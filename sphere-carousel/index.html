@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#05070c" />
+    <title>Sphere World — Carousel Navigation</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='13' fill='none' stroke='%237fd4d0' stroke-width='2'/><circle cx='16' cy='16' r='3.5' fill='%237fd4d0'/></svg>"
+    />
+    <link rel="stylesheet" href="./styles/main.css" />
+  </head>
+  <body>
+    <canvas id="stage"></canvas>
+
+    <div class="grain" aria-hidden="true"></div>
+
+    <div id="preloader" class="preloader">
+      <div class="preloader__inner">
+        <p class="preloader__label">Initialising world</p>
+        <div class="preloader__bar"><span id="preloader-fill" class="preloader__fill"></span></div>
+        <p class="preloader__count"><span id="preloader-pct">0</span>%</p>
+      </div>
+    </div>
+
+    <main class="ui" id="ui" aria-label="Sphere world navigation">
+      <header class="ui__top">
+        <div class="ui__brand">
+          <span class="ui__brand-name">Sphere World</span>
+          <span class="ui__brand-role">Carousel navigation study</span>
+        </div>
+        <div class="ui__counter" aria-live="polite">
+          <span id="counter-index">01</span><span class="ui__counter-sep">/</span><span id="counter-total">06</span>
+        </div>
+      </header>
+
+      <nav class="ui__ticks" id="ticks" aria-label="Items"></nav>
+
+      <section class="ui__caption">
+        <p class="ui__meta">
+          <span id="item-category">Category</span>
+          <span class="ui__meta-dot"></span>
+          <span id="item-year">2026</span>
+        </p>
+        <h1 class="ui__title" id="item-title"><span class="ui__title-line">Title</span></h1>
+        <button class="ui__open" id="open-btn" type="button">
+          <span class="ui__open-ring"></span>
+          <span class="ui__open-label">Open</span>
+        </button>
+      </section>
+
+      <footer class="ui__hint" id="hint">
+        <span class="ui__hint-arrow">&larr;</span>
+        <span>drag to travel</span>
+        <span class="ui__hint-arrow">&rarr;</span>
+      </footer>
+    </main>
+
+    <aside class="detail" id="detail" aria-hidden="true">
+      <div class="detail__inner">
+        <p class="detail__index" id="detail-index">01</p>
+        <h2 class="detail__title" id="detail-title">Title</h2>
+        <p class="detail__body" id="detail-body">Description</p>
+        <ul class="detail__tags" id="detail-tags"></ul>
+        <button class="detail__close" id="detail-close" type="button">Close <span>esc</span></button>
+      </div>
+    </aside>
+
+    <noscript>
+      <p class="noscript">This experience needs JavaScript and WebGL2.</p>
+    </noscript>
+
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>

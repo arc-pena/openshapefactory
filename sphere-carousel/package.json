@@ -1,0 +1,18 @@
+{
+  "name": "sphere-carousel",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Three.js sphere-world carousel navigation: camera at the centre of an inverted sphere, drag to rotate the world, items arrive from left/right and snap into focus.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --port 4173"
+  },
+  "dependencies": {
+    "three": "^0.186.0"
+  },
+  "devDependencies": {
+    "vite": "^7.1.5"
+  }
+}
