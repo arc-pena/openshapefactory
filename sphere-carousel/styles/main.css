@@ -149,9 +149,10 @@ body.is-detail .ui { opacity: 0.08; transition-duration: 600ms; transition-delay
   white-space: nowrap;
   will-change: transform;
 }
-.ui__title-line.is-out { transform: translate3d(0, -106%, 0); transition: transform 520ms var(--ease); }
 .ui__title-line.is-in { transform: translate3d(0, 106%, 0); }
 .ui__title-line.is-settled { transform: translate3d(0, 0, 0); transition: transform 760ms var(--ease); }
+/* Last, so leaving always beats settled at equal specificity. */
+.ui__title-line.is-out { transform: translate3d(0, -106%, 0); transition: transform 520ms var(--ease); }
 
 .ui__open {
   margin-top: 10px;

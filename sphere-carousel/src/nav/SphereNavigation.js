@@ -91,6 +91,7 @@ export class SphereNavigation {
 
   _onDown(event) {
     if (this.locked || this._pointerId !== null) return;
+    this._onHover(event);
     this._pointerId = event.pointerId;
     this.el.setPointerCapture?.(event.pointerId);
     this.dragging = true;
@@ -131,8 +132,12 @@ export class SphereNavigation {
     this.target += clamp(flick, -2.4, 2.4);
     this.target = Math.round(this.target);
 
-    // A tap (no travel) on the centred panel opens it.
-    if (this._dragDistance < 6) this.onActivate(this.index);
+    // A tap (no travel) asks to open the centred panel. Where the tap landed
+    // travels with it: the app only opens the item if the pointer was actually
+    // over it, so a click on empty world doesn't fire a project open.
+    if (this._dragDistance < 6) {
+      this.onActivate(this.index, { x: this.pointer.x, y: -this.pointer.y });
+    }
   }
 
   _onWheel(event) {
@@ -179,7 +184,10 @@ export class SphereNavigation {
   step(direction) {
     if (this.locked) return;
     this.idle = 0;
-    this.target = Math.round(this.position) + direction;
+    // Counted from `target`, not `position`: presses that arrive before the
+    // world has caught up still queue up instead of all resolving to the
+    // same neighbouring item.
+    this.target = Math.round(this.target) + direction;
   }
 
   /** Travel to an absolute item index by the shortest way round the sphere. */

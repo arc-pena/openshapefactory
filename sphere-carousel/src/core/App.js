@@ -31,6 +31,8 @@ export class App {
     this.frameTimes = [];
     this.reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     this._forward = new THREE.Vector3();
+    this._raycaster = new THREE.Raycaster();
+    this._ndc = new THREE.Vector2();
 
     this._buildRenderer();
     this._buildScene();
@@ -108,7 +110,7 @@ export class App {
         this.ui.setIndex(index);
         this.ui.dismissHint();
       },
-      onActivate: (index) => this.toggleItem(index),
+      onActivate: (index, ndc) => this.toggleItem(index, ndc),
     });
 
     // Warm the shader cache so the first drag isn't a stutter.
@@ -153,13 +155,19 @@ export class App {
 
   /* ------------------------------ commands ----------------------------- */
 
-  toggleItem(index) {
+  toggleItem(index, ndc) {
     if (this.openTarget > 0.5) this.closeItem();
-    else this.openItem(index);
+    else this.openItem(index, ndc);
   }
 
-  openItem(index) {
+  /**
+   * `ndc` is set when the request came from a tap; the panel opens only if the
+   * pointer was over it. Keyboard and the Open button pass nothing and always
+   * open the centred item.
+   */
+  openItem(index, ndc) {
     if (this.openTarget > 0.5) return;
+    if (ndc && !this._pointerOverPanel(ndc, index)) return;
     this.openTarget = 1;
     this.nav.lock(true);
     this.ui.showDetail(index);
@@ -170,6 +178,15 @@ export class App {
     this.openTarget = 0;
     this.nav.lock(false);
     this.ui.hideDetail();
+  }
+
+  _pointerOverPanel(ndc, index) {
+    const panel = this.carousel.panels[index];
+    if (!panel) return false;
+    // The backing slice stands in for the whole panel: one cheap mesh instead
+    // of a ray against 864 instanced cubes.
+    this._raycaster.setFromCamera(this._ndc.set(ndc.x, ndc.y), this.camera);
+    return this._raycaster.intersectObject(panel.backing, false).length > 0;
   }
 
   /* -------------------------------- loop ------------------------------- */

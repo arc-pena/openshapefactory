@@ -104,14 +104,26 @@ export class Interface {
     }
 
     // Old line rides up out of the mask while the new one rises into it.
-    const previous = this.titleEl.querySelector('.ui__title-line');
+    //
+    // Every line still in the mask has to be retired, not just the first one:
+    // travel fast enough and several swaps overlap, and retiring only the
+    // oldest leaves the ones in between parked at rest, stacked on top of each
+    // other. `is-settled` also has to come off, or it would out-rank `is-out`
+    // and the line would never leave.
+    const leaving = this.titleEl.querySelectorAll('.ui__title-line');
+    leaving.forEach((old, index) => {
+      if (index < leaving.length - 1) {
+        old.remove(); // already on its way out; no point animating it twice
+        return;
+      }
+      old.classList.remove('is-in', 'is-settled');
+      requestAnimationFrame(() => old.classList.add('is-out'));
+      setTimeout(() => old.remove(), 820);
+    });
+
     line.classList.add('is-in');
     this.titleEl.appendChild(line);
-    requestAnimationFrame(() => {
-      previous?.classList.add('is-out');
-      line.classList.add('is-settled');
-    });
-    setTimeout(() => previous?.remove(), 820);
+    requestAnimationFrame(() => line.classList.add('is-settled'));
   }
 
   /* ------------------------------- detail ------------------------------ */
