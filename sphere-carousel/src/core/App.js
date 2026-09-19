@@ -131,6 +131,10 @@ export class App {
       if (document.hidden) this.stop();
       else this.start();
     });
+    // Keyboard travel only works once the document has focus, which it does
+    // not when the page is first painted inside a frame.
+    this.canvas.addEventListener('pointerdown', () => window.focus());
+
     // Belt and braces: the canvas swallows wheel/gesture scrolling.
     window.addEventListener('contextmenu', (e) => {
       if (e.target === this.canvas) e.preventDefault();

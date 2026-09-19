@@ -153,10 +153,13 @@ export class SphereNavigation {
     switch (event.key) {
       case 'ArrowRight':
       case 'd':
+        // Embedded in a frame, the arrows would otherwise scroll the host page.
+        event.preventDefault();
         this.step(1);
         break;
       case 'ArrowLeft':
       case 'a':
+        event.preventDefault();
         this.step(-1);
         break;
       case 'Enter':
