@@ -1,85 +1,160 @@
 <title>Web BIM</title>
 <meta name="description" content="A browser BIM authoring tool on an OCAF-style parametric document: walls, joins, openings, spaces, views, sheets and exact PDF/DXF output.">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 <style>
 :root {
-  --ground: #E9ECF0; --panel: #FFFFFF; --panel-2: #F5F6F8; --panel-3: #EDEFF3; --ink: #17202C; --ink-2: #485263; --ink-3: #7B8595;
-  --rule: #D8DDE4; --rule-2: #E7EAEF; --accent: #1D6FD8; --accent-2: #E3EEFC; --accent-ink: #FFFFFF;
+  --ground: #D9DCE1; --panel: #FFFFFF; --panel-2: #F3F4F6; --panel-3: #E9EBEE; --ink: #1B1F24; --ink-2: #454C57; --ink-3: #7A828E;
+  --rule: #C9CED6; --rule-2: #E3E6EA; --accent: #0F6CBD; --accent-2: #DCEBFA; --accent-ink: #FFFFFF;
   --error: #B3261E; --error-bg: #FBE9E7; --note: #8A5A00; --note-bg: #FFF4DB; --ok: #1E7F4F; --ok-bg: #E4F4EA;
-  --canvas: #DDE1E7; --paper-edge: rgba(23, 32, 44, .18); --shadow: 0 1px 2px rgba(23,32,44,.08), 0 4px 16px rgba(23,32,44,.08);
-  --sans: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif; --cond: "IBM Plex Sans Condensed", "IBM Plex Sans", "Arial Narrow", sans-serif;
-  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
-  --left-w: 272px; --right-w: 332px; --bar-h: 46px; --status-h: 30px;
+  --chrome: #EEF0F3; --chrome-2: #E2E5E9; --title: #2B3A4E; --title-ink: #E9EEF5; --file: #1E5AA8; --context: #2E8B3E; --context-bg: #E6F3E8;
+  --canvas: #FFFFFF; --canvas-3d: linear-gradient(#EAEDF1, #FFFFFF 70%); --paper-edge: rgba(23, 32, 44, .18); --shadow: 0 1px 2px rgba(23,32,44,.1), 0 4px 14px rgba(23,32,44,.12);
+  --sans: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif; --cond: var(--sans);
+  --mono: ui-monospace, "Cascadia Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+  --left-w: 300px; --qat-h: 32px; --rtab-h: 27px; --rpanel-h: 92px; --opt-h: 30px; --status-h: 24px;
 }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
   color-scheme: dark;
-  --ground: #0E1217; --panel: #161B22; --panel-2: #1B2129; --panel-3: #222933; --ink: #E6E9EE; --ink-2: #AEB6C2; --ink-3: #7E8896;
-  --rule: #2A313B; --rule-2: #232A33; --accent: #5B9BF0; --accent-2: #1C2B40; --accent-ink: #0B1016;
+  --ground: #15191F; --panel: #1E232A; --panel-2: #252B33; --panel-3: #2C333C; --ink: #E6E9EE; --ink-2: #AEB6C2; --ink-3: #7E8896;
+  --rule: #353D48; --rule-2: #2A313B; --accent: #5B9BF0; --accent-2: #1C2B40; --accent-ink: #0B1016;
   --error: #F2867D; --error-bg: #3A1D1B; --note: #E6B758; --note-bg: #33290F; --ok: #6FCF9C; --ok-bg: #16301F;
-  --canvas: #242A33; --paper-edge: rgba(0,0,0,.5); --shadow: 0 1px 2px rgba(0,0,0,.4), 0 6px 20px rgba(0,0,0,.35);
+  --chrome: #262B33; --chrome-2: #1F242B; --title: #11151A; --title-ink: #D5DCE6; --file: #2F6FC4; --context: #4CAF62; --context-bg: #1B2E20;
+  --canvas: #20252C; --canvas-3d: linear-gradient(#2A3038, #1B1F25 70%); --paper-edge: rgba(0,0,0,.5); --shadow: 0 1px 2px rgba(0,0,0,.4), 0 6px 20px rgba(0,0,0,.35);
 } }
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --ground: #0E1217; --panel: #161B22; --panel-2: #1B2129; --panel-3: #222933; --ink: #E6E9EE; --ink-2: #AEB6C2; --ink-3: #7E8896;
-  --rule: #2A313B; --rule-2: #232A33; --accent: #5B9BF0; --accent-2: #1C2B40; --accent-ink: #0B1016;
+  --ground: #15191F; --panel: #1E232A; --panel-2: #252B33; --panel-3: #2C333C; --ink: #E6E9EE; --ink-2: #AEB6C2; --ink-3: #7E8896;
+  --rule: #353D48; --rule-2: #2A313B; --accent: #5B9BF0; --accent-2: #1C2B40; --accent-ink: #0B1016;
   --error: #F2867D; --error-bg: #3A1D1B; --note: #E6B758; --note-bg: #33290F; --ok: #6FCF9C; --ok-bg: #16301F;
-  --canvas: #242A33; --paper-edge: rgba(0,0,0,.5); --shadow: 0 1px 2px rgba(0,0,0,.4), 0 6px 20px rgba(0,0,0,.35);
+  --chrome: #262B33; --chrome-2: #1F242B; --title: #11151A; --title-ink: #D5DCE6; --file: #2F6FC4; --context: #4CAF62; --context-bg: #1B2E20;
+  --canvas: #20252C; --canvas-3d: linear-gradient(#2A3038, #1B1F25 70%); --paper-edge: rgba(0,0,0,.5); --shadow: 0 1px 2px rgba(0,0,0,.4), 0 6px 20px rgba(0,0,0,.35);
 }
-@font-face { font-family: "WebBIMSans"; src: local("DejaVu Sans"); }
 html, body { height: 100%; }
-body { margin: 0; background: var(--ground); color: var(--ink); font: 13px/1.4 var(--sans); overflow: hidden; }
+body { margin: 0; background: var(--ground); color: var(--ink); font: 12.5px/1.35 var(--sans); overflow: hidden; }
 * { box-sizing: border-box; }
 button, input, select, textarea { font: inherit; color: inherit; }
 button { cursor: pointer; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .mono { font-family: var(--mono); font-size: 11.5px; }
 .muted { color: var(--ink-3); }
-.app { display: grid; height: 100%; grid-template-rows: var(--bar-h) 1fr var(--status-h); grid-template-columns: var(--left-w) 1fr var(--right-w); grid-template-areas: "bar bar bar" "left main right" "status status status"; }
-.bar { grid-area: bar; display: flex; align-items: center; gap: 10px; padding: 0 12px; background: var(--panel); border-bottom: 1px solid var(--rule); min-width: 0; }
-.brand { display: flex; align-items: baseline; gap: 8px; font-family: var(--cond); font-weight: 600; font-size: 15px; letter-spacing: .02em; white-space: nowrap; }
-.brand b { display: inline-grid; place-items: center; width: 22px; height: 22px; background: var(--ink); color: var(--panel); border-radius: 3px; font-size: 12px; transform: translateY(4px); }
-.docname { border: 1px solid transparent; background: none; padding: 3px 6px; border-radius: 4px; min-width: 60px; max-width: 200px; font-weight: 500; }
-.docname:hover, .docname:focus { border-color: var(--rule); background: var(--panel-2); }
-.bar .sep { width: 1px; height: 22px; background: var(--rule); flex: none; }
-.btn { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border: 1px solid var(--rule); background: var(--panel); border-radius: 5px; white-space: nowrap; }
-.btn:hover { background: var(--panel-2); }
-.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 500; }
+.grow { flex: 1; min-width: 0; }
+.app { display: grid; height: 100%; grid-template-columns: var(--left-w) 1fr;
+  grid-template-rows: var(--qat-h) auto var(--opt-h) 1fr var(--status-h);
+  grid-template-areas: "qat qat" "ribbon ribbon" "options options" "left main" "status status"; }
+/* quick access toolbar = the title bar */
+.qat { grid-area: qat; display: flex; align-items: center; gap: 1px; padding: 0 6px; background: var(--title); color: var(--title-ink); min-width: 0; }
+.qat .logo { width: 22px; height: 22px; display: grid; place-items: center; background: var(--file); color: #fff; font-weight: 700; border-radius: 3px; margin-right: 6px; flex: none; }
+.qbtn { width: 28px; height: 26px; display: grid; place-items: center; border: 0; background: none; color: inherit; border-radius: 3px; padding: 0; flex: none; }
+.qbtn:hover { background: rgba(255,255,255,.14); }
+.qbtn[disabled] { opacity: .35; cursor: default; background: none; }
+.qsep { width: 1px; height: 16px; background: rgba(255,255,255,.22); margin: 0 4px; flex: none; }
+.qtitle { flex: 1; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12.5px; min-width: 0; padding: 0 8px; }
+.qtitle b { font-weight: 600; }
+/* ribbon */
+.ribbon { grid-area: ribbon; background: var(--chrome); border-bottom: 1px solid var(--rule); min-width: 0; }
+.rtabs { display: flex; align-items: flex-end; height: var(--rtab-h); background: var(--chrome-2); padding: 0 4px; gap: 1px; overflow-x: auto; scrollbar-width: none; }
+.rtab { height: 24px; padding: 0 12px; border: 1px solid transparent; border-bottom: 0; background: none; color: var(--ink-2); white-space: nowrap; border-radius: 3px 3px 0 0; }
+.rtab:hover { color: var(--ink); background: rgba(127,127,127,.12); }
+.rtab[aria-selected="true"] { background: var(--chrome); border-color: var(--rule); color: var(--ink); font-weight: 600; margin-bottom: -1px; height: 25px; }
+.rtab.file { background: var(--file); color: #fff; font-weight: 600; border-radius: 3px 3px 0 0; margin-right: 4px; padding: 0 16px; }
+.rtab.file:hover { filter: brightness(1.1); }
+.rtab.context { color: var(--context); font-weight: 600; background: var(--context-bg); border-color: var(--context); border-top-width: 3px; }
+.rtab.context[aria-selected="true"] { background: var(--context-bg); }
+.rtab.mini { padding: 0 8px; color: var(--ink-3); }
+.ribbon.collapsed .rpanels { display: none; }
+.rpanels { display: flex; height: var(--rpanel-h); padding: 3px 3px 0; gap: 0; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; }
+.rpanel { display: flex; flex-direction: column; border-right: 1px solid var(--rule); padding: 0 3px; flex: none; }
+.rpbody { flex: 1; display: flex; align-items: stretch; gap: 1px; }
+.rptitle { height: 18px; text-align: center; font-size: 11px; color: var(--ink-3); border-top: 1px solid var(--rule-2); line-height: 17px; white-space: nowrap; padding: 0 4px; }
+.rbig { display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 3px; min-width: 52px; max-width: 72px; padding: 4px 4px 2px; border: 1px solid transparent; background: none; border-radius: 3px; font-size: 11.5px; line-height: 1.15; color: var(--ink); }
+.rbig span { text-align: center; overflow-wrap: normal; hyphens: none; }
+.rbig svg { color: var(--accent); flex: none; }
+.rsmallcol { display: flex; flex-direction: column; gap: 1px; justify-content: flex-start; padding-top: 2px; }
+.rsmall { display: flex; align-items: center; gap: 5px; height: 22px; padding: 0 6px 0 3px; border: 1px solid transparent; background: none; border-radius: 3px; white-space: nowrap; font-size: 12px; color: var(--ink); }
+.rsmall svg { color: var(--accent); flex: none; }
+.rbig:hover, .rsmall:hover { background: var(--accent-2); border-color: #9CC3F0; }
+.rbig[aria-pressed="true"], .rsmall[aria-pressed="true"] { background: #C4DDF7; border-color: var(--accent); }
+/* options bar */
+.options { grid-area: options; display: flex; align-items: center; gap: 12px; padding: 0 10px; background: var(--panel-2); border-bottom: 1px solid var(--rule); white-space: nowrap; overflow-x: auto; scrollbar-width: none; min-width: 0; }
+.options .otitle { font-weight: 600; color: var(--ink); padding-right: 12px; border-right: 1px solid var(--rule); }
+.options label { display: inline-flex; align-items: center; gap: 4px; color: var(--ink-2); }
+.options select, .options input[type=text] { height: 22px; border: 1px solid var(--rule); border-radius: 2px; background: var(--panel); padding: 0 4px; }
+/* palettes */
+.left { grid-area: left; display: grid; grid-template-rows: var(--split, 55%) 5px 1fr; background: var(--chrome); border-right: 1px solid var(--rule); min-height: 0; min-width: 0; }
+body.hide-props .left { grid-template-rows: 0 0 1fr; }
+body.hide-props .palette.props, body.hide-props .psplit { display: none; }
+.palette { display: flex; flex-direction: column; min-height: 0; background: var(--panel); border: 1px solid var(--rule); margin: 3px 3px 0; }
+.palette.browser { margin-bottom: 3px; }
+.palette > header { display: flex; align-items: center; gap: 6px; height: 24px; padding: 0 4px 0 8px; background: var(--chrome-2); border-bottom: 1px solid var(--rule); font-weight: 600; font-size: 12px; flex: none; white-space: nowrap; overflow: hidden; }
+.palette > header > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.pclose { border: 0; background: none; color: var(--ink-3); width: 20px; height: 20px; padding: 0; border-radius: 2px; }
+.pclose:hover { background: var(--error-bg); color: var(--error); }
+.ptabs { display: flex; gap: 1px; }
+.ptabs button { border: 1px solid var(--rule); background: var(--panel); height: 18px; padding: 0 6px; font-size: 11px; font-weight: 400; border-radius: 2px; }
+.ptabs button[aria-pressed="true"] { background: var(--accent-2); border-color: var(--accent); color: var(--accent); }
+.pbody { flex: 1; overflow: auto; min-height: 0; }
+.psplit { cursor: row-resize; background: transparent; touch-action: none; }
+.psplit:hover { background: var(--accent-2); }
+/* main: document tabs, view, view control bar */
+.main { grid-area: main; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--ground); }
+.dtabs { display: flex; gap: 1px; height: 26px; align-items: flex-end; padding: 0 4px; background: var(--chrome-2); border-bottom: 1px solid var(--rule); overflow-x: auto; scrollbar-width: none; flex: none; }
+.dtab { display: inline-flex; align-items: center; gap: 5px; height: 23px; padding: 0 4px 0 9px; border: 1px solid var(--rule); border-bottom: 0; background: var(--chrome); color: var(--ink-2); white-space: nowrap; font-size: 12px; border-radius: 3px 3px 0 0; }
+.dtab svg { color: var(--accent); }
+.dtab[aria-selected="true"] { background: var(--panel); color: var(--ink); font-weight: 600; height: 25px; margin-bottom: -1px; }
+.dtab .x { opacity: .45; font-size: 10px; width: 16px; height: 16px; display: grid; place-items: center; border-radius: 2px; }
+.dtab .x:hover { opacity: 1; background: var(--error-bg); color: var(--error); }
+.viewhost { position: relative; flex: 1; overflow: hidden; background: var(--canvas); min-height: 0; }
+.vcb { display: flex; align-items: center; gap: 4px; height: 28px; padding: 0 6px; background: var(--chrome); border-top: 1px solid var(--rule); white-space: nowrap; overflow-x: auto; scrollbar-width: none; flex: none; }
+.vcb select { height: 22px; border: 1px solid var(--rule); background: var(--panel); border-radius: 2px; padding: 0 3px; font-size: 12px; }
+.vcb .vscale { font-weight: 600; }
+.vbtn { width: 24px; height: 22px; display: grid; place-items: center; border: 1px solid transparent; background: none; border-radius: 2px; padding: 0; color: var(--ink-2); flex: none; }
+.vbtn:hover { background: var(--accent-2); border-color: #9CC3F0; }
+.vbtn[aria-pressed="true"] { background: #C4DDF7; border-color: var(--accent); color: var(--accent); }
+/* status bar */
+.status { grid-area: status; display: flex; align-items: center; gap: 12px; padding: 0 8px; background: var(--chrome-2); border-top: 1px solid var(--rule); font-size: 12px; color: var(--ink-2); min-width: 0; overflow: hidden; white-space: nowrap; }
+.status .msg { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.status .msg.error { color: var(--error); } .status .msg.note { color: var(--ink-2); } .status .msg.ok { color: var(--ok); }
+.status #stats[data-keys]:not([data-keys=""])::before { content: attr(data-keys); font-weight: 700; color: var(--accent); margin-right: 8px; }
+/* context / file menu */
+.cmenu { position: fixed; z-index: 60; min-width: 220px; background: var(--panel); border: 1px solid var(--rule); box-shadow: var(--shadow); padding: 3px; border-radius: 3px; }
+.cmenu button { display: grid; grid-template-columns: 20px 1fr auto; align-items: center; gap: 6px; width: 100%; text-align: left; border: 0; background: none; padding: 4px 8px 4px 4px; border-radius: 2px; white-space: nowrap; }
+.cmenu button:hover { background: var(--accent-2); }
+.cmenu button[disabled] { opacity: .4; }
+.cmenu svg { color: var(--accent); }
+.cmenu .ck { font: 11px var(--mono); color: var(--ink-3); }
+.cmenu .csep { height: 1px; background: var(--rule-2); margin: 3px 4px; }
+/* ViewCube + navigation bar */
+.viewcube { position: absolute; right: 10px; top: 8px; width: 116px; height: 116px; z-index: 6; }
+.viewcube canvas { display: block; }
+.vc-home { position: absolute; left: 0; top: 0; width: 24px; height: 24px; display: grid; place-items: center; border: 0; background: none; color: var(--ink-2); border-radius: 3px; padding: 0; z-index: 1; }
+.vc-home:hover { background: var(--accent-2); color: var(--accent); }
+.navbar { position: absolute; right: 50px; top: 132px; display: flex; flex-direction: column; gap: 1px; padding: 2px; background: var(--panel); border: 1px solid var(--rule); border-radius: 3px; box-shadow: var(--shadow); z-index: 6; }
+.navbar button { width: 26px; height: 26px; display: grid; place-items: center; border: 0; background: none; border-radius: 2px; padding: 0; color: var(--ink-2); }
+.navbar button:hover { background: var(--accent-2); color: var(--accent); }
+.selbox { position: absolute; z-index: 5; pointer-events: none; border: 1px solid #1d6fd8; background: rgba(29,111,216,.08); }
+.selbox.crossing { border-style: dashed; border-color: #2e8b3e; background: rgba(46,139,62,.08); }
+.three { position: absolute; inset: 0; background: var(--canvas-3d); }
+/* shared bits */
+.btn { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border: 1px solid var(--rule); background: var(--panel); border-radius: 2px; white-space: nowrap; }
+.btn:hover { background: var(--accent-2); border-color: #9CC3F0; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
 .btn.ghost { border-color: transparent; background: none; }
-.btn.ghost:hover { background: var(--panel-2); }
 .btn[disabled] { opacity: .45; cursor: default; }
-.btn.small { height: 24px; padding: 0 8px; font-size: 12px; }
-.seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 5px; overflow: hidden; }
-.seg button { border: 0; background: var(--panel); height: 26px; padding: 0 9px; border-right: 1px solid var(--rule); font-size: 12px; }
+.btn.small { height: 22px; padding: 0 8px; font-size: 12px; }
+.seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 2px; overflow: hidden; }
+.seg button { border: 0; background: var(--panel); height: 22px; padding: 0 8px; border-right: 1px solid var(--rule); font-size: 12px; }
 .seg button:last-child { border-right: 0; }
 .seg button[aria-pressed="true"] { background: var(--accent-2); color: var(--accent); font-weight: 600; }
-.grow { flex: 1; min-width: 0; }
-.tabs { display: flex; gap: 2px; overflow-x: auto; min-width: 0; scrollbar-width: none; }
-.tab { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border: 1px solid transparent; border-bottom: 0; border-radius: 6px 6px 0 0; background: none; color: var(--ink-2); white-space: nowrap; transform: translateY(8px); }
-.tab[aria-selected="true"] { background: var(--ground); border-color: var(--rule); color: var(--ink); font-weight: 500; }
-.tab .x { opacity: .5; font-size: 11px; padding: 0 2px; }
-.tab .x:hover { opacity: 1; }
-.dock { background: var(--panel); display: flex; flex-direction: column; min-height: 0; min-width: 0; }
-.left { grid-area: left; border-right: 1px solid var(--rule); }
-.right { grid-area: right; border-left: 1px solid var(--rule); }
-.dock-tabs { display: flex; border-bottom: 1px solid var(--rule); flex: none; }
-.dock-tabs button { flex: 1; border: 0; background: none; height: 34px; font-family: var(--cond); font-weight: 500; font-size: 12.5px; letter-spacing: .03em; text-transform: uppercase; color: var(--ink-3); border-bottom: 2px solid transparent; }
-.dock-tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
-.dock-body { flex: 1; overflow: auto; min-height: 0; }
-.main { grid-area: main; position: relative; overflow: hidden; background: var(--canvas); min-width: 0; }
-.status { grid-area: status; display: flex; align-items: center; gap: 12px; padding: 0 10px; background: var(--panel); border-top: 1px solid var(--rule); font-size: 12px; color: var(--ink-2); min-width: 0; overflow: hidden; white-space: nowrap; }
-.status .msg { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.status .msg.error { color: var(--error); } .status .msg.note { color: var(--note); } .status .msg.ok { color: var(--ok); }
-.snaps { display: flex; gap: 2px; }
-.snaps button { border: 1px solid transparent; background: none; font: 500 11px var(--mono); padding: 1px 5px; border-radius: 3px; color: var(--ink-3); }
-.snaps button[aria-pressed="true"] { color: var(--accent); border-color: var(--accent-2); background: var(--accent-2); }
+.snaps { display: flex; gap: 1px; }
+.snaps button { border: 1px solid transparent; background: none; font: 500 11px var(--mono); padding: 1px 4px; border-radius: 2px; color: var(--ink-3); }
+.snaps button[aria-pressed="true"] { color: var(--accent); border-color: #9CC3F0; background: var(--accent-2); }
 /* tree */
 .tree { list-style: none; margin: 0; padding: 4px 0 12px; }
 .tree ul { list-style: none; margin: 0; padding: 0 0 0 14px; }
 .tree .row { display: flex; align-items: center; gap: 6px; padding: 3px 10px 3px 6px; cursor: default; border-radius: 4px; margin: 0 6px; min-height: 26px; }
 .tree .row:hover { background: var(--panel-2); }
 .tree .row.sel { background: var(--accent-2); }
+.tree .row.active .lab { font-weight: 700; }
+.tree .row[draggable=true] { cursor: grab; }
+.tree .row svg { color: var(--accent); flex: none; }
 .tree .row .fold { width: 16px; text-align: center; color: var(--ink-3); border: 0; background: none; padding: 0; font-size: 11px; }
 .tree .row .lab { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .tree .row .id { font: 11px var(--mono); color: var(--ink-3); }
@@ -126,14 +201,6 @@ button { cursor: pointer; }
 .empty { padding: 26px 18px; color: var(--ink-3); line-height: 1.55; }
 .empty h3 { margin: 0 0 6px; font: 600 14px var(--sans); color: var(--ink-2); }
 /* floating chrome over the canvas */
-.rail { position: absolute; left: 10px; top: 10px; display: flex; flex-direction: column; gap: 2px; padding: 4px; background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; box-shadow: var(--shadow); z-index: 5; max-height: calc(100% - 20px); overflow-y: auto; }
-.rail button { display: grid; grid-template-columns: 22px auto; align-items: center; gap: 6px; height: 30px; padding: 0 8px 0 5px; border: 0; background: none; border-radius: 5px; font-size: 12.5px; text-align: left; color: var(--ink-2); white-space: nowrap; }
-.rail button:hover { background: var(--panel-2); color: var(--ink); }
-.rail button[aria-pressed="true"] { background: var(--accent-2); color: var(--accent); font-weight: 600; }
-.rail svg { width: 18px; height: 18px; }
-.rail .k { font: 10px var(--mono); color: var(--ink-3); margin-left: auto; }
-.toolopts { position: absolute; left: 50%; transform: translateX(-50%); top: 10px; display: flex; align-items: center; gap: 8px; padding: 5px 8px; background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; box-shadow: var(--shadow); z-index: 6; font-size: 12px; max-width: calc(100% - 200px); flex-wrap: wrap; }
-.toolopts select, .toolopts input { height: 26px; border: 1px solid var(--rule); border-radius: 4px; background: var(--panel); padding: 0 6px; }
 .viewbar { position: absolute; right: 10px; bottom: 10px; display: flex; gap: 6px; z-index: 5; flex-wrap: wrap; justify-content: flex-end; max-width: calc(100% - 150px); }
 .viewbar .card { flex-wrap: wrap; }
 .viewbar .card { display: flex; align-items: center; gap: 6px; padding: 4px 6px 4px 10px; background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; box-shadow: var(--shadow); font-size: 12px; }
@@ -215,26 +282,28 @@ table.sched td.id { font: 11.5px var(--mono); color: var(--ink-3); }
 .port { fill: var(--panel); stroke: var(--ink-3); }
 .port.out { fill: var(--accent); stroke: var(--accent); }
 .port.ok { fill: var(--ok); } .port.no { opacity: .25; }
-.three { position: absolute; inset: 0; }
 .mobile-only { display: none; }
-@media (max-width: 1100px) { :root { --left-w: 236px; --right-w: 296px; } .rail button span.lbl { display: none; } .rail button { grid-template-columns: 22px; } }
+@media (max-width: 1100px) { :root { --left-w: 250px; } }
 @media (max-width: 860px) {
-  .app { grid-template-columns: 1fr; grid-template-areas: "bar" "main" "status"; }
-  .left, .right { position: fixed; top: var(--bar-h); bottom: var(--status-h); width: min(88vw, 340px); z-index: 30; box-shadow: var(--shadow); transform: translateX(-105%); transition: transform .18s ease; }
-  .left { left: 0; } .right { right: 0; transform: translateX(105%); }
-  body.show-left .left, body.show-right .right { transform: none; }
-  .mobile-only { display: inline-flex; }
+  .app { grid-template-columns: 1fr; grid-template-areas: "qat" "ribbon" "options" "main" "status"; }
+  :root { --rpanel-h: 80px; }
+  .rbig { width: 50px; font-size: 11px; }
+  .left { position: fixed; top: var(--qat-h); bottom: var(--status-h); left: 0; width: min(88vw, 340px); z-index: 30; box-shadow: var(--shadow); transform: translateX(-105%); transition: transform .18s ease; }
+  body.show-left .left { transform: none; }
+  .mobile-only { display: grid; }
   .hide-narrow { display: none !important; }
-  .toolopts { top: auto; bottom: 10px; max-width: calc(100% - 24px); }
-  .viewbar { max-width: calc(100% - 70px); }
+  .qtitle { font-size: 11.5px; }
+  .viewcube { transform: scale(.8); transform-origin: top right; }
+  .navbar { top: 106px; right: 42px; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 <div class="app" id="app">
-  <header class="bar" id="bar"></header>
-  <aside class="dock left" id="left"></aside>
+  <header class="qat" id="qat"></header>
+  <nav class="ribbon" id="ribbon" aria-label="Ribbon"></nav>
+  <div class="options" id="options" role="toolbar" aria-label="Options bar"></div>
+  <aside class="left" id="left"></aside>
   <main class="main" id="main"></main>
-  <aside class="dock right" id="right"></aside>
   <footer class="status" id="status"></footer>
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -4047,9 +4116,9 @@ class Editor {
   emit(r) { for (const fn of this.listeners) fn(r); }
 
   /** Apply one op (or a list) as one step. Returns {ok, error?, conflicts?, ...}. */
-  apply(op, { regenerate = true } = {}) {
+  apply(op, { regenerate = true, coalesce = null } = {}) {
     const ops = Array.isArray(op) ? op : [op];
-    const key = ops.length === 1 ? ops[0].coalesce || null : null;
+    const key = coalesce || (ops.length === 1 ? ops[0].coalesce || null : null);
     const snap = snapshot(this.doc);
     let result = { ok: true };
     try {
@@ -4257,6 +4326,26 @@ const HANDLERS = {
   },
   sheet(doc, o) { const sh = doc.element(o.id); const vps = clone(doc.argValue(sh, "viewports")); const vp = vps.find(v => v.id === o.viewport); if (o.remove) vps.splice(vps.indexOf(vp), 1); else Object.assign(vp, o.value); doc.setArg(sh, "viewports", vps); doc.bumpView(); return {}; },
   model(doc, o) { throw new Error("replace the whole model through openDocument, not as an edit"); },
+  /** Move · copy · rotate · mirror, for any element with a placement. One op
+   *  for the plan, the 3D view, the keyboard and the tests. */
+  transform(doc, o) {
+    const ids = [].concat(o.ids || o.id).filter(id => doc.element(id));
+    const T = transformer(o);
+    if (!T) throw new Error("transform needs move, rotate or mirror");
+    const skipped = [];
+    if (o.copy) return copyElements(doc, ids, T);
+    const before = new Map();
+    for (const id of ids) {
+      const f = doc.element(id), k = geomKey(f, doc);
+      if (!k) { skipped.push(id); continue; }
+      const g = doc.argValue(f, k);
+      if (doc.typeOf(f) === "Wall") before.set(id, clone(g));
+      doc.setArg(f, k, T.geom(g, doc.typeOf(f)));
+      transformExtras(doc, f, T);
+    }
+    followJoins(doc, new Set(ids), before);
+    return { moved: ids.filter(id => !skipped.includes(id)), said: skipped.length ? `${skipped.join(", ")} move with their host — drag their handle instead` : undefined };
+  },
   /** Node positions ride in the file, so undo restores layout too. */
   layout(doc, o) { if (o.reset) doc.graph.layout = {}; else doc.graph.layout[o.id] = o.at; return {}; },
   /** A drag: the handle computes a value; constraints propagate from the
@@ -4269,7 +4358,10 @@ const HANDLERS = {
       const leaders = clone(doc.argValue(f, "leaders") || []).map(L => Object.assign(L, L.elbow ? { elbow: add(L.elbow, d) } : {}));
       doc.setArg(f, "leaders", leaders);
     }
+    const before = clone(doc.argValue(f, "centreline"));
     setPath(doc, f, o.key, o.value);
+    // Joined ends follow: drag a wall and the walls joined to it stretch with it.
+    if (doc.typeOf(f) === "Wall" && before && o.follow !== false) followJoins(doc, new Set([o.id]), new Map([[o.id, before]]));
     const res = propagate(doc, o.id);
     if (res.conflicts.length) return { conflicts: res.conflicts, error: res.conflicts.map(c => c.say).join("; ") };
     for (const [id, cl] of res.set) if (id !== o.id) { const g = doc.element(id); doc.setArg(g, geomKey(g, doc), cl); }
@@ -4309,9 +4401,90 @@ const HANDLERS = {
 
 // ---------------------------------------------------------------- propagation (§10.5)
 /** Which argument moves an element as a whole. */
-function geomKey(f, doc) {
+function geomKey(f, doc) { return geomKeyOf(doc.typeOf(f)); }
+function geomKeyOf(t) {
+  return t === "Wall" ? "centreline" : t === "Grid" || t === "RoomSeparator" || t === "ElevationView" ? "line"
+    : t === "Column" || t === "Furniture" || t === "Text" || t === "SymbolInstance" ? "position" : t === "Space" ? "anchor"
+    : t === "DetailLine" ? "curve" : t === "FilledRegion" ? "boundary" : null;
+}
+
+// ---------------------------------------------------------------- transforms
+/** A rigid transform as point, angle and geometry functions. Mirror reverses
+ *  handedness, so a mirrored line swaps its ends to keep a wall's exterior out. */
+function transformer(o) {
+  let P, A, mirror = false;
+  if (o.move) { const d = o.move; P = p => [p[0] + d[0], p[1] + d[1]]; A = a => a; }
+  else if (o.rotate) { const { c, a } = o.rotate, cs = Math.cos(a), sn = Math.sin(a); P = p => { const x = p[0] - c[0], y = p[1] - c[1]; return [c[0] + x * cs - y * sn, c[1] + x * sn + y * cs]; }; A = deg => deg + a * 180 / Math.PI; }
+  else if (o.mirror) { const { p: m, d } = o.mirror, u = normalise(d); mirror = true; P = p => { const v = sub(p, m), t = dot(v, u); return add(m, sub(mul(u, 2 * t), v)); }; const th = Math.atan2(u[1], u[0]) * 180 / Math.PI; A = deg => 2 * th - deg; }
+  else return null;
+  const geom = (g) => {
+    if (!g) return g;
+    if (Array.isArray(g) && typeof g[0] === "number") return P(g);
+    if (Array.isArray(g)) return g.map(p => P(p));
+    const out = Object.assign({}, g);
+    if (g.type === "line") { out.start = P(g.start); out.end = P(g.end); if (mirror) [out.start, out.end] = [out.end, out.start]; }
+    else if (g.type === "arc") { out.centre = P(g.centre); if (mirror) { out.start = A(g.end); out.end = A(g.start); } else { out.start = A(g.start); out.end = A(g.end); } }
+    else if (g.type === "circle" || g.type === "ellipse") { out.centre = P(g.centre); if (g.rotation !== undefined) out.rotation = A(g.rotation); }
+    else if (g.type === "spline") { out.points = g.points.map(P); if (mirror) out.points.reverse(); }
+    return out;
+  };
+  return { P, A, geom, mirror };
+}
+function transformExtras(doc, f, T) {
   const t = doc.typeOf(f);
-  return t === "Wall" ? "centreline" : t === "Grid" || t === "RoomSeparator" ? "line" : t === "Column" || t === "Furniture" || t === "Text" ? "position" : null;
+  if ((t === "Column" || t === "Furniture" || t === "Text" || t === "SymbolInstance") && doc.argValue(f, "rotation") !== undefined)
+    doc.setArg(f, "rotation", ((T.A(doc.argValue(f, "rotation") || 0) % 360) + 360) % 360);
+  if (t === "Text") doc.setArg(f, "leaders", (doc.argValue(f, "leaders") || []).map(L => Object.assign({}, L, L.elbow ? { elbow: T.P(L.elbow) } : {}, { target: T.P(L.target) })));
+}
+/** Walls joined to a moved wall keep their joint: the shared end follows the
+ *  moved end (an L stretches), and a T end slides onto the moved through-wall. */
+function followJoins(doc, movedIds, before) {
+  const endOf = (id, e) => { const c = doc.argValue(doc.element(id), "centreline"); return c && c.type === "line" ? c[e] : null; };
+  const setEnd = (id, e, p) => { const f = doc.element(id), c = clone(doc.argValue(f, "centreline")); c[e] = p; doc.setArg(f, "centreline", c); };
+  for (const j of doc.joins) {
+    if (j.allowed === false) continue;
+    const A = j.a.of, B = j.b.of;
+    if (!doc.element(A) || !doc.element(B)) continue;
+    if (j.b.end) {
+      for (const [m, me, o, oe] of [[A, j.a.end, B, j.b.end], [B, j.b.end, A, j.a.end]]) {
+        if (!movedIds.has(m) || movedIds.has(o) || !before.has(m)) continue;
+        const was = before.get(m); if (!was || was.type !== "line") continue;
+        const oldEnd = was[me], otherEnd = endOf(o, oe);
+        // only if they were actually together before this edit
+        if (otherEnd && dist(oldEnd, otherEnd) < 1) setEnd(o, oe, endOf(m, me));
+      }
+    } else if (movedIds.has(B) && !movedIds.has(A)) {
+      const c = doc.argValue(doc.element(B), "centreline"), e = endOf(A, j.a.end);
+      if (c && c.type === "line" && e) { const L = lineThrough(c.start, c.end); setEnd(A, j.a.end, add(L.p, mul(L.d, dot(sub(e, L.p), L.d)))); }
+    }
+  }
+}
+/** Copies with fresh ids; hosted openings and their fillers come along, and
+ *  joins among the copied walls are copied too (ids rewritten in one pass). */
+function copyElements(doc, ids, T) {
+  const map = new Map(), recs = [];
+  const want = new Set(ids);
+  for (const g of doc.elements()) { const t = doc.typeOf(g); if (t === "Opening" && want.has(F.refId(g, "host"))) want.add(doc.idOf(g)); }
+  for (const g of doc.elements()) { const t = doc.typeOf(g); if ((t === "Door" || t === "Window") && want.has(F.refId(g, "fills"))) want.add(doc.idOf(g)); }
+  for (const id of want) {
+    const f = doc.element(id), rec = clone(doc.elementJSON(f));
+    const taken = new Set(map.values());
+    const base = (CATALOGUE.get(rec.type) || {}).idPrefix || rec.type.slice(0, 2).toUpperCase();
+    let n = 1; while (doc.element(base + n) || taken.has(base + n)) n++;
+    const nid = base + n; map.set(id, nid); rec.id = nid;
+    if (rec.name === id || !rec.name) delete rec.name; else rec.name = rec.name + " (copy)";
+    recs.push(rec);
+  }
+  for (const rec of recs) {
+    const k = geomKeyOf(rec.type);
+    if (k && rec.args[k] !== undefined) rec.args[k] = T.geom(rec.args[k], rec.type);
+    const rw = v => v && typeof v === "object" ? (Array.isArray(v) ? v.map(rw) : Object.fromEntries(Object.entries(v).map(([a, b]) => [a, a === "ref" && map.has(b) ? map.get(b) : rw(b)]))) : v;
+    rec.args = rw(rec.args);
+    doc.addElement(rec);
+    const f = doc.element(rec.id); transformExtras(doc, f, T);
+  }
+  for (const j of clone(doc.joins)) if (map.has(j.a.of) && map.has(j.b.of)) { const row = clone(j); row.a.of = map.get(j.a.of); row.b.of = map.get(j.b.of); delete row.id; HANDLERS.relate(doc, { store: "joins", row }); }
+  return { copied: [...map.values()], id: [...map.values()][0] };
 }
 /** The line of a reference key for an element in a hypothetical position. */
 function refLine(doc, f, rk, geom) {
@@ -5935,9 +6108,9 @@ function buildSample() {
   add({ id: "TX1", type: "Text", args: { content: "190mm blockwork, plaster both sides", position: [11200, 9800], rotation: 0, textType: { ref: "TT-25" }, wrapWidth: 40, leaders: [{ side: "left", elbow: [10600, 9800], target: [10600, 7000], arrow: "AR-DOT", attachment: "middle" }], view: { ref: "V-P00" } } });
   add({ id: "TX2", type: "Text", args: { content: "=\"Wall type \" & W1.TypeMark & \" — \" & W1.FireRating & \" min\"", position: [500, -1600], rotation: 0, textType: { ref: "TT-25" }, wrapWidth: 80, leaders: [], view: { ref: "V-P00" } } });
   add({ id: "DIM1", type: "Dimension", args: { of: ["W1:core.exterior", "W3:core.exterior"], offset: -1800, view: { ref: "V-P00" }, locked: false } });
-  add({ id: "DIM2", type: "Dimension", args: { of: ["W4:core.exterior", "P1:centreline"], offset: 9300, view: { ref: "V-P00" }, locked: true } });
+  add({ id: "DIM2", type: "Dimension", args: { of: ["W4:core.exterior", "P1:centreline"], offset: 9300, view: { ref: "V-P00" }, locked: false } });
   add({ id: "DIM3", type: "Dimension", args: { of: ["P1:centreline", "W2:core.exterior"], offset: 9300, view: { ref: "V-P00" }, locked: false } });
-  ed.apply({ op: "relate", store: "constraints", row: { id: "C1", kind: "distance", of: ["W4:core.exterior", "P1:centreline"], value: 6000, locked: true } }, { regenerate: false });
+  ed.apply({ op: "relate", store: "constraints", row: { id: "C1", kind: "distance", of: ["W4:core.exterior", "P1:centreline"], value: 6000, locked: false } }, { regenerate: false });
   // sheets
   add({ id: "SH-A101", type: "Sheet", name: "A-101 Ground Floor Plan", args: { number: "A-101", sheetName: "Ground Floor Plan", size: "A1", orientation: "landscape", titleBlock: { ref: "SY-TB-A1" },
     viewports: [{ id: "VP1", view: { ref: "V-P00" }, at: [250, 360], clipVisible: false }, { id: "VP2", view: { ref: "V-E01" }, at: [250, 110], clipVisible: false }, { id: "VP3", view: { ref: "SC3" }, at: [560, 470], clipVisible: false }, { id: "VP4", view: { ref: "V-E02" }, at: [540, 170], clipVisible: false }], revision: "P01" } });
@@ -6741,6 +6914,48 @@ function runAll(filter = null) {
   return out;
 }
 
+// ---------------------------------------------------------------- modify tools (interface-level, beyond §15)
+testCase("M1", "Move a wall: joined walls stretch with it", () => {
+  const { doc, ed } = fixture();
+  wall(doc, "A", [0, 0], [6000, 0], "T-300"); wall(doc, "B", [6000, 0], [6000, 4000], "T-300"); wall(doc, "C", [0, 4000], [0, 0], "T-300");
+  joinEE(doc, "A", "end", "B", "start"); joinEE(doc, "C", "end", "A", "start"); doc.regenerate();
+  ed.apply({ op: "transform", ids: ["A"], move: [0, -1000] });
+  const a = doc.argValue(doc.element("A"), "centreline"), b = doc.argValue(doc.element("B"), "centreline"), c = doc.argValue(doc.element("C"), "centreline");
+  // A goes to y = −1000; B's start and C's end come with it, their far ends stay
+  const ok = a.start[1] === -1000 && b.start[1] === -1000 && b.end[1] === 4000 && c.end[1] === -1000 && c.start[1] === 4000;
+  return R(ok && W(doc, "A").ends.end.k === "node", "A at y = −1000; B and C stretch; the corners stay joined", `A ${a.start}→${a.end}; B ${b.start}→${b.end}; C ${c.start}→${c.end}`);
+});
+testCase("M2", "Rotate 90° about a point, exactly", () => {
+  const { doc, ed } = fixture(); wall(doc, "A", [1000, 0], [5000, 0], "T-300");
+  doc.addElement({ id: "C", type: "Column", args: { position: [3000, 1000], columnType: { ref: "T-COL400" }, rotation: 0 } }); doc.regenerate();
+  ed.apply({ op: "transform", ids: ["A", "C"], rotate: { c: [0, 0], a: Math.PI / 2 } });
+  const a = doc.argValue(doc.element("A"), "centreline"), p = doc.argValue(doc.element("C"), "position"), r = doc.argValue(doc.element("C"), "rotation");
+  const ok = approx(a.start[0], 0, 1e-9) && approx(a.start[1], 1000, 1e-9) && approx(a.end[1], 5000, 1e-9) && approx(p[0], -1000, 1e-9) && approx(p[1], 3000, 1e-9) && approx(r, 90, 1e-9);
+  return R(ok, "(1000,0)→(0,1000), (5000,0)→(0,5000); column to (−1000, 3000), rotated 90°", `${a.start.map(r3)} ${a.end.map(r3)}; ${p.map(r3)} @ ${r3(r)}°`);
+});
+testCase("M3", "Mirror keeps the exterior outside", () => {
+  const { doc, ed } = fixture(); wall(doc, "A", [0, 0], [4000, 0], "T-EXTCAV300"); doc.regenerate();
+  const ext0 = resolveReference(doc, "A:face.exterior").geom.p[1];          // y = −145.25 (below)
+  ed.apply({ op: "transform", ids: ["A"], mirror: { p: [0, 1000], d: [1, 0] } });   // about y = 1000
+  const c = doc.argValue(doc.element("A"), "centreline"), ext1 = resolveReference(doc, "A:face.exterior").geom.p[1];
+  // centreline to y = 2000; the exterior face mirrors to above it: 2000 + 145.25
+  return R(c.start[1] === 2000 && approx(ext0, -145.25) && approx(ext1, 2145.25), "centreline y = 2000; exterior face at 2145.25 (mirrored side)", `centreline y ${c.start[1]}; exterior ${r3(ext0)} → ${r3(ext1)}`);
+});
+testCase("M4", "Copy a wall with its door", () => {
+  const { doc, ed } = openingFixture();
+  const r = ed.apply({ op: "transform", ids: ["A"], move: [0, 5000], copy: true });
+  const types = r.copied.map(id => doc.typeOf(doc.element(id))).sort().join();
+  const newDoor = r.copied.find(id => doc.typeOf(doc.element(id)) === "Door"), fr = doc.data(doc.element(newDoor)).frame;
+  return R(types === "Door,Opening,Wall" && fr.host !== "A" && approx(pointAt(W(doc, fr.host), 0, fr.at)[1], 5000), "wall, opening and door copied; the copy hosts the new door", `${r.copied.join(", ")} (${types}); door host ${fr.host}`);
+});
+testCase("M5", "Dragging a wall end stretches the joined neighbour", () => {
+  const { doc, ed } = fixture();
+  wall(doc, "A", [0, 0], [6000, 0], "T-300"); wall(doc, "B", [6000, 0], [6000, 4000], "T-300"); joinEE(doc, "A", "end", "B", "start"); doc.regenerate();
+  ed.apply({ op: "drag", id: "A", key: "centreline.end", value: [7000, 0] });
+  const b = doc.argValue(doc.element("B"), "centreline");
+  return R(b.start[0] === 7000 && b.end[0] === 6000, "B's start follows to (7000, 0)", `${b.start} → ${b.end}`);
+});
+
 // ===== ui_util.js =====
 //! Small DOM vocabulary shared by the interface modules. The interface only
 //! mirrors the document: nothing here owns model state.
@@ -6793,8 +7008,36 @@ const ICONS = {
   lock: P('<rect x="5" y="9" width="10" height="8" rx="1"/><path d="M7 9V6a3 3 0 0 1 6 0v3"/>'),
   unlock: P('<rect x="5" y="9" width="10" height="8" rx="1"/><path d="M7 9V6a3 3 0 0 1 6 0"/>'),
   graph: P('<rect x="2" y="3" width="6" height="5" rx="1"/><rect x="12" y="12" width="6" height="5" rx="1"/><path d="M8 5.5c4 0 0 9 4 9"/>'),
+  fit: P('<path d="M3 7V3h4M13 3h4v4M17 13v4h-4M7 17H3v-4"/><rect x="7" y="7" width="6" height="6"/>'),
+  move: P('<path d="M10 2v16M2 10h16M10 2l-2.5 2.5M10 2l2.5 2.5M10 18l-2.5-2.5M10 18l2.5-2.5M2 10l2.5-2.5M2 10l2.5 2.5M18 10l-2.5-2.5M18 10l-2.5 2.5"/>'),
+  copy: P('<rect x="3" y="3" width="10" height="10"/><rect x="7" y="7" width="10" height="10" fill="currentColor" fill-opacity=".12"/>'),
+  rotate: P('<path d="M15.5 6.5A7 7 0 1 0 17 11"/><path d="M16 2v5h-5"/><circle cx="10" cy="10" r="1.2"/>'),
+  mirror: P('<path d="M10 2v16" stroke-dasharray="2 1.5"/><path d="M8 5L3 15h5zM12 5l5 10h-5z"/>'),
+  del: P('<path d="M4 6h12M8 6V4h4v2M6 6l1 11h6l1-11M9 9v6M11 9v6"/>'),
+  level: P('<path d="M2 8h12" stroke-dasharray="3 1.5 1 1.5"/><path d="M14 8l2-2 2 2-2 2z"/><path d="M2 15h12" stroke-dasharray="3 1.5 1 1.5"/><path d="M14 15l2-2 2 2-2 2z"/>'),
+  room: P('<path d="M3 4h14v12H3z"/><path d="M7 9h6M8 12h4" stroke-width="1.2"/><path d="M3 4l3 3M17 4l-3 3" stroke-width="1"/>'),
+  plan: P('<path d="M3 3h14v14H3z"/><path d="M3 10h7v7M10 3v4" /><path d="M12 12h3"/>'),
+  view3d: P('<path d="M10 2l7 4v8l-7 4-7-4V6z"/><path d="M10 10l7-4M10 10v8M10 10L3 6"/>'),
+  house: P('<path d="M10 2l7 4v8l-7 4-7-4V6z" fill="currentColor" fill-opacity=".1"/><path d="M10 10l7-4M10 10v8M10 10L3 6"/>'),
+  sheet: P('<rect x="3" y="2" width="14" height="16"/><path d="M11 13h6M11 13v5M6 5h6v5H6z"/>'),
+  schedule: P('<rect x="3" y="3" width="14" height="14"/><path d="M3 7h14M3 11h14M3 15h14M8 3v14"/>'),
+  vv: P('<path d="M2 10s3-5 8-5 8 5 8 5-3 5-8 5-8-5-8-5z"/><circle cx="10" cy="10" r="2.5"/>'),
+  thin: P('<path d="M3 5h14" stroke-width="3"/><path d="M3 11h14" stroke-width="1.6"/><path d="M3 16h14" stroke-width=".7"/>'),
+  open: P('<path d="M2 5h6l2 2h8v9H2z"/>'),
+  save: P('<path d="M3 3h11l3 3v11H3z"/><path d="M6 3v5h7V3M6 17v-6h8v6"/>'),
+  edittype: P('<rect x="3" y="3" width="14" height="14" rx="1"/><path d="M6 7h8M6 10h8M6 13h5"/><path d="M13 16l4-4" stroke-width="2"/>'),
+  tree: P('<path d="M4 3v14M4 6h4M4 11h4M4 16h4"/><rect x="9" y="4" width="8" height="4"/><rect x="9" y="9" width="8" height="4"/><rect x="9" y="14" width="8" height="3"/>'),
+  importI: P('<path d="M10 2v10M6 8l4 4 4-4"/><path d="M3 13v4h14v-4"/>'),
+  exportI: P('<path d="M10 12V2M6 6l4-4 4 4"/><path d="M3 13v4h14v-4"/>'),
+  tests: P('<path d="M4 10l4 4 8-8"/><rect x="2" y="2" width="16" height="16" rx="2"/>'),
+  pens: P('<path d="M4 16l9-9 3 3-9 9H4z"/><path d="M12 4l4 4" /><path d="M2 5h5M2 8h3" stroke-width="1"/>'),
+  info: P('<circle cx="10" cy="10" r="8"/><path d="M10 9v5M10 6v.5"/>'),
+  elevview: P('<circle cx="10" cy="11" r="4"/><path d="M10 3l3 4H7z" fill="currentColor"/>'),
+  symbol: P('<circle cx="10" cy="10" r="7"/><path d="M10 4l3 11-3-2-3 2z"/>'),
+  close: P('<path d="M5 5l10 10M15 5L5 15"/>'),
+  sepline: P('<path d="M3 17L17 3" stroke-dasharray="3 2"/><path d="M3 3h5M3 3v5" stroke-width="1"/>'),
 };
-const icon = name => h("span", { html: ICONS[name] || "", style: { display: "inline-grid", width: "18px", height: "18px" }, "aria-hidden": "true" });
+const icon = (name, size = 18) => h("span", { class: "ic", html: ICONS[name] || "", style: { display: "inline-grid", width: size + "px", height: size + "px" }, "aria-hidden": "true" });
 
 // ---------------------------------------------------------------- storage (per-viewer conveniences only)
 function store(key, value) { try { if (value === undefined) return JSON.parse(localStorage.getItem("webbim:" + key)); localStorage.setItem("webbim:" + key, JSON.stringify(value)); } catch (e) { return undefined; } }
@@ -7324,7 +7567,8 @@ const trim = (t, n) => t.length > n ? t.slice(0, n - 1) + "…" : t;
 const SNAP_PX = 8;
 const SNAP_KINDS = ["endpoint", "midpoint", "centre", "intersection", "perpendicular", "nearest", "grid", "angle"];
 const SNAP_SHORT = { endpoint: "end", midpoint: "mid", centre: "cen", intersection: "int", perpendicular: "perp", nearest: "near", grid: "grid", angle: "ang" };
-const TOOLS_NEED_PLAN = new Set(["wall", "opening", "door", "window", "column", "grid", "text", "dim", "space", "elev", "sep"]);
+const TOOLS_NEED_PLAN = new Set(["wall", "opening", "door", "window", "column", "grid", "text", "dim", "space", "elev", "sep", "move", "copy", "rotate", "mirror"]);
+const MODIFY_TOOLS = new Set(["move", "copy", "rotate", "mirror"]);
 
 class View2D {
   constructor(app, root, viewId) {
@@ -7411,10 +7655,17 @@ class View2D {
       g.stroke(); g.setLineDash([]);
       for (const p of T.pts) { const q = this.toScreen(p); g.fillStyle = blue; g.fillRect(q[0] - 3, q[1] - 3, 6, 6); }
     }
+    if (T.ghost) { g.strokeStyle = "#1d6fd8"; g.lineWidth = 1.2; g.setLineDash([4, 3]); for (const poly of T.ghost) { g.beginPath(); poly.forEach((p, i) => { const q = this.toScreen(p); i ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1]); }); g.closePath(); g.stroke(); } g.setLineDash([]); }
+    if (T.centre && this.app.tool === "rotate") { const q = this.toScreen(T.centre); g.strokeStyle = "#1d6fd8"; g.beginPath(); g.arc(q[0], q[1], 6, 0, 7); g.stroke(); if (T.cursor) { const c = this.toScreen(T.cursor); g.beginPath(); g.moveTo(q[0], q[1]); g.lineTo(c[0], c[1]); g.stroke(); } if (T.pts[0]) { const c = this.toScreen(T.pts[0]); g.beginPath(); g.moveTo(q[0], q[1]); g.lineTo(c[0], c[1]); g.stroke(); } }
     if (T.preview) { g.strokeStyle = blue; g.lineWidth = 2; g.beginPath(); T.preview.forEach((p, i) => { const q = this.toScreen(p); i ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1]); }); g.stroke(); }
     for (const d of this.tdims || []) {
       g.strokeStyle = blue; g.lineWidth = 1; g.beginPath(); g.moveTo(d.sa[0], d.sa[1]); g.lineTo(d.sb[0], d.sb[1]); g.stroke();
       for (const p of [d.sa, d.sb]) { g.beginPath(); g.moveTo(p[0] - 4, p[1] + 4); g.lineTo(p[0] + 4, p[1] - 4); g.stroke(); }
+    }
+    if (this.box) {
+      const [a, b] = this.box, crossing = b[0] < a[0];
+      g.strokeStyle = "#1d6fd8"; g.fillStyle = crossing ? "rgba(46,125,50,.08)" : "rgba(29,111,216,.08)"; g.lineWidth = 1; g.setLineDash(crossing ? [5, 3] : []);
+      g.fillRect(a[0], a[1], b[0] - a[0], b[1] - a[1]); g.strokeRect(a[0], a[1], b[0] - a[0], b[1] - a[1]); g.setLineDash([]);
     }
     for (const gl of this.guides || []) { g.strokeStyle = "#e8591a"; g.setLineDash([4, 3]); g.beginPath(); g.moveTo(gl[0][0], gl[0][1]); g.lineTo(gl[1][0], gl[1][1]); g.stroke(); g.setLineDash([]); }
     g.restore();
@@ -7599,7 +7850,9 @@ class View2D {
     for (const ht of sc.hits) {
       if (!ht.id) continue;
       let hit = false, score = 0;
-      if (ht.kind === "curve") { for (let i = 0; i < ht.pts.length - 1; i++) { const a = ht.pts[i], b = ht.pts[i + 1], d = distSeg(p, a, b); if (d < tol) { hit = true; score = d; } } score = score * 0.001; }
+      if (ht.kind === "curve") { for (let i = 0; i < ht.pts.length - 1; i++) { const a = ht.pts[i], b = ht.pts[i + 1], d = distSeg(p, a, b); if (d < tol) { hit = true; score = d; } } score = score * 0.001;
+        // a datum line running through a wall must not steal the click from the wall
+        const f = this.doc.element(ht.id); if (f && ["Grid", "RoomSeparator", "ElevationView", "Level"].includes(this.doc.typeOf(f))) score += 1e12; }
       else if (ht.pts.length > 2 && pointInPoly(p, ht.pts)) { hit = true; score = Math.abs(polyArea(ht.pts)); }
       if (hit && (!best || score < best.score)) best = { id: ht.id, score };
     }
@@ -7615,12 +7868,16 @@ class View2D {
     c.addEventListener("pointerup", e => this.up(e));
     c.addEventListener("pointercancel", e => { this.pointers.delete(e.pointerId); this.drag = null; });
     c.addEventListener("dblclick", e => this.dbl(e));
+    c.addEventListener("contextmenu", e => e.preventDefault());
+    const sp = on => e => { if (e.code === "Space" && !(e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName))) { this.space = on; this.canvas.style.cursor = on ? "grab" : "default"; } };
+    window.addEventListener("keydown", sp(true)); window.addEventListener("keyup", sp(false));
     c.addEventListener("dragover", e => { if (this.kind === "Sheet") e.preventDefault(); });
     c.addEventListener("drop", e => {
       const vid = e.dataTransfer.getData("text/x-webbim-view"); if (!vid || this.kind !== "Sheet") return;
       e.preventDefault(); const p = this.toModel(...this.evPos(e));
       const r = this.app.apply({ op: "place", sheet: this.viewId, view: vid, at: p.map(Math.round) });
-      this.app.say(r.ok ? `Placed ${this.doc.element(vid).get("Name")} as ${r.id}` : r.error, r.ok ? "ok" : "error");
+      this.app.say(r.ok ? `Placed ${this.doc.element(vid).get("Name")} as ${r.id}, centred where you dropped it` : r.error, r.ok ? "ok" : "error");
+      if (r.ok) this.app.select([`${this.viewId}:${r.id}`]);
     });
   }
   zoomAt(sx, sy, k) { const before = [sx / this.cam.z + this.cam.x, (this.H - sy) / this.cam.z + this.cam.y]; this.cam.z = Math.max(0.02, Math.min(400, this.cam.z * k)); this.cam.x = before[0] - sx / this.cam.z; this.cam.y = before[1] - (this.H - sy) / this.cam.z; this.draw(); }
@@ -7630,11 +7887,40 @@ class View2D {
     this.pointers.set(e.pointerId, this.evPos(e));
     if (this.pointers.size === 2) { const [a, b] = [...this.pointers.values()]; this.pinch = { d: dist(a, b), cam: Object.assign({}, this.cam), mid: lerp(a, b, 0.5) }; this.drag = null; return; }
     const [sx, sy] = this.evPos(e);
-    this.drag = { start: [sx, sy], cam: Object.assign({}, this.cam), moved: false, button: e.button, shift: e.shiftKey };
-    if (this.kind === "Sheet" && e.button === 0 && this.app.tool === "select") {
-      const hit = this.hitAt(sx, sy);
+    // Revit's mouse: middle or right drag pans (as does Space+drag or one finger);
+    // left drag on empty space draws a selection box; left drag on a selected element moves it.
+    // middle-drag pans (as in a PDF viewer); so do Space+drag and a finger. A left drag is a normal drag.
+    const pan = e.button === 1 || this.space || e.pointerType === "touch";
+    if (e.button === 1) e.preventDefault();
+    this.drag = { start: [sx, sy], cam: Object.assign({}, this.cam), moved: false, button: e.button, shift: e.shiftKey, pan };
+    if (pan || e.button !== 0 || this.app.tool !== "select" || this.app.pickMode) return;
+    const hit = this.hitAt(sx, sy);
+    if (this.kind === "Sheet") {
       if (hit && this.app.selection.has(this.viewId + ":" + hit.id)) { const vp = (this.doc.argValue(this.view, "viewports") || []).find(v => v.id === hit.id); this.drag.viewport = { id: hit.id, at: vp.at.slice(), bb: hit.bb }; }
+      return;
     }
+    if (hit && this.kind === "PlanView") {
+      // pressing on something not yet selected selects it first, so one press-and-drag moves it
+      if (!this.app.selection.has(hit.id) && !e.shiftKey) { this.app.selection.clear(); this.app.selection.add(hit.id); this.pressSelected = true; }
+      const movable = [...this.app.selection].filter(id => this.doc.element(id) && geomKey(this.doc.element(id), this.doc));
+      if (movable.length) this.drag.body = { ids: movable, grab: this.toModel(sx, sy) };
+    } else if (!hit) this.drag.box = true;
+    // in an elevation a level line drags up and down: everything bound to it follows
+    if (hit && this.kind === "ElevationView") {
+      const f = this.doc.element(hit.id);
+      if (f && this.doc.typeOf(f) === "Level") {
+        if (!this.app.selection.has(hit.id)) { this.app.selection.clear(); this.app.selection.add(hit.id); this.pressSelected = true; }
+        this.drag.level = { id: hit.id, z0: F.real(f, "elevation"), grab: this.toModel(sx, sy) };
+      }
+    }
+  }
+  dragLevel(d, sx, sy) {
+    const p = this.toModel(sx, sy), dz = Math.round((p[1] - d.level.grab[1]) / 10) * 10, z = d.level.z0 + dz;
+    if (z !== d.level.last) {
+      const r = this.app.apply({ op: "set", id: d.level.id, key: "elevation", value: z }, { quiet: true, coalesce: `level:${d.level.id}:${d.start.join(",")}` });
+      if (r.ok) d.level.last = z;
+    }
+    this.showHud(sx, sy, `${F.text(this.doc.element(d.level.id), "name")}: ${z >= 0 ? "+" : ""}${fmtLen(z)} mm`);
   }
   move(e) {
     const [sx, sy] = this.evPos(e);
@@ -7642,29 +7928,69 @@ class View2D {
     if (this.pinch && this.pointers.size === 2) { const [a, b] = [...this.pointers.values()]; const k = dist(a, b) / this.pinch.d; this.cam = Object.assign({}, this.pinch.cam); this.zoomAt(this.pinch.mid[0], this.pinch.mid[1], k); return; }
     const d = this.drag;
     if (d) {
-      if (Math.abs(sx - d.start[0]) + Math.abs(sy - d.start[1]) > 3) d.moved = true;
+      if (Math.abs(sx - d.start[0]) + Math.abs(sy - d.start[1]) > 4) d.moved = true;
       if (d.viewport && d.moved) return this.dragViewport(d, sx, sy);
-      const tooling = TOOLS_NEED_PLAN.has(this.app.tool) && d.button === 0;
-      if (d.moved && (!tooling || d.button === 1)) { this.cam.x = d.cam.x - (sx - d.start[0]) / this.cam.z; this.cam.y = d.cam.y + (sy - d.start[1]) / this.cam.z; this.draw(); return; }
+      if (d.pan && d.moved) { this.cam.x = d.cam.x - (sx - d.start[0]) / this.cam.z; this.cam.y = d.cam.y + (sy - d.start[1]) / this.cam.z; this.draw(); return; }
+      if (d.body && d.moved) return this.dragBody(d, sx, sy, e);
+      if (d.level && d.moved) return this.dragLevel(d, sx, sy);
+      if (d.box && d.moved) { this.box = [d.start, [sx, sy]]; this.draw(); return; }
     }
     const p = this.toModel(sx, sy);
     if (this.app.tool !== "select" && this.kind === "PlanView") return this.toolHover(p, sx, sy, e);
     const hit = this.hitAt(sx, sy), hid = hit ? (this.kind === "Sheet" ? null : hit.id) : null;
-    if (hid !== this.hover) { this.hover = hid; this.draw(); }
-    this.canvas.style.cursor = this.app.pickMode ? "crosshair" : hit ? "pointer" : "default";
+    if (hid !== this.hover) { this.hover = hid; this.draw(); if (hid) this.app.hoverInfo(hid); }
+    this.canvas.style.cursor = this.app.pickMode ? "crosshair" : hit ? (hid && this.app.selection.has(hid) ? "move" : "pointer") : "default";
   }
   up(e) {
     this.pointers.delete(e.pointerId); if (this.pointers.size < 2) this.pinch = null;
     const d = this.drag; this.drag = null;
+    const pressed = this.pressSelected; this.pressSelected = false;
     if (!d) return;
     if (d.viewport) { this.guides = []; this.app.editor.seal(); this.draw(); if (d.moved) return; }
+    if (d.body && d.moved) { this.app.editor.seal(); this.showSnap(null); this.hideHud(); this.app.refresh({ keepMain: true }); return; }
+    if (d.level && d.moved) { this.app.editor.seal(); this.hideHud(); this.app.refresh({ keepMain: true }); this.app.say("Level moved: walls, rooms and views bound to it followed", "ok"); return; }
+    if (d.box && d.moved) return this.finishBox(d, e);
     if (d.moved) return;
     const [sx, sy] = this.evPos(e);
+    if (e.button === 2) return this.app.contextMenu(e, "2d");
     if (this.app.pickMode) return this.pick(sx, sy);
     if (this.app.tool !== "select" && this.kind === "PlanView") return this.toolClick(this.toModel(sx, sy), e);
     const hit = this.hitAt(sx, sy);
     if (this.kind === "Sheet") { this.app.select(hit ? [this.viewId + ":" + hit.id] : [], e.shiftKey, true); return; }
+    if (pressed) { this.app.select([hit.id]); return; }
     this.app.select(hit ? [hit.id] : [], e.shiftKey || e.ctrlKey || e.metaKey);
+  }
+  /** Drag a selected element's body: a translation of its placement, snapped. */
+  dragBody(d, sx, sy, e) {
+    let p = this.toModel(sx, sy);
+    const sn = this.snap(p, { exclude: d.body.ids[0], from: d.body.grab, shift: e.shiftKey });
+    this.showSnap(sn);
+    p = sn ? sn.point : this.quantise(p);
+    const g = this.quantise(d.body.grab), dv = [p[0] - g[0], p[1] - g[1]];
+    const done = d.body.done || [0, 0], step = [dv[0] - done[0], dv[1] - done[1]];
+    if (step[0] || step[1]) {
+      const r = this.app.apply({ op: "transform", ids: d.body.ids, move: step }, { quiet: true, coalesce: `move:${d.body.ids.join(",")}:${d.start.join(",")}` });
+      if (r.ok) d.body.done = dv;
+    }
+    this.showHud(sx, sy, `move ${fmtLen(dv[0])}, ${fmtLen(dv[1])} mm${sn ? " · " + SNAP_SHORT[sn.kind] : ""}`);
+  }
+  /** Left→right: window (wholly inside). Right→left: crossing (any part inside). */
+  finishBox(d, e) {
+    this.box = null;
+    const [a, b] = [d.start, this.evPos(e)];
+    const A = this.toModel(Math.min(a[0], b[0]), Math.max(a[1], b[1])), B = this.toModel(Math.max(a[0], b[0]), Math.min(a[1], b[1]));
+    const inside = p => p[0] >= A[0] && p[0] <= B[0] && p[1] >= A[1] && p[1] <= B[1];
+    const crossing = b[0] < a[0];
+    const ids = new Set();
+    for (const ht of this.scene().hits) {
+      if (!ht.id || !this.doc.element(ht.id)) continue;
+      if (crossing ? ht.pts.some(inside) : ht.pts.every(inside)) ids.add(ht.id);
+    }
+    // a whole element must be inside for a window: drop ids that also have a hit outside
+    if (!crossing) for (const ht of this.scene().hits) if (ids.has(ht.id) && !ht.pts.every(inside)) ids.delete(ht.id);
+    this.app.select([...ids], e.shiftKey || e.ctrlKey);
+    this.app.say(`${ids.size} selected (${crossing ? "crossing" : "window"} selection)`, "note");
+    this.draw();
   }
   dbl(e) {
     const [sx, sy] = this.evPos(e);
@@ -7710,6 +8036,7 @@ class View2D {
   // ---------------------------------------------------------------- tools
   toolHover(p, sx, sy, e) {
     const T = this.tool, tool = this.app.tool;
+    if (MODIFY_TOOLS.has(tool)) return this.modifyHover(p, sx, sy, e);
     const sn = this.snap(p, { from: T.pts[T.pts.length - 1], shift: e.shiftKey });
     this.showSnap(sn);
     const q = sn ? sn.point : this.quantise(p);
@@ -7736,6 +8063,7 @@ class View2D {
   }
   toolClick(p, e) {
     const T = this.tool, tool = this.app.tool, o = this.app.toolOpts, doc = this.doc;
+    if (MODIFY_TOOLS.has(tool)) return this.modifyClick();
     const q = T.cursor || p;
     const level = F.refId(this.view, "level");
     const addEl = (element, msg) => { const r = this.app.apply({ op: "add", element }); this.app.say(r.ok ? msg || `Added ${r.id}` : r.error, r.ok ? "ok" : "error"); if (r.ok) this.app.select([r.id]); return r; };
@@ -7752,16 +8080,8 @@ class View2D {
     if (["opening", "door", "window"].includes(tool)) {
       const hit = this.nearestWall(q); if (!hit) { this.app.say("click on a wall", "note"); return; }
       const u = Math.round(uOf(hit.w, q));
-      const t = tool === "door" ? doc.lib.types[o.doorType] : tool === "window" ? doc.lib.types[o.windowType] : null;
-      const w = t ? t.width : o.width, hh = t ? t.height : o.height_;
-      const sill = tool === "door" ? 0 : tool === "window" ? (o.sill ?? 900) : (o.openSill ?? 0);
-      const opId = doc.freshId("Opening");
-      const ops = [{ op: "add", element: { id: opId, type: "Opening", args: { host: { ref: hit.id }, profile: { kind: "rect", at: u, sill, w, h: hh }, farProfile: null, depth: "through" } } }];
-      if (tool === "door") ops.push({ op: "add", element: { type: "Door", args: { fills: { ref: opId }, doorType: { ref: o.doorType } }, params: { Phase: "New" } } });
-      if (tool === "window") ops.push({ op: "add", element: { type: "Window", args: { fills: { ref: opId }, windowType: { ref: o.windowType } } } });
-      const r = this.app.apply(ops);
-      this.app.say(r.ok ? `${tool === "opening" ? "Opening" : tool[0].toUpperCase() + tool.slice(1)} in ${hit.id} at u = ${u}` : r.error, r.ok ? "ok" : "error");
-      if (r.ok) this.app.select([r.id || opId]);
+      const r = this.app.placeOpening(tool, hit.id, u);
+      if (r.ok && r.id) this.app.select([r.id]);
       return;
     }
     if (tool === "column") return addEl({ type: "Column", args: { position: q, columnType: { ref: o.columnType }, baseLevel: level ? { ref: level } : null, height: 3000, rotation: 0 } });
@@ -7784,6 +8104,54 @@ class View2D {
       addEl({ type: "Dimension", args: { of: [a.key, b.key], offset: off, view: { ref: this.viewId }, locked: false } }, `Dimension ${fmtLen(m.value)} bound to ${a.key} and ${b.key}`);
     }
   }
+  // ---------------------------------------------------------------- Move · Copy · Rotate · Mirror
+  selectionIds() { return [...this.app.selection].filter(id => this.doc.element(id)); }
+  selectionCentre() {
+    const pts = this.scene().hits.filter(ht => this.app.selection.has(ht.id)).flatMap(ht => ht.pts);
+    if (!pts.length) return null; const bb = bboxOf(pts); return [(bb[0] + bb[2]) / 2, (bb[1] + bb[3]) / 2];
+  }
+  modifyOp(tool, T, target) {
+    const ids = this.selectionIds(), o = this.app.toolOpts;
+    if (tool === "move" || tool === "copy") return { op: "transform", ids, move: sub(target, T.pts[0]), copy: tool === "copy" || !!o.moveCopy };
+    if (tool === "rotate") { const c = T.centre, a = Math.atan2(target[1] - c[1], target[0] - c[0]) - Math.atan2(T.pts[0][1] - c[1], T.pts[0][0] - c[0]); return { op: "transform", ids, rotate: { c, a }, copy: !!o.rotateCopy }; }
+    if (tool === "mirror") return { op: "transform", ids, mirror: { p: T.pts[0], d: sub(target, T.pts[0]) }, copy: o.mirrorCopy !== false };
+  }
+  modifyHover(p, sx, sy, e) {
+    const T = this.tool, tool = this.app.tool;
+    if (!this.selectionIds().length) { this.showHud(sx, sy, "select elements first, then " + tool); return; }
+    if (tool === "rotate" && !T.centre) T.centre = this.selectionCentre();
+    const from = tool === "rotate" ? T.centre : T.pts[0];
+    const sn = this.snap(p, { from, shift: e.shiftKey });
+    this.showSnap(sn);
+    const q = sn ? sn.point : this.quantise(p);
+    T.cursor = q;
+    // preview: the selection's outline where the edit would put it
+    T.ghost = null;
+    if (T.pts.length) {
+      const op = this.modifyOp(tool, T, q), ghost = [];
+      const P = op.move ? (x => add(x, op.move)) : op.rotate ? (x => { const c = op.rotate.c, cs = Math.cos(op.rotate.a), s_ = Math.sin(op.rotate.a), v = sub(x, c); return [c[0] + v[0] * cs - v[1] * s_, c[1] + v[0] * s_ + v[1] * cs]; })
+        : (x => { const u = normalise(op.mirror.d), v = sub(x, op.mirror.p), t = dot(v, u); return add(op.mirror.p, sub(mul(u, 2 * t), v)); });
+      for (const ht of this.scene().hits) if (this.app.selection.has(ht.id)) ghost.push(ht.pts.map(P));
+      T.ghost = ghost;
+      const text = op.move ? `${fmtLen(Math.hypot(...op.move))} mm` : op.rotate ? `${fmtLen(op.rotate.a * 180 / Math.PI)}°` : "mirror axis";
+      this.showHud(sx, sy, this.hudInput ? this.hud.textContent : text);
+    } else this.showHud(sx, sy, tool === "rotate" ? "click the start of the angle" : tool === "mirror" ? "click the first point of the axis" : "click the base point");
+    this.draw();
+  }
+  modifyClick() {
+    const T = this.tool, tool = this.app.tool;
+    if (!this.selectionIds().length) { this.app.say(`Select what to ${tool} first — box-select or click — then ${tool.toUpperCase()}`, "note"); return; }
+    if (!T.cursor) return;
+    if (!T.pts.length) { T.pts.push(T.cursor); this.draw(); return; }
+    this.commitModify(T.cursor);
+  }
+  commitModify(target) {
+    const T = this.tool, tool = this.app.tool, op = this.modifyOp(tool, T, target);
+    const r = this.app.apply(op);
+    T.pts = []; T.ghost = null; T.centre = null; this.hideHud();
+    if (r.ok) { this.app.say(`${tool === "copy" || op.copy ? "Copied" : tool[0].toUpperCase() + tool.slice(1) + "d"} ${(r.copied || r.moved || []).length} element(s)`, "ok"); if (r.copied) this.app.select(r.copied); }
+    this.app.setTool("select");
+  }
   nearestRef(p) {
     let best = null; const tol = 10 * this.modelPerPx();
     for (const f of this.doc.elements()) {
@@ -7803,7 +8171,18 @@ class View2D {
   /** Keys while this view has focus: Enter/Esc/C for the chain, digits for length. */
   key(e) {
     const T = this.tool, tool = this.app.tool;
-    if (e.key === "Escape") { if (T.pts.length || T.refs) { T.pts = []; T.refs = []; this.hideHud(); this.draw(); return true; } return false; }
+    if (MODIFY_TOOLS.has(tool) && T.pts.length && (/^[0-9.\-]$/.test(e.key) || e.key === "Backspace" || (e.key === "Enter" && this.typed))) {
+      if (e.key === "Enter") {
+        const n = Number(this.typed); this.typed = ""; this.hudInput = null;
+        if (tool === "rotate") { const c = T.centre, a0 = Math.atan2(T.pts[0][1] - c[1], T.pts[0][0] - c[0]) + n * Math.PI / 180; this.commitModify(add(c, [Math.cos(a0) * 1000, Math.sin(a0) * 1000])); }
+        else { const dir = normalise(sub(T.cursor || add(T.pts[0], [1, 0]), T.pts[0])); this.commitModify(add(T.pts[0], mul(dir, n))); }
+        return true;
+      }
+      this.typed = e.key === "Backspace" ? (this.typed || "").slice(0, -1) : (this.typed || "") + e.key;
+      this.hudInput = true; this.hud.hidden = false; this.hud.textContent = `${tool === "rotate" ? "angle" : "distance"} ${this.typed} ${tool === "rotate" ? "°" : "mm"} ⏎`;
+      return true;
+    }
+    if (e.key === "Escape") { if (T.pts.length || T.refs || T.ghost) { T.pts = []; T.refs = []; T.ghost = null; T.centre = null; this.hideHud(); this.draw(); return true; } return false; }
     if (tool === "wall" && T.pts.length) {
       if (e.key === "Enter" && !this.typed) { this.finishWall(false); return true; }
       if (e.key.toLowerCase() === "c" && T.pts.length >= 3) { this.finishWall(true); return true; }
@@ -7831,12 +8210,120 @@ function translateGeom(g, d) {
   return o;
 }
 
+// ===== viewcube.js =====
+//! An Autodesk-style ViewCube: faces, edges and corners are hot spots that turn
+//! the camera to that direction; the compass ring turns it about z; dragging
+//! the cube orbits; the house returns home. It is drawn with its own small
+//! three.js scene and always shows the main camera's orientation.
+
+
+
+/** A pick on the unit cube → the view direction it names (toward the camera). */
+function cubeDirection(p) {
+  const d = p.map(v => Math.abs(v) > 0.62 ? Math.sign(v) : 0);
+  if (!d.some(Boolean)) return null;
+  return d;
+}
+/** A direction toward the camera → azimuth/elevation in degrees (the camera model hlr.js uses). */
+function dirToCamera(d) {
+  const l = Math.hypot(d[0], d[1], d[2]);
+  const el = Math.asin(d[2] / l) * 180 / Math.PI;
+  // straight up/down keeps a north-up plan: azimuth 270 looks north
+  const az = Math.abs(d[0]) + Math.abs(d[1]) < 1e-9 ? 270 : Math.atan2(d[1], d[0]) * 180 / Math.PI;
+  return { azimuth: (az + 360) % 360, elevation: Math.max(-89.5, Math.min(89.5, el)) };
+}
+const FACES = [ // BoxGeometry material order: +x, -x, +y, -y, +z, -z
+  ["RIGHT", 0], ["LEFT", 0], ["BACK", 0], ["FRONT", 0], ["TOP", 0], ["BOTTOM", 0],
+];
+
+class ViewCube {
+  constructor(parent, { onTurn, onHome, onOrbit }) {
+    this.T = window.THREE; this.onTurn = onTurn; this.onHome = onHome; this.onOrbit = onOrbit;
+    this.el = h("div", { class: "viewcube", "aria-label": "ViewCube" });
+    this.home = h("button", { class: "vc-home", title: "Home view", "aria-label": "Home view", onclick: () => onHome() }, h("span", { html: '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 10l7-6 7 6M5 9v7h4v-4h2v4h4V9"/></svg>' }));
+    parent.append(this.el); this.el.append(this.home);
+    if (!this.T) return;
+    const T = this.T, S = 116;
+    this.r = new T.WebGLRenderer({ antialias: true, alpha: true });
+    this.r.setPixelRatio(window.devicePixelRatio || 1); this.r.setSize(S, S);
+    this.el.append(this.r.domElement);
+    this.scene = new T.Scene();
+    this.cam = new T.OrthographicCamera(-2.1, 2.1, 2.1, -2.1, -10, 10);
+    const mats = FACES.map(([label]) => new T.MeshBasicMaterial({ map: this.faceTexture(label, false) }));
+    this.mats = mats;
+    this.cube = new T.Mesh(new T.BoxGeometry(2, 2, 2), mats);
+    this.scene.add(this.cube);
+    this.cube.add(new T.LineSegments(new T.EdgesGeometry(new T.BoxGeometry(2, 2, 2)), new T.LineBasicMaterial({ color: 0x8a939f })));
+    // compass ring on the ground, N toward +y
+    const ring = new T.Mesh(new T.RingGeometry(1.55, 1.85, 64), new T.MeshBasicMaterial({ color: 0xc9ced6, side: T.DoubleSide, transparent: true, opacity: .85 }));
+    ring.position.z = -1.05; this.scene.add(ring); this.ring = ring;
+    for (const [t, x, y] of [["N", 0, 1.7], ["E", 1.7, 0], ["S", 0, -1.7], ["W", -1.7, 0]]) {
+      const sp = new T.Sprite(new T.SpriteMaterial({ map: this.letter(t) }));
+      sp.position.set(x, y, -1.05); sp.scale.set(.42, .42, 1); sp.userData.compass = t; this.scene.add(sp);
+    }
+    this.ray = new T.Raycaster();
+    this.hover = -1;
+    const cv = this.r.domElement;
+    let drag = null;
+    cv.addEventListener("pointermove", e => {
+      if (drag) { const dx = e.clientX - drag.x, dy = e.clientY - drag.y; if (Math.abs(dx) + Math.abs(dy) > 2) drag.moved = true; if (drag.moved) { this.onOrbit(dx, dy); drag.x = e.clientX; drag.y = e.clientY; } return; }
+      const hit = this.pick(e); this.setHover(hit ? hit.face : -1); cv.style.cursor = hit ? "pointer" : "grab";
+    });
+    cv.addEventListener("pointerleave", () => this.setHover(-1));
+    cv.addEventListener("pointerdown", e => { cv.setPointerCapture(e.pointerId); drag = { x: e.clientX, y: e.clientY, moved: false }; });
+    cv.addEventListener("pointerup", e => {
+      const d = drag; drag = null; if (!d || d.moved) return;
+      const hit = this.pick(e);
+      if (hit && hit.dir) this.onTurn(dirToCamera(hit.dir));
+      else if (hit && hit.compass) this.onTurn({ azimuth: { N: 90, E: 0, S: 270, W: 180 }[hit.compass], keepElevation: true });
+    });
+  }
+  faceTexture(label, hot) {
+    const c = document.createElement("canvas"); c.width = c.height = 128; const g = c.getContext("2d");
+    g.fillStyle = hot ? "#9cc3f5" : "#eef0f3"; g.fillRect(0, 0, 128, 128);
+    g.strokeStyle = "#aab2bd"; g.lineWidth = 3; g.strokeRect(1.5, 1.5, 125, 125);
+    g.fillStyle = "#3b4350"; g.font = "600 24px Segoe UI, Arial, sans-serif"; g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(label, 64, 66);
+    const t = new this.T.CanvasTexture(c); t.anisotropy = 4; return t;
+  }
+  letter(t) {
+    const c = document.createElement("canvas"); c.width = c.height = 64; const g = c.getContext("2d");
+    g.fillStyle = t === "N" ? "#b3261e" : "#4a5361"; g.font = "700 40px Segoe UI, Arial, sans-serif"; g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(t, 32, 34);
+    return new this.T.CanvasTexture(c);
+  }
+  setHover(i) {
+    if (i === this.hover || !this.T) return;
+    if (this.hover >= 0) this.mats[this.hover].map = this.faceTexture(FACES[this.hover][0], false);
+    if (i >= 0) this.mats[i].map = this.faceTexture(FACES[i][0], true);
+    this.hover = i; this.draw();
+  }
+  pick(e) {
+    const r = this.r.domElement.getBoundingClientRect();
+    const ndc = new this.T.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+    this.ray.setFromCamera(ndc, this.cam);
+    const hits = this.ray.intersectObjects(this.scene.children, true);
+    for (const it of hits) {
+      if (it.object === this.cube) { const p = it.point; return { dir: cubeDirection([p.x, p.y, p.z]), face: it.face.materialIndex }; }
+      if (it.object.userData.compass) return { compass: it.object.userData.compass };
+    }
+    return null;
+  }
+  /** Follow the main camera: same direction, same up. */
+  sync(basis) {
+    if (!this.T) return;
+    this.cam.position.set(basis.D[0] * 5, basis.D[1] * 5, basis.D[2] * 5);
+    this.cam.up.set(...basis.up); this.cam.lookAt(0, 0, 0);
+    this.draw();
+  }
+  draw() { if (this.r) this.r.render(this.scene, this.cam); }
+}
+
 // ===== view3d.js =====
-//! The 3D view: for coordination and for looking (§10.1 — minimal handles here
-//! is a decision). One scene group per element, refreshed by revision; the
-//! solids are the same convex pieces the hidden-line pass uses, so what you
-//! orbit is what goes on the sheet. "Generate for sheet" runs HLR in slices
-//! with a progress bar and caches it on (camera, model revision).
+//! The 3D view. You can work in it, not just look: click selects (the same
+//! selection the plan and the Properties palette use); grips on a selected
+//! wall drag its ends and its height and move it; the wall, door, window,
+//! opening and column tools place things on the level plane or on the wall
+//! you click. Every gesture computes a value and sends an ordinary edit (§10.1).
+//! The ViewCube sits top-right; "Generate for sheet" runs hidden-line in slices.
 
 
 
@@ -7844,121 +8331,396 @@ function translateGeom(g, d) {
 
 
 
+
+
+const VISUAL_STYLES = ["Wireframe", "Hidden Line", "Shaded", "Consistent Colors"];
+const GRIP_PX = 9;
+
+/** A height bound to "A.elevation - B.elevation" between two levels is driven by level A. */
+function levelDriver(doc, exprId) {
+  const ex = doc.element(exprId); if (!ex || doc.typeOf(ex) !== "Expression") return null;
+  const m = /^\s*([\w-]+)\.elevation\s*-\s*([\w-]+)\.elevation\s*$/.exec(F.text(ex, "formula") || ""); if (!m) return null;
+  const a = doc.element(m[1]), b = doc.element(m[2]);
+  if (!a || !b || doc.typeOf(a) !== "Level" || doc.typeOf(b) !== "Level") return null;
+  return { level: m[1], baseZ: F.real(b, "elevation") };
+}
 class View3D {
   constructor(app, root, viewId) {
     this.app = app; this.root = root; this.viewId = viewId;
     this.wrap = h("div", { class: "three" });
-    root.append(this.wrap);
-    this.status = h("div", { class: "viewbar" });
-    root.append(this.status);
+    this.hud = h("div", { class: "hud", hidden: true });
+    root.append(this.wrap, this.hud);
     const T = window.THREE;
-    if (!T) { this.wrap.append(h("div", { class: "empty" }, h("h3", {}, "3D needs three.js"), "The renderer could not be loaded from cdnjs in this view. Hidden-line line-work for sheets still works: use Generate below.")); this.bar(); return; }
+    this.tool = { pts: [] };
+    if (!T) { this.wrap.append(h("div", { class: "empty" }, h("h3", {}, "3D needs three.js"), "The renderer could not be loaded in this view. Sheet line-work (hidden-line) still works from the view control bar.")); return; }
     this.T = T;
     this.renderer = new T.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
     this.renderer.setPixelRatio(window.devicePixelRatio || 1);
     this.wrap.append(this.renderer.domElement);
-    this.scene = new T.Scene(); this.scene.background = new T.Color(0xf4f5f7);
+    this.scene = new T.Scene();
     this.camera = new T.OrthographicCamera(-1, 1, 1, -1, -1e6, 1e6);
-    this.scene.add(new T.AmbientLight(0xffffff, 0.55));
-    const key = new T.DirectionalLight(0xffffff, 0.75); key.position.set(-0.6, -0.8, 1.2); this.scene.add(key);
-    const fill = new T.DirectionalLight(0xffffff, 0.3); fill.position.set(0.8, 0.4, 0.5); this.scene.add(fill);
-    this.groups = new Map();
-    this.cam = Object.assign({}, F.json(app.doc.element(viewId), "camera"));
-    this.zoom = 1;
-    this.bindOrbit();
+    this.scene.add(new T.AmbientLight(0xffffff, 0.58));
+    const key = new T.DirectionalLight(0xffffff, 0.72); key.position.set(-0.6, -0.8, 1.2); this.scene.add(key);
+    const fill = new T.DirectionalLight(0xffffff, 0.28); fill.position.set(0.8, 0.4, 0.5); this.scene.add(fill);
+    this.overlayScene = new T.Scene();         // grips and rubber bands, drawn over everything
+    this.meshes = []; this.groups = new Map();
+    this.cam = Object.assign({ azimuth: 225, elevation: 30, target: [6000, 4000, 1500] }, F.json(app.doc.element(viewId), "camera"));
+    this.zoom = app.zoom3d && app.zoom3d[viewId] || 1;
+    this.cube = new ViewCube(root, {
+      onTurn: c => this.turnTo(c.azimuth, c.keepElevation ? this.cam.elevation : c.elevation),
+      onHome: () => { const c = F.json(this.doc.element(this.viewId), "camera"); this.turnTo(c.azimuth, c.elevation, c.target); },
+      onOrbit: (dx, dy) => { this.cam.azimuth -= dx * 0.6; this.cam.elevation = Math.max(-89, Math.min(89, this.cam.elevation + dy * 0.45)); this.render(); },
+    });
+    root.append(h("div", { class: "navbar" },
+      h("button", { title: "Zoom to fit (ZF)", "aria-label": "Zoom to fit", onclick: () => this.fit() }, icon("fit")),
+      h("button", { title: "Zoom in", "aria-label": "Zoom in", onclick: () => { this.zoom *= 1.25; this.render(); } }, "+"),
+      h("button", { title: "Zoom out", "aria-label": "Zoom out", onclick: () => { this.zoom /= 1.25; this.render(); } }, "−")));
+    this.ray = new T.Raycaster();
+    this.bind();
     new ResizeObserver(() => this.resize()).observe(root);
-    this.resize(); this.refresh(); this.bar();
+    this.resize(); this.refresh();
+    if (!app.zoom3d || !app.zoom3d[viewId]) this.fit();
   }
   get doc() { return this.app.doc; }
+  get style() { return this.app.visualStyle3d[this.viewId] || "Shaded"; }
   resize() { if (!this.renderer) return; const r = this.root.getBoundingClientRect(); this.W = r.width; this.H = r.height; this.renderer.setSize(r.width, r.height); this.render(); }
-  /** Rebuild only groups whose element revision moved (refresh by revision). */
+
+  // ---------------------------------------------------------------- model → scene (one group per element)
   refresh() {
     if (!this.T) return;
-    const T = this.T, doc = this.doc;
-    const model = buildHLRModel(doc);
-    // group solids by element: rebuild from the model — cheap at this size; the revision
-    // check below keeps materials and geometry from churning when nothing changed.
-    const rev = doc.modelRevision;
-    if (this.builtRev === rev) { this.render(); return; }
-    this.builtRev = rev;
+    const T = this.T, doc = this.doc, style = this.style;
+    const key = doc.modelRevision + "|" + style;
+    if (this.builtKey === key) { this.render(); return; }
+    this.builtKey = key;
     for (const g of this.groups.values()) { this.scene.remove(g); g.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) [].concat(o.material).forEach(m => m.dispose()); }); }
-    this.groups.clear();
-    const perElement = new Map();
+    this.groups.clear(); this.meshes = [];
+    const one = (f, p, t) => buildHLRModel({ elements: () => [f], typeOf: () => t, plan: () => p, error: () => null });
     for (const f of doc.elements()) {
       if (f.get("Integer") === 0 || doc.error(f)) continue;
       const t = doc.typeOf(f), p = doc.plan(f);
       if (!p || (t !== "Wall" && t !== "Column")) continue;
-      const colour = t === "Wall" ? shadeOf(doc, p) : ((doc.lib.materials[p.material] || {}).shading || {}).colour || "#aaaaaa";
-      const g = new T.Group(); g.userData.id = doc.idOf(f);
+      const id = doc.idOf(f);
+      const m = one(f, p, t);
+      const colour = style === "Hidden Line" ? "#ffffff" : style === "Consistent Colors" ? flat(doc, t, p) : shade(doc, t, p);
+      const g = new T.Group(); g.userData.id = id;
       const pos = [];
-      const solids = t === "Wall" ? buildHLRModel({ elements: () => [f], typeOf: () => "Wall", plan: () => p, error: () => null }).solids : buildHLRModel({ elements: () => [f], typeOf: () => "Column", plan: () => p, error: () => null }).solids;
-      for (const s of solids) for (const fc of s.faces) for (let i = 1; i < fc.poly.length - 1; i++) pos.push(...fc.poly[0], ...fc.poly[i], ...fc.poly[i + 1]);
+      for (const s of m.solids) for (const fc of s.faces) for (let i = 1; i < fc.poly.length - 1; i++) pos.push(...fc.poly[0], ...fc.poly[i], ...fc.poly[i + 1]);
       const geo = new T.BufferGeometry(); geo.setAttribute("position", new T.Float32BufferAttribute(pos, 3)); geo.computeVertexNormals();
-      const mat = new T.MeshLambertMaterial({ color: new T.Color(colour), side: T.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
-      g.add(new T.Mesh(geo, mat));
-      perElement.set(doc.idOf(f), g); this.scene.add(g);
+      const mat = style === "Consistent Colors" || style === "Hidden Line" ? new T.MeshBasicMaterial({ color: new T.Color(colour), side: T.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 })
+        : new T.MeshLambertMaterial({ color: new T.Color(colour), side: T.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+      if (style === "Wireframe") { mat.transparent = true; mat.opacity = 0.06; mat.depthWrite = false; }
+      const mesh = new T.Mesh(geo, mat); mesh.userData.id = id; g.add(mesh); this.meshes.push(mesh);
+      // edges from the construction, not EdgesGeometry
+      const ep = []; for (const e of m.edges) if (e.kind === "sharp") ep.push(...e.a, ...e.b);
+      const eg = new T.BufferGeometry(); eg.setAttribute("position", new T.Float32BufferAttribute(ep, 3));
+      const line = new T.LineSegments(eg, new T.LineBasicMaterial({ color: 0x1b2230 })); line.userData.edges = true; g.add(line);
+      this.groups.set(id, g); this.scene.add(g);
     }
-    // edges from the construction (not EdgesGeometry): one LineSegments for everything
-    const ep = []; for (const e of model.edges) if (e.kind === "sharp") ep.push(...e.a, ...e.b);
-    const eg = new T.BufferGeometry(); eg.setAttribute("position", new T.Float32BufferAttribute(ep, 3));
-    const lines = new T.LineSegments(eg, new T.LineBasicMaterial({ color: 0x1b2230 })); const lg = new T.Group(); lg.add(lines);
-    perElement.set("__edges", lg); this.scene.add(lg);
-    this.groups = perElement;
     this.render();
   }
+  basis() { return cameraBasis(this.cam); }
+  span() { return 22000 / this.zoom; }
   render() {
     if (!this.renderer || !this.W) return;
-    const B = cameraBasis(this.cam), T = this.T;
+    const T = this.T, B = this.basis();
+    this.scene.background = new T.Color(this.style === "Hidden Line" || this.style === "Wireframe" ? 0xffffff : 0xf3f5f8);
     const t = new T.Vector3(...this.cam.target), D = new T.Vector3(...B.D);
-    this.camera.position.copy(t.clone().add(D.clone().multiplyScalar(60000)));
+    this.camera.position.copy(t.clone().add(D.multiplyScalar(60000)));
     this.camera.up.set(...B.up); this.camera.lookAt(t);
-    const span = 22000 / this.zoom, asp = this.W / this.H;
-    Object.assign(this.camera, { left: -span * asp / 2, right: span * asp / 2, top: span / 2, bottom: -span / 2, near: -1e6, far: 1e6 });
+    const span = this.span(), asp = this.W / this.H;
+    Object.assign(this.camera, { left: -span * asp / 2, right: span * asp / 2, top: span / 2, bottom: -span / 2 });
     this.camera.updateProjectionMatrix();
-    for (const [id, g] of this.groups) g.children.forEach(o => { if (o.material && o.material.emissive) o.material.emissive.set(this.app.selection.has(id) ? 0x1d4f9c : 0x000000); });
+    for (const [id, g] of this.groups) {
+      const sel = this.app.selection.has(id), hov = this.hoverId === id;
+      for (const o of g.children) {
+        if (o.userData.edges) o.material.color.set(sel ? 0x1d6fd8 : 0x1b2230);
+        else if (o.material.emissive) o.material.emissive.set(sel ? 0x1d4f9c : hov ? 0x223a5c : 0x000000);
+        else o.material.color.set(sel ? 0x9cc3f5 : hov ? 0xdbe8fa : new T.Color(this.style === "Hidden Line" ? "#ffffff" : flat(this.doc, this.doc.typeOf(this.doc.element(id)), this.doc.plan(this.doc.element(id)))));
+      }
+    }
+    this.buildOverlay();
+    this.renderer.autoClear = true;
     this.renderer.render(this.scene, this.camera);
+    this.renderer.autoClear = false; this.renderer.clearDepth();
+    this.renderer.render(this.overlayScene, this.camera);
+    if (this.cube) this.cube.sync(B);
+    this.app.zoom3d = Object.assign(this.app.zoom3d || {}, { [this.viewId]: this.zoom });
   }
-  bindOrbit() {
-    const el = this.renderer.domElement; let d = null;
-    el.style.touchAction = "none";
-    el.addEventListener("pointerdown", e => { el.setPointerCapture(e.pointerId); d = { x: e.clientX, y: e.clientY, cam: JSON.parse(JSON.stringify(this.cam)), pan: e.shiftKey || e.button === 1 || e.button === 2 }; });
-    el.addEventListener("pointermove", e => {
-      if (!d) return; const dx = e.clientX - d.x, dy = e.clientY - d.y;
-      if (d.pan) { const B = cameraBasis(d.cam), k = 22000 / this.zoom / this.H; this.cam.target = d.cam.target.map((v, i) => v - B.right[i] * dx * k + B.up[i] * dy * k); }
-      else { this.cam.azimuth = d.cam.azimuth - dx * 0.4; this.cam.elevation = Math.max(-5, Math.min(89, d.cam.elevation + dy * 0.3)); }
-      this.render();
+  fit() {
+    const pts = [];
+    for (const g of this.groups.values()) g.traverse(o => { if (o.isMesh) { o.geometry.computeBoundingBox(); const b = o.geometry.boundingBox; for (const x of [b.min.x, b.max.x]) for (const y of [b.min.y, b.max.y]) for (const z of [b.min.z, b.max.z]) pts.push([x, y, z]); } });
+    if (!pts.length) { this.render(); return; }
+    const c = [0, 1, 2].map(i => (Math.min(...pts.map(p => p[i])) + Math.max(...pts.map(p => p[i]))) / 2);
+    this.cam.target = c;
+    const B = this.basis();
+    const xs = pts.map(p => vdot3(v3sub3(p, c), B.right)), ys = pts.map(p => vdot3(v3sub3(p, c), B.up));
+    const need = Math.max((Math.max(...ys) - Math.min(...ys)) * 1.15, (Math.max(...xs) - Math.min(...xs)) * 1.15 / (this.W / this.H || 1));
+    this.zoom = 22000 / Math.max(need, 1000);
+    this.render();
+  }
+  /** Turn to a direction with a short animation — the ViewCube's job. */
+  turnTo(az, el, target) {
+    const a0 = this.cam.azimuth, e0 = this.cam.elevation, t0 = this.cam.target.slice();
+    let da = ((az - a0) % 360 + 540) % 360 - 180;
+    const start = performance.now(), dur = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 320;
+    const step = now => {
+      const k = dur ? Math.min(1, (now - start) / dur) : 1, s = k * k * (3 - 2 * k);
+      this.cam.azimuth = a0 + da * s; this.cam.elevation = e0 + (el - e0) * s;
+      if (target) this.cam.target = t0.map((v, i) => v + (target[i] - v) * s);
+      this.render(); if (k < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+
+  // ---------------------------------------------------------------- rays
+  rayAt(e) {
+    const r = this.renderer.domElement.getBoundingClientRect();
+    const ndc = new this.T.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+    this.ray.setFromCamera(ndc, this.camera);
+    return this.ray.ray;
+  }
+  onPlane(e, z) { const p = new this.T.Vector3(); return this.rayAt(e).intersectPlane(new this.T.Plane(new this.T.Vector3(0, 0, 1), -z), p) ? [p.x, p.y] : null; }
+  pickElement(e) { this.rayAt(e); const hit = this.ray.intersectObjects(this.meshes, false)[0]; return hit ? { id: hit.object.userData.id, point: [hit.point.x, hit.point.y, hit.point.z] } : null; }
+  screenOf(p3) { const v = new this.T.Vector3(...p3).project(this.camera); return [(v.x + 1) / 2 * this.W, (1 - v.y) / 2 * this.H]; }
+  /** z where the ray passes closest to the vertical line through `at`. */
+  onVertical(e, at) {
+    const R = this.rayAt(e), o = [R.origin.x, R.origin.y, R.origin.z], d = [R.direction.x, R.direction.y, R.direction.z];
+    const w0 = v3sub3(o, [at[0], at[1], 0]), b = d[2], dd = vdot3(d, d), dw = vdot3(d, w0);
+    const den = dd - b * b; if (Math.abs(den) < 1e-9) return null;
+    const s = (dd * w0[2] - b * dw) / den;        // parameter along z
+    return s;
+  }
+  levelZ() { const lv = this.doc.elements().find(f => this.doc.typeOf(f) === "Level"); const id = this.app.workLevel || (lv && this.doc.idOf(lv)); const f = id && this.doc.element(id); return { id, z: f ? (this.doc.data(f) || {}).value || 0 : 0 }; }
+
+  // ---------------------------------------------------------------- grips (declared per element, drawn here in 3D)
+  grips() {
+    const ids = [...this.app.selection].filter(id => this.doc.element(id));
+    if (ids.length !== 1 || this.app.tool !== "select") return [];
+    const f = this.doc.element(ids[0]), t = this.doc.typeOf(f), p = this.doc.plan(f);
+    if (t === "Wall" && p && p.curve.type === "line") {
+      const c = F.json(f, "centreline"), mid = lerp(c.start, c.end, 0.5);
+      return [
+        { key: "start", at: [...c.start, p.z0], kind: "end", writes: "centreline.start" },
+        { key: "end", at: [...c.end, p.z0], kind: "end", writes: "centreline.end" },
+        { key: "move", at: [...mid, p.z0], kind: "move", writes: "centreline" },
+        { key: "height", at: [...mid, p.z1], kind: "height", writes: "height" },
+      ];
+    }
+    if (t === "Column" && p) { const c = F.point(f, "position"); return [{ key: "move", at: [...c, p.z0], kind: "move", writes: "position" }]; }
+    if ((t === "Door" || t === "Window")) { const d = this.doc.data(f), fr = d && d.frame, host = fr && this.doc.element(fr.host), w = host && this.doc.plan(host); if (w) return [{ key: "along", at: [...pointAt(w, 0, fr.at), w.z0 + fr.sill + fr.h + 150], kind: "along", host: fr.host, opening: F.refId(f, "fills") }]; }
+    return [];
+  }
+  buildOverlay() {
+    const T = this.T; clear3(this.overlayScene);
+    const k = this.span() / this.H;          // model mm per screen px: grips keep their screen size
+    for (const g of this.grips()) {
+      const col = g.kind === "height" ? 0x2e7d32 : g.kind === "move" ? 0x1d6fd8 : 0xffffff;
+      const geo = g.kind === "height" ? new T.ConeGeometry(GRIP_PX * k, GRIP_PX * 2.2 * k, 16) : g.kind === "move" ? new T.OctahedronGeometry(GRIP_PX * 1.1 * k) : new T.SphereGeometry(GRIP_PX * 0.8 * k, 16, 12);
+      const m = new T.Mesh(geo, new T.MeshBasicMaterial({ color: this.hoverGrip === g.key ? 0xe8591a : col, depthTest: false }));
+      if (g.kind === "height") m.rotation.x = Math.PI / 2;
+      m.position.set(...g.at); m.renderOrder = 10; m.userData.grip = g;
+      this.overlayScene.add(m);
+      if (g.kind === "end") { const ring = new T.Mesh(new T.RingGeometry(GRIP_PX * 0.8 * k, GRIP_PX * 1.1 * k, 20), new T.MeshBasicMaterial({ color: 0x1d6fd8, depthTest: false, side: T.DoubleSide })); ring.position.set(...g.at); ring.lookAt(this.camera.position); ring.renderOrder = 11; this.overlayScene.add(ring); }
+    }
+    // rubber band for the wall tool
+    const pts = this.tool.pts.concat(this.tool.cursor ? [this.tool.cursor] : []);
+    if (pts.length >= 2) {
+      const z = this.levelZ().z, arr = pts.flatMap(p => [p[0], p[1], z + 5]);
+      const geo = new T.BufferGeometry(); geo.setAttribute("position", new T.Float32BufferAttribute(arr, 3));
+      const ln = new T.Line(geo, new T.LineDashedMaterial({ color: 0x1d6fd8, dashSize: 12 * k, gapSize: 8 * k, depthTest: false })); ln.computeLineDistances(); ln.renderOrder = 12;
+      this.overlayScene.add(ln);
+    }
+    if (this.tool.cursor && this.app.tool !== "select") {
+      const z = this.levelZ().z, m = new T.Mesh(new T.RingGeometry(4 * k, 7 * k, 20), new T.MeshBasicMaterial({ color: this.tool.snapped ? 0xe8591a : 0x1d6fd8, depthTest: false }));
+      m.position.set(this.tool.cursor[0], this.tool.cursor[1], z + 5); m.renderOrder = 12; this.overlayScene.add(m);
+    }
+  }
+  pickGrip(e) {
+    const r = this.renderer.domElement.getBoundingClientRect(), sx = e.clientX - r.left, sy = e.clientY - r.top;
+    let best = null;
+    for (const g of this.grips()) { const s = this.screenOf(g.at), d = Math.hypot(s[0] - sx, s[1] - sy); if (d < GRIP_PX + 6 && (!best || d < best.d)) best = { g, d }; }
+    return best && best.g;
+  }
+  /** Snap a plane point to wall ends within 12 px, else quantise to 10 mm. */
+  snap(p, exclude) {
+    const z = this.levelZ().z, s0 = this.screenOf([p[0], p[1], z]);
+    for (const f of this.doc.elements()) if (this.doc.typeOf(f) === "Wall" && this.doc.idOf(f) !== exclude) {
+      const c = F.json(f, "centreline"); if (!c || c.type !== "line") continue;
+      for (const q of [c.start, c.end]) { const s = this.screenOf([q[0], q[1], z]); if (Math.hypot(s[0] - s0[0], s[1] - s0[1]) < 12) return { p: q.slice(), snapped: true }; }
+    }
+    return { p: [Math.round(p[0] / 10) * 10, Math.round(p[1] / 10) * 10], snapped: false };
+  }
+
+  // ---------------------------------------------------------------- pointer
+  bind() {
+    const el = this.renderer.domElement; el.style.touchAction = "none"; el.tabIndex = 0;
+    let d = null;
+    el.addEventListener("pointerdown", e => {
+      el.focus({ preventScroll: true }); el.setPointerCapture(e.pointerId);
+      const grip = e.button === 0 && this.app.tool === "select" ? this.pickGrip(e) : null;
+      if (grip) { d = this.startGrip(e, grip); return; }
+      // Revit/PDF navigation: middle-drag pans, Shift+middle-drag orbits (so does the ViewCube);
+      // a left drag is a normal drag: a selection window. One finger on a touch screen orbits.
+      const touch = e.pointerType === "touch";
+      const nav = e.button === 1 ? (e.shiftKey ? "orbit" : "pan") : touch && e.button === 0 && this.app.tool === "select" ? "orbit" : e.button === 0 && this.app.tool === "select" ? "box" : null;
+      d = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, cam: JSON.parse(JSON.stringify(this.cam)), nav, moved: false, button: e.button };
+      if (e.button === 1) e.preventDefault();
     });
-    el.addEventListener("pointerup", () => { d = null; });
+    el.addEventListener("pointermove", e => {
+      if (d && d.grip) { d.move(e); return; }
+      if (d) {
+        const dx = e.clientX - d.x, dy = e.clientY - d.y;
+        if (Math.abs(e.clientX - d.sx) + Math.abs(e.clientY - d.sy) > 3) d.moved = true;
+        if (d.moved) {
+          if (d.nav === "pan") { const B = this.basis(), k = this.span() / this.H; this.cam.target = this.cam.target.map((v, i) => v - B.right[i] * dx * k + B.up[i] * dy * k); }
+          else if (d.nav === "orbit") { this.cam.azimuth -= dx * 0.4; this.cam.elevation = Math.max(-89, Math.min(89, this.cam.elevation + dy * 0.3)); }
+          else if (d.nav === "box") { this.showBox(d, e); return; }
+          d.x = e.clientX; d.y = e.clientY; this.render();
+        }
+        return;
+      }
+      this.hover(e);
+    });
+    el.addEventListener("pointerup", e => {
+      const g = d; d = null;
+      if (!g) return;
+      if (g.grip) { g.end(); return; }
+      if (g.moved) { if (g.nav === "box") this.finishBox(g, e); return; }
+      if (g.button === 1) return;
+      if (g.button === 2) return this.app.contextMenu(e, "3d");
+      this.click(e);
+    });
+    el.addEventListener("dblclick", () => { if (this.app.tool === "wall" && this.tool.pts.length >= 2) this.finishWall(false); });
     el.addEventListener("contextmenu", e => e.preventDefault());
-    el.addEventListener("wheel", e => { e.preventDefault(); this.zoom *= Math.exp(-e.deltaY * 0.0015); this.render(); }, { passive: false });
+    el.addEventListener("auxclick", e => { if (e.button === 1) e.preventDefault(); });
+    el.addEventListener("wheel", e => {
+      e.preventDefault();
+      // zoom about the cursor: keep the point under it fixed on screen
+      const r = el.getBoundingClientRect(), mx = (e.clientX - r.left) - this.W / 2, my = (e.clientY - r.top) - this.H / 2, B = this.basis();
+      const k0 = this.span() / this.H; this.zoom *= Math.exp(-e.deltaY * 0.0015); const k1 = this.span() / this.H;
+      this.cam.target = this.cam.target.map((v, i) => v + B.right[i] * mx * (k0 - k1) - B.up[i] * my * (k0 - k1));
+      this.render();
+    }, { passive: false });
+    el.addEventListener("keydown", e => { if (this.key(e)) { e.preventDefault(); e.stopPropagation(); } });
   }
-  bar() {
-    clear(this.status);
-    const doc = this.doc, v = doc.element(this.viewId);
-    const cache = doc._hlrCache && doc._hlrCache[this.viewId];
-    const stale = cache && (cache.revision !== doc.modelRevision || cache.camera !== JSON.stringify(doc.argValue(v, "camera")));
-    const prog = h("div", { class: "progress", hidden: true }, h("i"));
-    this.status.append(h("div", { class: "card" },
-      h("span", { class: "muted" }, "drag orbits · shift-drag pans · wheel zooms"),
-      this.T ? h("button", { class: "btn small", onclick: () => { this.app.apply({ op: "set", id: this.viewId, key: "camera", value: roundCam(this.cam) }); this.bar(); this.app.say("Camera saved to the view", "ok"); } }, "Save camera to view") : null,
-      h("button", { class: "btn small primary", onclick: () => this.generate(prog) }, cache ? "Regenerate hidden-line" : "Generate hidden-line for sheet"),
-      prog,
-      cache ? h("span", { class: "chip", style: stale ? { background: "var(--error-bg)", color: "var(--error)" } : {} }, stale ? "sheet line-work stale" : `current · ${cache.counts.visible + cache.counts.outlineV} visible edges`) : null));
+  /** Left→right encloses (window), right→left touches (crossing), as in plan. */
+  showBox(d, e) {
+    const r = this.root.getBoundingClientRect();
+    if (!this.boxEl) { this.boxEl = h("div", { class: "selbox" }); this.root.append(this.boxEl); }
+    const x0 = Math.min(d.sx, e.clientX) - r.left, y0 = Math.min(d.sy, e.clientY) - r.top;
+    Object.assign(this.boxEl.style, { left: x0 + "px", top: y0 + "px", width: Math.abs(e.clientX - d.sx) + "px", height: Math.abs(e.clientY - d.sy) + "px" });
+    this.boxEl.classList.toggle("crossing", e.clientX < d.sx); this.boxEl.hidden = false;
   }
+  finishBox(d, e) {
+    if (this.boxEl) this.boxEl.hidden = true;
+    const r = this.root.getBoundingClientRect(), crossing = e.clientX < d.sx;
+    const bx = [Math.min(d.sx, e.clientX) - r.left, Math.min(d.sy, e.clientY) - r.top, Math.max(d.sx, e.clientX) - r.left, Math.max(d.sy, e.clientY) - r.top];
+    const boxes = new Map();
+    for (const m of this.meshes) {
+      m.geometry.computeBoundingBox(); const b = m.geometry.boundingBox.clone().applyMatrix4(m.matrixWorld);
+      const id = m.userData.id, cur = boxes.get(id); if (cur) cur.union(b); else boxes.set(id, b);
+    }
+    const ids = [];
+    for (const [id, b] of boxes) {
+      const pts = [];
+      for (const x of [b.min.x, b.max.x]) for (const y of [b.min.y, b.max.y]) for (const z of [b.min.z, b.max.z]) pts.push(this.screenOf([x, y, z]));
+      const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+      const sb = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+      const inside = sb[0] >= bx[0] && sb[1] >= bx[1] && sb[2] <= bx[2] && sb[3] <= bx[3];
+      const touches = sb[0] <= bx[2] && sb[2] >= bx[0] && sb[1] <= bx[3] && sb[3] >= bx[1];
+      if (crossing ? touches : inside) ids.push(id);
+    }
+    this.app.select(ids, e.shiftKey || e.ctrlKey || e.metaKey);
+    this.app.say(`${ids.length} selected (${crossing ? "crossing" : "window"} selection)`, "note");
+  }
+  hover(e) {
+    const tool = this.app.tool;
+    if (tool === "select") {
+      const g = this.pickGrip(e); const gk = g ? g.key : null;
+      const hit = g ? null : this.pickElement(e); const hid = hit ? hit.id : null;
+      if (gk !== this.hoverGrip || hid !== this.hoverId) { this.hoverGrip = gk; this.hoverId = hid; this.renderer.domElement.style.cursor = g ? "grab" : hid ? "pointer" : "default"; this.render(); if (hid) this.app.hoverInfo(hid); }
+      return;
+    }
+    const z = this.levelZ().z;
+    if (["wall", "column"].includes(tool)) { const p = this.onPlane(e, z); if (!p) return; const s = this.snap(p); this.tool.cursor = s.p; this.tool.snapped = s.snapped; const last = this.tool.pts[this.tool.pts.length - 1]; this.showHud(e, last ? `${Math.round(dist(last, s.p))} mm` : `${s.p.map(Math.round).join(", ")}`); this.render(); }
+    if (["door", "window", "opening"].includes(tool)) { const hit = this.pickElement(e); const ok = hit && this.doc.typeOf(this.doc.element(hit.id)) === "Wall"; this.renderer.domElement.style.cursor = ok ? "copy" : "not-allowed"; this.showHud(e, ok ? `${hit.id} · click to place` : "hover a wall"); }
+  }
+  showHud(e, text) { const r = this.root.getBoundingClientRect(); this.hud.hidden = false; this.hud.style.left = (e.clientX - r.left) + "px"; this.hud.style.top = (e.clientY - r.top) + "px"; this.hud.textContent = text; }
+  click(e) {
+    const tool = this.app.tool, z = this.levelZ();
+    if (tool === "select") { const hit = this.pickElement(e); this.app.select(hit ? [hit.id] : [], e.shiftKey || e.ctrlKey || e.metaKey); return; }
+    if (tool === "wall") { const p = this.tool.cursor || this.onPlane(e, z.z); if (!p) return; this.tool.pts.push(p); if (this.tool.pts.length > 2 && dist(p, this.tool.pts[0]) < 1) return this.finishWall(true); this.render(); return; }
+    if (tool === "column") { const p = this.tool.cursor || this.onPlane(e, z.z); if (!p) return; this.app.place({ type: "Column", args: { position: p, columnType: { ref: this.app.toolOpts.columnType }, baseLevel: { ref: z.id }, height: 3000, rotation: 0 } }); return; }
+    if (["door", "window", "opening"].includes(tool)) {
+      const hit = this.pickElement(e); if (!hit || this.doc.typeOf(this.doc.element(hit.id)) !== "Wall") { this.app.say("click on a wall", "note"); return; }
+      const w = this.doc.plan(this.doc.element(hit.id));
+      this.app.placeOpening(tool, hit.id, Math.round(uOf(w, [hit.point[0], hit.point[1]])));
+    }
+  }
+  startGrip(e, g) {
+    const doc = this.doc, id = [...this.app.selection][0], f = doc.element(id);
+    const z0 = g.at[2], grab = this.onPlane(e, g.kind === "height" ? g.at[2] : z0);
+    const orig = JSON.parse(JSON.stringify(g.writes ? (g.writes.includes(".") ? F.json(f, g.writes.split(".")[0])[g.writes.split(".")[1]] : doc.argValue(f, g.writes)) : null));
+    const key = `grip3d:${id}:${g.key}`;
+    const wasBound = g.kind === "height" && orig && typeof orig === "object" && orig.ref;
+    const plan = doc.plan(f);
+    const drv = wasBound ? levelDriver(doc, orig.ref) : null;
+    const send = (op) => this.app.apply(Object.assign(op, { coalesce: key }), { quiet: true });
+    return {
+      grip: true,
+      move: ev => {
+        if (g.kind === "height") {
+          const zz = this.onVertical(ev, g.at); if (zz === null) return;
+          const hgt = Math.max(100, Math.round((zz - plan.z0) / 10) * 10);
+          // bound to "Top.elevation - Base.elevation": drive the top level, so every wall bound to it follows
+          if (drv) { const z = drv.baseZ + hgt; send({ op: "set", id: drv.level, key: "elevation", value: z }); this.showHud(ev, `${F.text(doc.element(drv.level), "name")} → ${z} mm (height ${hgt})`); this.refresh(); return; }
+          send({ op: "set", id, key: "height", value: hgt }); this.showHud(ev, `height ${hgt} mm`); return;
+        }
+        if (g.kind === "along") {
+          const w = doc.plan(doc.element(g.host)), p = this.onPlane(ev, w.z0); if (!p) return;
+          const u = Math.max(0, Math.min(w.L, Math.round(uOf(w, p) / 10) * 10));
+          send({ op: "drag", id: g.opening, key: "profile.at", value: u }); this.showHud(ev, `along ${g.host}: ${u} mm`); return;
+        }
+        const p = this.onPlane(ev, z0); if (!p) return;
+        if (g.kind === "end") { const s = this.snap(p, id); send({ op: "drag", id, key: g.writes, value: s.p }); const c = F.json(doc.element(id), "centreline"); this.showHud(ev, `length ${Math.round(dist(c.start, c.end))} mm${s.snapped ? " · end" : ""}`); }
+        if (g.kind === "move" && grab) {
+          const dxy = [Math.round((p[0] - grab[0]) / 10) * 10, Math.round((p[1] - grab[1]) / 10) * 10];
+          const value = Array.isArray(orig) ? add(orig, dxy) : Object.assign({}, orig, { start: add(orig.start, dxy), end: add(orig.end, dxy) });
+          send({ op: "drag", id, key: g.writes, value }); this.showHud(ev, `move ${dxy.join(", ")} mm`);
+        }
+        this.refresh();
+      },
+      end: () => { this.app.editor.seal(); this.hud.hidden = true; this.app.refresh({ keepMain: true }); this.refresh(); if (drv) this.app.say(`Moved level ${drv.level}: every wall bound to it followed`, "ok"); else if (wasBound) this.app.say(`height was bound to ${orig.ref}; the grip set it to a literal — undo to restore the binding`, "note"); },
+    };
+  }
+  finishWall(closed) {
+    const pts = this.tool.pts.slice(); this.tool.pts = []; this.tool.cursor = null;
+    if (pts.length < 2) return;
+    const o = this.app.toolOpts, z = this.levelZ();
+    const r = this.app.apply({ op: "draw", points: pts, closed, wallType: o.wallType, level: z.id, height: o.height || 3000, mounting: o.mounting || "Centred", tol: 1 });
+    if (r.ok) { this.app.say(`${r.ids.length} wall${r.ids.length > 1 ? "s" : ""} drawn and joined`, "ok"); this.app.select(r.ids); }
+    this.refresh();
+  }
+  key(e) {
+    if (e.key === "Escape" && this.tool.pts.length) { this.tool.pts = []; this.tool.cursor = null; this.render(); return true; }
+    if (this.app.tool === "wall" && this.tool.pts.length) {
+      if (e.key === "Enter") { this.finishWall(false); return true; }
+      if (e.key.toLowerCase() === "c" && this.tool.pts.length >= 3) { this.finishWall(true); return true; }
+    }
+    return false;
+  }
+
+  // ---------------------------------------------------------------- sheet line-work
   /** Exact HLR in slices — minutes with a progress bar is a feature (§6.4). */
-  async generate(prog) {
+  async generate(onProgress) {
     const doc = this.doc, v = doc.element(this.viewId);
-    if (this.T) this.app.apply({ op: "set", id: this.viewId, key: "camera", value: roundCam(this.cam) });
+    if (this.T) this.app.apply({ op: "set", id: this.viewId, key: "camera", value: roundCam(this.cam) }, { quiet: true });
     const cam = F.json(v, "camera");
-    // Feed it the smallest correct model: visible categories only.
     const model = buildHLRModel(doc);
-    prog.hidden = false; const bar = prog.firstChild;
-    const it = hlrSteps(model, cam); let r;
-    const t0 = performance.now();
-    for (;;) { r = it.next(); if (r.done) break; bar.style.width = (100 * r.value.done / r.value.total) + "%"; if (performance.now() - t0 > 12) { await new Promise(res => setTimeout(res, 0)); } }
+    const it = hlrSteps(model, cam); let r; const t0 = performance.now(); let last = t0;
+    for (;;) { r = it.next(); if (r.done) break; if (onProgress) onProgress(r.value.done / r.value.total); if (performance.now() - last > 12) { await new Promise(res => setTimeout(res, 0)); last = performance.now(); } }
     const out = r.value;
     const entry = { camera: JSON.stringify(cam), revision: doc.modelRevision, lines: out.lines, bbox: out.bbox, counts: out.counts };
-    // linesOverShaded: raster at the viewport's paper size and print resolution, not the screen's
     const render = F.json(v, "render") || {};
     if (render.mode === "linesOverShaded" && this.renderer) {
       const S = F.int(v, "scale") || 200, wmm = (out.bbox[2] - out.bbox[0]) / S, hmm = (out.bbox[3] - out.bbox[1]) / S;
@@ -7967,32 +8729,39 @@ class View3D {
     }
     doc._hlrCache = Object.assign({}, doc._hlrCache, { [this.viewId]: entry });
     doc.bumpView();
-    prog.hidden = true;
-    this.app.say(`Hidden-line: ${out.edges} edges against ${out.faces} faces in ${Math.round(performance.now() - t0)} ms — ${JSON.stringify(out.counts)}`, "ok");
-    this.bar(); this.app.refresh();
+    return { out, ms: performance.now() - t0 };
   }
+  saveCamera() { this.app.apply({ op: "set", id: this.viewId, key: "camera", value: roundCam(this.cam) }); }
   snapshot(pxW, pxH, cam, bbox) {
     const T = this.T, B = cameraBasis(cam), r = new T.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
     r.setPixelRatio(1); r.setSize(pxW, pxH);
     const c = new T.OrthographicCamera(bbox[0], bbox[2], bbox[3], bbox[1], -1e6, 1e6);
     const t = new T.Vector3(...cam.target); c.position.copy(t.clone().add(new T.Vector3(...B.D).multiplyScalar(60000))); c.up.set(...B.up); c.lookAt(t);
     const bg = this.scene.background; this.scene.background = new T.Color(0xffffff);
-    const edges = this.groups.get("__edges"); if (edges) edges.visible = false;
+    for (const g of this.groups.values()) g.children.forEach(o => { if (o.userData.edges) o.visible = false; });
     r.render(this.scene, c);
     const url = r.domElement.toDataURL("image/jpeg", 0.9);
-    this.scene.background = bg; if (edges) edges.visible = true; r.dispose();
+    this.scene.background = bg; for (const g of this.groups.values()) g.children.forEach(o => { o.visible = true; }); r.dispose();
     return url;
   }
 }
-function shadeOf(doc, w) { const core = w.stack.layers.find(l => l.function === "Structure") || w.stack.layers[0]; const m = doc.lib.materials[w.stack.layers[0].material] || doc.lib.materials[core.material] || {}; return (m.shading || {}).colour || "#bbbbbb"; }
-const roundCam = c => ({ azimuth: Math.round(c.azimuth * 10) / 10, elevation: Math.round(c.elevation * 10) / 10, target: c.target.map(v => Math.round(v)) });
+function clear3(scene) { for (const o of scene.children.slice()) { scene.remove(o); if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); } }
+const vdot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const v3sub3 = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+function shade(doc, t, p) {
+  if (t === "Column") return ((doc.lib.materials[p.material] || {}).shading || {}).colour || "#aaaaaa";
+  const m = doc.lib.materials[p.stack.layers[0].material] || {}; return (m.shading || {}).colour || "#bbbbbb";
+}
+function flat(doc, t, p) { return t === "Column" ? "#b9bec6" : shade(doc, t, p); }
+const roundCam = c => ({ azimuth: Math.round(((c.azimuth % 360) + 360) % 360 * 10) / 10, elevation: Math.round(c.elevation * 10) / 10, target: c.target.map(v => Math.round(v)) });
 
 // ===== app.js =====
-//! The application shell. It owns no model state: the document is the kernel,
-//! the interface mirrors it, and every change goes through app.apply → the op
-//! pipeline → regenerate → refresh. Three projections of one document sit side
-//! by side: the project browser (views, sheets, families, relationships), the
-//! feature tree (construction order) and the node graph.
+//! The application shell, laid out the way a BIM author expects (Revit's
+//! arrangement): Quick Access Toolbar, a ribbon whose File tab sits at the far
+//! left, an options bar, the Properties palette over the Project Browser on the
+//! left, document tabs over the view, a view control bar under it, and the
+//! status bar. The shell owns no model state: every command goes through one
+//! registry, and every edit through app.apply → the op pipeline → regenerate.
 
 
 
@@ -8009,48 +8778,49 @@ const roundCam = c => ({ azimuth: Math.round(c.azimuth * 10) / 10, elevation: Ma
 
 
 
-const TOOLS = [
-  ["select", "Select", "V"], ["wall", "Wall", "W"], ["opening", "Opening", "O"], ["door", "Door", "D"], ["window", "Window", "N"],
-  ["column", "Column", "C"], ["grid", "Grid", "G"], ["text", "Text", "T"], ["dim", "Dimension", "M"], ["space", "Space", "S"],
-  ["elev", "Elevation", "E"], ["sep", "Room line", "R"],
-];
-const TOOL_ICON = { select: "select", wall: "wall", opening: "opening", door: "door", window: "window", column: "column", grid: "grid", text: "text", dim: "dim", space: "space", elev: "elev", sep: "sep" };
 const VIEW_TYPES = ["PlanView", "ElevationView", "View3D", "Schedule", "Sheet"];
+const PLACE_TOOLS = new Set(["wall", "opening", "door", "window", "column", "grid", "text", "dim", "space", "elev", "sep"]);
 
 const app = {
   doc: null, editor: null, selection: new Set(), activeView: null, tabs: [], tool: "select",
-  toolOpts: { wallType: "T-EXTCAV300", mounting: "Core exterior", height: 3000, doorType: "T-DOOR915", windowType: "T-WIN1215", columnType: "T-COL400", width: 1000, height_: 2100, openSill: 0, sill: 900, boundaryAt: "finishFace", spaceName: "Room" },
-  snaps: Object.fromEntries(SNAP_KINDS.map(k => [k, k !== "angle"])), thinLines: false, leftTab: "project", pickMode: null,
-  views: new Map(), mode3d: {}, expanded: new Set(["Views", "Floor plans", "Elevations", "3D views", "Schedules", "Sheets"]), treeFilter: "",
+  toolOpts: { wallType: "T-EXTCAV300", mounting: "Core exterior", height: 3000, doorType: "T-DOOR915", windowType: "T-WIN1215", columnType: "T-COL400", width: 1000, height_: 2100, openSill: 0, sill: 900, boundaryAt: "finishFace", spaceName: "Room", mirrorCopy: true, moveCopy: false, rotateCopy: false },
+  snaps: Object.fromEntries(SNAP_KINDS.map(k => [k, k !== "angle"])), thinLines: false, pickMode: null,
+  views: new Map(), visualStyle3d: {}, expanded: new Set(["Views (all)", "Floor Plans", "3D Views", "Elevations (Building Elevation)", "Schedules/Quantities (all)", "Sheets (all)"]),
+  ribbonTab: "Architecture", ribbonAuto: null, ribbonCollapsed: false, browserTab: "browser", treeFilter: "", lastCommand: null, workLevel: null,
 };
 window.webbim = app;       // for the console and for tests: the document, the editor, the op pipeline
 
 // ---------------------------------------------------------------- the one edit path
 app.apply = (op, opts = {}) => {
-  const r = app.editor.apply(op);
+  const r = app.editor.apply(op, { coalesce: opts.coalesce || null });
   if (!r.ok && !opts.quiet) app.say(r.error || (r.conflicts || []).map(c => c.say).join("; "), "error");
   if (r.ok && r.said) app.say(r.said, "note");
-  if (opts.quiet) { const v = app.views.get(app.activeView); if (v && v.draw) v.draw(); updateStatus(); if (!r.ok && r.conflicts) app.say(r.error, "error"); }
+  if (opts.quiet) { const v = app.views.get(app.activeView); if (v && v.draw) v.draw(); if (v && v.refresh && v.T) v.refresh(); updateStatus(); if (!r.ok && r.conflicts) app.say(r.error, "error"); }
   else app.refresh();
   saveDraftSoon();
   return r;
 };
 app.say = (msg, kind = "") => { const m = document.getElementById("msg"); if (!m) return; m.textContent = msg; m.className = "msg " + kind; m.title = msg; };
-app.select = (ids, add = false, raw = false) => {
+app.select = (ids, add = false) => {
   if (!add) app.selection.clear();
   for (const id of ids) { if (add && app.selection.has(id)) app.selection.delete(id); else app.selection.add(id); }
+  // Revit's contextual tab: selecting something brings up "Modify | <Category>"
+  const els = [...app.selection].filter(id => app.doc.element(id));
+  if (els.length && app.tool === "select") { if (app.ribbonTab !== "__context") app.ribbonAuto = app.ribbonTab; app.ribbonTab = "__context"; }
+  else if (!els.length && app.ribbonTab === "__context") { app.ribbonTab = app.ribbonAuto || "Architecture"; app.ribbonAuto = null; }
   app.refresh({ keepMain: true });
 };
 app.refresh = (opts = {}) => {
-  renderLeft(); renderRight(); renderBar(); updateStatus();
+  renderQAT(); renderRibbon(); renderOptionsBar(); renderPalettes(); updateStatus();
   const v = app.views.get(app.activeView);
-  if (!opts.keepMain || !v) renderMain(); else if (v.draw) v.draw(); else if (v.render) v.render();
-  if (opts.keepMain && v && v.refresh && v.T) v.render();
-  if (opts.keepMain && (app.activeView === "__graph" || (app.activeView && app.doc.element(app.activeView) && app.doc.typeOf(app.doc.element(app.activeView)) === "Schedule"))) renderMain();
+  if (!opts.keepMain || !v) renderMain();
+  else { if (v.draw) v.draw(); if (v.refresh && v.T) v.refresh(); renderViewControl(); }
+  if (opts.keepMain && (app.activeView === "__graph" || app.activeView === "__tree" || (app.activeView && app.doc.element(app.activeView) && app.doc.typeOf(app.doc.element(app.activeView)) === "Schedule"))) renderMain();
 };
-app.openView = (id) => {
+app.openView = id => {
   if (!app.tabs.includes(id)) app.tabs.push(id);
-  app.activeView = id; app.tool = "select"; app.pickMode = null;
+  app.activeView = id; app.pickMode = null;
+  if (app.tool !== "select" && !canUseTool(app.tool)) app.tool = "select";
   store("tabs", { tabs: app.tabs, active: id });
   app.refresh();
   if (window.innerWidth <= 860) document.body.classList.remove("show-left");
@@ -8060,67 +8830,323 @@ app.openGraph = id => { app.graphFocus = id; app.openView("__graph"); };
 app.revealInView = id => {
   const f = app.doc.element(id); if (!f) return;
   if (VIEW_TYPES.includes(app.doc.typeOf(f))) return app.openView(id);
+  const cur = app.doc.element(app.activeView);
+  if (cur && ["PlanView", "View3D"].includes(app.doc.typeOf(cur))) return;
   const plan = app.tabs.find(t => app.doc.element(t) && app.doc.typeOf(app.doc.element(t)) === "PlanView") || firstOf("PlanView");
-  if (plan && app.activeView !== plan) app.openView(plan);
+  if (plan) app.openView(plan);
 };
-app.editInView = (id, key) => { app.select([id]); app.revealInView(id); app.tool = "select"; app.say(`Drag the handles to edit ${key}; type a number mid-drag for an exact value`, "note"); app.refresh(); };
-app.startPick = (pm) => { app.pickMode = pm; app.revealInView(pm.ids[0]); app.say(`Pick an element to bind ${pm.label} (${pm.kind} only) — Esc cancels`, "note"); app.refresh(); };
+app.editInView = (id, key) => { app.select([id]); app.revealInView(id); app.say(`Drag the grips to edit ${key}; type a number mid-drag for an exact value`, "note"); };
+app.startPick = pm => { app.pickMode = pm; app.revealInView(pm.ids[0]); app.say(`Pick an element to bind ${pm.label} (${pm.kind} only) — Esc cancels`, "note"); app.refresh(); };
 app.endPick = () => { app.pickMode = null; app.refresh(); };
+app.hoverInfo = id => {
+  const f = app.doc.element(id); if (!f) return;
+  const tk = ["wallType", "doorType", "windowType", "columnType"].find(k => F.refId(f, k));
+  const t = tk && app.doc.resolveType(F.refId(f, tk));
+  const cat = (app.doc.lib.categories[categoryOf(app.doc, f)] || {}).name || app.doc.typeOf(f);
+  app.say(`${cat} : ${t ? `${(t.chain[0] || {}).name || ""} : ${t.name}` : f.get("Name")}  ·  ${id}`, "");
+};
+/** Placement shared by the plan and the 3D view: one path for "a door in this wall at u". */
+app.place = element => { const r = app.apply({ op: "add", element }); if (r.ok) { app.say(`Placed ${r.id}`, "ok"); } return r; };
+app.placeOpening = (tool, wallId, u) => {
+  const doc = app.doc, o = app.toolOpts;
+  const t = tool === "door" ? doc.lib.types[o.doorType] : tool === "window" ? doc.lib.types[o.windowType] : null;
+  const w = t ? t.width : o.width, hh = t ? t.height : o.height_;
+  const sill = tool === "door" ? 0 : tool === "window" ? (o.sill ?? 900) : (o.openSill ?? 0);
+  const opId = doc.freshId("Opening");
+  const ops = [{ op: "add", element: { id: opId, type: "Opening", args: { host: { ref: wallId }, profile: { kind: "rect", at: u, sill, w, h: hh }, farProfile: null, depth: "through" } } }];
+  if (tool === "door") ops.push({ op: "add", element: { type: "Door", args: { fills: { ref: opId }, doorType: { ref: o.doorType } }, params: { Phase: "New" } } });
+  if (tool === "window") ops.push({ op: "add", element: { type: "Window", args: { fills: { ref: opId }, windowType: { ref: o.windowType } } } });
+  const r = app.apply(ops);
+  app.say(r.ok ? `${tool === "opening" ? "Opening" : tool[0].toUpperCase() + tool.slice(1)} placed in ${wallId} at ${u} mm along it` : r.error, r.ok ? "ok" : "error");
+  return r;
+};
 const firstOf = type => { const f = app.doc.elements().find(g => app.doc.typeOf(g) === type); return f ? app.doc.idOf(f) : null; };
+const activeType = () => { const v = app.activeView && app.doc.element(app.activeView); return v ? app.doc.typeOf(v) : app.activeView; };
+const canUseTool = k => { const t = activeType(); if (t === "PlanView") return true; if (t === "View3D") return ["wall", "door", "window", "opening", "column", "select"].includes(k); return k === "select"; };
 
 // ---------------------------------------------------------------- documents
+/** There is always a {3D} view: the house button must have somewhere to go. */
+function ensureDefault3D(doc) {
+  if (doc.elements().some(f => doc.typeOf(f) === "View3D" && f.get("Name") === "{3D}")) return;
+  let id = "V-3D"; let n = 1; while (doc.element(id)) id = "V-3D" + (++n);
+  doc.addElement({ id, type: "View3D", name: "{3D}", args: { camera: { azimuth: 225, elevation: 30, target: [6000, 4000, 1500] }, scale: 100, style: { ref: "VS-CONSTRUCTION" }, render: { mode: "lines", hidden: false, rasterDPI: 300 } } });
+  doc.regenerate();
+}
 function setDocument(doc, note) {
+  ensureDefault3D(doc);
   app.doc = doc; app.editor = new Editor(doc); app.selection.clear(); app.views.clear();
   const saved = store("tabs");
   app.tabs = (saved && saved.tabs || []).filter(t => t.startsWith("__") || doc.element(t));
-  if (!app.tabs.length) app.tabs = ["V-P00", "SH-A101"].filter(t => doc.element(t));
+  if (!app.tabs.length) app.tabs = ["V-P00", default3D()].filter(t => t && doc.element(t));
   if (!app.tabs.length) { const p = firstOf("PlanView"); if (p) app.tabs = [p]; }
   app.activeView = saved && app.tabs.includes(saved.active) ? saved.active : app.tabs[0] || null;
   app.refresh();
   if (note) app.say(note.msg, note.kind);
 }
+function default3D() { const f = app.doc.elements().find(g => app.doc.typeOf(g) === "View3D" && g.get("Name") === "{3D}") || app.doc.elements().find(g => app.doc.typeOf(g) === "View3D"); return f ? app.doc.idOf(f) : null; }
 let draftTimer = null;
-function saveDraftSoon() { clearTimeout(draftTimer); draftTimer = setTimeout(() => { try { store("draft", app.doc.toJSON()); } catch (e) { /* too big or blocked: the draft is a convenience only */ } }, 800); }
+function saveDraftSoon() { clearTimeout(draftTimer); draftTimer = setTimeout(() => { try { store("draft-v2", app.doc.toJSON()); } catch (e) { /* too big or blocked: the draft is a convenience only */ } }, 800); }
 
-// ---------------------------------------------------------------- top bar
-function renderBar() {
-  const bar = clear(document.getElementById("bar"));
-  const doc = app.doc;
-  bar.append(
-    h("button", { class: "btn ghost mobile-only", "aria-label": "Project browser", onclick: () => document.body.classList.toggle("show-left") }, icon("menu")),
-    h("div", { class: "brand" }, h("b", {}, "B"), h("span", { class: "hide-narrow" }, "Web BIM")),
-    h("input", { class: "docname hide-narrow", id: "docname", value: doc.meta.name, "aria-label": "Project name", onchange: e => { doc.meta.name = e.target.value; saveDraftSoon(); app.refresh(); } }),
-    h("span", { class: "sep hide-narrow" }),
-    h("div", { class: "tabs grow", role: "tablist" }, app.tabs.map(t => {
-      const f = doc.element(t), label = t === "__graph" ? "Node graph" : t === "__diag" ? "Diagnostics" : f ? f.get("Name") : t;
-      return h("button", { class: "tab", role: "tab", "aria-selected": String(t === app.activeView), onclick: () => app.openView(t) }, label,
-        h("span", { class: "x", role: "button", "aria-label": `Close ${label}`, onclick: e => { e.stopPropagation(); app.closeTab(t); } }, "✕"));
-    })),
-    h("button", { class: "btn ghost", title: "Undo (Ctrl+Z)", "aria-label": "Undo", disabled: !app.editor.undoStack.length, onclick: () => { app.editor.undo(); app.refresh(); saveDraftSoon(); } }, icon("undo")),
-    h("button", { class: "btn ghost", title: "Redo (Ctrl+Shift+Z)", "aria-label": "Redo", disabled: !app.editor.redoStack.length, onclick: () => { app.editor.redo(); app.refresh(); saveDraftSoon(); } }, icon("redo")),
-    h("span", { class: "sep hide-narrow" }),
-    h("button", { class: "btn hide-narrow", onclick: fileMenu }, "File"),
-    h("button", { class: "btn primary", onclick: exportDialog }, "Export"),
-    h("button", { class: "btn ghost mobile-only", "aria-label": "Properties", onclick: () => document.body.classList.toggle("show-right") }, icon("props")));
+// ---------------------------------------------------------------- the command registry
+//! Ribbon buttons, the Quick Access Toolbar, keyboard shortcuts and the
+//! right-click menu all name commands here — one registry, four surfaces.
+const tool = (id, label, ic, key, hint) => ({ label, icon: ic, key, hint, tool: id, run: () => app.setTool(id) });
+const COMMANDS = {
+  select: tool("select", "Modify", "select", "MD", "Click to select, Shift adds. Drag a window left→right to enclose, right→left to cross. Drag an element to move it. Middle-drag pans, Shift+middle-drag orbits in 3D, the wheel zooms, right-click for the menu."),
+  wall: tool("wall", "Wall", "wall", "WA", "Click points; the chain shares corners (joins) and lands on walls (T joins). Type a length + Enter. Enter ends, C closes, Esc cancels. Works in plan and in 3D."),
+  door: tool("door", "Door", "door", "DR", "Click a wall to place a door (plan or 3D)."),
+  window: tool("window", "Window", "window", "WN", "Click a wall to place a window (plan or 3D)."),
+  opening: tool("opening", "Wall Opening", "opening", "OP", "Click a wall: an opening with nothing in it."),
+  column: tool("column", "Column", "column", "CL", "Click to place (plan or 3D)."),
+  grid: tool("grid", "Grid", "grid", "GR", "Two clicks."),
+  space: tool("space", "Room", "room", "RM", "Click inside an enclosed area. The room keeps its name by this point."),
+  sep: tool("sep", "Room Separator", "sepline", "RS", "Two clicks: divides rooms where there is no wall."),
+  dim: tool("dim", "Aligned", "dim", "DI", "Click two parallel references: faces, centrelines, grids. It binds to them, not to points."),
+  text: tool("text", "Text", "text", "TX", "Click, type, Enter. Height is paper millimetres."),
+  elev: tool("elev", "Elevation", "elevview", "EL", "Two clicks: the marker line is the view."),
+  move: tool("move", "Move", "move", "MV", "Click a base point, then the destination (or type a distance + Enter)."),
+  copy: tool("copy", "Copy", "copy", "CO", "Click a base point, then where the copy goes."),
+  rotate: tool("rotate", "Rotate", "rotate", "RO", "Click the start of the angle, then its end (or type degrees + Enter)."),
+  mirror: tool("mirror", "Mirror", "mirror", "MM", "Click two points on the mirror axis."),
+  del: { label: "Delete", icon: "del", key: "DE", run: () => deleteSelection() },
+  undo: { label: "Undo", icon: "undo", run: () => { app.editor.undo(); app.refresh(); saveDraftSoon(); } },
+  redo: { label: "Redo", icon: "redo", run: () => { app.editor.redo(); app.refresh(); saveDraftSoon(); } },
+  default3d: { label: "Default 3D View", icon: "house", key: "3D", run: () => { ensureDefault3D(app.doc); app.openView(default3D()); } },
+  planview: { label: "Plan View", icon: "plan", run: () => newPlanView() },
+  level: { label: "Level", icon: "level", key: "LL", run: () => newLevel() },
+  schedule: { label: "Schedule", icon: "schedule", run: () => newSchedule() },
+  sheet: { label: "Sheet", icon: "sheet", run: () => newSheet() },
+  vv: { label: "Visibility/ Graphics", icon: "vv", key: "VV", run: () => { const v = app.doc.element(app.activeView); if (v && ["PlanView", "ElevationView", "View3D"].includes(app.doc.typeOf(v))) vvDialog(app, app.activeView); else app.say("open a plan, elevation or 3D view first", "note"); } },
+  thin: { label: "Thin Lines", icon: "thin", key: "TL", active: () => app.thinLines, run: () => { app.thinLines = !app.thinLines; app.refresh({ keepMain: true }); } },
+  zoomfit: { label: "Zoom to Fit", icon: "fit", key: "ZF", run: () => { const v = app.views.get(app.activeView); if (v && v.fit) v.fit(); } },
+  graph: { label: "Node Graph", icon: "graph", run: () => app.openView("__graph") },
+  tree: { label: "Feature Tree", icon: "tree", run: () => app.openView("__tree") },
+  tests: { label: "Acceptance Tests", icon: "tests", run: () => app.openView("__diag") },
+  closehidden: { label: "Close Inactive", icon: "close", run: () => { app.tabs = app.tabs.filter(t => t === app.activeView); app.refresh(); } },
+  edittype: { label: "Edit Type", icon: "edittype", run: () => { const t = selectedType(); if (t) typeEditor(app, t); else app.say("select an element with a type", "note"); } },
+  props: { label: "Properties", icon: "props", key: "PP", active: () => !document.body.classList.contains("hide-props"), run: () => document.body.classList.toggle("hide-props") },
+  pens: { label: "Object Styles & Pens", icon: "pens", run: () => { const v = app.activeView && app.doc.element(app.activeView); vvDialog(app, v && ["PlanView", "ElevationView", "View3D"].includes(app.doc.typeOf(v)) ? app.activeView : firstOf("PlanView")); } },
+  projectinfo: { label: "Project Information", icon: "info", run: () => projectInfo() },
+  open: { label: "Open…", icon: "open", run: () => openFile() },
+  save: { label: "Save", icon: "save", key: "", run: () => saveModel() },
+  importdxf: { label: "Import DXF Symbol", icon: "importI", run: () => importDXF() },
+  placesymbol: { label: "Symbol", icon: "symbol", run: () => placeSymbol(Object.keys(app.doc.lib.symbols).find(k => app.doc.lib.symbols[k].source) || "SY-NORTH") },
+  export: { label: "Export", icon: "exportI", run: () => exportDialog() },
+  selectall: { label: "Select All Instances", icon: "select", key: "SA", run: () => selectAllInstances() },
+  flip: { label: "Flip", icon: "mirror", run: () => { for (const id of app.selection) { const f = app.doc.element(id); if (f && app.doc.typeOf(f) === "Wall") app.apply({ op: "set", id, key: "flipped", value: !F.bool(f, "flipped") }); if (f && app.doc.typeOf(f) === "Door") app.apply({ op: "set", id, key: "flipFacing", value: !F.bool(f, "flipFacing") }); } } },
+};
+function selectedType() { for (const id of app.selection) { const f = app.doc.element(id); if (!f) continue; const k = ["wallType", "doorType", "windowType", "columnType"].find(k => F.refId(f, k)); if (k) return F.refId(f, k); } return null; }
+app.setTool = k => {
+  if (!canUseTool(k)) { if (PLACE_TOOLS.has(k) || MODIFY_TOOLS.has(k)) { const plan = firstOf("PlanView"); if (plan) app.openView(plan); } }
+  if (PLACE_TOOLS.has(k)) app.selection.clear(); // placing starts from a clean selection, as in Revit
+  app.tool = k; app.pickMode = null; app.lastCommand = k !== "select" ? k : app.lastCommand;
+  const v = app.views.get(app.activeView); if (v && v.tool) { v.tool.pts = []; v.tool.refs = []; v.tool.preview = null; v.tool.ghost = null; v.tool.centre = null; }
+  if (k !== "select" && app.ribbonTab === "__context" && !MODIFY_TOOLS.has(k)) { app.ribbonTab = app.ribbonAuto || "Architecture"; }
+  app.refresh({ keepMain: true });
+  app.say((COMMANDS[k] && COMMANDS[k].hint) || "", "note");
+};
+app.run = id => { const c = COMMANDS[id]; if (!c) return; closeMenus(); c.run(); if (!c.tool && id !== "undo" && id !== "redo") app.lastCommand = id; };
+
+// ---------------------------------------------------------------- the ribbon
+const big = id => ({ id, size: "big" }), small = id => ({ id, size: "small" });
+const RIBBON = [
+  { tab: "Architecture", panels: [
+    { title: "Build", items: [big("wall"), big("door"), big("window"), big("column")] },
+    { title: "Opening", items: [big("opening")] },
+    { title: "Room & Area", items: [big("space"), small("sep"), small("schedule")] },
+    { title: "Datum", items: [big("level"), big("grid")] },
+  ] },
+  { tab: "Structure", panels: [
+    { title: "Structure", items: [big("column"), big("wall")] },
+    { title: "Datum", items: [big("grid"), big("level")] },
+  ] },
+  { tab: "Insert", panels: [
+    { title: "Import", items: [big("importdxf"), big("open")] },
+    { title: "Load from Library", items: [big("placesymbol")] },
+  ] },
+  { tab: "Annotate", panels: [
+    { title: "Dimension", items: [big("dim")] },
+    { title: "Text", items: [big("text")] },
+    { title: "Symbol", items: [big("placesymbol")] },
+  ] },
+  { tab: "View", panels: [
+    { title: "Graphics", items: [big("vv"), small("thin"), small("zoomfit")] },
+    { title: "Create", items: [big("default3d"), small("planview"), small("elev"), small("schedule"), big("sheet")] },
+    { title: "Windows", items: [small("graph"), small("tree"), small("closehidden")] },
+  ] },
+  { tab: "Manage", panels: [
+    { title: "Settings", items: [big("pens"), big("projectinfo")] },
+    { title: "Inquiry", items: [big("tests")] },
+  ] },
+  { tab: "Modify", panels: [
+    { title: "Select", items: [big("select")] },
+    { title: "Properties", items: [big("props"), big("edittype")] },
+    { title: "Modify", items: [small("move"), small("copy"), small("rotate"), small("mirror"), small("del"), small("selectall")] },
+    { title: "View", items: [small("zoomfit"), small("thin")] },
+  ] },
+];
+function contextTab() {
+  const els = [...app.selection].map(id => app.doc.element(id)).filter(Boolean);
+  if (!els.length) return null;
+  const cats = [...new Set(els.map(f => (app.doc.lib.categories[categoryOf(app.doc, f)] || {}).name || app.doc.typeOf(f)))];
+  const hasWall = els.some(f => ["Wall", "Door"].includes(app.doc.typeOf(f)));
+  return { tab: "__context", label: `Modify | ${cats.length === 1 ? cats[0] : "Multi-Select"}`, panels: [
+    { title: "Properties", items: [big("props"), big("edittype")] },
+    { title: "Modify", items: [big("move"), big("copy"), big("rotate"), big("mirror"), big("del")] },
+    ...(hasWall ? [{ title: "Mode", items: [big("flip")] }] : []),
+    { title: "Select", items: [small("selectall"), small("select")] },
+  ] };
+}
+function renderRibbon() {
+  const root = clear(document.getElementById("ribbon"));
+  const ctx = contextTab();
+  if (app.ribbonTab === "__context" && !ctx) app.ribbonTab = app.ribbonAuto || "Architecture";
+  const tabs = h("div", { class: "rtabs", role: "tablist" },
+    h("button", { class: "rtab file", onclick: e => fileMenu(e.currentTarget) }, "File"),
+    RIBBON.map(t => h("button", { class: "rtab", role: "tab", "aria-selected": String(app.ribbonTab === t.tab), onclick: () => { app.ribbonTab = t.tab; app.ribbonAuto = null; renderRibbon(); }, ondblclick: () => { app.ribbonCollapsed = !app.ribbonCollapsed; renderRibbon(); } }, t.tab)),
+    ctx ? h("button", { class: "rtab context", role: "tab", "aria-selected": String(app.ribbonTab === "__context"), onclick: () => { app.ribbonTab = "__context"; renderRibbon(); } }, ctx.label) : null,
+    h("span", { class: "grow" }),
+    h("button", { class: "rtab mini", title: app.ribbonCollapsed ? "Show the ribbon" : "Minimise the ribbon", "aria-label": "Toggle ribbon", onclick: () => { app.ribbonCollapsed = !app.ribbonCollapsed; renderRibbon(); } }, app.ribbonCollapsed ? "▾" : "▴"));
+  root.append(tabs);
+  if (app.ribbonCollapsed) { root.classList.add("collapsed"); return; }
+  root.classList.remove("collapsed");
+  const def = app.ribbonTab === "__context" ? ctx : RIBBON.find(t => t.tab === app.ribbonTab) || RIBBON[0];
+  const strip = h("div", { class: "rpanels" });
+  for (const p of def.panels) {
+    const body = h("div", { class: "rpbody" });
+    let smalls = null;
+    for (const it of p.items) {
+      const c = COMMANDS[it.id]; if (!c) continue;
+      const on = (c.tool && app.tool === c.tool) || (c.active && c.active());
+      const title = `${c.label}${c.key ? ` (${c.key})` : ""}${c.hint ? "\n" + c.hint : ""}`;
+      if (it.size === "big") { smalls = null; body.append(h("button", { class: "rbig", "aria-pressed": String(!!on), title, onclick: () => app.run(it.id) }, icon(c.icon, 30), h("span", {}, c.label))); }
+      else { if (!smalls || smalls.children.length >= 3) { smalls = h("div", { class: "rsmallcol" }); body.append(smalls); } smalls.append(h("button", { class: "rsmall", "aria-pressed": String(!!on), title, onclick: () => app.run(it.id) }, icon(c.icon, 16), h("span", {}, c.label))); }
+    }
+    strip.append(h("div", { class: "rpanel" }, body, h("div", { class: "rptitle" }, p.title)));
+  }
+  root.append(strip);
+}
+function renderQAT() {
+  const q = clear(document.getElementById("qat"));
+  const b = (id, ic) => h("button", { class: "qbtn", title: COMMANDS[id].label + (COMMANDS[id].key ? ` (${COMMANDS[id].key})` : ""), "aria-label": COMMANDS[id].label, disabled: (id === "undo" && !app.editor.undoStack.length) || (id === "redo" && !app.editor.redoStack.length), onclick: () => app.run(id) }, icon(ic || COMMANDS[id].icon, 16));
+  const v = app.activeView && app.doc.element(app.activeView);
+  const viewName = v ? `${{ PlanView: "Floor Plan", ElevationView: "Elevation", View3D: "3D View", Schedule: "Schedule", Sheet: "Sheet" }[app.doc.typeOf(v)]}: ${v.get("Name")}` : app.activeView === "__graph" ? "Node Graph" : app.activeView === "__tree" ? "Feature Tree" : app.activeView === "__diag" ? "Acceptance Tests" : "";
+  q.append(
+    h("button", { class: "qbtn mobile-only", "aria-label": "Palettes", onclick: () => document.body.classList.toggle("show-left") }, icon("menu", 16)),
+    h("div", { class: "logo", title: "Web BIM" }, "B"),
+    b("open"), b("save"), h("span", { class: "qsep" }), b("undo"), b("redo"), h("span", { class: "qsep" }),
+    b("dim"), b("text"), h("span", { class: "qsep" }), b("default3d"), b("elev"), b("thin"), b("closehidden"),
+    h("div", { class: "qtitle" }, h("b", {}, app.doc.meta.name), viewName ? " — " + viewName : ""),
+    h("button", { class: "qbtn", title: "Export (PDF set, DXF)", "aria-label": "Export", onclick: () => exportDialog() }, icon("exportI", 16)));
+}
+function renderOptionsBar() {
+  const bar = clear(document.getElementById("options"));
+  const o = app.toolOpts, doc = app.doc, t = app.tool;
+  const typesOf = cat => Object.entries(doc.lib.types).filter(([id]) => (doc.resolveType(id) || {}).category === cat);
+  const sel = (key, opts, label) => h("label", {}, label + " ", h("select", { onchange: e => { o[key] = e.target.value; } }, opts.map(([v, l]) => h("option", { value: v, selected: o[key] === v }, l))));
+  const num = (key, label) => h("label", {}, label + " ", h("input", { type: "text", value: o[key], style: { width: "64px" }, onchange: e => { o[key] = Number(e.target.value); } }));
+  const chk = (key, label) => h("label", {}, h("input", { type: "checkbox", checked: !!o[key], onchange: e => { o[key] = e.target.checked; } }), " " + label);
+  const els = [...app.selection].filter(id => doc.element(id));
+  let title, kids = [];
+  if (app.pickMode) { title = `Bind ${app.pickMode.label}`; kids = [h("span", {}, "Click an element in the view"), h("button", { class: "btn small", onclick: app.endPick }, "Cancel")]; }
+  else if (t === "select") { title = els.length ? `Modify | ${els.length} selected` : "Modify"; kids = els.length ? [h("span", { class: "muted" }, "Drag to move · MV CO RO MM · DE deletes · Esc clears")] : [h("span", { class: "muted" }, "Pick elements, or window-select by dragging on empty space")]; }
+  else {
+    title = `Modify | Place ${COMMANDS[t] ? COMMANDS[t].label : t}`;
+    if (t === "wall") kids = [sel("wallType", typesOf("IfcWall").map(([id, x]) => [id, x.name]), "Type:"), sel("mounting", ["Centred", "Core centre", "Core exterior", "Core interior", "Finish exterior", "Finish interior"].map(x => [x, x]), "Location Line:"), num("height", "Height:"), levelPicker()];
+    if (t === "door") kids = [sel("doorType", typesOf("IfcDoor").map(([id, x]) => [id, x.name]), "Type:")];
+    if (t === "window") kids = [sel("windowType", typesOf("IfcWindow").map(([id, x]) => [id, x.name]), "Type:"), num("sill", "Sill Height:")];
+    if (t === "opening") kids = [num("width", "Width:"), num("height_", "Height:"), num("openSill", "Sill:")];
+    if (t === "column") kids = [sel("columnType", typesOf("IfcColumn").map(([id, x]) => [id, x.name]), "Type:"), levelPicker()];
+    if (t === "space") kids = [h("label", {}, "Name: ", h("input", { type: "text", value: o.spaceName, style: { width: "110px" }, onchange: e => { o.spaceName = e.target.value; } })), sel("boundaryAt", [["finishFace", "Finish face (net)"], ["coreFace", "Core face"], ["coreCentre", "Core centre"], ["wallCentre", "Wall centre (gross)"]], "Boundary:")];
+    if (t === "move") kids = [chk("moveCopy", "Copy")];
+    if (t === "rotate") kids = [chk("rotateCopy", "Copy"), h("span", { class: "muted" }, "rotates about the selection's centre")];
+    if (t === "mirror") kids = [chk("mirrorCopy", "Copy")];
+    kids.push(h("button", { class: "btn small", onclick: () => app.setTool("select") }, "Finish ✓"));
+  }
+  bar.append(h("span", { class: "otitle" }, title), ...kids);
+}
+function levelPicker() {
+  const lv = app.doc.elements().filter(f => app.doc.typeOf(f) === "Level");
+  return h("label", {}, "Level: ", h("select", { onchange: e => { app.workLevel = e.target.value; } }, lv.map(f => h("option", { value: app.doc.idOf(f), selected: app.workLevel === app.doc.idOf(f) }, F.text(f, "name")))));
+}
+let openMenu = null;
+function closeMenus() { if (openMenu) { openMenu.remove(); openMenu = null; } }
+function menuAt(x, y, items) {
+  closeMenus();
+  const m = h("div", { class: "cmenu", role: "menu", style: { left: Math.min(x, window.innerWidth - 240) + "px", top: Math.min(y, window.innerHeight - items.length * 30 - 10) + "px" } },
+    items.map(it => it === "-" ? h("div", { class: "csep" }) : h("button", { role: "menuitem", disabled: it.disabled, onclick: () => { closeMenus(); it.run(); } }, it.icon ? icon(it.icon, 16) : h("span", { style: { width: "16px" } }), h("span", {}, it.label), it.key ? h("span", { class: "ck" }, it.key) : null)));
+  document.body.append(m); openMenu = m;
+  setTimeout(() => window.addEventListener("pointerdown", ev => { if (!m.contains(ev.target)) closeMenus(); }, { once: true }), 0);
+}
+/** Right-click: the Revit context menu. */
+app.contextMenu = (e) => {
+  const items = [];
+  const c = id => ({ label: COMMANDS[id].label, icon: COMMANDS[id].icon, key: COMMANDS[id].key, run: () => app.run(id) });
+  items.push({ label: "Cancel", run: () => { app.setTool("select"); app.select([]); } });
+  if (app.lastCommand && COMMANDS[app.lastCommand]) items.push({ label: `Repeat [${COMMANDS[app.lastCommand].label}]`, icon: COMMANDS[app.lastCommand].icon, run: () => app.run(app.lastCommand) });
+  items.push("-");
+  if (app.selection.size) items.push(c("selectall"), c("edittype"), c("move"), c("copy"), c("rotate"), c("mirror"), c("del"), "-");
+  items.push(c("zoomfit"), c("default3d"), c("props"));
+  menuAt(e.clientX, e.clientY, items);
+};
+function fileMenu(anchor) {
+  const r = anchor.getBoundingClientRect();
+  menuAt(r.left, r.bottom, [
+    { label: "New", icon: "sheet", run: () => newEmpty() }, { label: "Open…", icon: "open", run: () => openFile() }, { label: "Save", icon: "save", run: () => saveModel() },
+    "-", { label: "Export…", icon: "exportI", run: () => exportDialog() }, { label: "Import DXF Symbol…", icon: "importI", run: () => importDXF() },
+    "-", { label: "Project Information…", icon: "info", run: () => projectInfo() }, { label: "Reset to Sample Project", icon: "house", run: () => { forget("draft-v2"); forget("tabs"); setDocument(buildSample(), { msg: "Sample project loaded", kind: "ok" }); } },
+  ]);
 }
 
-// ---------------------------------------------------------------- left dock
-function renderLeft() {
-  const left = clear(document.getElementById("left"));
-  const tabs = h("div", { class: "dock-tabs", role: "tablist" },
-    [["project", "Project"], ["tree", "Feature tree"]].map(([k, l]) => h("button", { role: "tab", "aria-selected": String(app.leftTab === k), onclick: () => { app.leftTab = k; renderLeft(); } }, l)));
-  const body = h("div", { class: "dock-body" });
-  left.append(tabs, body);
-  if (app.leftTab === "project") renderBrowser(body); else renderTree(body);
+// ---------------------------------------------------------------- palettes: Properties over the Project Browser
+function renderPalettes() {
+  const leftEl = document.getElementById("left");
+  // keep the browser where it was scrolled: a click re-renders it
+  const keep = [...leftEl.querySelectorAll(".palette")].map(p => [p.classList.contains("browser") ? "browser" : "props", p.querySelector(".pbody") ? p.querySelector(".pbody").scrollTop : 0]);
+  const left = clear(leftEl);
+  const props = h("section", { class: "palette props" },
+    h("header", {}, h("span", {}, "Properties"), h("button", { class: "pclose", title: "Close (PP toggles)", "aria-label": "Close Properties", onclick: () => document.body.classList.add("hide-props") }, "✕")));
+  const pbody = h("div", { class: "pbody" }); props.append(pbody);
+  const vp = [...app.selection].find(id => id.includes(":VP"));
+  if (vp) renderViewportPanel(pbody, vp); else renderPanel(app, pbody);
+  const browser = h("section", { class: "palette browser" },
+    h("header", {}, h("span", {}, app.browserTab === "browser" ? `Project Browser - ${app.doc.meta.name}` : "Feature Tree"),
+      h("div", { class: "ptabs" }, h("button", { "aria-pressed": String(app.browserTab === "browser"), onclick: () => { app.browserTab = "browser"; renderPalettes(); } }, "Views"), h("button", { "aria-pressed": String(app.browserTab === "tree"), onclick: () => { app.browserTab = "tree"; renderPalettes(); } }, "Tree"))));
+  const bbody = h("div", { class: "pbody" }); browser.append(bbody);
+  if (app.browserTab === "browser") renderBrowser(bbody); else renderTree(bbody);
+  left.append(props, h("div", { class: "psplit", role: "separator", "aria-label": "Resize palettes", onpointerdown: splitDrag }), browser);
+  const was = Object.fromEntries(keep);
+  if (was.browser) bbody.scrollTop = was.browser;
+  const selKey = [...app.selection].join(",");
+  if (was.props && selKey === renderPalettes.selKey) pbody.scrollTop = was.props;
+  renderPalettes.selKey = selKey;
+}
+function splitDrag(e) {
+  const left = document.getElementById("left"), r = left.getBoundingClientRect();
+  e.target.setPointerCapture(e.pointerId);
+  const mv = ev => { const f = Math.max(0.2, Math.min(0.8, (ev.clientY - r.top) / r.height)); left.style.setProperty("--split", (f * 100).toFixed(1) + "%"); store("split", f); };
+  e.target.addEventListener("pointermove", mv);
+  e.target.addEventListener("pointerup", () => e.target.removeEventListener("pointermove", mv), { once: true });
+}
+// a click re-renders the palette, so the row a double-click started on is gone before
+// the browser's dblclick: detect the second click ourselves, by row key and time
+let lastRowClick = { key: null, t: 0 };
+function rowClick(key, single, dbl) {
+  const now = performance.now();
+  if (dbl && lastRowClick.key === key && now - lastRowClick.t < 500) { lastRowClick = { key: null, t: 0 }; dbl(); return; }
+  lastRowClick = { key, t: now }; if (single) single();
 }
 function node(label, kids, opts = {}) {
-  const open = app.expanded.has(opts.key || label);
+  const key = opts.key || label, open = app.expanded.has(key);
+  const toggle = () => { if (app.expanded.has(key)) app.expanded.delete(key); else app.expanded.add(key); renderPalettes(); };
   const li = h("li");
-  const row = h("div", { class: "row" + (opts.sel ? " sel" : ""), draggable: opts.drag ? "true" : null, ondragstart: opts.drag ? (e => e.dataTransfer.setData("text/x-webbim-view", opts.drag)) : null,
-    onclick: opts.onclick || (kids ? () => { const k = opts.key || label; if (app.expanded.has(k)) app.expanded.delete(k); else app.expanded.add(k); renderLeft(); } : null), ondblclick: opts.ondbl },
-    h("button", { class: "fold", tabindex: -1, "aria-label": open ? "Fold" : "Unfold", onclick: e => { e.stopPropagation(); const k = opts.key || label; if (app.expanded.has(k)) app.expanded.delete(k); else app.expanded.add(k); renderLeft(); } }, kids ? (open ? "−" : "+") : ""),
-    opts.dot ? h("span", { class: "dot " + opts.dot, title: opts.dotTitle || "" }) : null,
-    h("span", { class: "lab" + (opts.head ? " head" : "") }, label), opts.count !== undefined ? h("span", { class: "count" }, opts.count) : null, opts.extra || null, opts.id ? h("span", { class: "id" }, opts.id) : null);
+  const row = h("div", { class: "row" + (opts.sel ? " sel" : "") + (opts.active ? " active" : ""), draggable: opts.drag ? "true" : null, tabindex: 0,
+    ondragstart: opts.drag ? (e => { e.dataTransfer.setData("text/x-webbim-view", opts.drag); e.dataTransfer.effectAllowed = "copy"; app.say("Drop it on a sheet: the viewport is centred where you let go", "note"); }) : null,
+    onclick: () => rowClick(key, opts.onclick || (kids ? toggle : null), opts.ondbl),
+    onkeydown: e => { if (e.key === "Enter") (opts.ondbl || opts.onclick || toggle)(); } },
+    h("button", { class: "fold", tabindex: -1, "aria-label": open ? "Collapse" : "Expand", onclick: e => { e.stopPropagation(); toggle(); } }, kids ? (open ? "−" : "+") : ""),
+    opts.ic ? icon(opts.ic, 14) : null,
+    h("span", { class: "lab" + (opts.head ? " head" : "") }, label), opts.extra || null);
   li.append(row);
   if (kids && (open || app.treeFilter)) li.append(h("ul", {}, kids));
   return li;
@@ -8128,71 +9154,54 @@ function node(label, kids, opts = {}) {
 function renderBrowser(body) {
   const doc = app.doc, els = doc.elements();
   const byType = t => els.filter(f => doc.typeOf(f) === t);
-  const viewRow = f => node(f.get("Name"), null, { id: doc.idOf(f), sel: app.activeView === doc.idOf(f), onclick: () => app.openView(doc.idOf(f)), drag: doc.idOf(f),
-    extra: placedChip(doc.idOf(f)) });
   const placed = new Map(); for (const sh of byType("Sheet")) for (const vp of doc.argValue(sh, "viewports") || []) placed.set(vp.view.ref, doc.argValue(sh, "number"));
-  function placedChip(id) { return placed.has(id) ? h("span", { class: "chip", title: "placed on sheet" }, placed.get(id)) : null; }
+  // single click selects the view (its properties show above); double-click opens it; drag it onto a sheet
+  const viewRow = (f, ic) => { const id = doc.idOf(f); return node(f.get("Name"), null, { key: "view:" + id, ic, sel: app.selection.has(id), active: app.activeView === id, drag: id,
+    onclick: () => app.select([id]), ondbl: () => app.openView(id),
+    extra: placed.has(id) ? h("span", { class: "chip", title: "placed on sheet" }, placed.get(id)) : null }); };
   const tree = h("ul", { class: "tree" });
-  tree.append(node("Views", [
-    node("Floor plans", byType("PlanView").map(viewRow), { count: byType("PlanView").length, extra: h("button", { class: "iconbtn", title: "New plan view", "aria-label": "New plan view", onclick: e => { e.stopPropagation(); newPlanView(); } }, "+") }),
-    node("Elevations", byType("ElevationView").map(viewRow), { count: byType("ElevationView").length }),
-    node("3D views", byType("View3D").map(viewRow), { count: byType("View3D").length }),
-    node("Schedules", byType("Schedule").map(viewRow), { count: byType("Schedule").length }),
+  tree.append(node("Views (all)", [
+    node("Floor Plans", byType("PlanView").map(f => viewRow(f, "plan"))),
+    node("3D Views", byType("View3D").map(f => viewRow(f, "view3d"))),
+    node("Elevations (Building Elevation)", byType("ElevationView").map(f => viewRow(f, "elevview"))),
   ], { head: true }));
-  tree.append(node("Sheets", byType("Sheet").sort((a, b) => String(doc.argValue(a, "number")).localeCompare(doc.argValue(b, "number"))).map(f => node(`${doc.argValue(f, "number")} ${doc.argValue(f, "sheetName")}`, null, { sel: app.activeView === doc.idOf(f), onclick: () => app.openView(doc.idOf(f)) })),
-    { head: true, count: byType("Sheet").length, extra: h("button", { class: "iconbtn", title: "New sheet", "aria-label": "New sheet", onclick: e => { e.stopPropagation(); newSheet(); } }, "+") }));
-  tree.append(node("Levels", byType("Level").map(f => node(`${F.text(f, "name")}  ${fmtLen(F.real(f, "elevation"))}`, null, { id: doc.idOf(f), sel: app.selection.has(doc.idOf(f)), onclick: () => app.select([doc.idOf(f)]) })), { head: true, count: byType("Level").length }));
-  // families as classes: the extends chain, types at the leaves
+  tree.append(node("Schedules/Quantities (all)", byType("Schedule").map(f => viewRow(f, "schedule")), { head: true }));
+  tree.append(node("Sheets (all)", byType("Sheet").sort((a, b) => String(doc.argValue(a, "number")).localeCompare(doc.argValue(b, "number"))).map(f => { const id = doc.idOf(f); return node(`${doc.argValue(f, "number")} - ${doc.argValue(f, "sheetName")}`, null, { key: "view:" + id, ic: "sheet", sel: app.selection.has(id), active: app.activeView === id, onclick: () => app.select([id]), ondbl: () => app.openView(id) }); }), { head: true }));
   const fams = doc.lib.families, roots = Object.keys(fams).filter(k => !fams[k].extends);
-  const famNode = id => node(fams[id].name + (fams[id].sealed ? " (system)" : ""), [
+  const famNode = id => node(fams[id].name, [
     ...Object.keys(fams).filter(k => fams[k].extends === id).map(famNode),
-    ...Object.entries(doc.lib.types).filter(([, t]) => t.family === id).map(([tid, t]) => node(t.name || tid, null, { id: tid, onclick: () => typeEditor(app, tid) })),
+    ...Object.entries(doc.lib.types).filter(([, t]) => t.family === id).map(([tid, t]) => node(t.name || tid, null, { onclick: () => { const k = { IfcWall: "wallType", IfcDoor: "doorType", IfcWindow: "windowType", IfcColumn: "columnType" }[(doc.resolveType(tid) || {}).category]; if (k) app.toolOpts[k] = tid; }, ondbl: () => typeEditor(app, tid) })),
   ], { key: "fam:" + id });
-  tree.append(node("Families & types", roots.map(famNode), { head: true, key: "Families" }));
-  tree.append(node("View styles", Object.entries(doc.lib.viewStyles).map(([id, s]) => node(s.name || id, null, { id, onclick: () => { const v = app.activeView && doc.element(app.activeView); if (v && F.refId(v, "style") === id) vvDialog(app, app.activeView); else app.say(`Open a view that uses ${s.name} and press Visibility / Graphics`, "note"); } })), { head: true, key: "Styles" }));
+  tree.append(node("Families", roots.map(r => node((doc.lib.categories[fams[r].category] || {}).name || fams[r].category, [famNode(r)], { key: "cat:" + r })), { head: true }));
+  tree.append(node("Levels", byType("Level").map(f => node(`${F.text(f, "name")} (${fmtLen(F.real(f, "elevation"))})`, null, { ic: "level", sel: app.selection.has(doc.idOf(f)), onclick: () => app.select([doc.idOf(f)]) })), { head: true }));
   tree.append(node("Relationships", [
-    node("Joins", doc.joins.map(j => node(`${j.a.of}.${j.a.end} ⟷ ${j.b.of}${j.b.end ? "." + j.b.end : " @ " + Math.round(j.b.u)}`, null, { id: j.id, extra: h("span", { class: "chip" }, j.allowed === false ? "off" : j.kind || "auto"), onclick: () => app.select([j.a.of, j.b.of]) })), { count: doc.joins.length }),
-    node("Constraints", doc.constraints.map(c => node(`${c.kind} ${c.value ?? ""}`, null, { id: c.id, extra: h("button", { class: "iconbtn", title: c.locked === false ? "Enable" : "Disable", "aria-label": `Toggle ${c.id}`, onclick: e => { e.stopPropagation(); app.apply({ op: "relate", store: "constraints", row: Object.assign({}, c, { locked: c.locked === false }) }); } }, c.locked === false ? icon("unlock") : icon("lock")),
-      onclick: () => app.select(c.of.map(r => r.split(":")[0]).filter(id => doc.element(id))) })), { count: doc.constraints.length }),
-  ], { head: true, key: "Relationships" }));
-  tree.append(node("Symbols", Object.entries(doc.lib.symbols).map(([id, s]) => node(s.name || id, null, { id, extra: s.source ? h("button", { class: "btn small", onclick: e => { e.stopPropagation(); placeSymbol(id); } }, "Place") : null })), { head: true, extra: h("button", { class: "iconbtn", title: "Import a DXF symbol", "aria-label": "Import DXF symbol", onclick: e => { e.stopPropagation(); importDXF(); } }, "+") }));
-  tree.append(node("Node graph", null, { head: true, onclick: () => app.openView("__graph"), sel: app.activeView === "__graph" }));
-  tree.append(node("Diagnostics & acceptance tests", null, { head: true, onclick: () => app.openView("__diag"), sel: app.activeView === "__diag" }));
+    node("Joins", doc.joins.map(j => node(`${j.a.of}.${j.a.end} ⟷ ${j.b.of}${j.b.end ? "." + j.b.end : " @ " + Math.round(j.b.u)}`, null, { onclick: () => app.select([j.a.of, j.b.of]) }))),
+    node("Constraints", doc.constraints.map(c => node(`${c.id} ${c.kind} ${c.value ?? ""}${c.locked === false ? " (off)" : ""}`, null, { onclick: () => app.select(c.of.map(r => r.split(":")[0]).filter(id => doc.element(id))),
+      extra: h("button", { class: "iconbtn", title: c.locked === false ? "Enable" : "Disable", "aria-label": `Toggle ${c.id}`, onclick: e => { e.stopPropagation(); app.apply({ op: "relate", store: "constraints", row: Object.assign({}, c, { locked: c.locked === false }) }); } }, icon(c.locked === false ? "unlock" : "lock", 14)) }))),
+  ], { head: true }));
   body.append(tree);
 }
 function renderTree(body) {
-  const doc = app.doc;
-  const q = app.treeFilter.toLowerCase();
-  const input = h("input", { type: "search", placeholder: "Search the tree", value: app.treeFilter, "aria-label": "Search the feature tree", oninput: e => { app.treeFilter = e.target.value; const pos = e.target.selectionStart; renderLeft(); const i = document.querySelector(".left .search input"); if (i) { i.focus(); i.setSelectionRange(pos, pos); } } });
+  const doc = app.doc, q = app.treeFilter.toLowerCase();
+  const input = h("input", { type: "search", placeholder: "Search", value: app.treeFilter, "aria-label": "Search the feature tree", oninput: e => { app.treeFilter = e.target.value; const pos = e.target.selectionStart; renderPalettes(); const i = document.querySelector(".browser .search input"); if (i) { i.focus(); i.setSelectionRange(pos, pos); } } });
   body.append(h("div", { class: "search" }, input));
   const ul = h("ul", { class: "tree" });
   for (const f of doc.elements()) {
     const id = doc.idOf(f), name = f.get("Name"), t = doc.typeOf(f);
     if (q && !(`${name} ${id} ${t}`.toLowerCase().includes(q))) continue;
     const err = doc.error(f), note = doc.note(f);
-    const eye = h("button", { class: "eye", "aria-pressed": String(f.get("Integer") !== 0), "aria-label": `Toggle visibility of ${id}`, title: "visible", onclick: e => { e.stopPropagation(); app.apply({ op: "set", id, key: "visible", value: f.get("Integer") === 0 }); } }, "◉");
-    ul.append(h("li", {}, h("div", { class: "row" + (app.selection.has(id) ? " sel" : ""), onclick: e => app.select([id], e.shiftKey || e.ctrlKey || e.metaKey), ondblclick: () => app.revealInView(id), title: err || note || CATALOGUE.get(t)?.summary || "" },
-      h("span", { class: "dot " + (err ? "err" : note ? "note" : "ok"), title: err || note || "built" }), eye,
+    ul.append(h("li", {}, h("div", { class: "row" + (app.selection.has(id) ? " sel" : ""), onclick: e => rowClick("el:" + id, () => app.select([id], e.shiftKey || e.ctrlKey || e.metaKey), () => app.revealInView(id)), title: err || note || (CATALOGUE.get(t) || {}).summary || "" },
+      h("span", { class: "dot " + (err ? "err" : note ? "note" : "ok") }),
+      h("button", { class: "eye", "aria-pressed": String(f.get("Integer") !== 0), "aria-label": `Toggle visibility of ${id}`, onclick: e => { e.stopPropagation(); app.apply({ op: "set", id, key: "visible", value: f.get("Integer") === 0 }); } }, "◉"),
       h("span", { class: "lab", style: f.get("Integer") === 0 ? { opacity: .5 } : {} }, name), h("span", { class: "id" }, `${t} · ${id}`))));
   }
   body.append(ul);
-}
-
-// ---------------------------------------------------------------- right dock
-function renderRight() {
-  const right = clear(document.getElementById("right"));
-  right.append(h("div", { class: "dock-tabs" }, h("button", { "aria-selected": "true" }, "Properties")));
-  const body = h("div", { class: "dock-body" });
-  right.append(body);
-  const vp = [...app.selection].find(id => id.includes(":VP"));
-  if (vp) return renderViewportPanel(body, vp);
-  renderPanel(app, body);
 }
 function renderViewportPanel(body, key) {
   const [shId, vpId] = key.split(":"), doc = app.doc, sh = doc.element(shId);
   const vp = (doc.argValue(sh, "viewports") || []).find(v => v.id === vpId); if (!vp) return;
   const view = doc.element(vp.view.ref);
-  body.append(h("div", { class: "pp" }, h("div", { class: "pp-head" }, h("div", { style: { fontWeight: 600, fontSize: "15px" } }, `Viewport ${vpId}`), h("div", { class: "muted" }, "A frame holding a view, not a copy of it. Scale and crop live on the view.")),
+  body.append(h("div", { class: "pp" }, h("div", { class: "pp-head" }, h("div", { style: { fontWeight: 600, fontSize: "14px" } }, `Viewport ${vpId}`), h("div", { class: "muted" }, "A frame holding a view, not a copy of it. Scale and crop live on the view.")),
     h("div", { class: "prow" }, h("label", {}, "View"), h("div", { class: "val" }, h("button", { class: "btn small", onclick: () => app.openView(vp.view.ref) }, view ? view.get("Name") : vp.view.ref))),
     h("div", { class: "prow" }, h("label", {}, "Position"), h("div", { class: "ro mono" }, `${fmtLen(vp.at[0])}, ${fmtLen(vp.at[1])} mm on paper`)),
     h("div", { class: "prow" }, h("label", { for: "vp-clip" }, "Show crop"), h("div", { class: "ro" }, h("input", { id: "vp-clip", type: "checkbox", checked: !!vp.clipVisible, onchange: e => app.apply({ op: "sheet", id: shId, viewport: vpId, value: { clipVisible: e.target.checked } }) }))),
@@ -8200,103 +9209,117 @@ function renderViewportPanel(body, key) {
     h("div", { style: { padding: "12px 14px" } }, h("button", { class: "btn", onclick: () => { app.apply({ op: "sheet", id: shId, viewport: vpId, remove: true }); app.select([]); app.say("Viewport removed; the view itself survives", "ok"); } }, "Remove from sheet"))));
 }
 
-// ---------------------------------------------------------------- main area
+// ---------------------------------------------------------------- the view area: document tabs, view, view control bar
 function renderMain() {
-  const main = document.getElementById("main");
-  clear(main);
-  const id = app.activeView, doc = app.doc;
-  if (!id) { main.append(h("div", { class: "empty", style: { maxWidth: "520px", margin: "60px auto" } }, h("h3", {}, "No view open"), "Open a plan, elevation, 3D view, schedule or sheet from the project browser.")); return; }
+  const area = clear(document.getElementById("main"));
+  const doc = app.doc;
+  const tabs = h("div", { class: "dtabs", role: "tablist" }, app.tabs.map(t => {
+    const f = doc.element(t), label = t === "__graph" ? "Node Graph" : t === "__diag" ? "Acceptance Tests" : t === "__tree" ? "Feature Tree" : f ? f.get("Name") : t;
+    const ic = t === "__graph" ? "graph" : t === "__diag" ? "tests" : t === "__tree" ? "tree" : { PlanView: "plan", View3D: "view3d", ElevationView: "elevview", Schedule: "schedule", Sheet: "sheet" }[f && doc.typeOf(f)];
+    return h("button", { class: "dtab", role: "tab", "aria-selected": String(t === app.activeView), onclick: () => app.openView(t), onauxclick: e => { if (e.button === 1) app.closeTab(t); } }, icon(ic, 14), h("span", {}, label),
+      h("span", { class: "x", role: "button", "aria-label": `Close ${label}`, onclick: e => { e.stopPropagation(); app.closeTab(t); } }, "✕"));
+  }));
+  const main = h("div", { class: "viewhost" });
+  const vcb = h("div", { class: "vcb", id: "vcb" });
+  area.append(tabs, main, vcb);
+  const id = app.activeView;
+  if (!id) { main.append(h("div", { class: "empty", style: { maxWidth: "520px", margin: "60px auto" } }, h("h3", {}, "No view open"), "Double-click a view in the Project Browser, or press the 3D house in the Quick Access Toolbar.")); return; }
   if (id === "__graph") { renderGraph(app, main, app.graphFocus); app.graphFocus = null; app.views.set(id, {}); return; }
   if (id === "__diag") { renderDiagnostics(main); app.views.set(id, {}); return; }
+  if (id === "__tree") { const b = h("div", { class: "sheetpane" }, h("div", { class: "doccard" }, h("header", {}, h("h2", {}, "Feature Tree"), h("span", { class: "muted" }, "construction order; ● built, ● note, ● error; double-click shows it")), h("div", { style: { padding: "0 0 10px" } }))); renderTree(b.querySelector(".doccard > div")); main.append(b); app.views.set(id, {}); return; }
   const v = doc.element(id); if (!v) { app.closeTab(id); return; }
   const t = doc.typeOf(v);
-  if (t === "Schedule") { renderSchedule(app, main, v); app.views.set(id, {}); return; }
-  if (t === "View3D" && app.mode3d[id] !== "lines") {
-    const view = new View3D(app, main, id);
-    app.views.set(id, view);
-    main.append(h("div", { class: "viewbar", style: { bottom: "auto", top: "10px" } }, h("div", { class: "card" }, h("div", { class: "seg" },
-      h("button", { "aria-pressed": "true" }, "Shaded"), h("button", { "aria-pressed": "false", onclick: () => { app.mode3d[id] = "lines"; renderMain(); } }, "Sheet line-work")))));
-    return;
-  }
+  if (t === "Schedule") { renderSchedule(app, main, v); app.views.set(id, {}); renderViewControl(); return; }
+  if (t === "View3D" && (app.visualStyle3d[id] || "Shaded") !== "Sheet Line-work") { const view = new View3D(app, main, id); app.views.set(id, view); renderViewControl(); return; }
   const prev = app.views.get(id);
   const view = new View2D(app, main, id);
   if (prev && prev.cam) view.cam = prev.cam;
   app.views.set(id, view);
   view.canvas.addEventListener("keydown", e => { if (view.key(e)) { e.preventDefault(); e.stopPropagation(); } });
-  if (t === "PlanView") main.append(rail(), toolOptions());
-  main.append(viewBar(v, t));
   view.draw();
-  if (t === "View3D") { const sc = deriveView(doc, v); if (sc.stale) main.append(h("div", { class: "stale" }, `Hidden-line ${sc.stale} — regenerate from the Shaded tab. Export refuses stale viewports.`)); }
+  if (t === "View3D") { const sc = deriveView(doc, v); if (sc.stale) main.append(h("div", { class: "stale" }, `Sheet line-work ${sc.stale} — use "Generate hidden-line" below. Export refuses stale viewports.`)); }
+  renderViewControl();
 }
-function viewBar(v, t) {
-  const doc = app.doc, id = doc.idOf(v);
-  const card = h("div", { class: "card" });
+/** The view control bar: scale, detail level, visual style, thin lines, crop, VV — at the foot of the view. */
+function renderViewControl() {
+  const bar = document.getElementById("vcb"); if (!bar) return; clear(bar);
+  const doc = app.doc, id = app.activeView, v = doc.element(id); if (!v) return;
+  const t = doc.typeOf(v);
+  const ib = (ic, title, on, run) => h("button", { class: "vbtn", title, "aria-label": title, "aria-pressed": on === undefined ? null : String(!!on), onclick: run }, icon(ic, 16));
+  if (["PlanView", "ElevationView", "View3D"].includes(t)) bar.append(h("select", { class: "vscale", "aria-label": "View scale", title: "View scale", onchange: e => app.apply({ op: "set", id, key: "scale", value: Number(e.target.value) }) }, [10, 20, 50, 100, 200, 500].map(s => h("option", { value: s, selected: F.int(v, "scale") === s }, "1 : " + s))));
   if (t === "PlanView" || t === "ElevationView") {
-    const styleId = F.refId(v, "style");
-    card.append(h("div", { class: "seg", role: "group", "aria-label": "View style" },
-      [["VS-CONSTRUCTION", "Construction"], ["VS-PRESENTATION", "Presentation"]].map(([sid, l]) => h("button", { "aria-pressed": String(styleId === sid), onclick: () => app.apply({ op: "set", id, key: "style", value: { ref: sid } }) }, l))));
-    card.append(h("div", { class: "seg", role: "group", "aria-label": "Detail level" }, ["Coarse", "Medium", "Fine"].map(d => h("button", { "aria-pressed": String(F.choice(v, "detailLevel") === d), onclick: () => app.apply({ op: "set", id, key: "detailLevel", value: d }) }, d))));
-    card.append(h("select", { "aria-label": "Scale", onchange: e => app.apply({ op: "set", id, key: "scale", value: Number(e.target.value) }) }, [10, 20, 50, 100, 200, 500].map(s => h("option", { value: s, selected: F.int(v, "scale") === s }, "1:" + s))));
-    if (t === "PlanView") card.append(h("select", { "aria-label": "Colour fill", title: "Colour-fill plan", onchange: e => { const ov = Object.assign({}, doc.argValue(v, "overrides") || {}); if (e.target.value) ov.__colourFill = e.target.value; else delete ov.__colourFill; app.apply({ op: "set", id, key: "overrides", value: ov }); } },
-      h("option", { value: "" }, "No colour fill"), ["Department", "Number", "Name"].map(k => h("option", { value: k, selected: (doc.argValue(v, "overrides") || {}).__colourFill === k }, "Fill by " + k))));
-    card.append(h("button", { class: "btn small", onclick: () => vvDialog(app, id) }, "VV"));
+    const dl = F.choice(v, "detailLevel");
+    bar.append(h("select", { class: "vsel", title: "Detail level", "aria-label": "Detail level", onchange: e => app.apply({ op: "set", id, key: "detailLevel", value: e.target.value }) }, ["Coarse", "Medium", "Fine"].map(d => h("option", { selected: dl === d }, d))));
+    const st = F.refId(v, "style");
+    bar.append(h("select", { class: "vsel", title: "View style", "aria-label": "View style", onchange: e => app.apply({ op: "set", id, key: "style", value: { ref: e.target.value } }) }, Object.entries(doc.lib.viewStyles).map(([k, s]) => h("option", { value: k, selected: k === st }, s.name))));
+    if (t === "PlanView") {
+      const clip = doc.argValue(v, "clip") || {};
+      bar.append(ib("fit", "Crop view", clip.active, () => app.apply({ op: "set", id, key: "clip", value: Object.assign({}, clip, { active: !clip.active, rect: clip.rect || [-5000, -5000, 20000, 15000] }) })));
+      bar.append(h("select", { class: "vsel", "aria-label": "Colour fill", title: "Colour-fill plan", onchange: e => { const ov = Object.assign({}, doc.argValue(v, "overrides") || {}); if (e.target.value) ov.__colourFill = e.target.value; else delete ov.__colourFill; app.apply({ op: "set", id, key: "overrides", value: ov }); } },
+        h("option", { value: "" }, "No colour fill"), ["Department", "Number", "Name"].map(k => h("option", { value: k, selected: (doc.argValue(v, "overrides") || {}).__colourFill === k }, "Fill by " + k))));
+    }
   }
-  if (t === "View3D") card.append(h("div", { class: "seg" }, h("button", { "aria-pressed": "false", onclick: () => { app.mode3d[id] = "shaded"; renderMain(); } }, "Shaded"), h("button", { "aria-pressed": "true" }, "Sheet line-work")));
-  card.append(h("button", { class: "btn small", title: "Thin lines (screen only — never exported)", "aria-pressed": String(app.thinLines), onclick: () => { app.thinLines = !app.thinLines; app.refresh({ keepMain: true }); } }, app.thinLines ? "Thin lines ✓" : "Thin lines"));
-  card.append(h("button", { class: "btn small", onclick: () => app.views.get(id).fit() }, "Fit"));
-  return h("div", { class: "viewbar" }, card);
-}
-function rail() {
-  return h("nav", { class: "rail", "aria-label": "Tools" }, TOOLS.map(([k, label, key]) => h("button", { "aria-pressed": String(app.tool === k), title: `${label} (${key})`, onclick: () => setTool(k) },
-    h("span", { html: "" }, icon(TOOL_ICON[k])), h("span", { class: "lbl" }, label), h("span", { class: "k lbl" }, key))));
-}
-function setTool(k) { app.tool = k; app.pickMode = null; const v = app.views.get(app.activeView); if (v && v.tool) { v.tool.pts = []; v.tool.refs = []; v.tool.preview = null; } app.refresh(); app.say(TOOL_HINT[k] || "", "note"); }
-const TOOL_HINT = {
-  select: "Click to select, Shift adds. Drag empty space to pan; wheel zooms. Handles write parameters.",
-  wall: "Click points; the chain shares nodes (L joins) and lands on centrelines (T joins, never splits). Type a length + Enter. Enter ends, C closes, Esc cancels.",
-  opening: "Click a wall: an opening with nothing in it — a doorway, a service hole.", door: "Click a wall: an opening, then a door filling it.", window: "Click a wall: an opening, then a window filling it.",
-  column: "Click to place.", grid: "Two clicks.", text: "Click, type, Enter. Height is paper millimetres.", dim: "Click two parallel references: faces, centrelines, grids. The dimension binds to them, not to points.",
-  space: "Click inside a room. The space keeps its identity by this anchor.", elev: "Two clicks: the marker line is the view.", sep: "Two clicks: divides rooms with no wall.",
-};
-function toolOptions() {
-  const o = app.toolOpts, doc = app.doc, tool = app.tool;
-  const typesOf = cat => Object.entries(doc.lib.types).filter(([id]) => (doc.resolveType(id) || {}).category === cat);
-  const sel = (key, opts, label) => h("label", {}, label + " ", h("select", { onchange: e => { o[key] = e.target.value; } }, opts.map(([v, l]) => h("option", { value: v, selected: o[key] === v }, l))));
-  const num = (key, label) => h("label", {}, label + " ", h("input", { type: "text", value: o[key], style: { width: "64px" }, onchange: e => { o[key] = Number(e.target.value); } }));
-  let kids = null;
-  if (tool === "wall") kids = [sel("wallType", typesOf("IfcWall").map(([id, t]) => [id, t.name]), "Type"), sel("mounting", ["Centred", "Core centre", "Core exterior", "Core interior", "Finish exterior", "Finish interior"].map(x => [x, x]), "Location"), num("height", "Height")];
-  if (tool === "door") kids = [sel("doorType", typesOf("IfcDoor").map(([id, t]) => [id, t.name]), "Type")];
-  if (tool === "window") kids = [sel("windowType", typesOf("IfcWindow").map(([id, t]) => [id, t.name]), "Type"), num("sill", "Sill")];
-  if (tool === "opening") kids = [num("width", "Width"), num("height_", "Height"), num("openSill", "Sill")];
-  if (tool === "column") kids = [sel("columnType", typesOf("IfcColumn").map(([id, t]) => [id, t.name]), "Type")];
-  if (tool === "space") kids = [h("label", {}, "Name ", h("input", { type: "text", value: o.spaceName, style: { width: "110px" }, onchange: e => { o.spaceName = e.target.value; } })), sel("boundaryAt", [["finishFace", "Finish face (net)"], ["coreFace", "Core face"], ["coreCentre", "Core centre"], ["wallCentre", "Wall centre (gross)"]], "Boundary")];
-  if (app.pickMode) kids = [h("span", {}, `Binding ${app.pickMode.label}: click an element`), h("button", { class: "btn small", onclick: app.endPick }, "Cancel")];
-  return kids ? h("div", { class: "toolopts" }, kids) : h("span");
+  if (t === "View3D") {
+    const cur = app.visualStyle3d[id] || "Shaded";
+    bar.append(h("select", { class: "vsel", title: "Visual style", "aria-label": "Visual style", onchange: e => { app.visualStyle3d[id] = e.target.value; renderMain(); } }, [...VISUAL_STYLES, "Sheet Line-work"].map(s => h("option", { selected: s === cur }, s))));
+    const view = app.views.get(id);
+    const prog = h("div", { class: "progress", hidden: true }, h("i"));
+    const cache = doc._hlrCache && doc._hlrCache[id];
+    const stale = !cache || cache.revision !== doc.modelRevision;
+    bar.append(h("button", { class: "btn small", title: "Exact hidden-line removal for sheets (cached)", onclick: async () => {
+      let gen = view && view.generate ? view : null;
+      if (!gen) { app.visualStyle3d[id] = "Shaded"; renderMain(); gen = app.views.get(id); }
+      prog.hidden = false; const r = await gen.generate(f => { prog.firstChild.style.width = (f * 100) + "%"; }); prog.hidden = true;
+      app.say(`Hidden-line: ${r.out.edges} edges against ${r.out.faces} faces in ${Math.round(r.ms)} ms`, "ok"); app.refresh({ keepMain: true });
+    } }, stale ? "Generate hidden-line" : "Hidden-line current ✓"), prog);
+    if (view && view.saveCamera) bar.append(h("button", { class: "btn small", title: "Store this camera in the view (and its sheets)", onclick: () => view.saveCamera() }, "Save camera"));
+  }
+  bar.append(ib("thin", "Thin lines (screen only)", app.thinLines, () => app.run("thin")));
+  if (t !== "Schedule" && t !== "Sheet") bar.append(ib("vv", "Visibility/Graphics (VV)", undefined, () => app.run("vv")));
+  bar.append(ib("fit", "Zoom to fit (ZF)", undefined, () => app.run("zoomfit")));
+  const snaps = h("div", { class: "snaps", role: "group", "aria-label": "Snaps" }, SNAP_KINDS.map(k => h("button", { "aria-pressed": String(!!app.snaps[k]), title: `Snap: ${k}`, onclick: e => { app.snaps[k] = !app.snaps[k]; e.target.setAttribute("aria-pressed", String(app.snaps[k])); store("snaps", app.snaps); } }, { endpoint: "end", midpoint: "mid", centre: "cen", intersection: "int", perpendicular: "perp", nearest: "near", grid: "grid", angle: "15°" }[k])));
+  if (t === "PlanView") bar.append(h("span", { class: "grow" }), snaps);
 }
 
 // ---------------------------------------------------------------- status bar
 function updateStatus() {
   const st = document.getElementById("status");
-  if (!st.querySelector("#msg")) {
-    clear(st);
-    st.append(h("div", { id: "msg", class: "msg", role: "status", "aria-live": "polite" }, "Ready"),
-      h("div", { class: "snaps hide-narrow", role: "group", "aria-label": "Snaps" }, SNAP_KINDS.map(k => h("button", { "aria-pressed": String(!!app.snaps[k]), title: `Snap: ${k}`, onclick: e => { app.snaps[k] = !app.snaps[k]; e.target.setAttribute("aria-pressed", String(app.snaps[k])); store("snaps", app.snaps); } }, { endpoint: "end", midpoint: "mid", centre: "cen", intersection: "int", perpendicular: "perp", nearest: "near", grid: "grid", angle: "15°" }[k]))),
-      h("div", { id: "stats", class: "mono hide-narrow" }));
-  }
+  if (!st.querySelector("#msg")) { clear(st); st.append(h("div", { id: "msg", class: "msg", role: "status", "aria-live": "polite" }, "Ready"), h("div", { id: "stats", class: "mono hide-narrow" })); }
   const s = app.doc.stats, lr = s.lastRegen;
-  document.getElementById("stats").textContent = `regen ${lr ? lr.ms.toFixed(1) : "–"} ms · ${lr ? lr.rebuilt.length : 0} rebuilt · model rev ${app.doc.modelRevision} · view rev ${app.doc.viewRevision}`;
+  document.getElementById("stats").textContent = `${app.selection.size ? app.selection.size + " selected · " : ""}regen ${lr ? lr.ms.toFixed(1) : "–"} ms · ${lr ? lr.rebuilt.length : 0} rebuilt · rev ${app.doc.modelRevision}/${app.doc.viewRevision}`;
 }
 
-// ---------------------------------------------------------------- new views & sheets
-function newPlanView() {
-  const lv = firstOf("Level"); if (!lv) return app.say("add a level first", "error");
-  const r = app.apply({ op: "add", element: { type: "PlanView", name: "Plan " + (app.doc.elements().filter(f => app.doc.typeOf(f) === "PlanView").length + 1), args: { level: { ref: lv }, scale: 100, viewRange: { top: 2300, cut: 1200, bottom: 0 }, detailLevel: "Fine", style: { ref: "VS-CONSTRUCTION" }, filters: [], clip: { rect: null, visible: false, active: false }, overrides: {} } } });
+// ---------------------------------------------------------------- commands' bodies
+function deleteSelection() {
+  const ids = [...app.selection].filter(id => app.doc.element(id)), vps = [...app.selection].filter(id => id.includes(":VP"));
+  if (!ids.length && !vps.length) return app.say("nothing selected to delete", "note");
+  if (ids.length) { const r = app.apply({ op: "delete", ids }); if (r.ok) app.say(`Deleted ${r.deleted.join(", ")}`, "ok"); }
+  for (const k of vps) { const [sh, vp] = k.split(":"); app.apply({ op: "sheet", id: sh, viewport: vp, remove: true }); }
+  app.select([]);
+}
+function selectAllInstances() {
+  const t = selectedType(); const f0 = app.doc.element([...app.selection][0]);
+  if (!f0) return app.say("select one element first", "note");
+  const ids = app.doc.elements().filter(f => t ? ["wallType", "doorType", "windowType", "columnType"].some(k => F.refId(f, k) === t) : app.doc.typeOf(f) === app.doc.typeOf(f0)).map(f => app.doc.idOf(f));
+  app.select(ids); app.say(`${ids.length} instances selected`, "note");
+}
+function newPlanView(levelId) {
+  const lv = levelId || app.workLevel || firstOf("Level"); if (!lv) return app.say("add a level first", "error");
+  const r = app.apply({ op: "add", element: { type: "PlanView", name: `${F.text(app.doc.element(lv), "name")} Plan`, args: { level: { ref: lv }, scale: 100, viewRange: { top: 2300, cut: 1200, bottom: 0 }, detailLevel: "Fine", style: { ref: "VS-CONSTRUCTION" }, filters: [], clip: { rect: null, visible: false, active: false }, overrides: {} } } });
   if (r.ok) app.openView(r.id);
 }
+function newLevel() {
+  const lv = app.doc.elements().filter(f => app.doc.typeOf(f) === "Level");
+  const top = Math.max(0, ...lv.map(f => F.real(f, "elevation")));
+  const name = `Level ${lv.length + 1}`;
+  const r = app.apply({ op: "add", element: { type: "Level", name, args: { name, elevation: lv.length ? top + 3000 : 0 } } });
+  if (r.ok) { app.workLevel = r.id; newPlanView(r.id); app.say(`${name} at +${((lv.length ? top + 3000 : 0) / 1000).toFixed(3)} with its floor plan — set the elevation in Properties`, "ok"); }
+}
+function newSchedule() { const r = app.apply({ op: "add", element: { type: "Schedule", name: "Wall Schedule " + (app.doc.elements().filter(f => app.doc.typeOf(f) === "Schedule").length + 1), args: { of: "IfcWall", fields: ["Id", "TypeMark", "Length", "Height", "FireRating", "Phase"] } } }); if (r.ok) app.openView(r.id); }
 function newSheet() {
   const n = app.doc.elements().filter(f => app.doc.typeOf(f) === "Sheet").length + 1;
-  const r = app.apply({ op: "add", element: { type: "Sheet", name: `A-${100 + n} New Sheet`, args: { number: `A-${100 + n}`, sheetName: "New Sheet", size: "A3", orientation: "landscape", viewports: [], revision: "P01" } } });
-  if (r.ok) { app.openView(r.id); app.say("Drag a view from the browser onto the sheet to place it", "note"); }
+  const r = app.apply({ op: "add", element: { type: "Sheet", name: `A-${100 + n} Unnamed`, args: { number: `A-${100 + n}`, sheetName: "Unnamed", size: "A1", orientation: "landscape", viewports: [], revision: "P01" } } });
+  if (r.ok) { app.openView(r.id); app.say("Drag a view from the Project Browser onto the sheet: it lands where you drop it", "note"); }
 }
 function placeSymbol(symId) {
   const v = app.activeView && app.doc.element(app.activeView);
@@ -8304,21 +9327,27 @@ function placeSymbol(symId) {
   const view = app.views.get(app.activeView), c = view.toModel(view.W / 2, view.H / 2);
   app.apply({ op: "add", element: { type: "SymbolInstance", args: { symbol: { ref: symId }, position: c.map(Math.round), rotation: 0, view: { ref: app.activeView } } } });
 }
-
-// ---------------------------------------------------------------- files
-function fileMenu() {
-  const openIn = h("input", { type: "file", accept: ".json,application/json", hidden: true, onchange: async e => {
-    const file = e.target.files[0]; if (!file) return;
-    try { const doc = openDocument(await file.text()); doc.regenerate(); setDocument(doc, { msg: `Opened ${file.name}${doc.loadReport.length ? " — " + doc.loadReport.join("; ") : ""}`, kind: doc.loadReport.length ? "note" : "ok" }); d.close(); }
-    catch (err) { app.say(`Could not open ${file.name}: ${err.message}`, "error"); }
-  } });
-  const d = dialog("File", h("div", { style: { display: "grid", gap: "10px" } },
-    h("button", { class: "btn", onclick: () => openIn.click() }, "Open a model (.json)…"), openIn,
-    h("button", { class: "btn", onclick: async () => { const r = await saveFile(`${app.doc.meta.name || "model"}.json`, app.doc.serialise(), "application/json"); app.say(r.ok ? "Model saved" : r.error, r.ok ? "ok" : "error"); } }, "Save the model (.json) — readable, diffable, the same format edits are"),
-    h("button", { class: "btn", onclick: () => { d.close(); importDXF(); } }, "Import a DXF symbol…"),
-    h("button", { class: "btn", onclick: () => { forget("draft"); forget("tabs"); setDocument(buildSample(), { msg: "Sample project loaded", kind: "ok" }); d.close(); } }, "Reset to the sample project"),
-    h("button", { class: "btn", onclick: () => { forget("draft"); const doc = newDocument("Untitled"); doc.addElement({ id: "L0", type: "Level", name: "Ground", args: { name: "Ground", elevation: 0 } }); doc.addElement({ id: "V-P00", type: "PlanView", name: "Ground Floor Plan", args: { level: { ref: "L0" }, scale: 100, style: { ref: "VS-CONSTRUCTION" } } }); doc.regenerate(); forget("tabs"); setDocument(doc, { msg: "New empty model: draw walls with W", kind: "ok" }); d.close(); } }, "New empty model"),
-    h("div", { class: "muted" }, "Your edits are kept as a draft in this browser only. Save the model to keep it anywhere else.")));
+function projectInfo() {
+  const inp = h("input", { type: "text", value: app.doc.meta.name, id: "pi-name" });
+  dialog("Project Information", h("div", { style: { display: "grid", gap: "8px" } }, h("label", { for: "pi-name" }, "Project name"), inp), [{ label: "Cancel", run: () => true }, { label: "OK", primary: true, run: () => { app.doc.meta.name = inp.value; saveDraftSoon(); app.refresh({ keepMain: true }); } }]);
+}
+function openFile() {
+  const inp = h("input", { type: "file", accept: ".json,application/json", hidden: true }); document.body.append(inp);
+  inp.addEventListener("change", async () => { const file = inp.files[0]; inp.remove(); if (!file) return;
+    try { const doc = openDocument(await file.text()); doc.regenerate(); setDocument(doc, { msg: `Opened ${file.name}${doc.loadReport.length ? " — " + doc.loadReport.join("; ") : ""}`, kind: doc.loadReport.length ? "note" : "ok" }); }
+    catch (err) { app.say(`Could not open ${file.name}: ${err.message}`, "error"); } });
+  inp.click();
+}
+async function saveModel() { const r = await saveFile(`${app.doc.meta.name || "model"}.json`, app.doc.serialise(), "application/json"); app.say(r.ok ? "Model saved" : r.error, r.ok ? "ok" : "error"); }
+function newEmpty() {
+  forget("draft-v2"); forget("tabs");
+  const doc = newDocument("Untitled");
+  doc.addElement({ id: "L0", type: "Level", name: "Level 1", args: { name: "Level 1", elevation: 0 } });
+  doc.addElement({ id: "L1", type: "Level", name: "Level 2", args: { name: "Level 2", elevation: 3000 } });
+  doc.addElement({ id: "V-P00", type: "PlanView", name: "Level 1", args: { level: { ref: "L0" }, scale: 100, style: { ref: "VS-CONSTRUCTION" } } });
+  doc.addElement({ id: "V-P01", type: "PlanView", name: "Level 2", args: { level: { ref: "L1" }, scale: 100, style: { ref: "VS-CONSTRUCTION" } } });
+  doc.regenerate();
+  setDocument(doc, { msg: "New model: press WA to draw walls, or 3D to model in the {3D} view", kind: "ok" });
 }
 function importDXF() {
   const inp = h("input", { type: "file", accept: ".dxf", hidden: true });
@@ -8448,35 +9477,45 @@ function renderDiagnostics(main) {
   setTimeout(run, 30);
 }
 
-// ---------------------------------------------------------------- keys
+
+// ---------------------------------------------------------------- keys (Revit two-letter shortcuts)
+const SHORTCUTS = Object.fromEntries(Object.entries(COMMANDS).filter(([, c]) => c.key).map(([id, c]) => [c.key.toUpperCase(), id]));
+let keyBuf = "", keyTimer = null;
 window.addEventListener("keydown", e => {
-  const t = e.target; if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
+  const t = e.target; if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
   const mod = e.ctrlKey || e.metaKey;
-  if (mod && e.key.toLowerCase() === "z") { e.preventDefault(); if (e.shiftKey) app.editor.redo(); else app.editor.undo(); app.refresh(); saveDraftSoon(); return; }
-  if (mod && e.key.toLowerCase() === "y") { e.preventDefault(); app.editor.redo(); app.refresh(); return; }
-  if (e.key === "Escape") { if (app.pickMode) { app.endPick(); return; } if (app.tool !== "select") { setTool("select"); return; } if (app.selection.size) app.select([]); return; }
-  if ((e.key === "Delete" || e.key === "Backspace") && app.selection.size && app.activeView !== "__graph") {
-    const ids = [...app.selection].filter(id => app.doc.element(id));
-    const vps = [...app.selection].filter(id => id.includes(":VP"));
-    if (ids.length) { const r = app.apply({ op: "delete", ids }); if (r.ok) app.say(`Deleted ${r.deleted.join(", ")}`, "ok"); }
-    for (const k of vps) { const [sh, vp] = k.split(":"); app.apply({ op: "sheet", id: sh, viewport: vp, remove: true }); }
-    app.select([]); return;
+  if (mod && e.key.toLowerCase() === "z") { e.preventDefault(); app.run(e.shiftKey ? "redo" : "undo"); return; }
+  if (mod && e.key.toLowerCase() === "y") { e.preventDefault(); app.run("redo"); return; }
+  if (mod && e.key.toLowerCase() === "s") { e.preventDefault(); app.run("save"); return; }
+  if (e.key === "Escape") {
+    keyBuf = ""; if (openMenu) { closeMenus(); return; }
+    if (app.pickMode) { app.endPick(); return; }
+    if (app.tool !== "select") { app.setTool("select"); return; }
+    if (app.selection.size) app.select([]); return;
   }
+  if ((e.key === "Delete" || e.key === "Backspace") && app.selection.size && app.activeView !== "__graph") { e.preventDefault(); deleteSelection(); return; }
   if (mod || e.altKey) return;
-  const v = app.doc.element(app.activeView);
-  if (v && app.doc.typeOf(v) === "PlanView") { const tool = TOOLS.find(x => x[2].toLowerCase() === e.key.toLowerCase()); const view = app.views.get(app.activeView); if (tool && !(view && view.tool && view.tool.pts.length)) { setTool(tool[0]); e.preventDefault(); } }
-  if (e.key === "f" || e.key === "F") { const view = app.views.get(app.activeView); if (view && view.fit) view.fit(); }
+  if (e.key === "Enter" && !keyBuf && app.lastCommand && app.tool === "select") { app.run(app.lastCommand); return; }
+  if (!/^[a-z0-9]$/i.test(e.key)) return;
+  keyBuf = (keyBuf + e.key.toUpperCase()).slice(-2);
+  clearTimeout(keyTimer); keyTimer = setTimeout(() => { keyBuf = ""; const s = document.getElementById("stats"); if (s) s.dataset.keys = ""; }, 1200);
+  const m = document.getElementById("stats"); if (m) m.dataset.keys = keyBuf;
+  if (keyBuf.length === 2 && SHORTCUTS[keyBuf]) { const id = SHORTCUTS[keyBuf]; keyBuf = ""; if (m) m.dataset.keys = ""; e.preventDefault(); app.run(id); return; }
+  if (keyBuf.length === 1 && e.key.toLowerCase() === "f" && !Object.keys(SHORTCUTS).some(k => k[0] === "F")) { keyBuf = ""; app.run("zoomfit"); }
 });
+document.addEventListener("pointerdown", e => { if (openMenu && !openMenu.contains(e.target)) closeMenus(); }, true);
+window.addEventListener("resize", () => { const v = app.views.get(app.activeView); if (v && v.resize) v.resize(); });
 
 // ---------------------------------------------------------------- boot
 async function boot() {
   const snaps = store("snaps"); if (snaps) Object.assign(app.snaps, snaps);
+  const split = store("split"); if (split) document.getElementById("left").style.setProperty("--split", (split * 100).toFixed(1) + "%");
   await loadDrawingFont();
   let doc = null, note = null;
-  const draft = store("draft");
-  if (draft) { try { doc = openDocument(draft); doc.regenerate(); note = { msg: "Restored your draft from this browser. File › Reset to go back to the sample.", kind: "note" }; } catch (e) { doc = null; } }
+  const draft = store("draft-v2");
+  if (draft) { try { doc = openDocument(draft); doc.regenerate(); note = { msg: "Restored your draft from this browser. File › New to start empty.", kind: "note" }; } catch (e) { doc = null; } }
   if (!doc) doc = buildSample();
-  setDocument(doc, note || { msg: `Studio House: ${doc.elements().length} elements regenerated in ${doc.stats.lastRegen.ms.toFixed(0)} ms. Select a wall to see its handles and listening dimensions.`, kind: "ok" });
+  setDocument(doc, note || { msg: `Studio House: ${doc.elements().length} elements. Double-click a view in the Project Browser to open it; WA draws walls; 3D opens the {3D} view.`, kind: "ok" });
 }
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();
 

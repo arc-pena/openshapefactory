@@ -16,7 +16,7 @@ const SRC = path.join(ROOT, "src");
 const MODULES = [
   "fontdata.js", "geom2d.js", "expr.js", "ocaf.js", "library.js", "walls.js", "spaces.js", "joins.js", "dxf.js",
   "bim.js", "styles.js", "ops.js", "scene.js", "props.js", "hlr.js", "pdf.js", "render.js", "sample.js", "acceptance.js",
-  "ui_util.js", "panel.js", "graph.js", "canvas2d.js", "view3d.js", "app.js",
+  "ui_util.js", "panel.js", "graph.js", "canvas2d.js", "viewcube.js", "view3d.js", "app.js",
 ];
 const fail = msg => { console.error("build refused: " + msg); process.exit(1); };
 

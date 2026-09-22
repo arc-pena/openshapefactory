@@ -19,9 +19,9 @@ export class Editor {
   emit(r) { for (const fn of this.listeners) fn(r); }
 
   /** Apply one op (or a list) as one step. Returns {ok, error?, conflicts?, ...}. */
-  apply(op, { regenerate = true } = {}) {
+  apply(op, { regenerate = true, coalesce = null } = {}) {
     const ops = Array.isArray(op) ? op : [op];
-    const key = ops.length === 1 ? ops[0].coalesce || null : null;
+    const key = coalesce || (ops.length === 1 ? ops[0].coalesce || null : null);
     const snap = snapshot(this.doc);
     let result = { ok: true };
     try {
@@ -229,6 +229,26 @@ const HANDLERS = {
   },
   sheet(doc, o) { const sh = doc.element(o.id); const vps = clone(doc.argValue(sh, "viewports")); const vp = vps.find(v => v.id === o.viewport); if (o.remove) vps.splice(vps.indexOf(vp), 1); else Object.assign(vp, o.value); doc.setArg(sh, "viewports", vps); doc.bumpView(); return {}; },
   model(doc, o) { throw new Error("replace the whole model through openDocument, not as an edit"); },
+  /** Move · copy · rotate · mirror, for any element with a placement. One op
+   *  for the plan, the 3D view, the keyboard and the tests. */
+  transform(doc, o) {
+    const ids = [].concat(o.ids || o.id).filter(id => doc.element(id));
+    const T = transformer(o);
+    if (!T) throw new Error("transform needs move, rotate or mirror");
+    const skipped = [];
+    if (o.copy) return copyElements(doc, ids, T);
+    const before = new Map();
+    for (const id of ids) {
+      const f = doc.element(id), k = geomKey(f, doc);
+      if (!k) { skipped.push(id); continue; }
+      const g = doc.argValue(f, k);
+      if (doc.typeOf(f) === "Wall") before.set(id, clone(g));
+      doc.setArg(f, k, T.geom(g, doc.typeOf(f)));
+      transformExtras(doc, f, T);
+    }
+    followJoins(doc, new Set(ids), before);
+    return { moved: ids.filter(id => !skipped.includes(id)), said: skipped.length ? `${skipped.join(", ")} move with their host — drag their handle instead` : undefined };
+  },
   /** Node positions ride in the file, so undo restores layout too. */
   layout(doc, o) { if (o.reset) doc.graph.layout = {}; else doc.graph.layout[o.id] = o.at; return {}; },
   /** A drag: the handle computes a value; constraints propagate from the
@@ -241,7 +261,10 @@ const HANDLERS = {
       const leaders = clone(doc.argValue(f, "leaders") || []).map(L => Object.assign(L, L.elbow ? { elbow: add(L.elbow, d) } : {}));
       doc.setArg(f, "leaders", leaders);
     }
+    const before = clone(doc.argValue(f, "centreline"));
     setPath(doc, f, o.key, o.value);
+    // Joined ends follow: drag a wall and the walls joined to it stretch with it.
+    if (doc.typeOf(f) === "Wall" && before && o.follow !== false) followJoins(doc, new Set([o.id]), new Map([[o.id, before]]));
     const res = propagate(doc, o.id);
     if (res.conflicts.length) return { conflicts: res.conflicts, error: res.conflicts.map(c => c.say).join("; ") };
     for (const [id, cl] of res.set) if (id !== o.id) { const g = doc.element(id); doc.setArg(g, geomKey(g, doc), cl); }
@@ -282,9 +305,90 @@ export { HANDLERS };
 
 // ---------------------------------------------------------------- propagation (§10.5)
 /** Which argument moves an element as a whole. */
-export function geomKey(f, doc) {
+export function geomKey(f, doc) { return geomKeyOf(doc.typeOf(f)); }
+export function geomKeyOf(t) {
+  return t === "Wall" ? "centreline" : t === "Grid" || t === "RoomSeparator" || t === "ElevationView" ? "line"
+    : t === "Column" || t === "Furniture" || t === "Text" || t === "SymbolInstance" ? "position" : t === "Space" ? "anchor"
+    : t === "DetailLine" ? "curve" : t === "FilledRegion" ? "boundary" : null;
+}
+
+// ---------------------------------------------------------------- transforms
+/** A rigid transform as point, angle and geometry functions. Mirror reverses
+ *  handedness, so a mirrored line swaps its ends to keep a wall's exterior out. */
+export function transformer(o) {
+  let P, A, mirror = false;
+  if (o.move) { const d = o.move; P = p => [p[0] + d[0], p[1] + d[1]]; A = a => a; }
+  else if (o.rotate) { const { c, a } = o.rotate, cs = Math.cos(a), sn = Math.sin(a); P = p => { const x = p[0] - c[0], y = p[1] - c[1]; return [c[0] + x * cs - y * sn, c[1] + x * sn + y * cs]; }; A = deg => deg + a * 180 / Math.PI; }
+  else if (o.mirror) { const { p: m, d } = o.mirror, u = normalise(d); mirror = true; P = p => { const v = sub(p, m), t = dot(v, u); return add(m, sub(mul(u, 2 * t), v)); }; const th = Math.atan2(u[1], u[0]) * 180 / Math.PI; A = deg => 2 * th - deg; }
+  else return null;
+  const geom = (g) => {
+    if (!g) return g;
+    if (Array.isArray(g) && typeof g[0] === "number") return P(g);
+    if (Array.isArray(g)) return g.map(p => P(p));
+    const out = Object.assign({}, g);
+    if (g.type === "line") { out.start = P(g.start); out.end = P(g.end); if (mirror) [out.start, out.end] = [out.end, out.start]; }
+    else if (g.type === "arc") { out.centre = P(g.centre); if (mirror) { out.start = A(g.end); out.end = A(g.start); } else { out.start = A(g.start); out.end = A(g.end); } }
+    else if (g.type === "circle" || g.type === "ellipse") { out.centre = P(g.centre); if (g.rotation !== undefined) out.rotation = A(g.rotation); }
+    else if (g.type === "spline") { out.points = g.points.map(P); if (mirror) out.points.reverse(); }
+    return out;
+  };
+  return { P, A, geom, mirror };
+}
+function transformExtras(doc, f, T) {
   const t = doc.typeOf(f);
-  return t === "Wall" ? "centreline" : t === "Grid" || t === "RoomSeparator" ? "line" : t === "Column" || t === "Furniture" || t === "Text" ? "position" : null;
+  if ((t === "Column" || t === "Furniture" || t === "Text" || t === "SymbolInstance") && doc.argValue(f, "rotation") !== undefined)
+    doc.setArg(f, "rotation", ((T.A(doc.argValue(f, "rotation") || 0) % 360) + 360) % 360);
+  if (t === "Text") doc.setArg(f, "leaders", (doc.argValue(f, "leaders") || []).map(L => Object.assign({}, L, L.elbow ? { elbow: T.P(L.elbow) } : {}, { target: T.P(L.target) })));
+}
+/** Walls joined to a moved wall keep their joint: the shared end follows the
+ *  moved end (an L stretches), and a T end slides onto the moved through-wall. */
+export function followJoins(doc, movedIds, before) {
+  const endOf = (id, e) => { const c = doc.argValue(doc.element(id), "centreline"); return c && c.type === "line" ? c[e] : null; };
+  const setEnd = (id, e, p) => { const f = doc.element(id), c = clone(doc.argValue(f, "centreline")); c[e] = p; doc.setArg(f, "centreline", c); };
+  for (const j of doc.joins) {
+    if (j.allowed === false) continue;
+    const A = j.a.of, B = j.b.of;
+    if (!doc.element(A) || !doc.element(B)) continue;
+    if (j.b.end) {
+      for (const [m, me, o, oe] of [[A, j.a.end, B, j.b.end], [B, j.b.end, A, j.a.end]]) {
+        if (!movedIds.has(m) || movedIds.has(o) || !before.has(m)) continue;
+        const was = before.get(m); if (!was || was.type !== "line") continue;
+        const oldEnd = was[me], otherEnd = endOf(o, oe);
+        // only if they were actually together before this edit
+        if (otherEnd && dist(oldEnd, otherEnd) < 1) setEnd(o, oe, endOf(m, me));
+      }
+    } else if (movedIds.has(B) && !movedIds.has(A)) {
+      const c = doc.argValue(doc.element(B), "centreline"), e = endOf(A, j.a.end);
+      if (c && c.type === "line" && e) { const L = lineThrough(c.start, c.end); setEnd(A, j.a.end, add(L.p, mul(L.d, dot(sub(e, L.p), L.d)))); }
+    }
+  }
+}
+/** Copies with fresh ids; hosted openings and their fillers come along, and
+ *  joins among the copied walls are copied too (ids rewritten in one pass). */
+function copyElements(doc, ids, T) {
+  const map = new Map(), recs = [];
+  const want = new Set(ids);
+  for (const g of doc.elements()) { const t = doc.typeOf(g); if (t === "Opening" && want.has(F.refId(g, "host"))) want.add(doc.idOf(g)); }
+  for (const g of doc.elements()) { const t = doc.typeOf(g); if ((t === "Door" || t === "Window") && want.has(F.refId(g, "fills"))) want.add(doc.idOf(g)); }
+  for (const id of want) {
+    const f = doc.element(id), rec = clone(doc.elementJSON(f));
+    const taken = new Set(map.values());
+    const base = (CATALOGUE.get(rec.type) || {}).idPrefix || rec.type.slice(0, 2).toUpperCase();
+    let n = 1; while (doc.element(base + n) || taken.has(base + n)) n++;
+    const nid = base + n; map.set(id, nid); rec.id = nid;
+    if (rec.name === id || !rec.name) delete rec.name; else rec.name = rec.name + " (copy)";
+    recs.push(rec);
+  }
+  for (const rec of recs) {
+    const k = geomKeyOf(rec.type);
+    if (k && rec.args[k] !== undefined) rec.args[k] = T.geom(rec.args[k], rec.type);
+    const rw = v => v && typeof v === "object" ? (Array.isArray(v) ? v.map(rw) : Object.fromEntries(Object.entries(v).map(([a, b]) => [a, a === "ref" && map.has(b) ? map.get(b) : rw(b)]))) : v;
+    rec.args = rw(rec.args);
+    doc.addElement(rec);
+    const f = doc.element(rec.id); transformExtras(doc, f, T);
+  }
+  for (const j of clone(doc.joins)) if (map.has(j.a.of) && map.has(j.b.of)) { const row = clone(j); row.a.of = map.get(j.a.of); row.b.of = map.get(j.b.of); delete row.id; HANDLERS.relate(doc, { store: "joins", row }); }
+  return { copied: [...map.values()], id: [...map.values()][0] };
 }
 /** The line of a reference key for an element in a hypothetical position. */
 function refLine(doc, f, rk, geom) {

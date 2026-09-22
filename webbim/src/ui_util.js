@@ -49,8 +49,36 @@ export const ICONS = {
   lock: P('<rect x="5" y="9" width="10" height="8" rx="1"/><path d="M7 9V6a3 3 0 0 1 6 0v3"/>'),
   unlock: P('<rect x="5" y="9" width="10" height="8" rx="1"/><path d="M7 9V6a3 3 0 0 1 6 0"/>'),
   graph: P('<rect x="2" y="3" width="6" height="5" rx="1"/><rect x="12" y="12" width="6" height="5" rx="1"/><path d="M8 5.5c4 0 0 9 4 9"/>'),
+  fit: P('<path d="M3 7V3h4M13 3h4v4M17 13v4h-4M7 17H3v-4"/><rect x="7" y="7" width="6" height="6"/>'),
+  move: P('<path d="M10 2v16M2 10h16M10 2l-2.5 2.5M10 2l2.5 2.5M10 18l-2.5-2.5M10 18l2.5-2.5M2 10l2.5-2.5M2 10l2.5 2.5M18 10l-2.5-2.5M18 10l-2.5 2.5"/>'),
+  copy: P('<rect x="3" y="3" width="10" height="10"/><rect x="7" y="7" width="10" height="10" fill="currentColor" fill-opacity=".12"/>'),
+  rotate: P('<path d="M15.5 6.5A7 7 0 1 0 17 11"/><path d="M16 2v5h-5"/><circle cx="10" cy="10" r="1.2"/>'),
+  mirror: P('<path d="M10 2v16" stroke-dasharray="2 1.5"/><path d="M8 5L3 15h5zM12 5l5 10h-5z"/>'),
+  del: P('<path d="M4 6h12M8 6V4h4v2M6 6l1 11h6l1-11M9 9v6M11 9v6"/>'),
+  level: P('<path d="M2 8h12" stroke-dasharray="3 1.5 1 1.5"/><path d="M14 8l2-2 2 2-2 2z"/><path d="M2 15h12" stroke-dasharray="3 1.5 1 1.5"/><path d="M14 15l2-2 2 2-2 2z"/>'),
+  room: P('<path d="M3 4h14v12H3z"/><path d="M7 9h6M8 12h4" stroke-width="1.2"/><path d="M3 4l3 3M17 4l-3 3" stroke-width="1"/>'),
+  plan: P('<path d="M3 3h14v14H3z"/><path d="M3 10h7v7M10 3v4" /><path d="M12 12h3"/>'),
+  view3d: P('<path d="M10 2l7 4v8l-7 4-7-4V6z"/><path d="M10 10l7-4M10 10v8M10 10L3 6"/>'),
+  house: P('<path d="M10 2l7 4v8l-7 4-7-4V6z" fill="currentColor" fill-opacity=".1"/><path d="M10 10l7-4M10 10v8M10 10L3 6"/>'),
+  sheet: P('<rect x="3" y="2" width="14" height="16"/><path d="M11 13h6M11 13v5M6 5h6v5H6z"/>'),
+  schedule: P('<rect x="3" y="3" width="14" height="14"/><path d="M3 7h14M3 11h14M3 15h14M8 3v14"/>'),
+  vv: P('<path d="M2 10s3-5 8-5 8 5 8 5-3 5-8 5-8-5-8-5z"/><circle cx="10" cy="10" r="2.5"/>'),
+  thin: P('<path d="M3 5h14" stroke-width="3"/><path d="M3 11h14" stroke-width="1.6"/><path d="M3 16h14" stroke-width=".7"/>'),
+  open: P('<path d="M2 5h6l2 2h8v9H2z"/>'),
+  save: P('<path d="M3 3h11l3 3v11H3z"/><path d="M6 3v5h7V3M6 17v-6h8v6"/>'),
+  edittype: P('<rect x="3" y="3" width="14" height="14" rx="1"/><path d="M6 7h8M6 10h8M6 13h5"/><path d="M13 16l4-4" stroke-width="2"/>'),
+  tree: P('<path d="M4 3v14M4 6h4M4 11h4M4 16h4"/><rect x="9" y="4" width="8" height="4"/><rect x="9" y="9" width="8" height="4"/><rect x="9" y="14" width="8" height="3"/>'),
+  importI: P('<path d="M10 2v10M6 8l4 4 4-4"/><path d="M3 13v4h14v-4"/>'),
+  exportI: P('<path d="M10 12V2M6 6l4-4 4 4"/><path d="M3 13v4h14v-4"/>'),
+  tests: P('<path d="M4 10l4 4 8-8"/><rect x="2" y="2" width="16" height="16" rx="2"/>'),
+  pens: P('<path d="M4 16l9-9 3 3-9 9H4z"/><path d="M12 4l4 4" /><path d="M2 5h5M2 8h3" stroke-width="1"/>'),
+  info: P('<circle cx="10" cy="10" r="8"/><path d="M10 9v5M10 6v.5"/>'),
+  elevview: P('<circle cx="10" cy="11" r="4"/><path d="M10 3l3 4H7z" fill="currentColor"/>'),
+  symbol: P('<circle cx="10" cy="10" r="7"/><path d="M10 4l3 11-3-2-3 2z"/>'),
+  close: P('<path d="M5 5l10 10M15 5L5 15"/>'),
+  sepline: P('<path d="M3 17L17 3" stroke-dasharray="3 2"/><path d="M3 3h5M3 3v5" stroke-width="1"/>'),
 };
-export const icon = name => h("span", { html: ICONS[name] || "", style: { display: "inline-grid", width: "18px", height: "18px" }, "aria-hidden": "true" });
+export const icon = (name, size = 18) => h("span", { class: "ic", html: ICONS[name] || "", style: { display: "inline-grid", width: size + "px", height: size + "px" }, "aria-hidden": "true" });
 
 // ---------------------------------------------------------------- storage (per-viewer conveniences only)
 export function store(key, value) { try { if (value === undefined) return JSON.parse(localStorage.getItem("webbim:" + key)); localStorage.setItem("webbim:" + key, JSON.stringify(value)); } catch (e) { return undefined; } }

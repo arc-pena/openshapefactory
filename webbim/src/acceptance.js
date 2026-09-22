@@ -786,3 +786,45 @@ export function runAll(filter = null) {
   }
   return out;
 }
+
+// ---------------------------------------------------------------- modify tools (interface-level, beyond §15)
+testCase("M1", "Move a wall: joined walls stretch with it", () => {
+  const { doc, ed } = fixture();
+  wall(doc, "A", [0, 0], [6000, 0], "T-300"); wall(doc, "B", [6000, 0], [6000, 4000], "T-300"); wall(doc, "C", [0, 4000], [0, 0], "T-300");
+  joinEE(doc, "A", "end", "B", "start"); joinEE(doc, "C", "end", "A", "start"); doc.regenerate();
+  ed.apply({ op: "transform", ids: ["A"], move: [0, -1000] });
+  const a = doc.argValue(doc.element("A"), "centreline"), b = doc.argValue(doc.element("B"), "centreline"), c = doc.argValue(doc.element("C"), "centreline");
+  // A goes to y = −1000; B's start and C's end come with it, their far ends stay
+  const ok = a.start[1] === -1000 && b.start[1] === -1000 && b.end[1] === 4000 && c.end[1] === -1000 && c.start[1] === 4000;
+  return R(ok && W(doc, "A").ends.end.k === "node", "A at y = −1000; B and C stretch; the corners stay joined", `A ${a.start}→${a.end}; B ${b.start}→${b.end}; C ${c.start}→${c.end}`);
+});
+testCase("M2", "Rotate 90° about a point, exactly", () => {
+  const { doc, ed } = fixture(); wall(doc, "A", [1000, 0], [5000, 0], "T-300");
+  doc.addElement({ id: "C", type: "Column", args: { position: [3000, 1000], columnType: { ref: "T-COL400" }, rotation: 0 } }); doc.regenerate();
+  ed.apply({ op: "transform", ids: ["A", "C"], rotate: { c: [0, 0], a: Math.PI / 2 } });
+  const a = doc.argValue(doc.element("A"), "centreline"), p = doc.argValue(doc.element("C"), "position"), r = doc.argValue(doc.element("C"), "rotation");
+  const ok = approx(a.start[0], 0, 1e-9) && approx(a.start[1], 1000, 1e-9) && approx(a.end[1], 5000, 1e-9) && approx(p[0], -1000, 1e-9) && approx(p[1], 3000, 1e-9) && approx(r, 90, 1e-9);
+  return R(ok, "(1000,0)→(0,1000), (5000,0)→(0,5000); column to (−1000, 3000), rotated 90°", `${a.start.map(r3)} ${a.end.map(r3)}; ${p.map(r3)} @ ${r3(r)}°`);
+});
+testCase("M3", "Mirror keeps the exterior outside", () => {
+  const { doc, ed } = fixture(); wall(doc, "A", [0, 0], [4000, 0], "T-EXTCAV300"); doc.regenerate();
+  const ext0 = resolveReference(doc, "A:face.exterior").geom.p[1];          // y = −145.25 (below)
+  ed.apply({ op: "transform", ids: ["A"], mirror: { p: [0, 1000], d: [1, 0] } });   // about y = 1000
+  const c = doc.argValue(doc.element("A"), "centreline"), ext1 = resolveReference(doc, "A:face.exterior").geom.p[1];
+  // centreline to y = 2000; the exterior face mirrors to above it: 2000 + 145.25
+  return R(c.start[1] === 2000 && approx(ext0, -145.25) && approx(ext1, 2145.25), "centreline y = 2000; exterior face at 2145.25 (mirrored side)", `centreline y ${c.start[1]}; exterior ${r3(ext0)} → ${r3(ext1)}`);
+});
+testCase("M4", "Copy a wall with its door", () => {
+  const { doc, ed } = openingFixture();
+  const r = ed.apply({ op: "transform", ids: ["A"], move: [0, 5000], copy: true });
+  const types = r.copied.map(id => doc.typeOf(doc.element(id))).sort().join();
+  const newDoor = r.copied.find(id => doc.typeOf(doc.element(id)) === "Door"), fr = doc.data(doc.element(newDoor)).frame;
+  return R(types === "Door,Opening,Wall" && fr.host !== "A" && approx(pointAt(W(doc, fr.host), 0, fr.at)[1], 5000), "wall, opening and door copied; the copy hosts the new door", `${r.copied.join(", ")} (${types}); door host ${fr.host}`);
+});
+testCase("M5", "Dragging a wall end stretches the joined neighbour", () => {
+  const { doc, ed } = fixture();
+  wall(doc, "A", [0, 0], [6000, 0], "T-300"); wall(doc, "B", [6000, 0], [6000, 4000], "T-300"); joinEE(doc, "A", "end", "B", "start"); doc.regenerate();
+  ed.apply({ op: "drag", id: "A", key: "centreline.end", value: [7000, 0] });
+  const b = doc.argValue(doc.element("B"), "centreline");
+  return R(b.start[0] === 7000 && b.end[0] === 6000, "B's start follows to (7000, 0)", `${b.start} → ${b.end}`);
+});

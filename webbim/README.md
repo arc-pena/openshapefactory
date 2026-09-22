@@ -8,7 +8,7 @@ Live artifact: https://claude.ai/artifact/EuWpSVPSYJtKFJB8GHDqfP
 
 ```
 node build.mjs            # writes BOTH targets, and refuses on any of the checks below
-node --test test/         # 123 tests: the §15 acceptance suite, spaces, DXF, PDF raster measurement
+node --test test/*.test.mjs   # 128 tests: the §15 acceptance suite, spaces, DXF, PDF raster measurement
 ```
 
 1. **The Artifact**: republish `dist/web-bim.html` to the URL above so the link stays the same. Declare `capabilities: {downloads: true}`: file saves (PDF, zipped DXF, JSON) go through it. Publishing without the URL creates a second artifact.
@@ -44,9 +44,25 @@ The build refuses:
 | §12.4 / §8.2 DXF R2000 write/read, `$INSUNITS`, 370 ladder | `dxf.js` |
 | §4.5 property model, pick-binding, node graph model, listening dimensions | `props.js` |
 | §15 acceptance suite (shared by node and the in-app Diagnostics view) | `acceptance.js` |
-| UI: canvas + DOM overlay, panel, schedules, node editor, three.js view | `canvas2d.js` `panel.js` `graph.js` `view3d.js` `app.js` |
+| UI: canvas + DOM overlay, panel, schedules, node editor, three.js view, ViewCube | `canvas2d.js` `panel.js` `graph.js` `viewcube.js` `view3d.js` `app.js` |
 
 `tools/make_font.py` regenerates `src/fontdata.js`. This is DejaVu Sans, subset to cp1252. The PDF embeds those same bytes and the canvas draws with them, so screen text and paper text use the same metrics.
+
+## Using it (Revit conventions)
+
+- **Layout:** Quick Access Toolbar, then the ribbon (File at the far left; a green *Modify | <Category>* tab appears when something is selected), then the options bar for the active tool. Properties sit above the Project Browser on the left. Document tabs and the view control bar surround the view.
+- **Project Browser:** a single click selects a view and shows its properties. A double-click opens it. Drag a view onto an open sheet and the viewport is centred where you drop it.
+- **3D:** there is always a `{3D}` view (**3D** or the house in the QAT). The ViewCube (top right) turns the view by face, edge or corner, and turns about z from the compass. Drag the cube to orbit; the house button goes home.
+- **Mouse:**
+  - Left-drag is a normal drag. On empty space it window-selects left→right and crossing-selects right→left, in plan and 3D. On an element it moves the element.
+  - Middle-drag pans (Space+drag too). Shift+middle-drag orbits in 3D. The wheel zooms about the cursor. Right-click opens the context menu.
+- **Everything moves:**
+  - Walls: move, drag ends (joined neighbours follow), and drag height, in plan and 3D.
+  - Doors and windows slide along their host.
+  - Levels drag up and down in elevations.
+  - A wall-top grip on a wall whose height is `Top.elevation - Base.elevation` moves the level, so every wall bound to it follows.
+  - The sample's dimensions start unlocked; the padlock locks them.
+- **Two-letter shortcuts:** WA DR WN OP CL GR RM RS DI TX EL MV CO RO MM DE LL VV TL ZF 3D SA PP MD. Ctrl+Z / Ctrl+Y undo and redo; Esc cancels, then clears the selection.
 
 ## Known gaps (said, not hidden)
 

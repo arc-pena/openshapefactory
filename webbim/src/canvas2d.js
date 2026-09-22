@@ -12,12 +12,13 @@ import { F, CATALOGUE } from "./ocaf.js";
 import { uOf, pointAt } from "./walls.js";
 import { listeningDimensions, dimensionMove, pickCandidates } from "./props.js";
 import { resolveReference, measureRefs, sheetSize } from "./bim.js";
-import { getPath } from "./ops.js";
+import { getPath, geomKey } from "./ops.js";
 
 export const SNAP_PX = 8;
 export const SNAP_KINDS = ["endpoint", "midpoint", "centre", "intersection", "perpendicular", "nearest", "grid", "angle"];
 const SNAP_SHORT = { endpoint: "end", midpoint: "mid", centre: "cen", intersection: "int", perpendicular: "perp", nearest: "near", grid: "grid", angle: "ang" };
-const TOOLS_NEED_PLAN = new Set(["wall", "opening", "door", "window", "column", "grid", "text", "dim", "space", "elev", "sep"]);
+const TOOLS_NEED_PLAN = new Set(["wall", "opening", "door", "window", "column", "grid", "text", "dim", "space", "elev", "sep", "move", "copy", "rotate", "mirror"]);
+export const MODIFY_TOOLS = new Set(["move", "copy", "rotate", "mirror"]);
 
 export class View2D {
   constructor(app, root, viewId) {
@@ -104,10 +105,17 @@ export class View2D {
       g.stroke(); g.setLineDash([]);
       for (const p of T.pts) { const q = this.toScreen(p); g.fillStyle = blue; g.fillRect(q[0] - 3, q[1] - 3, 6, 6); }
     }
+    if (T.ghost) { g.strokeStyle = "#1d6fd8"; g.lineWidth = 1.2; g.setLineDash([4, 3]); for (const poly of T.ghost) { g.beginPath(); poly.forEach((p, i) => { const q = this.toScreen(p); i ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1]); }); g.closePath(); g.stroke(); } g.setLineDash([]); }
+    if (T.centre && this.app.tool === "rotate") { const q = this.toScreen(T.centre); g.strokeStyle = "#1d6fd8"; g.beginPath(); g.arc(q[0], q[1], 6, 0, 7); g.stroke(); if (T.cursor) { const c = this.toScreen(T.cursor); g.beginPath(); g.moveTo(q[0], q[1]); g.lineTo(c[0], c[1]); g.stroke(); } if (T.pts[0]) { const c = this.toScreen(T.pts[0]); g.beginPath(); g.moveTo(q[0], q[1]); g.lineTo(c[0], c[1]); g.stroke(); } }
     if (T.preview) { g.strokeStyle = blue; g.lineWidth = 2; g.beginPath(); T.preview.forEach((p, i) => { const q = this.toScreen(p); i ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1]); }); g.stroke(); }
     for (const d of this.tdims || []) {
       g.strokeStyle = blue; g.lineWidth = 1; g.beginPath(); g.moveTo(d.sa[0], d.sa[1]); g.lineTo(d.sb[0], d.sb[1]); g.stroke();
       for (const p of [d.sa, d.sb]) { g.beginPath(); g.moveTo(p[0] - 4, p[1] + 4); g.lineTo(p[0] + 4, p[1] - 4); g.stroke(); }
+    }
+    if (this.box) {
+      const [a, b] = this.box, crossing = b[0] < a[0];
+      g.strokeStyle = "#1d6fd8"; g.fillStyle = crossing ? "rgba(46,125,50,.08)" : "rgba(29,111,216,.08)"; g.lineWidth = 1; g.setLineDash(crossing ? [5, 3] : []);
+      g.fillRect(a[0], a[1], b[0] - a[0], b[1] - a[1]); g.strokeRect(a[0], a[1], b[0] - a[0], b[1] - a[1]); g.setLineDash([]);
     }
     for (const gl of this.guides || []) { g.strokeStyle = "#e8591a"; g.setLineDash([4, 3]); g.beginPath(); g.moveTo(gl[0][0], gl[0][1]); g.lineTo(gl[1][0], gl[1][1]); g.stroke(); g.setLineDash([]); }
     g.restore();
@@ -292,7 +300,9 @@ export class View2D {
     for (const ht of sc.hits) {
       if (!ht.id) continue;
       let hit = false, score = 0;
-      if (ht.kind === "curve") { for (let i = 0; i < ht.pts.length - 1; i++) { const a = ht.pts[i], b = ht.pts[i + 1], d = distSeg(p, a, b); if (d < tol) { hit = true; score = d; } } score = score * 0.001; }
+      if (ht.kind === "curve") { for (let i = 0; i < ht.pts.length - 1; i++) { const a = ht.pts[i], b = ht.pts[i + 1], d = distSeg(p, a, b); if (d < tol) { hit = true; score = d; } } score = score * 0.001;
+        // a datum line running through a wall must not steal the click from the wall
+        const f = this.doc.element(ht.id); if (f && ["Grid", "RoomSeparator", "ElevationView", "Level"].includes(this.doc.typeOf(f))) score += 1e12; }
       else if (ht.pts.length > 2 && pointInPoly(p, ht.pts)) { hit = true; score = Math.abs(polyArea(ht.pts)); }
       if (hit && (!best || score < best.score)) best = { id: ht.id, score };
     }
@@ -308,12 +318,16 @@ export class View2D {
     c.addEventListener("pointerup", e => this.up(e));
     c.addEventListener("pointercancel", e => { this.pointers.delete(e.pointerId); this.drag = null; });
     c.addEventListener("dblclick", e => this.dbl(e));
+    c.addEventListener("contextmenu", e => e.preventDefault());
+    const sp = on => e => { if (e.code === "Space" && !(e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName))) { this.space = on; this.canvas.style.cursor = on ? "grab" : "default"; } };
+    window.addEventListener("keydown", sp(true)); window.addEventListener("keyup", sp(false));
     c.addEventListener("dragover", e => { if (this.kind === "Sheet") e.preventDefault(); });
     c.addEventListener("drop", e => {
       const vid = e.dataTransfer.getData("text/x-webbim-view"); if (!vid || this.kind !== "Sheet") return;
       e.preventDefault(); const p = this.toModel(...this.evPos(e));
       const r = this.app.apply({ op: "place", sheet: this.viewId, view: vid, at: p.map(Math.round) });
-      this.app.say(r.ok ? `Placed ${this.doc.element(vid).get("Name")} as ${r.id}` : r.error, r.ok ? "ok" : "error");
+      this.app.say(r.ok ? `Placed ${this.doc.element(vid).get("Name")} as ${r.id}, centred where you dropped it` : r.error, r.ok ? "ok" : "error");
+      if (r.ok) this.app.select([`${this.viewId}:${r.id}`]);
     });
   }
   zoomAt(sx, sy, k) { const before = [sx / this.cam.z + this.cam.x, (this.H - sy) / this.cam.z + this.cam.y]; this.cam.z = Math.max(0.02, Math.min(400, this.cam.z * k)); this.cam.x = before[0] - sx / this.cam.z; this.cam.y = before[1] - (this.H - sy) / this.cam.z; this.draw(); }
@@ -323,11 +337,40 @@ export class View2D {
     this.pointers.set(e.pointerId, this.evPos(e));
     if (this.pointers.size === 2) { const [a, b] = [...this.pointers.values()]; this.pinch = { d: dist(a, b), cam: Object.assign({}, this.cam), mid: lerp(a, b, 0.5) }; this.drag = null; return; }
     const [sx, sy] = this.evPos(e);
-    this.drag = { start: [sx, sy], cam: Object.assign({}, this.cam), moved: false, button: e.button, shift: e.shiftKey };
-    if (this.kind === "Sheet" && e.button === 0 && this.app.tool === "select") {
-      const hit = this.hitAt(sx, sy);
+    // Revit's mouse: middle or right drag pans (as does Space+drag or one finger);
+    // left drag on empty space draws a selection box; left drag on a selected element moves it.
+    // middle-drag pans (as in a PDF viewer); so do Space+drag and a finger. A left drag is a normal drag.
+    const pan = e.button === 1 || this.space || e.pointerType === "touch";
+    if (e.button === 1) e.preventDefault();
+    this.drag = { start: [sx, sy], cam: Object.assign({}, this.cam), moved: false, button: e.button, shift: e.shiftKey, pan };
+    if (pan || e.button !== 0 || this.app.tool !== "select" || this.app.pickMode) return;
+    const hit = this.hitAt(sx, sy);
+    if (this.kind === "Sheet") {
       if (hit && this.app.selection.has(this.viewId + ":" + hit.id)) { const vp = (this.doc.argValue(this.view, "viewports") || []).find(v => v.id === hit.id); this.drag.viewport = { id: hit.id, at: vp.at.slice(), bb: hit.bb }; }
+      return;
     }
+    if (hit && this.kind === "PlanView") {
+      // pressing on something not yet selected selects it first, so one press-and-drag moves it
+      if (!this.app.selection.has(hit.id) && !e.shiftKey) { this.app.selection.clear(); this.app.selection.add(hit.id); this.pressSelected = true; }
+      const movable = [...this.app.selection].filter(id => this.doc.element(id) && geomKey(this.doc.element(id), this.doc));
+      if (movable.length) this.drag.body = { ids: movable, grab: this.toModel(sx, sy) };
+    } else if (!hit) this.drag.box = true;
+    // in an elevation a level line drags up and down: everything bound to it follows
+    if (hit && this.kind === "ElevationView") {
+      const f = this.doc.element(hit.id);
+      if (f && this.doc.typeOf(f) === "Level") {
+        if (!this.app.selection.has(hit.id)) { this.app.selection.clear(); this.app.selection.add(hit.id); this.pressSelected = true; }
+        this.drag.level = { id: hit.id, z0: F.real(f, "elevation"), grab: this.toModel(sx, sy) };
+      }
+    }
+  }
+  dragLevel(d, sx, sy) {
+    const p = this.toModel(sx, sy), dz = Math.round((p[1] - d.level.grab[1]) / 10) * 10, z = d.level.z0 + dz;
+    if (z !== d.level.last) {
+      const r = this.app.apply({ op: "set", id: d.level.id, key: "elevation", value: z }, { quiet: true, coalesce: `level:${d.level.id}:${d.start.join(",")}` });
+      if (r.ok) d.level.last = z;
+    }
+    this.showHud(sx, sy, `${F.text(this.doc.element(d.level.id), "name")}: ${z >= 0 ? "+" : ""}${fmtLen(z)} mm`);
   }
   move(e) {
     const [sx, sy] = this.evPos(e);
@@ -335,29 +378,69 @@ export class View2D {
     if (this.pinch && this.pointers.size === 2) { const [a, b] = [...this.pointers.values()]; const k = dist(a, b) / this.pinch.d; this.cam = Object.assign({}, this.pinch.cam); this.zoomAt(this.pinch.mid[0], this.pinch.mid[1], k); return; }
     const d = this.drag;
     if (d) {
-      if (Math.abs(sx - d.start[0]) + Math.abs(sy - d.start[1]) > 3) d.moved = true;
+      if (Math.abs(sx - d.start[0]) + Math.abs(sy - d.start[1]) > 4) d.moved = true;
       if (d.viewport && d.moved) return this.dragViewport(d, sx, sy);
-      const tooling = TOOLS_NEED_PLAN.has(this.app.tool) && d.button === 0;
-      if (d.moved && (!tooling || d.button === 1)) { this.cam.x = d.cam.x - (sx - d.start[0]) / this.cam.z; this.cam.y = d.cam.y + (sy - d.start[1]) / this.cam.z; this.draw(); return; }
+      if (d.pan && d.moved) { this.cam.x = d.cam.x - (sx - d.start[0]) / this.cam.z; this.cam.y = d.cam.y + (sy - d.start[1]) / this.cam.z; this.draw(); return; }
+      if (d.body && d.moved) return this.dragBody(d, sx, sy, e);
+      if (d.level && d.moved) return this.dragLevel(d, sx, sy);
+      if (d.box && d.moved) { this.box = [d.start, [sx, sy]]; this.draw(); return; }
     }
     const p = this.toModel(sx, sy);
     if (this.app.tool !== "select" && this.kind === "PlanView") return this.toolHover(p, sx, sy, e);
     const hit = this.hitAt(sx, sy), hid = hit ? (this.kind === "Sheet" ? null : hit.id) : null;
-    if (hid !== this.hover) { this.hover = hid; this.draw(); }
-    this.canvas.style.cursor = this.app.pickMode ? "crosshair" : hit ? "pointer" : "default";
+    if (hid !== this.hover) { this.hover = hid; this.draw(); if (hid) this.app.hoverInfo(hid); }
+    this.canvas.style.cursor = this.app.pickMode ? "crosshair" : hit ? (hid && this.app.selection.has(hid) ? "move" : "pointer") : "default";
   }
   up(e) {
     this.pointers.delete(e.pointerId); if (this.pointers.size < 2) this.pinch = null;
     const d = this.drag; this.drag = null;
+    const pressed = this.pressSelected; this.pressSelected = false;
     if (!d) return;
     if (d.viewport) { this.guides = []; this.app.editor.seal(); this.draw(); if (d.moved) return; }
+    if (d.body && d.moved) { this.app.editor.seal(); this.showSnap(null); this.hideHud(); this.app.refresh({ keepMain: true }); return; }
+    if (d.level && d.moved) { this.app.editor.seal(); this.hideHud(); this.app.refresh({ keepMain: true }); this.app.say("Level moved: walls, rooms and views bound to it followed", "ok"); return; }
+    if (d.box && d.moved) return this.finishBox(d, e);
     if (d.moved) return;
     const [sx, sy] = this.evPos(e);
+    if (e.button === 2) return this.app.contextMenu(e, "2d");
     if (this.app.pickMode) return this.pick(sx, sy);
     if (this.app.tool !== "select" && this.kind === "PlanView") return this.toolClick(this.toModel(sx, sy), e);
     const hit = this.hitAt(sx, sy);
     if (this.kind === "Sheet") { this.app.select(hit ? [this.viewId + ":" + hit.id] : [], e.shiftKey, true); return; }
+    if (pressed) { this.app.select([hit.id]); return; }
     this.app.select(hit ? [hit.id] : [], e.shiftKey || e.ctrlKey || e.metaKey);
+  }
+  /** Drag a selected element's body: a translation of its placement, snapped. */
+  dragBody(d, sx, sy, e) {
+    let p = this.toModel(sx, sy);
+    const sn = this.snap(p, { exclude: d.body.ids[0], from: d.body.grab, shift: e.shiftKey });
+    this.showSnap(sn);
+    p = sn ? sn.point : this.quantise(p);
+    const g = this.quantise(d.body.grab), dv = [p[0] - g[0], p[1] - g[1]];
+    const done = d.body.done || [0, 0], step = [dv[0] - done[0], dv[1] - done[1]];
+    if (step[0] || step[1]) {
+      const r = this.app.apply({ op: "transform", ids: d.body.ids, move: step }, { quiet: true, coalesce: `move:${d.body.ids.join(",")}:${d.start.join(",")}` });
+      if (r.ok) d.body.done = dv;
+    }
+    this.showHud(sx, sy, `move ${fmtLen(dv[0])}, ${fmtLen(dv[1])} mm${sn ? " · " + SNAP_SHORT[sn.kind] : ""}`);
+  }
+  /** Left→right: window (wholly inside). Right→left: crossing (any part inside). */
+  finishBox(d, e) {
+    this.box = null;
+    const [a, b] = [d.start, this.evPos(e)];
+    const A = this.toModel(Math.min(a[0], b[0]), Math.max(a[1], b[1])), B = this.toModel(Math.max(a[0], b[0]), Math.min(a[1], b[1]));
+    const inside = p => p[0] >= A[0] && p[0] <= B[0] && p[1] >= A[1] && p[1] <= B[1];
+    const crossing = b[0] < a[0];
+    const ids = new Set();
+    for (const ht of this.scene().hits) {
+      if (!ht.id || !this.doc.element(ht.id)) continue;
+      if (crossing ? ht.pts.some(inside) : ht.pts.every(inside)) ids.add(ht.id);
+    }
+    // a whole element must be inside for a window: drop ids that also have a hit outside
+    if (!crossing) for (const ht of this.scene().hits) if (ids.has(ht.id) && !ht.pts.every(inside)) ids.delete(ht.id);
+    this.app.select([...ids], e.shiftKey || e.ctrlKey);
+    this.app.say(`${ids.size} selected (${crossing ? "crossing" : "window"} selection)`, "note");
+    this.draw();
   }
   dbl(e) {
     const [sx, sy] = this.evPos(e);
@@ -403,6 +486,7 @@ export class View2D {
   // ---------------------------------------------------------------- tools
   toolHover(p, sx, sy, e) {
     const T = this.tool, tool = this.app.tool;
+    if (MODIFY_TOOLS.has(tool)) return this.modifyHover(p, sx, sy, e);
     const sn = this.snap(p, { from: T.pts[T.pts.length - 1], shift: e.shiftKey });
     this.showSnap(sn);
     const q = sn ? sn.point : this.quantise(p);
@@ -429,6 +513,7 @@ export class View2D {
   }
   toolClick(p, e) {
     const T = this.tool, tool = this.app.tool, o = this.app.toolOpts, doc = this.doc;
+    if (MODIFY_TOOLS.has(tool)) return this.modifyClick();
     const q = T.cursor || p;
     const level = F.refId(this.view, "level");
     const addEl = (element, msg) => { const r = this.app.apply({ op: "add", element }); this.app.say(r.ok ? msg || `Added ${r.id}` : r.error, r.ok ? "ok" : "error"); if (r.ok) this.app.select([r.id]); return r; };
@@ -445,16 +530,8 @@ export class View2D {
     if (["opening", "door", "window"].includes(tool)) {
       const hit = this.nearestWall(q); if (!hit) { this.app.say("click on a wall", "note"); return; }
       const u = Math.round(uOf(hit.w, q));
-      const t = tool === "door" ? doc.lib.types[o.doorType] : tool === "window" ? doc.lib.types[o.windowType] : null;
-      const w = t ? t.width : o.width, hh = t ? t.height : o.height_;
-      const sill = tool === "door" ? 0 : tool === "window" ? (o.sill ?? 900) : (o.openSill ?? 0);
-      const opId = doc.freshId("Opening");
-      const ops = [{ op: "add", element: { id: opId, type: "Opening", args: { host: { ref: hit.id }, profile: { kind: "rect", at: u, sill, w, h: hh }, farProfile: null, depth: "through" } } }];
-      if (tool === "door") ops.push({ op: "add", element: { type: "Door", args: { fills: { ref: opId }, doorType: { ref: o.doorType } }, params: { Phase: "New" } } });
-      if (tool === "window") ops.push({ op: "add", element: { type: "Window", args: { fills: { ref: opId }, windowType: { ref: o.windowType } } } });
-      const r = this.app.apply(ops);
-      this.app.say(r.ok ? `${tool === "opening" ? "Opening" : tool[0].toUpperCase() + tool.slice(1)} in ${hit.id} at u = ${u}` : r.error, r.ok ? "ok" : "error");
-      if (r.ok) this.app.select([r.id || opId]);
+      const r = this.app.placeOpening(tool, hit.id, u);
+      if (r.ok && r.id) this.app.select([r.id]);
       return;
     }
     if (tool === "column") return addEl({ type: "Column", args: { position: q, columnType: { ref: o.columnType }, baseLevel: level ? { ref: level } : null, height: 3000, rotation: 0 } });
@@ -477,6 +554,54 @@ export class View2D {
       addEl({ type: "Dimension", args: { of: [a.key, b.key], offset: off, view: { ref: this.viewId }, locked: false } }, `Dimension ${fmtLen(m.value)} bound to ${a.key} and ${b.key}`);
     }
   }
+  // ---------------------------------------------------------------- Move · Copy · Rotate · Mirror
+  selectionIds() { return [...this.app.selection].filter(id => this.doc.element(id)); }
+  selectionCentre() {
+    const pts = this.scene().hits.filter(ht => this.app.selection.has(ht.id)).flatMap(ht => ht.pts);
+    if (!pts.length) return null; const bb = bboxOf(pts); return [(bb[0] + bb[2]) / 2, (bb[1] + bb[3]) / 2];
+  }
+  modifyOp(tool, T, target) {
+    const ids = this.selectionIds(), o = this.app.toolOpts;
+    if (tool === "move" || tool === "copy") return { op: "transform", ids, move: sub(target, T.pts[0]), copy: tool === "copy" || !!o.moveCopy };
+    if (tool === "rotate") { const c = T.centre, a = Math.atan2(target[1] - c[1], target[0] - c[0]) - Math.atan2(T.pts[0][1] - c[1], T.pts[0][0] - c[0]); return { op: "transform", ids, rotate: { c, a }, copy: !!o.rotateCopy }; }
+    if (tool === "mirror") return { op: "transform", ids, mirror: { p: T.pts[0], d: sub(target, T.pts[0]) }, copy: o.mirrorCopy !== false };
+  }
+  modifyHover(p, sx, sy, e) {
+    const T = this.tool, tool = this.app.tool;
+    if (!this.selectionIds().length) { this.showHud(sx, sy, "select elements first, then " + tool); return; }
+    if (tool === "rotate" && !T.centre) T.centre = this.selectionCentre();
+    const from = tool === "rotate" ? T.centre : T.pts[0];
+    const sn = this.snap(p, { from, shift: e.shiftKey });
+    this.showSnap(sn);
+    const q = sn ? sn.point : this.quantise(p);
+    T.cursor = q;
+    // preview: the selection's outline where the edit would put it
+    T.ghost = null;
+    if (T.pts.length) {
+      const op = this.modifyOp(tool, T, q), ghost = [];
+      const P = op.move ? (x => add(x, op.move)) : op.rotate ? (x => { const c = op.rotate.c, cs = Math.cos(op.rotate.a), s_ = Math.sin(op.rotate.a), v = sub(x, c); return [c[0] + v[0] * cs - v[1] * s_, c[1] + v[0] * s_ + v[1] * cs]; })
+        : (x => { const u = normalise(op.mirror.d), v = sub(x, op.mirror.p), t = dot(v, u); return add(op.mirror.p, sub(mul(u, 2 * t), v)); });
+      for (const ht of this.scene().hits) if (this.app.selection.has(ht.id)) ghost.push(ht.pts.map(P));
+      T.ghost = ghost;
+      const text = op.move ? `${fmtLen(Math.hypot(...op.move))} mm` : op.rotate ? `${fmtLen(op.rotate.a * 180 / Math.PI)}°` : "mirror axis";
+      this.showHud(sx, sy, this.hudInput ? this.hud.textContent : text);
+    } else this.showHud(sx, sy, tool === "rotate" ? "click the start of the angle" : tool === "mirror" ? "click the first point of the axis" : "click the base point");
+    this.draw();
+  }
+  modifyClick() {
+    const T = this.tool, tool = this.app.tool;
+    if (!this.selectionIds().length) { this.app.say(`Select what to ${tool} first — box-select or click — then ${tool.toUpperCase()}`, "note"); return; }
+    if (!T.cursor) return;
+    if (!T.pts.length) { T.pts.push(T.cursor); this.draw(); return; }
+    this.commitModify(T.cursor);
+  }
+  commitModify(target) {
+    const T = this.tool, tool = this.app.tool, op = this.modifyOp(tool, T, target);
+    const r = this.app.apply(op);
+    T.pts = []; T.ghost = null; T.centre = null; this.hideHud();
+    if (r.ok) { this.app.say(`${tool === "copy" || op.copy ? "Copied" : tool[0].toUpperCase() + tool.slice(1) + "d"} ${(r.copied || r.moved || []).length} element(s)`, "ok"); if (r.copied) this.app.select(r.copied); }
+    this.app.setTool("select");
+  }
   nearestRef(p) {
     let best = null; const tol = 10 * this.modelPerPx();
     for (const f of this.doc.elements()) {
@@ -496,7 +621,18 @@ export class View2D {
   /** Keys while this view has focus: Enter/Esc/C for the chain, digits for length. */
   key(e) {
     const T = this.tool, tool = this.app.tool;
-    if (e.key === "Escape") { if (T.pts.length || T.refs) { T.pts = []; T.refs = []; this.hideHud(); this.draw(); return true; } return false; }
+    if (MODIFY_TOOLS.has(tool) && T.pts.length && (/^[0-9.\-]$/.test(e.key) || e.key === "Backspace" || (e.key === "Enter" && this.typed))) {
+      if (e.key === "Enter") {
+        const n = Number(this.typed); this.typed = ""; this.hudInput = null;
+        if (tool === "rotate") { const c = T.centre, a0 = Math.atan2(T.pts[0][1] - c[1], T.pts[0][0] - c[0]) + n * Math.PI / 180; this.commitModify(add(c, [Math.cos(a0) * 1000, Math.sin(a0) * 1000])); }
+        else { const dir = normalise(sub(T.cursor || add(T.pts[0], [1, 0]), T.pts[0])); this.commitModify(add(T.pts[0], mul(dir, n))); }
+        return true;
+      }
+      this.typed = e.key === "Backspace" ? (this.typed || "").slice(0, -1) : (this.typed || "") + e.key;
+      this.hudInput = true; this.hud.hidden = false; this.hud.textContent = `${tool === "rotate" ? "angle" : "distance"} ${this.typed} ${tool === "rotate" ? "°" : "mm"} ⏎`;
+      return true;
+    }
+    if (e.key === "Escape") { if (T.pts.length || T.refs || T.ghost) { T.pts = []; T.refs = []; T.ghost = null; T.centre = null; this.hideHud(); this.draw(); return true; } return false; }
     if (tool === "wall" && T.pts.length) {
       if (e.key === "Enter" && !this.typed) { this.finishWall(false); return true; }
       if (e.key.toLowerCase() === "c" && T.pts.length >= 3) { this.finishWall(true); return true; }
