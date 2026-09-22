@@ -1,0 +1,391 @@
+//! Every edit goes through one pipeline with a JSON op vocabulary (§1.8):
+//!   add · delete · set · connect · disconnect · rename · appearance · draw ·
+//!   drag · relate · place · sheet · style · filter · import · model · type · undo · redo
+//! A model file and an edit script are the same kind of thing, so a test
+//! fixture, a sample and an assistant all use this path. Consecutive edits with
+//! the same coalescing key collapse into one undo step.
+
+import { TOL, add, sub, mul, dot, dist, perp, normalise, lineThrough, signedDistance, offsetLine, rot, len } from "./geom2d.js";
+import { parse, namesIn, evaluate, saysFormula, readValue, ExprError, formatValue } from "./expr.js";
+import { CATALOGUE, F, clone, documentLookup, MODEL_LIBS } from "./ocaf.js";
+import { resolveReference } from "./bim.js";
+
+export class Editor {
+  constructor(doc) {
+    this.doc = doc; this.undoStack = []; this.redoStack = []; this.lastKey = null; this.listeners = [];
+    this.lastResult = null;
+  }
+  on(fn) { this.listeners.push(fn); }
+  emit(r) { for (const fn of this.listeners) fn(r); }
+
+  /** Apply one op (or a list) as one step. Returns {ok, error?, conflicts?, ...}. */
+  apply(op, { regenerate = true } = {}) {
+    const ops = Array.isArray(op) ? op : [op];
+    const key = ops.length === 1 ? ops[0].coalesce || null : null;
+    const snap = snapshot(this.doc);
+    let result = { ok: true };
+    try {
+      for (const o of ops) {
+        const h = HANDLERS[o.op];
+        if (!h) throw new Error(`"${o.op}" is not an edit this document understands`);
+        const r = h(this.doc, o, this);
+        if (r && r.conflicts) { restore(this.doc, snap); this.doc.regenerate(); return this.finish({ ok: false, conflicts: r.conflicts, error: r.error }); }
+        result = Object.assign(result, r || {});
+      }
+    } catch (err) {
+      restore(this.doc, snap);
+      if (regenerate) this.doc.regenerate();
+      return this.finish({ ok: false, error: err.message, at: err.at });
+    }
+    if (!(key && key === this.lastKey)) { this.undoStack.push(snap); if (this.undoStack.length > 400) this.undoStack.shift(); }
+    this.redoStack = [];
+    this.lastKey = key;
+    if (regenerate) this.doc.regenerate();
+    return this.finish(result);
+  }
+  /** Ends a coalescing run (pointer-up): the next edit starts a new step. */
+  seal() { this.lastKey = null; }
+  undo() { if (!this.undoStack.length) return this.finish({ ok: false, error: "nothing to undo" }); const cur = snapshot(this.doc); restore(this.doc, this.undoStack.pop()); this.redoStack.push(cur); this.lastKey = null; this.doc.regenerate(); return this.finish({ ok: true, undo: true }); }
+  redo() { if (!this.redoStack.length) return this.finish({ ok: false, error: "nothing to redo" }); const cur = snapshot(this.doc); restore(this.doc, this.redoStack.pop()); this.undoStack.push(cur); this.lastKey = null; this.doc.regenerate(); return this.finish({ ok: true, redo: true }); }
+  finish(r) { this.lastResult = r; this.emit(r); return r; }
+}
+
+// ---------------------------------------------------------------- snapshots
+export function snapshot(doc) {
+  const els = new Map();
+  for (const f of doc.elements()) els.set(doc.idOf(f), JSON.stringify(doc.elementJSON(f)));
+  return { els, lib: JSON.stringify(doc.lib), libObj: null, joins: JSON.stringify(doc.joins), constraints: JSON.stringify(doc.constraints), graph: JSON.stringify(doc.graph), browser: JSON.stringify(doc.browser), name: doc.meta.name };
+}
+/** Restore by difference, so labels keep their tags and only what changed is touched. */
+export function restore(doc, snap) {
+  const cur = new Set(doc.elements().map(f => doc.idOf(f)));
+  for (const id of cur) if (!snap.els.has(id)) doc.removeElement(id);
+  for (const [id, s] of snap.els) {
+    const rec = JSON.parse(s);
+    const f = doc.element(id);
+    if (!f) { doc.addElement(rec); continue; }
+    if (JSON.stringify(doc.elementJSON(f)) === s) continue;
+    const decl = doc.declOf(f);
+    if (!decl || f.get("Type") !== rec.type) { doc.removeElement(id); doc.addElement(rec); continue; }
+    for (const a of decl.args) { const v = rec.args[a.key]; if (JSON.stringify(doc.argValue(f, a.key)) !== JSON.stringify(v)) doc.setArg(f, a.key, v === undefined ? clone(a.def) : v); }
+    f.set("Name", rec.name || id); f.set("Integer", rec.visible === false ? 0 : 1);
+    const had = doc.params(f), want = rec.params || {};
+    for (const k of new Set([...Object.keys(had), ...Object.keys(want)])) if (JSON.stringify(had[k]) !== JSON.stringify(want[k])) doc.setParam(f, k, want[k]);
+    const ap = f.child(52); ap.set("Json", rec.appearance); ap.set("Overrides", rec.overrides);
+    doc.log.touch(f);
+  }
+  const lib = JSON.parse(snap.lib);
+  for (const k of Object.keys(lib)) {
+    const a = doc.lib[k] || {}, b = lib[k];
+    for (const id of new Set([...Object.keys(a), ...Object.keys(b)])) if (JSON.stringify(a[id]) !== JSON.stringify(b[id])) doc.setDef(k, id, b[id]);
+  }
+  if (JSON.stringify(doc.joins) !== snap.joins || JSON.stringify(doc.constraints) !== snap.constraints) doc.relationRevision++;
+  doc.joins = JSON.parse(snap.joins); doc.constraints = JSON.parse(snap.constraints);
+  doc.graph = JSON.parse(snap.graph); doc.browser = JSON.parse(snap.browser); doc.meta.name = snap.name;
+  doc.bumpView();
+}
+
+// ---------------------------------------------------------------- value paths
+/** "centreline.end" → deep set inside an argument's JSON value. */
+function setPath(doc, f, key, value) {
+  const [head, ...rest] = key.split(".");
+  if (head === "params") { doc.setParam(f, rest.join("."), value); return; }
+  if (head === "Name") { f.set("Name", String(value)); doc.bumpView(); doc.log.touch(f); return; }
+  if (head === "visible") { f.set("Integer", value ? 1 : 0); doc.bumpView(); return; }
+  if (!rest.length) { doc.setArg(f, head, value); return; }
+  const v = clone(doc.argValue(f, head));
+  let o = v; for (let i = 0; i < rest.length - 1; i++) { if (o[rest[i]] == null) o[rest[i]] = {}; o = o[rest[i]]; }
+  o[rest[rest.length - 1]] = value;
+  doc.setArg(f, head, v);
+}
+export function getPath(doc, f, key) {
+  const [head, ...rest] = key.split(".");
+  if (head === "params") return doc.getParam(f, rest.join("."));
+  let o = doc.argValue(f, head); for (const k of rest) o = o == null ? undefined : o[k];
+  return o;
+}
+
+/** What a person typed into a numeric field becomes: a literal, a literal that
+ *  remembers its arithmetic, or — when it references something — an Expression
+ *  element wired to the field (§4.1 promotion). Returns the stored value. */
+export function valueFromText(doc, f, arg, textIn, editor) {
+  const src = String(textIn).trim();
+  const q = arg.quantity === "Integer" ? "Number" : arg.quantity;
+  let tree;
+  try { tree = parse(src); } catch (e) { throw e; }
+  const names = namesIn(tree);
+  if (!names.length) {
+    const v = evaluate(tree, { into: q });
+    if (q === "Length" && v.kind !== "Length" && v.kind !== "Number") throw new ExprError(`this field wants a length; that is ${v.kind === "Angle" ? "an angle" : "a " + v.kind.toLowerCase()}`);
+    const num = arg.kind === "Integer" ? Math.round(v.v) : v.v;
+    return saysFormula(src) ? { v: num, expr: src } : num;
+  }
+  // References something: check it evaluates now (and say which name is wrong if not) …
+  const self = f;
+  evaluate(tree, { lookup: documentLookup(doc, self), into: q });
+  // … and promote it. An existing expression with the same text is shared.
+  const same = doc.elements().find(g => doc.typeOf(g) === "Expression" && doc.argValue(g, "formula") === src && doc.argValue(g, "quantity") === (q || "Number"));
+  if (same) return { ref: doc.idOf(same) };
+  const id = doc.freshId("Expression");
+  doc.addElement({ id, type: "Expression", name: `${doc.idOf(f)}.${arg.key}`, args: { formula: src, quantity: q === "Integer" ? "Number" : (q || "Number") } });
+  return { ref: id };
+}
+
+// ---------------------------------------------------------------- handlers
+const HANDLERS = {
+  add(doc, o) {
+    const rec = clone(o.element);
+    if (!CATALOGUE.has(rec.type)) throw new Error(`there is no element type called ${rec.type}`);
+    if (!rec.id) rec.id = doc.freshId(rec.type);
+    doc.addElement(rec);
+    return { id: rec.id };
+  },
+  delete(doc, o) {
+    const ids = [].concat(o.id || o.ids);
+    const gone = new Set();
+    const cascade = id => {
+      if (gone.has(id) || !doc.element(id)) return; gone.add(id);
+      // hosted things go with their host: an opening in a deleted wall, a door in a deleted opening
+      for (const g of doc.elements()) {
+        const t = doc.typeOf(g);
+        if ((t === "Opening" && F.refId(g, "host") === id) || ((t === "Door" || t === "Window") && F.refId(g, "fills") === id)) cascade(doc.idOf(g));
+      }
+      // …and a sheet's viewport of a deleted view
+      for (const g of doc.elements()) if (doc.typeOf(g) === "Sheet") {
+        const vps = doc.argValue(g, "viewports") || [];
+        if (vps.some(v => v.view && v.view.ref === id)) doc.setArg(g, "viewports", vps.filter(v => !(v.view && v.view.ref === id)));
+      }
+    };
+    ids.forEach(cascade);
+    for (const id of gone) doc.removeElement(id);
+    return { deleted: [...gone] };
+  },
+  set(doc, o, ed) {
+    const ids = [].concat(o.ids || o.id);
+    for (const id of ids) {
+      const f = doc.element(id); if (!f) throw new Error(`there is no element ${id}`);
+      let value = o.value;
+      if (o.text !== undefined) {
+        const decl = doc.declOf(f), arg = decl && decl.args.find(a => a.key === o.key);
+        if (arg && (arg.kind === "Real" || arg.kind === "Integer")) value = valueFromText(doc, f, arg, o.text, ed);
+        else value = o.text;
+      }
+      setPath(doc, f, o.key, value);
+    }
+    return {};
+  },
+  unbind(doc, o) {
+    const f = doc.element(o.id); const v = doc.argValue(f, o.key);
+    if (!v || !v.ref) return { said: `${o.key} is not bound` };
+    const ex = doc.element(v.ref), val = ex ? (doc.data(ex) || {}).value : undefined;
+    const formula = ex ? doc.argValue(ex, "formula") : v.ref;
+    doc.setArg(f, o.key, typeof val === "number" ? val : 0);
+    return { said: `${o.key} was bound to ${v.ref} (${formula}); it is now the literal ${typeof val === "number" ? Math.round(val * 1000) / 1000 : 0}` };
+  },
+  rename(doc, o) {
+    const f = doc.element(o.id); if (!f) throw new Error(`there is no element ${o.id}`);
+    f.set("Name", o.name); doc.log.touch(f); doc.bumpView();
+    // Expressions naming it by name re-evaluate (test 37j): touch them.
+    for (const g of doc.elements()) if (doc.typeOf(g) === "Expression") doc.log.touch(g);
+    return {};
+  },
+  connect(doc, o) { const f = doc.element(o.id); doc.setArg(f, o.key, { ref: o.to }); return {}; },
+  disconnect(doc, o) { const f = doc.element(o.id); doc.setArg(f, o.key, null); return {}; },
+  appearance(doc, o) { const f = doc.element(o.id); f.child(52).set("Json", o.value); doc.bumpView(); return {}; },
+  /** Library edits: types and families rebuild geometry; the rest are drawing only. */
+  type(doc, o) {
+    const cur = clone(doc.lib[o.lib][o.id]);
+    if (o.remove) { doc.setDef(o.lib, o.id, undefined); return {}; }
+    if (o.path) { let x = cur; const ks = o.path.split("."); for (let i = 0; i < ks.length - 1; i++) x = x[ks[i]]; x[ks[ks.length - 1]] = o.value; doc.setDef(o.lib, o.id, cur); }
+    else doc.setDef(o.lib, o.id, o.value);
+    return {};
+  },
+  style(doc, o) { return HANDLERS.type(doc, Object.assign({}, o, { lib: "viewStyles" })); },
+  filter(doc, o) { return HANDLERS.type(doc, Object.assign({}, o, { lib: "viewStyles" })); },
+  relate(doc, o) {
+    // join and constraint rows: the two relationship stores (§1.5)
+    const store = o.store === "joins" ? doc.joins : doc.constraints;
+    if (o.remove) { const i = store.findIndex(r => r.id === o.remove); if (i >= 0) store.splice(i, 1); }
+    else if (o.row) {
+      const row = clone(o.row); if (!row.id) { let n = 1; const p = o.store === "joins" ? "J" : "C"; while (store.some(r => r.id === p + n)) n++; row.id = p + n; }
+      const i = store.findIndex(r => r.id === row.id); if (i >= 0) store[i] = row; else store.push(row);
+    }
+    doc.relationRevision++;
+    return {};
+  },
+  place(doc, o) {
+    // a viewport onto a sheet. A model view sits on one sheet only (§11).
+    const sh = doc.element(o.sheet);
+    const view = doc.element(o.view);
+    if (!sh || !view) throw new Error("place needs a sheet and a view");
+    const kind = doc.typeOf(view);
+    if (kind !== "Schedule") for (const g of doc.elements()) if (doc.typeOf(g) === "Sheet" && g !== sh && (doc.argValue(g, "viewports") || []).some(v => v.view.ref === o.view))
+      throw new Error(`${view.get("Name")} is already on sheet ${doc.argValue(g, "number")}; a model view can be placed on one sheet only`);
+    const vps = clone(doc.argValue(sh, "viewports") || []);
+    let n = 1; while (vps.some(v => v.id === "VP" + n)) n++;
+    vps.push({ id: "VP" + n, view: { ref: o.view }, at: o.at || [200, 200], clipVisible: false });
+    doc.setArg(sh, "viewports", vps); doc.bumpView();
+    return { id: "VP" + n };
+  },
+  sheet(doc, o) { const sh = doc.element(o.id); const vps = clone(doc.argValue(sh, "viewports")); const vp = vps.find(v => v.id === o.viewport); if (o.remove) vps.splice(vps.indexOf(vp), 1); else Object.assign(vp, o.value); doc.setArg(sh, "viewports", vps); doc.bumpView(); return {}; },
+  model(doc, o) { throw new Error("replace the whole model through openDocument, not as an edit"); },
+  /** Node positions ride in the file, so undo restores layout too. */
+  layout(doc, o) { if (o.reset) doc.graph.layout = {}; else doc.graph.layout[o.id] = o.at; return {}; },
+  /** A drag: the handle computes a value; constraints propagate from the
+   *  pinned element; conflicts are named and nothing is applied (§10.5). */
+  drag(doc, o) {
+    const f = doc.element(o.id);
+    // Dragging a note moves the text and its elbows, never what it points at (§9.2).
+    if (doc.typeOf(f) === "Text" && o.key === "position") {
+      const was = doc.argValue(f, "position"), d = sub(o.value, was);
+      const leaders = clone(doc.argValue(f, "leaders") || []).map(L => Object.assign(L, L.elbow ? { elbow: add(L.elbow, d) } : {}));
+      doc.setArg(f, "leaders", leaders);
+    }
+    setPath(doc, f, o.key, o.value);
+    const res = propagate(doc, o.id);
+    if (res.conflicts.length) return { conflicts: res.conflicts, error: res.conflicts.map(c => c.say).join("; ") };
+    for (const [id, cl] of res.set) if (id !== o.id) { const g = doc.element(id); doc.setArg(g, geomKey(g, doc), cl); }
+    return { moved: [...res.set.keys()].filter(id => id !== o.id) };
+  },
+  draw(doc, o) {
+    // Chain-draw walls: click, click, click (§10.9). Each vertex shares a node
+    // with an existing end (L join), lands on a centreline (T join, never a
+    // split), or is free.
+    const pts = o.points; const ids = [];
+    const snapNode = p => {
+      for (const g of doc.elements()) if (doc.typeOf(g) === "Wall") { const c = doc.argValue(g, "centreline"); if (c.type !== "line") continue;
+        if (dist(c.start, p) <= (o.tol || 1)) return { of: doc.idOf(g), end: "start" }; if (dist(c.end, p) <= (o.tol || 1)) return { of: doc.idOf(g), end: "end" }; }
+      for (const g of doc.elements()) if (doc.typeOf(g) === "Wall") { const c = doc.argValue(g, "centreline"); if (c.type !== "line") continue;
+        const L = lineThrough(c.start, c.end), t = dot(sub(p, c.start), L.d), l = dist(c.start, c.end);
+        if (t > 1 && t < l - 1 && Math.abs(signedDistance(L, p)) <= (o.tol || 1)) return { of: doc.idOf(g), u: t }; }
+      return null;
+    };
+    const n = o.closed ? pts.length : pts.length - 1;
+    const first = [];
+    for (let i = 0; i < n; i++) {
+      const a = pts[i], b = pts[(i + 1) % pts.length];
+      if (dist(a, b) < TOL) continue;
+      const at0 = snapNode(a), at1 = snapNode(b);
+      const id = doc.freshId("Wall");
+      doc.addElement({ id, type: "Wall", args: Object.assign({ centreline: { type: "line", start: a, end: b }, mounting: o.mounting || "Centred", wallType: { ref: o.wallType }, baseLevel: { ref: o.level }, height: o.height || 3000 }, o.args || {}) });
+      ids.push(id);
+      if (i === 0 && at0) first.push(at0.u !== undefined ? { a: { of: id, end: "start" }, b: at0 } : { a: { of: id, end: "start" }, b: at0 });
+      if (at1 && !(o.closed && i === n - 1)) HANDLERS.relate(doc, { store: "joins", row: at1.u !== undefined ? { a: { of: id, end: "end" }, b: at1, kind: "auto", order: 0, allowed: true } : { a: { of: id, end: "end" }, b: at1, kind: "auto", order: 0, allowed: true } });
+      if (i > 0) HANDLERS.relate(doc, { store: "joins", row: { a: { of: ids[ids.length - 2], end: "end" }, b: { of: id, end: "start" }, kind: "auto", order: 0, allowed: true } });
+    }
+    for (const r of first) HANDLERS.relate(doc, { store: "joins", row: Object.assign(r, { kind: "auto", order: 0, allowed: true }) });
+    if (o.closed && ids.length > 1) HANDLERS.relate(doc, { store: "joins", row: { a: { of: ids[ids.length - 1], end: "end" }, b: { of: ids[0], end: "start" }, kind: "auto", order: 0, allowed: true } });
+    return { ids };
+  },
+};
+export { HANDLERS };
+
+// ---------------------------------------------------------------- propagation (§10.5)
+/** Which argument moves an element as a whole. */
+export function geomKey(f, doc) {
+  const t = doc.typeOf(f);
+  return t === "Wall" ? "centreline" : t === "Grid" || t === "RoomSeparator" ? "line" : t === "Column" || t === "Furniture" || t === "Text" ? "position" : null;
+}
+/** The line of a reference key for an element in a hypothetical position. */
+function refLine(doc, f, rk, geom) {
+  const t = doc.typeOf(f);
+  if (t === "Wall" && geom.type === "line") {
+    const r = resolveReference(doc, doc.idOf(f) + ":" + rk);
+    if (!r) return null;
+    const base = lineThrough(geom.start, geom.end);
+    if (rk === "end.start") return { point: geom.start };
+    if (rk === "end.end") return { point: geom.end };
+    return { line: offsetLine(base, r.s || 0) };
+  }
+  if (t === "Grid") return { line: lineThrough(geom.start, geom.end) };
+  if (t === "Column") return { point: geom };
+  return null;
+}
+const translate = (geom, d) => Array.isArray(geom) ? add(geom, d) : Object.assign({}, geom, geom.start ? { start: add(geom.start, d), end: add(geom.end, d) } : {}, geom.centre ? { centre: add(geom.centre, d) } : {}, geom.points ? { points: geom.points.map(p => add(p, d)) } : {});
+
+/** Breadth-first from the pinned element; one closed-form computation per
+ *  constraint edge. A revisit either agrees (a consistent cycle) or names
+ *  exactly which constraint disagreed with which. No iteration, no solver state. */
+export function propagate(doc, pinnedId) {
+  const set = new Map(), pinned = new Set([pinnedId]), conflicts = [];
+  const pf = doc.element(pinnedId);
+  set.set(pinnedId, clone(doc.argValue(pf, geomKey(pf, doc))));
+  const queue = [pinnedId], cause = new Map();
+  const on = id => doc.constraints.filter(c => c.locked !== false && c.enabled !== false && c.of.some(r => r.split(":")[0] === id));
+  const geomOf = id => set.has(id) ? set.get(id) : clone(doc.argValue(doc.element(id), geomKey(doc.element(id), doc)));
+  let steps = 0;
+  while (queue.length) {
+    const e = queue.shift();
+    for (const C of on(e)) {
+      if (++steps > 10000) break;
+      const [ra, rb] = C.of, [ia, ka] = ra.split(":"), [ib, kb] = (rb || "").split(":");
+      const unary = !rb || ia === ib;
+      if (unary) { const bad = unaryViolation(doc, C, geomOf(ia)); if (bad) conflicts.push({ c: C.id, say: `${C.id} (${C.kind}) is not satisfied by this position${bad}` }); continue; }
+      const [me, mk, other, ok] = ia === e ? [ia, ka, ib, kb] : [ib, kb, ia, ka];
+      const fo = doc.element(other), fm = doc.element(me);
+      if (!fo || !fm) continue;
+      const v = solveFor(doc, C, fm, mk, geomOf(me), fo, ok, geomOf(other));
+      if (v === null) continue;
+      if (pinned.has(other) || set.has(other)) {
+        const cur = geomOf(other);
+        const diff = geomDiff(cur, v);
+        if (diff > 1e-6) {
+          const was = cause.get(other);
+          conflicts.push({ c: C.id, with: was, say: `${C.id} wants ${other} ${describe(C)} here${was ? `, ${was} already placed it` : ""} — ${Math.round(diff * 1000) / 1000}mm apart. Relax which?` });
+        }
+        continue;
+      }
+      set.set(other, v); cause.set(other, C.id); queue.push(other);
+    }
+  }
+  return { set, conflicts, steps };
+}
+function describe(C) { return C.kind === "distance" ? `at ${C.value}` : C.kind; }
+function geomDiff(a, b) {
+  if (Array.isArray(a)) return dist(a, b);
+  let d = 0; for (const k of ["start", "end", "centre"]) if (a[k] && b[k]) d = Math.max(d, dist(a[k], b[k]));
+  return d;
+}
+function unaryViolation(doc, C, geom) {
+  if (!geom || !geom.start) return null;
+  const d = sub(geom.end, geom.start);
+  if (C.kind === "horizontal" && Math.abs(d[1]) > 1e-6) return ` (it rises ${Math.round(d[1])}mm)`;
+  if (C.kind === "vertical" && Math.abs(d[0]) > 1e-6) return ` (it runs ${Math.round(d[0])}mm across)`;
+  return null;
+}
+/** Closed-form placement of `fo` so the constraint holds, given `fm` fixed. */
+function solveFor(doc, C, fm, mk, gm, fo, ok, go) {
+  const A = refLine(doc, fm, mk, gm), B = refLine(doc, fo, ok, go);
+  if (!A || !B) return null;
+  switch (C.kind) {
+    case "distance": case "aligned": {
+      const want = C.kind === "aligned" ? 0 : C.value;
+      if (A.line && B.line) {
+        const n = perp(A.line.d);
+        const cur = dot(sub(B.line.p, A.line.p), n);
+        const sign = cur < 0 ? -1 : 1;
+        return translate(go, mul(n, sign * want - cur));
+      }
+      if (A.point && B.point) { const d = sub(B.point, A.point), l = len(d) || 1; return translate(go, mul(d, want / l - 1)); }
+      if (A.line && B.point) { const n = perp(A.line.d), cur = dot(sub(B.point, A.line.p), n); const sign = cur < 0 ? -1 : 1; return translate(go, mul(n, sign * want - cur)); }
+      if (A.point && B.line) { const n = perp(B.line.d), cur = dot(sub(A.point, B.line.p), n); const sign = cur < 0 ? -1 : 1; return translate(go, mul(n, -(sign * want - cur))); }
+      return null;
+    }
+    case "coincident": {
+      if (!A.point || !B.point) return null;
+      return translate(go, sub(A.point, B.point));
+    }
+    case "equal": {
+      if (!gm.start || !go.start) return null;
+      const L = dist(gm.start, gm.end), d = normalise(sub(go.end, go.start));
+      return Object.assign({}, go, { end: add(go.start, mul(d, L)) });
+    }
+    case "parallel": case "perpendicular": {
+      if (!gm.start || !go.start) return null;
+      let d = normalise(sub(gm.end, gm.start)); if (C.kind === "perpendicular") d = perp(d);
+      const cur = normalise(sub(go.end, go.start)); if (dot(d, cur) < 0) d = mul(d, -1);
+      return Object.assign({}, go, { end: add(go.start, mul(d, dist(go.start, go.end))) });
+    }
+  }
+  return null;
+}
