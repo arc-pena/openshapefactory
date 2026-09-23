@@ -439,13 +439,26 @@ declare({ type: "Generic", guid: "wb-0403", category: "IfcBuildingElementProxy",
   args: [ json("boundary", "Boundary", [[0, 0], [1000, 0], [1000, 1000], [0, 1000]]), ref("level", "Level", ["level"]),
           real("baseOffset", "Base offset", 0, -100000, 100000, 1, "mm", { group: "Constraints" }), real("height", "Height", 1000, 1, 100000, 1, "mm", { group: "Dimensions" }),
           text("ifcClass", "IFC class", "IfcBuildingElementProxy", { group: "IFC" }), text("material", "Material", "M-CONC", { group: "Materials" }),
-          text("colour", "Colour", "", { group: "Graphics" }) ],
-  handles: (f) => { const b = F.json(f, "boundary") || []; return b.map((p, i) => ({ key: "v" + i, at: p, constraint: "free2d", writes: `boundary.${i}` })); } });
+          text("colour", "Colour", "", { group: "Graphics" }),
+          // a body that is not an extrusion (an imported stair, railing, fixture): a shared mesh from the
+          // document's mesh library and the frame that places it, z measured from the base
+          json("mesh", "Body mesh", null, { group: "IFC" }) ],
+  handles: (f) => { if (F.json(f, "mesh")) return []; const b = F.json(f, "boundary") || []; return b.map((p, i) => ({ key: "v" + i, at: p, constraint: "free2d", writes: `boundary.${i}` })); } });
 BUILDERS.Generic = {
   precondition: (f) => { const b = F.json(f, "boundary"); return Array.isArray(b) && b.length >= 3 ? null : "a generic model needs an outline of three points or more"; },
   build: (f, doc) => {
     const b = F.json(f, "boundary"), z0 = levelElev(doc, f, "level") + F.real(f, "baseOffset"), h = F.real(f, "height"), material = F.text(f, "material") || "M-CONC";
-    const colour = F.text(f, "colour") || null;
+    const colour = F.text(f, "colour") || null, mref = F.json(f, "mesh");
+    if (mref && mref.shape) {
+      const shape = doc.lib.meshes && doc.lib.meshes[mref.shape]; if (!shape) throw new Error(`its body mesh ${mref.shape} is missing from the document`);
+      const fr = mref.frame || { o: [0, 0, 0], x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] }, P = shape.positions, W = new Array(P.length);
+      let lo = Infinity, hi = -Infinity;
+      for (let i = 0; i < P.length; i += 3) { const x = P[i], y = P[i + 1], z = P[i + 2]; for (let k = 0; k < 3; k++) W[i + k] = fr.o[k] + fr.x[k] * x + fr.y[k] * y + fr.z[k] * z; W[i + 2] += z0; lo = Math.min(lo, W[i + 2]); hi = Math.max(hi, W[i + 2]); }
+      const mesh = { positions: W, index: shape.index }, shade = mref.colour || ((doc.lib.materials[material] || {}).shading || {}).colour || "#b9b2a6";
+      const area = Math.abs(polyArea(b));
+      return { plan: { path: polyPath(b), foot: b.map(p => p.slice()), z0: lo, z1: hi, material, parts: [], colour, mesh, meshShape: mref.shape, meshFrame: { o: [fr.o[0], fr.o[1], fr.o[2] + z0], x: fr.x, y: fr.y, z: fr.z }, mesh3d: [{ positions: W, index: shape.index, colour: shade }] },
+        data: { value: area, kind: "Area", parts: [], props: { Area: { kind: "Area", v: area }, Height: L(hi - lo), "Base elevation": L(lo), "IFC class": T(F.text(f, "ifcClass")), Triangles: T(String(shape.index.length / 3)) } } };
+    }
     const parts = [{ foot: b.map(p => p.slice()), z0, z1: z0 + h, sub: "Body", material, colour }];
     const area = Math.abs(polyArea(b));
     return { plan: { path: polyPath(b), foot: b, z0, z1: z0 + h, material, parts, colour },

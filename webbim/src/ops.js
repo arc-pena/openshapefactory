@@ -450,7 +450,8 @@ const HANDLERS = {
     const f = doc.element(o.id);
     if (isPinned(doc, f)) throw new Error(`${o.id} is pinned - unpin it to move it (UP, or click its pin)`);
     // an outline moved whole by its centre grip
-    if (o.key === "boundary.@centre") { const b = clone(doc.argValue(f, "boundary")), c = b.reduce((a, p) => add(a, p), [0, 0]).map(v => v / b.length), d = sub(o.value, c); doc.setArg(f, "boundary", b.map(p => [Math.round(p[0] + d[0]), Math.round(p[1] + d[1])])); return {}; }
+    if (o.key === "boundary.@centre") { const b = clone(doc.argValue(f, "boundary")), c = b.reduce((a, p) => add(a, p), [0, 0]).map(v => v / b.length), d = sub(o.value, c); doc.setArg(f, "boundary", b.map(p => [Math.round(p[0] + d[0]), Math.round(p[1] + d[1])]));
+      const m = doc.argValue(f, "mesh"); if (m && m.frame) doc.setArg(f, "mesh", Object.assign({}, m, { frame: moveFrame(m.frame, p => [p[0] + d[0], p[1] + d[1]]) })); return {}; }
     // Dragging a note moves the text and its elbows, never what it points at (§9.2).
     if (doc.typeOf(f) === "Text" && o.key === "position") {
       const was = doc.argValue(f, "position"), d = sub(o.value, was);
@@ -693,9 +694,16 @@ export function transformer(o) {
 }
 function transformExtras(doc, f, T) {
   const t = doc.typeOf(f);
+  // a body of its own shape moves with its outline: its placing frame is carried through the same transform
+  if (t === "Generic") { const m = doc.argValue(f, "mesh"); if (m && m.frame) doc.setArg(f, "mesh", Object.assign({}, m, { frame: moveFrame(m.frame, T.P) })); }
   if ((t === "Column" || t === "Furniture" || t === "Text" || t === "SymbolInstance") && doc.argValue(f, "rotation") !== undefined)
     doc.setArg(f, "rotation", ((T.A(doc.argValue(f, "rotation") || 0) % 360) + 360) % 360);
   if (t === "Text") doc.setArg(f, "leaders", (doc.argValue(f, "leaders") || []).map(L => Object.assign({}, L, L.elbow ? { elbow: T.P(L.elbow) } : {}, { target: T.P(L.target) })));
+}
+/** A placing frame {o, x, y, z} through a plan transform: the origin moved, the axes turned (and mirrored) in plan, heights kept. */
+function moveFrame(fr, P) {
+  const o2 = P([fr.o[0], fr.o[1]]), ax = v => { const q = P([fr.o[0] + v[0], fr.o[1] + v[1]]); return [q[0] - o2[0], q[1] - o2[1], v[2]]; };
+  return { o: [o2[0], o2[1], fr.o[2]], x: ax(fr.x), y: ax(fr.y), z: ax(fr.z) };
 }
 /** Walls joined to a moved wall keep their joint: the shared end follows the
  *  moved end (an L stretches), and a T end slides onto the moved through-wall. */

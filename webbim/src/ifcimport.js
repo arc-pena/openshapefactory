@@ -9,7 +9,11 @@
 //! not mapped is counted by class in the report, never dropped silently.
 
 import { readIfc, ifcScale, ofType, follow, followAll, asText, asNumber, isRef, asList, pointingAt, ifcWorldFrame, ifcBodyItems, ifcProfile,
-  ifcPlacementFrame, ifcCompose, ifcAt, ifcDirection, ifcName } from "./ifcread.js";
+  ifcPlacementFrame, ifcCompose, ifcAt, ifcDirection, ifcName, ifcPoint, ifcTransformScale, ifcProfileElements } from "./ifcread.js";
+import { triangulate } from "./geom2d.js";
+import { bridgeHoles } from "./bimsketch.js";
+import { weldTriangles, clipMeshPlane, frameMesh, packMesh } from "./massing.js";
+import { genericCategory } from "./styles.js";
 
 const WALLS = new Set(["IFCWALL", "IFCWALLSTANDARDCASE", "IFCWALLELEMENTEDCASE", "IFCCURTAINWALL"]);
 const SLABS = new Set(["IFCSLAB", "IFCSLABSTANDARDCASE", "IFCSLABELEMENTEDCASE", "IFCROOF", "IFCCOVERING"]);
@@ -96,6 +100,210 @@ function bodySolids(model, entity, scale) {
   const points = out.flatMap(x => x.points);
   return { frame, solids: out, points, clipped, extrusions: out.filter(x => x.kind === "extrusion") };
 }
+// ---------------------------------------------------------------- bodies as meshes
+//! What a drawing cannot take as a wall, a slab or a beam still has a shape, and that shape is kept:
+//! every body item tessellated into one welded mesh. A shape a file repeats (Revit writes each family
+//! type once, as an IfcRepresentationMap, and places it hundreds of times) is tessellated once and
+//! shared: the element keeps only the frame that places it.
+const TAU_ = 2 * Math.PI;
+/** A run of profile elements (lines, arcs, circles) as one chain of points, each element turned to
+ *  follow on from the last. */
+function runPoints(run, seg = 12) {
+  const out = [];
+  for (const el of run || []) {
+    let pts;
+    if (el.type === "line") pts = [el.a, el.b];
+    else if (el.type === "circle" || (el.c && el.r && el.a0 === undefined)) { pts = []; const n = Math.max(12, seg * 2); for (let i = 0; i < n; i++) pts.push([el.c[0] + el.r * Math.cos(i / n * TAU_), el.c[1] + el.r * Math.sin(i / n * TAU_)]); }
+    else if (el.c && el.r) { let sw = ((el.a1 - el.a0) % TAU_ + TAU_) % TAU_; if (sw < 1e-9) sw = TAU_; const n = Math.max(2, Math.ceil(sw / (TAU_ / 24))); pts = []; for (let i = 0; i <= n; i++) { const a = el.a0 + sw * i / n; pts.push([el.c[0] + el.r * Math.cos(a), el.c[1] + el.r * Math.sin(a)]); } }
+    else if (el.rx && el.ry && el.c) { pts = []; const n = 24, r = el.rot || 0; for (let i = 0; i < n; i++) { const a = i / n * TAU_, x = el.rx * Math.cos(a), y = el.ry * Math.sin(a); pts.push([el.c[0] + x * Math.cos(r) - y * Math.sin(r), el.c[1] + x * Math.sin(r) + y * Math.cos(r)]); } }
+    else if (el.a && el.b) pts = [el.a, el.b];
+    else continue;
+    if (out.length) { const L = out[out.length - 1], d0 = Math.hypot(pts[0][0] - L[0], pts[0][1] - L[1]), d1 = Math.hypot(pts[pts.length - 1][0] - L[0], pts[pts.length - 1][1] - L[1]); if (d1 < d0) pts = pts.slice().reverse(); if (Math.min(d0, d1) < 1e-6) pts = pts.slice(1); }
+    out.push(...pts);
+  }
+  if (out.length > 2 && Math.hypot(out[0][0] - out[out.length - 1][0], out[0][1] - out[out.length - 1][1]) < 1e-6) out.pop();
+  return out;
+}
+const areaOf = pts => { let A = 0; for (let i = 0; i < pts.length; i++) { const a = pts[i], b = pts[(i + 1) % pts.length]; A += a[0] * b[1] - b[0] * a[1]; } return A / 2; };
+/** A flat polygon (outer ring, holes) as triangles, in its own 2D coordinates: [[p, q, r] …] of points. */
+function flatTriangles(outer, holes) {
+  const o = areaOf(outer) < 0 ? outer.slice().reverse() : outer;
+  const hs = (holes || []).filter(hh => hh.length >= 3).map(hh => areaOf(hh) > 0 ? hh.slice().reverse() : hh);
+  const poly = hs.length ? bridgeHoles(o, hs) : o;
+  return triangulate(poly).map(([a, b, c]) => [poly[a], poly[b], poly[c]]);
+}
+/** A planar 3D face (outer loop, inner loops) as triangles: projected on its own plane, triangulated, lifted back. */
+function faceTriangles(outer3, inner3, push) {
+  if (outer3.length < 3) return;
+  const n = [0, 0, 0];
+  for (let i = 0; i < outer3.length; i++) { const a = outer3[i], b = outer3[(i + 1) % outer3.length]; n[0] += (a[1] - b[1]) * (a[2] + b[2]); n[1] += (a[2] - b[2]) * (a[0] + b[0]); n[2] += (a[0] - b[0]) * (a[1] + b[1]); }
+  const L = Math.hypot(...n); if (L < 1e-12) return;
+  const z = n.map(v => v / L), x0 = Math.abs(z[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0];
+  const xa = [x0[1] * z[2] - x0[2] * z[1], x0[2] * z[0] - x0[0] * z[2], x0[0] * z[1] - x0[1] * z[0]], xl = Math.hypot(...xa), x = xa.map(v => v / xl);
+  const y = [z[1] * x[2] - z[2] * x[1], z[2] * x[0] - z[0] * x[2], z[0] * x[1] - z[1] * x[0]];
+  const lift = new Map(), to2 = p => { const q = [p[0] * x[0] + p[1] * x[1] + p[2] * x[2], p[0] * y[0] + p[1] * y[1] + p[2] * y[2]]; lift.set(q, p); return q; };
+  if (outer3.length === 3 && !(inner3 || []).length) { push(outer3[0], outer3[1], outer3[2]); return; }
+  const o2 = outer3.map(to2), h2 = (inner3 || []).map(r => r.map(to2));
+  // the outer ring counter-clockwise seen along the face normal: then the triangles face out too
+  for (const [a, b, c] of flatTriangles(o2, h2)) push(lift.get(a), lift.get(b), lift.get(c));
+}
+/** A 3D curve as points: polylines, indexed poly curves, composite and trimmed curves (their basis's points). */
+function curvePoints3(model, value, scale, depth = 0) {
+  const e = follow(model, value); if (!e || depth > 12) return [];
+  if (e.type === "IFCPOLYLINE") return followAll(model, e.args[0]).map(p => ifcPoint(model, { ref: p.id }, scale));
+  if (e.type === "IFCINDEXEDPOLYCURVE") { const h = follow(model, e.args[0]); return h ? asList(h.args[0]).map(q => { const l = asList(q).map(n => asNumber(n) * scale); return [l[0] || 0, l[1] || 0, l[2] || 0]; }) : []; }
+  if (e.type === "IFCCOMPOSITECURVE") { const out = []; for (const sg of followAll(model, e.args[0])) { const pts = curvePoints3(model, sg.args[2], scale, depth + 1); if (out.length && pts.length && Math.hypot(...[0, 1, 2].map(k => pts[0][k] - out[out.length - 1][k])) > Math.hypot(...[0, 1, 2].map(k => pts[pts.length - 1][k] - out[out.length - 1][k]))) pts.reverse(); out.push(...pts); } return out; }
+  if (e.type === "IFCTRIMMEDCURVE") return curvePoints3(model, e.args[0], scale, depth + 1);
+  return [];
+}
+/** Everything that makes a mesh, in the coordinates of `fr` (item-local → shape space). */
+function meshItems(model, items, fr, scale, notes) {
+  const tri = [];
+  const push = (a, b, c) => tri.push(...ifcAt(fr, a), ...ifcAt(fr, b), ...ifcAt(fr, c));
+  const sub = (item, f2) => { const m = meshItems(model, [item], f2, scale, notes); for (let i = 0; i < m.length; i++) tri.push(m[i]); };
+  for (const item of items) {
+    if (!item) continue;
+    const a = item.args || [];
+    switch (item.type) {
+      case "IFCEXTRUDEDAREASOLID": case "IFCEXTRUDEDAREASOLIDTAPERED": {
+        const place = ifcPlacementFrame(model, a[1], scale), profile = ifcProfile(model, a[0], scale); if (!profile) { notes.add("a profile this reader does not know"); break; }
+        const els = ifcProfileElements(profile), outer = runPoints(els.outer), holes = (els.inner || []).map(r => runPoints(r)).filter(r => r.length >= 3);
+        if (outer.length < 3) break;
+        const d = ifcDirection(model, a[2], [0, 0, 1]), depth = asNumber(a[3]) * scale, dv = [d[0] * depth, d[1] * depth, d[2] * depth];
+        const P0 = p => ifcAt(place, [p[0], p[1], 0]), P1 = p => ifcAt(place, [p[0] + dv[0], p[1] + dv[1], dv[2]]);
+        const up = dv[2] >= 0;
+        for (const [p, q, r] of flatTriangles(outer, holes)) { if (up) { push(P0(p), P0(r), P0(q)); push(P1(p), P1(q), P1(r)); } else { push(P0(p), P0(q), P0(r)); push(P1(p), P1(r), P1(q)); } }
+        const ringSides = (ring, flip) => { const cw = (areaOf(ring) < 0) !== flip !== !up; for (let i = 0; i < ring.length; i++) { const p = ring[i], q = ring[(i + 1) % ring.length]; if (cw) { push(P0(p), P1(q), P0(q)); push(P0(p), P1(p), P1(q)); } else { push(P0(p), P0(q), P1(q)); push(P0(p), P1(q), P1(p)); } } };
+        ringSides(outer, false); for (const hh of holes) ringSides(hh, true);
+        if (item.type === "IFCEXTRUDEDAREASOLIDTAPERED") notes.add("tapered extrusions come in with their start profile");
+        break;
+      }
+      case "IFCREVOLVEDAREASOLID": {
+        const place = ifcPlacementFrame(model, a[1], scale), profile = ifcProfile(model, a[0], scale), ax = follow(model, a[2]); if (!profile || !ax) break;
+        const ring = runPoints(ifcProfileElements(profile).outer); if (ring.length < 2) break;
+        const o = ifcPoint(model, ax.args[0], scale), dz = ifcDirection(model, ax.args[1], [0, 1, 0]);
+        let ang = asNumber(a[3]); if (ang > TAU_ + 0.01) ang = ang * Math.PI / 180;
+        const n = Math.max(3, Math.ceil(ang / (TAU_ / 24))), rot = (p, t) => { // Rodrigues about the axis through o along dz, in the profile's plane (z = 0)
+          const v = [p[0] - o[0], p[1] - o[1], 0 - (o[2] || 0)], k = dz, c = Math.cos(t), sn = Math.sin(t), kv = k[0] * v[0] + k[1] * v[1] + k[2] * v[2];
+          const cr = [k[1] * v[2] - k[2] * v[1], k[2] * v[0] - k[0] * v[2], k[0] * v[1] - k[1] * v[0]];
+          return ifcAt(place, [0, 1, 2].map(i => (o[i] || 0) + v[i] * c + cr[i] * sn + k[i] * kv * (1 - c))); };
+        for (let s = 0; s < n; s++) for (let i = 0; i < ring.length; i++) { const p = ring[i], q = ring[(i + 1) % ring.length], t0 = ang * s / n, t1 = ang * (s + 1) / n; push(rot(p, t0), rot(q, t0), rot(q, t1)); push(rot(p, t0), rot(q, t1), rot(p, t1)); }
+        break;
+      }
+      case "IFCMAPPEDITEM": {
+        const src = follow(model, a[0]), rep = src && follow(model, src.args[1]); if (!rep) break;
+        const k = ifcTransformScale(model, a[1]), t = ifcPlacementFrame(model, a[1], scale), sc = f => ({ o: f.o, x: f.x.map(v => v * k), y: f.y.map(v => v * k), z: f.z.map(v => v * k) });
+        const f2 = ifcCompose(sc(t), ifcPlacementFrame(model, src.args[0], scale));
+        for (const it of followAll(model, rep.args[3])) sub(it, f2);
+        break;
+      }
+      case "IFCBOOLEANRESULT": case "IFCBOOLEANCLIPPINGRESULT": {
+        const op = asText(a[0], "").replace(/\./g, "").toUpperCase(), first = follow(model, a[1]), second = follow(model, a[2]);
+        const m1 = meshItems(model, [first], { o: [0, 0, 0], x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] }, scale, notes);
+        let mesh = weldTriangles(m1, 0.05);
+        if (op === "DIFFERENCE" && second && /HALFSPACESOLID/.test(second.type)) {
+          const surf = follow(model, second.args[0]), pl = surf && ifcPlacementFrame(model, surf.args[0], scale), agree = /T/.test(asText(second.args[1], ".T."));
+          if (pl) {
+            // the solid half space lies against the normal when AgreementFlag is true; the difference keeps the other side
+            const nrm = agree ? pl.z.map(v => -v) : pl.z, d = nrm[0] * pl.o[0] + nrm[1] * pl.o[1] + nrm[2] * pl.o[2];
+            mesh = clipMeshPlane(mesh, nrm, d);
+            if (second.type === "IFCPOLYGONALBOUNDEDHALFSPACE") notes.add("bounded half-space cuts are applied as unbounded planes");
+          }
+        } else if (op === "UNION" && second) { const m2 = weldTriangles(meshItems(model, [second], { o: [0, 0, 0], x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] }, scale, notes), 0.05); const off = mesh.positions.length / 3; mesh = { positions: mesh.positions.concat(m2.positions), index: mesh.index.concat(m2.index.map(i => i + off)) }; }
+        else if (second) notes.add("solid-by-solid boolean cuts are shown uncut");
+        for (let i = 0; i < mesh.index.length; i += 3) push(...[0, 1, 2].map(e => { const k = mesh.index[i + e] * 3; return [mesh.positions[k], mesh.positions[k + 1], mesh.positions[k + 2]]; }));
+        break;
+      }
+      case "IFCCSGSOLID": sub(follow(model, a[0]), { o: [0, 0, 0], x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] }); break;
+      case "IFCFACETEDBREP": case "IFCFACETEDBREPWITHVOIDS": case "IFCADVANCEDBREP": case "IFCADVANCEDBREPWITHVOIDS":
+        facesOf(model, followAll(model, (follow(model, a[0]) || { args: [] }).args[0]), scale, push, notes); break;
+      case "IFCSHELLBASEDSURFACEMODEL": for (const sh of followAll(model, a[0])) facesOf(model, followAll(model, sh.args[0]), scale, push, notes); break;
+      case "IFCFACEBASEDSURFACEMODEL": for (const cf of followAll(model, a[0])) facesOf(model, followAll(model, cf.args[0]), scale, push, notes); break;
+      case "IFCCLOSEDSHELL": case "IFCOPENSHELL": facesOf(model, followAll(model, a[0]), scale, push, notes); break;
+      case "IFCTRIANGULATEDFACESET": case "IFCTRIANGULATEDIRREGULARNETWORK": {
+        const C = coordList(model, a[0], scale), idx = asList(a[3]).map(t => asList(t).map(n => Math.round(asNumber(n)))), pn = a[4] ? asList(a[4]).map(n => Math.round(asNumber(n))) : null;
+        const at = i => C[(pn ? pn[i - 1] : i) - 1];
+        for (const t of idx) { const [p, q, r] = t.map(at); if (p && q && r) push(p, q, r); }
+        break;
+      }
+      case "IFCPOLYGONALFACESET": {
+        const C = coordList(model, a[0], scale), pn = a[3] ? asList(a[3]).map(n => Math.round(asNumber(n))) : null, at = i => C[(pn ? pn[i - 1] : Math.round(i)) - 1];
+        for (const fc of followAll(model, a[2])) {
+          const outer = asList(fc.args[0]).map(n => at(asNumber(n))).filter(Boolean);
+          const inner = fc.type === "IFCINDEXEDPOLYGONALFACEWITHVOIDS" ? asList(fc.args[1]).map(r => asList(r).map(n => at(asNumber(n))).filter(Boolean)) : [];
+          faceTriangles(outer, inner, push);
+        }
+        break;
+      }
+      case "IFCSWEPTDISKSOLID": case "IFCSWEPTDISKSOLIDPOLYGONAL": {
+        const path = curvePoints3(model, a[0], scale).filter((p, i, arr) => !i || Math.hypot(p[0] - arr[i - 1][0], p[1] - arr[i - 1][1], p[2] - arr[i - 1][2]) > 1e-6);
+        const r = asNumber(a[1]) * scale; if (path.length < 2 || !(r > 0)) { notes.add("swept disks whose path this reader cannot follow"); break; }
+        tube(path, r, push); break;
+      }
+      case "IFCBLOCK": { const pl = ifcPlacementFrame(model, a[0], scale), [dx, dy, dz] = [1, 2, 3].map(i => asNumber(a[i]) * scale); box(pl, [0, 0, 0], [dx, dy, dz], push); break; }
+      case "IFCRIGHTCIRCULARCYLINDER": { const pl = ifcPlacementFrame(model, a[0], scale), h = asNumber(a[1]) * scale, r = asNumber(a[2]) * scale, ring = []; for (let i = 0; i < 24; i++) ring.push([r * Math.cos(i / 24 * TAU_), r * Math.sin(i / 24 * TAU_)]);
+        for (const [p, q, t] of flatTriangles(ring, [])) { push(ifcAt(pl, [p[0], p[1], 0]), ifcAt(pl, [t[0], t[1], 0]), ifcAt(pl, [q[0], q[1], 0])); push(ifcAt(pl, [p[0], p[1], h]), ifcAt(pl, [q[0], q[1], h]), ifcAt(pl, [t[0], t[1], h])); }
+        for (let i = 0; i < 24; i++) { const p = ring[i], q = ring[(i + 1) % 24]; push(ifcAt(pl, [p[0], p[1], 0]), ifcAt(pl, [q[0], q[1], 0]), ifcAt(pl, [q[0], q[1], h])); push(ifcAt(pl, [p[0], p[1], 0]), ifcAt(pl, [q[0], q[1], h]), ifcAt(pl, [p[0], p[1], h])); }
+        break; }
+      default: notes.add(`${item.type.replace(/^IFC/, "Ifc").toLowerCase()} bodies (not read)`);
+    }
+  }
+  return tri;
+}
+function coordList(model, value, scale) { const h = follow(model, value); return h ? asList(h.args[0]).map(q => { const l = asList(q).map(n => asNumber(n) * scale); return [l[0] || 0, l[1] || 0, l[2] || 0]; }) : []; }
+/** Faces of a shell: each face's outer bound and its inner bounds (poly loops, or edge loops read by their vertices). */
+function facesOf(model, faces, scale, push, notes) {
+  const loopPts = lp => {
+    if (!lp) return [];
+    if (lp.type === "IFCPOLYLOOP") return followAll(model, lp.args[0]).map(p => ifcPoint(model, { ref: p.id }, scale));
+    if (lp.type === "IFCEDGELOOP") { notes.add("curved edges of advanced breps come in as chords"); return followAll(model, lp.args[0]).map(oe => { const edge = follow(model, oe.args[2]), fwd = !/F/.test(asText(oe.args[3], ".T.")); const v = follow(model, fwd ? edge.args[0] : edge.args[1]); return v ? ifcPoint(model, v.args[0], scale) : null; }).filter(Boolean); }
+    return [];
+  };
+  for (const fc of faces) {
+    const bounds = followAll(model, fc.args[0]); if (!bounds.length) continue;
+    const ob = bounds.find(b => b.type === "IFCFACEOUTERBOUND") || bounds[0];
+    const orient = b => { const pts = loopPts(follow(model, b.args[0])); return /F/.test(asText(b.args[1], ".T.")) ? pts.reverse() : pts; };
+    faceTriangles(orient(ob), bounds.filter(b => b !== ob).map(orient), push);
+  }
+}
+/** A round bar along a path (a railing's handrail): eight sides, the frame carried along the path. */
+function tube(path, r, push) {
+  const N = 8; let prevN = null; const rings = [];
+  for (let i = 0; i < path.length; i++) {
+    const a = path[Math.max(0, i - 1)], b = path[Math.min(path.length - 1, i + 1)], t0 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], tl = Math.hypot(...t0) || 1, t = t0.map(v => v / tl);
+    let n = prevN ? prevN.slice() : (Math.abs(t[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0]);
+    const k = n[0] * t[0] + n[1] * t[1] + n[2] * t[2]; n = [n[0] - k * t[0], n[1] - k * t[1], n[2] - k * t[2]]; const nl = Math.hypot(...n) || 1; n = n.map(v => v / nl); prevN = n;
+    const bn = [t[1] * n[2] - t[2] * n[1], t[2] * n[0] - t[0] * n[2], t[0] * n[1] - t[1] * n[0]];
+    const ring = []; for (let j = 0; j < N; j++) { const c = Math.cos(j / N * TAU_) * r, s = Math.sin(j / N * TAU_) * r; ring.push([0, 1, 2].map(q => path[i][q] + n[q] * c + bn[q] * s)); }
+    rings.push(ring);
+  }
+  for (let i = 0; i + 1 < rings.length; i++) for (let j = 0; j < N; j++) { const A = rings[i][j], B = rings[i][(j + 1) % N], C = rings[i + 1][(j + 1) % N], D = rings[i + 1][j]; push(A, B, C); push(A, C, D); }
+  for (const [ring, rev] of [[rings[0], true], [rings[rings.length - 1], false]]) for (let j = 1; j + 1 < N; j++) rev ? push(ring[0], ring[j + 1], ring[j]) : push(ring[0], ring[j], ring[j + 1]);
+}
+function box(pl, a, b, push) {
+  const P = (x, y, z) => ifcAt(pl, [x ? b[0] : a[0], y ? b[1] : a[1], z ? b[2] : a[2]]);
+  const q = (p1, p2, p3, p4) => { push(p1, p2, p3); push(p1, p3, p4); };
+  q(P(0, 0, 0), P(0, 1, 0), P(1, 1, 0), P(1, 0, 0)); q(P(0, 0, 1), P(1, 0, 1), P(1, 1, 1), P(0, 1, 1));
+  q(P(0, 0, 0), P(1, 0, 0), P(1, 0, 1), P(0, 0, 1)); q(P(1, 0, 0), P(1, 1, 0), P(1, 1, 1), P(1, 0, 1));
+  q(P(1, 1, 0), P(0, 1, 0), P(0, 1, 1), P(1, 1, 1)); q(P(0, 1, 0), P(0, 0, 0), P(0, 0, 1), P(0, 1, 1));
+}
+const ID3 = { o: [0, 0, 0], x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] };
+/** An element's body as a shape and the frame that places it. A body that is one mapped item is keyed
+ *  by its representation map (and scale) so every instance shares one mesh; anything else is its own. */
+export function elementShape(model, e, scale) {
+  const world = ifcWorldFrame(model, e.args[5], scale), items = ifcBodyItems(model, e), notes = new Set();
+  if (!items.length) return null;
+  if (items.length === 1 && items[0].type === "IFCMAPPEDITEM") {
+    const a = items[0].args, src = follow(model, a[0]), rep = src && follow(model, src.args[1]);
+    if (rep) {
+      const k = ifcTransformScale(model, a[1]), frame = ifcCompose(world, ifcCompose(ifcPlacementFrame(model, a[1], scale), ifcPlacementFrame(model, src.args[0], scale)));
+      const key = `map${src.id}${k !== 1 ? "x" + k : ""}`;
+      return { key, frame, build: () => { const t = meshItems(model, followAll(model, rep.args[3]), { o: [0, 0, 0], x: [k, 0, 0], y: [0, k, 0], z: [0, 0, k] }, scale, notes); return t.length ? weldTriangles(t, 0.05) : null; }, notes };
+    }
+  }
+  return { key: `el${e.id}`, frame: world, build: () => { const t = meshItems(model, items, ID3, scale, notes); return t.length ? weldTriangles(t, 0.05) : null; }, notes };
+}
+
 /** The points a brep or face set is made of: its cartesian points and point lists, and nothing that is
  *  only a placement or a direction. Each entity is read once however many faces share it. */
 const PLACEMENTS = new Set(["IFCAXIS2PLACEMENT2D", "IFCAXIS2PLACEMENT3D", "IFCDIRECTION", "IFCSTYLEDITEM", "IFCPRESENTATIONLAYERASSIGNMENT", "IFCCARTESIANTRANSFORMATIONOPERATOR3D"]);
@@ -148,7 +356,13 @@ function profileCentre(profile, local) {
 }
 const zRange = pts => [Math.min(...pts.map(p => p[2])), Math.max(...pts.map(p => p[2]))];
 
-export function importIfc(doc, text) {
+//! What each kind of mesh-bodied element is counted as, and drawn in.
+const MESH_KIND = { IfcStair: ["Stair", "M-CONC"], IfcRamp: ["Ramp", "M-CONC"], IfcRailing: ["Railing", "M-STEEL"], IfcPlate: ["Curtain panel", "M-GLASS"], Furniture: ["Furniture item", "M-TIMBER"],
+  IfcFlowTerminal: ["Fixture", "M-TILE"], IfcTransportElement: ["Lift or escalator", "M-STEEL"], IfcWall: ["Wall (exact shape)", "M-BLOCK"], IfcSlab: ["Floor (exact shape)", "M-CONC"],
+  IfcBeam: ["Beam (exact shape)", "M-STEEL"], IfcColumn: ["Column (exact shape)", "M-CONC"] };
+/** @param opts.everything bring in every other product with a body (stairs, railings, plates, furniture, fixtures…) with its own shape
+ *  @param opts.exact walls, slabs and members that are not one plain extrusion (clipped, sloped, breps) keep their exact shape */
+export function importIfc(doc, text, { everything = true, exact = true } = {}) {
   const model = readIfc(text), scale = ifcScale(model);
   const report = { made: {}, missed: {}, notes: [] };
   const made = k => { report.made[k] = (report.made[k] || 0) + 1; };
@@ -227,12 +441,56 @@ export function importIfc(doc, text) {
     made(T === "IFCROOF" ? "Floor (roof)" : footing ? "Floor (footing)" : "Floor");
     return true;
   };
+  //! A body kept as it is: tessellated once per shape, placed by its frame, filed by its class.
+  const shapes = new Map(), meshWalls = new Set(), locals = new Map();
+  const cls = T => T.replace(/^IFC/, "Ifc").toLowerCase().replace(/^ifc(.)/, (_, c) => "Ifc" + c.toUpperCase());
+  const IFC_CLASS = T => { const known = { IFCSTAIRFLIGHT: "IfcStairFlight", IFCSTAIR: "IfcStair", IFCRAMPFLIGHT: "IfcRampFlight", IFCRAMP: "IfcRamp", IFCRAILING: "IfcRailing", IFCPLATE: "IfcPlate", IFCFURNISHINGELEMENT: "IfcFurnishingElement", IFCFURNITURE: "IfcFurniture", IFCFLOWTERMINAL: "IfcFlowTerminal", IFCSANITARYTERMINAL: "IfcSanitaryTerminal", IFCTRANSPORTELEMENT: "IfcTransportElement", IFCWALL: "IfcWall", IFCWALLSTANDARDCASE: "IfcWall", IFCCURTAINWALL: "IfcCurtainWall", IFCSLAB: "IfcSlab", IFCROOF: "IfcRoof", IFCCOVERING: "IfcCovering", IFCFOOTING: "IfcFooting", IFCBEAM: "IfcBeam", IFCMEMBER: "IfcMember", IFCCOLUMN: "IfcColumn", IFCBUILDINGELEMENTPROXY: "IfcBuildingElementProxy", IFCDOOR: "IfcDoor", IFCWINDOW: "IfcWindow" }; return known[T] || cls(T); };
+  const addMesh = (e, T, lv) => {
+    const sh = elementShape(model, e, scale); if (!sh) return false;
+    let shapeId = shapes.get(sh.key);
+    if (shapeId === undefined) {
+      let local = null; try { local = sh.build(); } catch (err) { local = null; }
+      for (const n of sh.notes) note("mesh:" + n, n);
+      if (!local || !local.index.length) { shapes.set(sh.key, null); return false; }
+      let n = locals.size + 1; while (doc.lib.meshes && doc.lib.meshes["MS-" + n] || locals.has("MS-" + n)) n++;
+      shapeId = "MS-" + n; shapes.set(sh.key, shapeId); locals.set(shapeId, local); ops.push({ op: "type", lib: "meshes", id: shapeId, value: packMesh(local) });
+    }
+    if (!shapeId) return false;
+    const local = locals.get(shapeId), world = frameMesh(local, sh.frame);
+    const zs = []; for (let i = 2; i < world.positions.length; i += 3) zs.push(world.positions[i]);
+    const zLo = Math.min(...zs), zHi = Math.max(...zs), xy = []; for (let i = 0; i < world.positions.length; i += 3) xy.push([world.positions[i], world.positions[i + 1]]);
+    const boundary = hull2(xy); if (boundary.length < 3) return false;
+    const ic = IFC_CLASS(T), cat = genericCategory(ic), [label, material] = MESH_KIND[cat] || ["Generic models (exact shape)", "M-CONC"];
+    const r6 = v => Math.round(v * 1e6) / 1e6, fr = { o: [r1(sh.frame.o[0]), r1(sh.frame.o[1]), r1(sh.frame.o[2] - zLo)], x: sh.frame.x.map(r6), y: sh.frame.y.map(r6), z: sh.frame.z.map(r6) };
+    const id = fresh("GM");
+    ops.push({ op: "add", element: { id, type: "Generic", name: ifcName(e) || id, args: { boundary: boundary.map(p => [r1(p[0]), r1(p[1])]), level: lv ? { ref: lv.id } : null, baseOffset: r1(zLo - (lv ? lv.z : 0)), height: r1(Math.max(1, zHi - zLo)), ifcClass: ic, material, colour: "", mesh: { shape: shapeId, frame: fr } } } });
+    made(label); return true;
+  };
+  //! "Exact" for a wall, slab or member: a body that is not one plain extrusion (or is clipped) keeps its shape.
+  //! A wall with openings stays a wall (its doors and windows need a host); the clipped top is noted instead.
+  const voided = new Set(ofType(model, "IFCRELVOIDSELEMENT").map(rel => (follow(model, rel.args[4]) || {}).id));
+  const plainUpright = body => body.extrusions.length === 1 && body.solids.length === 1 && Math.abs(body.extrusions[0].dir[2]) > 0.9 && !body.clipped;
   for (const e of products) {
     const T = e.type;
     if (/^IFCREL/.test(T) || !e.args || !isRef(e.args[6])) continue;
     const isWall = WALLS.has(T), isSlab = SLABS.has(T) || T === "IFCFOOTING", isCol = COLUMNS.has(T), isBeam = BEAMS.has(T), isProxy = PROXIES.has(T);
-    if (!(isWall || isSlab || isCol || isBeam || isProxy)) { if (!FILLERS.has(T) && /^IFC/.test(T) && e.args.length > 6 && isRef(e.args[5]) && !IGNORED.has(T)) missed(T); continue; }
+    if (!(isWall || isSlab || isCol || isBeam || isProxy)) {
+      if (!FILLERS.has(T) && /^IFC/.test(T) && e.args.length > 6 && isRef(e.args[5]) && !IGNORED.has(T)) {
+        if (everything && ifcBodyItems(model, e).length && addMesh(e, T, levelFor(e))) continue;
+        missed(T, everything ? (ifcBodyItems(model, e).length ? "its body could not be tessellated" : "no Body representation") : "not brought in (Import everything else is off)");
+      }
+      continue;
+    }
     const body = bodySolids(model, e, scale), lv = levelFor(e);
+    // a proxy is always its own shape; a wall, slab or member that is not a plain upright extrusion keeps its shape when asked
+    if (isProxy && addMesh(e, T, lv)) continue;
+    if (exact && body.points.length) {
+      const single = body.extrusions.length === 1 && body.solids.length === 1, dz = single ? Math.abs(body.extrusions[0].dir[2]) : 0;
+      // a wall or slab is exact unless it is one plain upright extrusion (a wall with openings stays a wall, to host them);
+      // a member is exact when it is not one extrusion, is clipped, or slopes (neither level nor upright)
+      const want = (isWall || isSlab) ? !plainUpright(body) && !(isWall && voided.has(e.id)) : (!single || body.clipped || (dz > 0.02 && dz < 0.98));
+      if (want && addMesh(e, T, lv)) { if (isWall) meshWalls.add(e.id); continue; }
+    }
     if (!body.points.length) {
       const reps = (follow(model, e.args[6]) || { args: [] }).args[2], kinds = followAll(model, reps).map(r => asText(r.args[1], "?") + "/" + asText(r.args[2], "?"));
       const items = ifcBodyItems(model, e).map(i => i.type);
@@ -305,7 +563,7 @@ export function importIfc(doc, text) {
   let connections = 0;
   for (const rel of ofType(model, "IFCRELCONNECTSPATHELEMENTS")) {
     const A = wallOf.get((follow(model, rel.args[5]) || {}).id), B_ = wallOf.get((follow(model, rel.args[6]) || {}).id);
-    if (!A || !B_) { missed("IFCRELCONNECTSPATHELEMENTS"); continue; }
+    if (!A || !B_) { const ids = [(follow(model, rel.args[5]) || {}).id, (follow(model, rel.args[6]) || {}).id]; if (!ids.some(x => meshWalls.has(x))) missed("IFCRELCONNECTSPATHELEMENTS", "a wall it joins was not brought in as a wall"); continue; }
     const kinds = [asText(rel.args[10], ""), asText(rel.args[9], "")];
     [[A, B_, kinds[0]], [B_, A, kinds[1]]].forEach(([w, o, k]) => { if (!/ATPATH/i.test(k)) { const end = nearEnd(w, o); joinEnds.set(w.id + ":" + end, { id: w.id, end }); } });
     connections++;
@@ -316,7 +574,8 @@ export function importIfc(doc, text) {
   for (const rel of ofType(model, "IFCRELVOIDSELEMENT")) { const w = follow(model, rel.args[4]), o = follow(model, rel.args[5]); if (w && o && wallOf.has(w.id)) hostOfOpening.set(o.id, w.id); }
   for (const rel of ofType(model, "IFCRELFILLSELEMENT")) {
     const o = follow(model, rel.args[4]), fill = follow(model, rel.args[5]); if (!o || !fill) continue;
-    const host = wallOf.get(hostOfOpening.get(o.id)); if (!host) { missed(fill.type); continue; }
+    const host = wallOf.get(hostOfOpening.get(o.id));
+    if (!host) { if (!(everything && addMesh(fill, fill.type, levelFor(fill)))) missed(fill.type, "its host is not a wall here"); continue; }
     const door = /DOOR/.test(fill.type);
     const hgt = asNumber(fill.args[8]) * scale, wid = asNumber(fill.args[9]) * scale;
     const ob = bodySolids(model, o, scale), x = ob.extrusions[0] || (ob.points.length ? { world: ob.points, depth: zRange(ob.points)[1] - zRange(ob.points)[0] } : null), fr = ob.frame;
@@ -333,5 +592,9 @@ export function importIfc(doc, text) {
   }
   const typeOps = [...newTypes.entries()].map(([id, value]) => ({ op: "type", lib: "types", id, value }));
   if (joinEnds.size) ops.push({ op: "autojoin", ends: [...joinEnds.values()] });
-  return { ops: typeOps.concat(ops), report, types: newTypes.size };
+  // the meshes go first (an element reads its shape as it builds), without their working copies
+  const meshOps = ops.filter(o => o.lib === "meshes"), rest = ops.filter(o => o.lib !== "meshes");
+  const nShapes = meshOps.length, nMeshEls = rest.filter(o => o.element && o.element.args && o.element.args.mesh).length;
+  if (nShapes) report.notes.unshift(`${nMeshEls} elements keep their own shape, from ${nShapes} distinct shape${nShapes === 1 ? "" : "s"} (repeated family types are stored once)`);
+  return { ops: meshOps.concat(typeOps, rest), report, types: newTypes.size, shapes: nShapes };
 }

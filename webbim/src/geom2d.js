@@ -370,3 +370,29 @@ export class GridIndex {
     return out;
   }
 }
+
+/** Triangles of a simple polygon (ear clipping): index triples into `poly`. The polygon may carry
+ *  bridge edges to holes (repeated points); either winding. Gives up gracefully on a degenerate
+ *  remainder by fanning it, so a bad face costs a sliver, never the whole element. */
+export function triangulate(poly) {
+  const n = poly.length; if (n < 3) return [];
+  const idx = [...Array(n).keys()]; if (polyArea(poly) < 0) idx.reverse();
+  const out = [], cr = (a, b, c) => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+  const inside = (p, a, b, c) => cr(a, b, p) > 1e-9 && cr(b, c, p) > 1e-9 && cr(c, a, p) > 1e-9;
+  let guard = 0;
+  while (idx.length > 3 && guard++ < n * n) {
+    let clipped = false;
+    for (let i = 0; i < idx.length; i++) {
+      const i0 = idx[(i + idx.length - 1) % idx.length], i1 = idx[i], i2 = idx[(i + 1) % idx.length], a = poly[i0], b = poly[i1], c = poly[i2];
+      // a collinear vertex is kept as a zero-area triangle: a neighbouring face may use it (no T-junction)
+      const k = cr(a, b, c); if (k <= 1e-9) { if (Math.abs(k) <= 1e-9 && idx.length > 3) { out.push([i0, i1, i2]); idx.splice(i, 1); clipped = true; break; } continue; }
+      let ear = true;
+      for (const j of idx) { if (j === i0 || j === i1 || j === i2) continue; const p = poly[j]; if ((p[0] === a[0] && p[1] === a[1]) || (p[0] === b[0] && p[1] === b[1]) || (p[0] === c[0] && p[1] === c[1])) continue; if (inside(p, a, b, c)) { ear = false; break; } }
+      if (!ear) continue;
+      out.push([i0, i1, i2]); idx.splice(i, 1); clipped = true; break;
+    }
+    if (!clipped) break;
+  }
+  if (idx.length >= 3) for (let i = 1; i < idx.length - 1; i++) out.push([idx[0], idx[i], idx[i + 1]]);
+  return out;
+}

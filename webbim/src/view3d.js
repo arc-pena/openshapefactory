@@ -96,8 +96,8 @@ export class View3D {
       if (f.get("Integer") === 0 || doc.error(f)) continue;
       if (vw && !shownInView(doc, vw, f)) continue;          // Visibility/Graphics is data: the 3D view obeys it too
       const t = doc.typeOf(f), p = doc.plan(f);
-      if (p && PART_TYPES.has(t)) { this.addParts(f, t, style); continue; }
       if (p && (p.mesh3d || (t === "Massing" && p.mesh))) { this.addMeshes(f, p.mesh3d || [{ positions: p.mesh.positions, index: p.mesh.index, colour: "#7fa7d8", opacity: 0.28 }], style); continue; }
+      if (p && PART_TYPES.has(t)) { this.addParts(f, t, style); continue; }
       if (!p || (t !== "Wall" && t !== "Column")) continue;
       const id = doc.idOf(f);
       const m = one(f, p, t);

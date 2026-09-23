@@ -34,8 +34,14 @@ export function categoryOf(doc, f) {
   for (const k of ["wallType", "doorType", "windowType", "columnType", "floorType", "beamType"]) {
     const id = F.refId(f, k); if (id) { const t = doc.resolveType(id); if (t && t.category) return t.category; }
   }
+  // an imported generic model files under what the IFC says it is: a stair with the stairs, a basin with the fixtures
+  if (doc.typeOf(f) === "Generic") { const c = genericCategory(F.text(f, "ifcClass")); if (c && doc.lib.categories[c]) return c; }
   return decl ? decl.category : "Unknown";
 }
+const GENERIC_CATEGORY = [[/^Ifc(Stair|StairFlight)$/i, "IfcStair"], [/^Ifc(Ramp|RampFlight)$/i, "IfcRamp"], [/^IfcRailing$/i, "IfcRailing"], [/^IfcPlate$/i, "IfcPlate"],
+  [/^Ifc(Furnishing|Furniture|SystemFurniture)/i, "Furniture"], [/^Ifc(FlowTerminal|SanitaryTerminal|LightFixture|AirTerminal|WasteTerminal|FireSuppressionTerminal|ElectricAppliance|Lamp|Outlet|SpaceHeater|Valve|FlowSegment|FlowFitting|DuctSegment|PipeSegment)/i, "IfcFlowTerminal"],
+  [/^Ifc(TransportElement)$/i, "IfcTransportElement"], [/^Ifc(Wall|WallStandardCase|CurtainWall)$/i, "IfcWall"], [/^Ifc(Slab|Roof|Covering|Footing)$/i, "IfcSlab"], [/^Ifc(Beam|Member)$/i, "IfcBeam"], [/^IfcColumn$/i, "IfcColumn"]];
+export function genericCategory(cls) { for (const [re, c] of GENERIC_CATEGORY) if (re.test(cls || "")) return c; return null; }
 export function familyChainOf(doc, f) {
   for (const k of ["wallType", "doorType", "windowType", "columnType", "floorType", "beamType"]) {
     const id = F.refId(f, k); if (id) { const t = doc.resolveType(id); if (t) return t.chain.map(c => c.id); }

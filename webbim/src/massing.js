@@ -6,7 +6,8 @@
 //! Everything here is plain geometry on { positions: [x,y,z,…], index: [a,b,c,…], faces?: [..] }
 //! in millimetres, z up - so it is tested without a browser.
 
-import { polyArea, pointInPoly, dist, sub, add, mul, dot, normalise, lerp } from "./geom2d.js";
+import { polyArea, pointInPoly, dist, sub, add, mul, dot, normalise, lerp, triangulate } from "./geom2d.js";
+import { bridgeHoles } from "./bimsketch.js";
 
 // ---------------------------------------------------------------- reading
 /** OBJ: v and f records (polygons fanned; negative indices honoured). `scale` turns file units to mm. */
@@ -301,3 +302,64 @@ export function storeysFor(m, levels, floorToFloor, minPlate = 20e6) {
   });
   return out;
 }
+
+// ---------------------------------------------------------------- meshes as element bodies
+//! An element that is not an extrusion (a stair, a railing, a basin, a wall clipped under a roof)
+//! keeps its body as a welded triangle mesh. Drawings read three things off it: where a plane cuts
+//! it (sliceMesh), its feature edges seen from outside (the lines a draughtsman would draw), and
+//! its outline in plan.
+
+/** The edges worth drawing: the mesh's open boundary and every crease sharper than `angle` degrees
+ *  (a cylinder sampled at 15° shows its ends, not its facets). Pairs of vertex indices. */
+export function featureEdges(m, angle = 20) {
+  const P = m.positions, I = m.index, cosA = Math.cos(angle * Math.PI / 180), faces = new Map();
+  const nrm = t => { const [a, b, c] = [I[t], I[t + 1], I[t + 2]].map(k => [P[k * 3], P[k * 3 + 1], P[k * 3 + 2]]); const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]]; const n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]]; const L = Math.hypot(...n) || 1; return n.map(x => x / L); };
+  for (let t = 0; t < I.length; t += 3) {
+    const n = nrm(t);
+    for (let e = 0; e < 3; e++) { const a = I[t + e], b = I[t + (e + 1) % 3], k = a < b ? a * 4294967296 + b : b * 4294967296 + a; const l = faces.get(k); if (l) l.push(n); else faces.set(k, [n]); }
+  }
+  const out = [];
+  for (const [k, ns] of faces) {
+    const a = Math.floor(k / 4294967296), b = k - a * 4294967296;
+    if (ns.length !== 2 || ns[0][0] * ns[1][0] + ns[0][1] * ns[1][1] + ns[0][2] * ns[1][2] < cosA) out.push([a, b]);
+  }
+  return out;
+}
+/** A mesh's vertices moved by a frame { o, x, y, z } (the axes may carry a scale). */
+export function frameMesh(m, fr) {
+  const P = m.positions, out = new Array(P.length);
+  for (let i = 0; i < P.length; i += 3) { const x = P[i], y = P[i + 1], z = P[i + 2]; for (let k = 0; k < 3; k++) out[i + k] = fr.o[k] + fr.x[k] * x + fr.y[k] * y + fr.z[k] * z; }
+  return { positions: out, index: m.index };
+}
+/** The part of a mesh on the side n·p ≤ d of a plane, closed again where the plane cut it (so a wall
+ *  clipped under a roof has a sloping top, not a hole). The cap is the slice of the original mesh in
+ *  the plane, triangulated. */
+export function clipMeshPlane(m, n, d) {
+  const P = m.positions, I = m.index, tri = [];
+  const side = k => n[0] * P[k * 3] + n[1] * P[k * 3 + 1] + n[2] * P[k * 3 + 2] - d;
+  const at = k => [P[k * 3], P[k * 3 + 1], P[k * 3 + 2]];
+  for (let t = 0; t < I.length; t += 3) {
+    const ks = [I[t], I[t + 1], I[t + 2]], s = ks.map(side), pts = ks.map(at);
+    if (s.every(v => v <= 1e-6)) { tri.push(...pts[0], ...pts[1], ...pts[2]); continue; }
+    if (s.every(v => v >= -1e-6)) continue;
+    const poly = [];
+    for (let e = 0; e < 3; e++) {
+      const a = pts[e], b = pts[(e + 1) % 3], sa = s[e], sb = s[(e + 1) % 3];
+      if (sa <= 0) poly.push(a);
+      if ((sa < 0 && sb > 0) || (sa > 0 && sb < 0)) { const u = sa / (sa - sb); poly.push([a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u]); }
+    }
+    for (let i = 1; i + 1 < poly.length; i++) tri.push(...poly[0], ...poly[i], ...poly[i + 1]);
+  }
+  // the cap: rotate the plane to z = 0, slice there, triangulate, rotate back
+  const z = mnormalise3(n), x = mnormalise3(Math.abs(z[2]) < 0.9 ? mcross3([0, 0, 1], z) : mcross3([1, 0, 0], z)), y = mcross3(z, x), o = [z[0] * d, z[1] * d, z[2] * d];
+  const local = { positions: [], index: m.index };
+  for (let i = 0; i < P.length; i += 3) { const v = [P[i] - o[0], P[i + 1] - o[1], P[i + 2] - o[2]]; local.positions.push(v[0] * x[0] + v[1] * x[1] + v[2] * x[2], v[0] * y[0] + v[1] * y[1] + v[2] * y[2], v[0] * z[0] + v[1] * z[1] + v[2] * z[2]); }
+  for (const pl of plateAt(local, 0).plates) {
+    const poly = pl.holes.length ? bridgeHoles(pl.outer, pl.holes.map(hh => hh.slice().reverse())) : pl.outer;
+    for (const [a, b, c] of triangulate(poly)) for (const q of [poly[a], poly[c], poly[b]]) tri.push(o[0] + x[0] * q[0] + y[0] * q[1], o[1] + x[1] * q[0] + y[1] * q[1], o[2] + x[2] * q[0] + y[2] * q[1]);
+  }
+  const w = weldTriangles(tri, 0.05);
+  return { positions: w.positions, index: w.index };
+}
+const mcross3 = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const mnormalise3 = v => { const L = Math.hypot(...v) || 1; return v.map(x => x / L); };

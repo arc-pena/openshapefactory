@@ -919,8 +919,20 @@ function importIfcFile() {
   const inp = h("input", { type: "file", accept: ".ifc", hidden: true }); document.body.append(inp);
   inp.addEventListener("change", async () => {
     const file = inp.files[0]; inp.remove(); if (!file) return;
+    const text = await file.text();
+    // what to bring in beyond walls, slabs, columns, beams, doors and windows - asked once, both on by default
+    const everything = h("input", { type: "checkbox", checked: true }), exact = h("input", { type: "checkbox", checked: true });
+    dialog(`Import ${file.name}`, h("div", { style: { display: "grid", gap: "10px", maxWidth: "560px" } },
+      h("label", { class: "cellrow" }, everything, h("span", {}, h("b", {}, "Bring in everything else with its own shape"), h("div", { class: "muted small" }, "Stairs, ramps, railings, curtain panels, furniture, plumbing fixtures, lifts and proxies: kept as generic models with their exact tessellated body, filed in their own Visibility/Graphics category. Repeated family types are stored once."))),
+      h("label", { class: "cellrow" }, exact, h("span", {}, h("b", {}, "Keep the exact shape of walls, slabs and members that are not plain extrusions"), h("div", { class: "muted small" }, "Walls clipped under a roof, sloped roofs and slabs, sloping or curved beams and breps come in as their true shape instead of the box they fill. Walls with doors or windows stay walls so they can host them.")))),
+      [{ label: "Cancel", run: () => true }, { label: "Import", primary: true, run: () => { setTimeout(() => runIfcImport(file, text, { everything: everything.checked, exact: exact.checked }), 0); return true; } }]);
+  });
+  inp.click();
+}
+function runIfcImport(file, text, opts) {
+  {
     let r;
-    try { r = importIfc(app.doc, await file.text()); } catch (e) { return app.say(`Could not read ${file.name}: ${e.message}`, "error"); }
+    try { r = importIfc(app.doc, text, opts); } catch (e) { return app.say(`Could not read ${file.name}: ${e.message}`, "error"); }
     const res = app.apply(r.ops);
     if (!res.ok) return app.say(`${file.name}: ${res.error}`, "error");
     // "9 Floors (footing)", not "9 Floor (footing)s"
@@ -929,11 +941,10 @@ function importIfcFile() {
     const missed = Object.entries(r.report.missed).map(([k, n]) => `${n} × ${k}${r.report.why && r.report.why[k] ? " (" + Object.entries(r.report.why[k]).map(([w, c]) => (c > 1 ? c + ": " : "") + w).join("; ") + ")" : ""}`).join(", ");
     dialog(`Imported ${file.name}`, h("div", { style: { display: "grid", gap: "8px" } },
       h("div", {}, `Made: ${made}${r.types ? ` · ${r.types} new type${r.types > 1 ? "s" : ""}` : ""}.`),
-      missed ? h("div", { class: "banner note" }, `Not mapped (kept out, counted here): ${missed}. The Parametric CAD interface's IFC package can bring these in as geometry.`) : null,
+      missed ? h("div", { class: "banner note" }, `Not brought in (counted here): ${missed}.`) : null,
       ...r.report.notes.map(n => h("div", { class: "muted" }, n))), [{ label: "OK", primary: true, run: () => true }]);
     app.say(`${file.name}: ${made}`, "ok");
-  });
-  inp.click();
+  }
 }
 /** Revit's Import CAD: the DXF into the active 2D view as one element, origin to origin, pinned. */
 function importCAD() {

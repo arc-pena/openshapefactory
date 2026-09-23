@@ -103,6 +103,13 @@ export const CATEGORIES = {
   IfcBeam:           { name: "Structural Framing", subcategories: { Common: { cut: "heavy", projection: "thin", beyond: "hairline" } } },
   IfcBuildingElementProxy: { name: "Generic Models", subcategories: { Common: { cut: "heavy", projection: "thin", beyond: "hairline" } } },
   Furniture:         { name: "Furniture", subcategories: { Common: { projection: "thin" } } },
+  // what an IFC file brings that is drawn from its own shape
+  IfcStair:          { name: "Stairs", subcategories: { Common: { cut: "medium", projection: "thin", beyond: "hairline" } } },
+  IfcRamp:           { name: "Ramps", subcategories: { Common: { cut: "medium", projection: "thin", beyond: "hairline" } } },
+  IfcRailing:        { name: "Railings", subcategories: { Common: { cut: "medium", projection: "thin", beyond: "hairline" } } },
+  IfcPlate:          { name: "Curtain Panels", subcategories: { Common: { cut: "medium", projection: "thin", beyond: "hairline" } } },
+  IfcFlowTerminal:   { name: "Plumbing & Fixtures", subcategories: { Common: { cut: "thin", projection: "thin", beyond: "hairline" } } },
+  IfcTransportElement: { name: "Vertical Circulation", subcategories: { Common: { cut: "medium", projection: "thin", beyond: "hairline" } } },
 };
 
 export const FAMILIES = {

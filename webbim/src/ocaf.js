@@ -89,7 +89,7 @@ export class Logbook {
  *  libraries that only drive drawing (edits bump the view revision) — §1.4. */
 export const MODEL_LIBS = ["families", "types"];
 export const VIEW_LIBS = ["categories", "paramSpecs", "patterns", "materials", "symbols", "viewStyles", "pens", "textTypes"];
-const LIB_ORDER = ["categories", "paramSpecs", "pens", "patterns", "materials", "symbols", "families", "types", "textTypes", "viewStyles"];
+const LIB_ORDER = ["categories", "paramSpecs", "pens", "patterns", "materials", "symbols", "families", "types", "textTypes", "viewStyles", "meshes"];
 
 // ---------------------------------------------------------------- the document
 export class Document {

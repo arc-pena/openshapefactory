@@ -8,6 +8,7 @@
 //! interactive.
 
 import { TOL, samplePath, segStart, segEnd, dist, add, mul, sub, perp, normalise } from "./geom2d.js";
+import { featureEdges } from "./massing.js";
 import { wallRegions } from "./joins.js";
 import { pointAt, uOf } from "./walls.js";
 import { F } from "./ocaf.js";
@@ -35,6 +36,8 @@ export function buildHLRModel(doc, opts = {}) {
     if (f.get("Integer") === 0 || doc.error(f)) continue;
     if (opts.visible && !opts.visible(f)) continue;           // the view's Visibility/Graphics
     const t = doc.typeOf(f);
+    // a body of its own shape draws its feature edges (it does not hide others: it is not a convex solid)
+    if (t === "Generic" && doc.plan(f) && doc.plan(f).mesh) { const m = doc.plan(f).mesh, P = m.positions; for (const [a, b] of featureEdges(m)) edges.push({ a: [P[a * 3], P[a * 3 + 1], P[a * 3 + 2]], b: [P[b * 3], P[b * 3 + 1], P[b * 3 + 2]], kind: "sharp" }); continue; }
     if (t === "Door" || t === "Window" || t === "Floor" || t === "Beam" || t === "Generic") { for (const pt of elementParts(doc, f)) if (pt.foot && pt.foot.length >= 3) {
       prism(pt.foot, pt.z0, pt.z1, solids, edges, "auto");
       // a hole's edges are drawn; its opening does not yet let the line-work see through (the occluder is the outline)

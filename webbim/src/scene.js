@@ -11,7 +11,7 @@
 import { fmtLength, fmtArea } from "./units.js";
 import { outline, elementSegs } from "./bimsketch.js";
 import { buildableArea } from "./spacegraph.js";
-import { plateAt } from "./massing.js";
+import { plateAt, featureEdges, sliceMesh } from "./massing.js";
 import {
   TOL, add, sub, mul, dot, dist, perp, normalise, lerp, samplePath, pathArea, polyPath, bboxOf, segStart, segEnd, segMinusConvex,
   ensureCCW, convexHull, TAU, pointInPoly, reversePath, polyArea,
@@ -246,6 +246,29 @@ export function planScene(doc, v, opts = {}) {
       // a generic model reads like a column: poché where the cut crosses it, its outline below
       const p = doc.plan(f); if (!p) continue; const bnd = band(p.z0, p.z1);
       if (bnd === "above" || bnd === "below") continue;
+      if (p.mesh) {
+        // a body of its own shape (an imported stair, railing, basin): cut where the plane crosses it,
+        // and below the cut its feature edges, as the draughtsman sees them from above
+        const id = doc.idOf(f);
+        if (bnd === "cut") {
+          const g = resolveGraphics(doc, ctx, f, "cut"), mc = (doc.lib.materials[p.material] || {}).cut || {};
+          for (const pl of meshPlates(doc, p, cutZ)) {
+            const path = [...polyPath(pl.outer), ...pl.holes.flatMap(hh => polyPath(hh))];
+            B.fill(path, g.pattern === "solid" ? g.fill || "#000" : g.fill || mc.background || "#e9eaec", categoryOf(doc, f), id);
+            B.stroke(path, g, categoryOf(doc, f), id); B.hit(id, pl.outer);
+          }
+        }
+        const gp = resolveGraphics(doc, ctx, f, bnd === "beyond" ? "beyond" : "projection"), P = p.mesh.positions, segs = [], lo = bnd === "beyond" ? -Infinity : depthZ, hi = cutZ;
+        for (const [a, b] of meshEdges(doc, p.meshShape, p.mesh)) {
+          let za = P[a * 3 + 2], zb = P[b * 3 + 2]; if ((za > hi && zb > hi) || (za < lo && zb < lo)) continue;
+          let A = [P[a * 3], P[a * 3 + 1]], Bq = [P[b * 3], P[b * 3 + 1]];
+          if (za > hi || zb > hi) { const t = (hi - za) / (zb - za), m = [A[0] + (Bq[0] - A[0]) * t, A[1] + (Bq[1] - A[1]) * t]; if (za > hi) A = m; else Bq = m; }
+          if (Math.hypot(Bq[0] - A[0], Bq[1] - A[1]) > 0.5) segs.push(lineSeg(A, Bq));
+        }
+        if (segs.length) B.stroke(segs, gp, categoryOf(doc, f), id);
+        B.hit(id, p.foot);
+        continue;
+      }
       const g = resolveGraphics(doc, ctx, f, bnd === "cut" ? "cut" : "projection");
       // a coloured mass (a block of programme) keeps its colour: solid where cut, paler seen from above
       if (bnd === "cut") B.fill(p.path, p.colour || g.fill || ((doc.lib.materials[p.material] || {}).cut || {}).background || "#e9eaec", "IfcBuildingElementProxy", doc.idOf(f));
@@ -766,6 +789,15 @@ function gatherElevationItems(doc, ctx, G, skip = null) {
     if (!categoryVisible(ctx, categoryOf(doc, f))) continue;
     const t = doc.typeOf(f);
     if (t === "Wall") { const w = doc.plan(f); if (!w) continue; const it = elevWall(doc, f, w, V, sOf, depthOf, ctx); if (it) items.push(it); }
+    if (t === "Generic" && doc.plan(f) && doc.plan(f).mesh) {
+      // a body of its own shape: its feature edges, projected; hidden by what stands in front of it
+      const p = doc.plan(f), P = p.mesh.positions, curves = [];
+      let d0 = Infinity, d1 = -Infinity, s0 = Infinity, s1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+      for (let i = 0; i < P.length; i += 3) { const q = [P[i], P[i + 1]], dd = depthOf(q), ss = sOf(q); d0 = Math.min(d0, dd); d1 = Math.max(d1, dd); s0 = Math.min(s0, ss); s1 = Math.max(s1, ss); z0 = Math.min(z0, P[i + 2]); z1 = Math.max(z1, P[i + 2]); }
+      for (const [a, b] of meshEdges(doc, p.meshShape, p.mesh)) { const A = [P[a * 3], P[a * 3 + 1]], Bq = [P[b * 3], P[b * 3 + 1]]; curves.push([[sOf(A), P[a * 3 + 2] - Z0], [sOf(Bq), P[b * 3 + 2] - Z0]]); }
+      items.push({ id: doc.idOf(f), f, depth: d0, depthMax: d1, s0, s1, curves, sil: [], fillerHits: [{ id: doc.idOf(f), poly: [[s0, z0 - Z0], [s1, z0 - Z0], [s1, z1 - Z0], [s0, z1 - Z0]] }], cat: categoryOf(doc, f) });
+      continue;
+    }
     if (t === "Floor" || t === "Beam" || t === "Generic") {
       const p = doc.plan(f); if (!p || !p.parts) continue;
       for (const part of p.parts) {
@@ -871,9 +903,28 @@ const rectMinus = (r, k) => {
   return out;
 };
 /** The cut: material rectangles, their conflicts resolved by priority. */
+/** Where a plan cuts a mesh body. Upright instances of one shared shape cut at the same height share
+ *  one slice (a building's hundred basins are sliced once), placed by each instance's frame. */
+const MESH_SLICES = new Map();
+function meshPlates(doc, p, cutZ) {
+  const fr = p.meshFrame, shape = p.meshShape && doc.lib.meshes && doc.lib.meshes[p.meshShape];
+  if (!fr || !shape || Math.abs(fr.z[2] - 1) > 1e-6 || Math.abs(fr.x[2]) > 1e-6 || Math.abs(fr.y[2]) > 1e-6) return plateAt(p.mesh, cutZ).plates;
+  const h = Math.round((cutZ - fr.o[2]) * 10) / 10;
+  let byH = MESH_SLICES.get(shape); if (!byH) { if (MESH_SLICES.size > 4000) MESH_SLICES.clear(); byH = new Map(); MESH_SLICES.set(shape, byH); }
+  let local = byH.get(h); if (!local) { local = plateAt(shape, h).plates; byH.set(h, local); }
+  const put = q => [fr.o[0] + fr.x[0] * q[0] + fr.y[0] * q[1], fr.o[1] + fr.x[1] * q[0] + fr.y[1] * q[1]];
+  return local.map(pl => ({ outer: pl.outer.map(put), holes: pl.holes.map(hh => hh.map(put)) }));
+}
+/** A mesh body's feature edges, worked out once per shared shape (every instance has the same indices). */
+const MESH_EDGES = new Map();
+function meshEdges(doc, shapeId, mesh) {
+  const shape = shapeId && doc.lib.meshes && doc.lib.meshes[shapeId]; const key = shape || mesh;
+  let e = MESH_EDGES.get(key); if (!e) { e = featureEdges(shape || mesh); if (MESH_EDGES.size > 4000) MESH_EDGES.clear(); MESH_EDGES.set(key, e); }
+  return e;
+}
 export function sectionCut(doc, v) {
   const ctx = viewContext(doc, v), G = viewLineGeometry(doc, v);
-  const rects = [], cutIds = new Set();
+  const rects = [], cutIds = new Set(), polys = [];
   const push = (f, kind, s0, s1, z0, z1, material, priority) => { rects.push({ id: doc.idOf(f), kind, s0, s1, z0: z0 - G.Z0, z1: z1 - G.Z0, material, priority }); cutIds.add(doc.idOf(f)); };
   const detail = ctx.detail === "Coarse" ? "Coarse" : "Fine";
   for (const f of doc.elements()) {
@@ -893,6 +944,16 @@ export function sectionCut(doc, v) {
         }
       }
     }
+    if (t === "Generic" && p.mesh) {
+      // a body of its own shape, cut by the section plane: turned into (along, up, depth) and sliced at depth 0
+      const P = p.mesh.positions, Q = new Array(P.length); let lo = Infinity, hi = -Infinity;
+      for (let i = 0; i < P.length; i += 3) { const q = [P[i], P[i + 1]], dd = G.depthOf(q); Q[i] = G.sOf(q); Q[i + 1] = P[i + 2] - G.Z0; Q[i + 2] = dd; lo = Math.min(lo, dd); hi = Math.max(hi, dd); }
+      if (lo < 0 && hi > 0) {
+        const loops = sliceMesh({ positions: Q, index: p.mesh.index }, 0).filter(l => l.closed && l.pts.length >= 3).map(l => l.pts);
+        if (loops.length) { polys.push({ id: doc.idOf(f), material: p.material, loops, cat: categoryOf(doc, f) }); cutIds.add(doc.idOf(f)); }
+      }
+      continue;
+    }
     if ((t === "Floor" || t === "Beam" || t === "Generic") && p.parts) for (const part of p.parts) {
       const pr = LAYER_PRIORITY[part.sub] ?? (t === "Beam" ? 1 : 4);
       // a floor's holes take their stretch out of the cut
@@ -909,16 +970,18 @@ export function sectionCut(doc, v) {
   const upright = w => w.kind === "wall" || w.kind === "column";
   const fl = floors.flatMap(r => others.filter(w => upright(w) && w.priority < r.priority).reduce((acc, w) => acc.flatMap(x => rectMinus(x, w)), [r]));
   const ot = others.flatMap(w => !upright(w) ? [w] : floors.filter(r => !(w.priority < r.priority)).reduce((acc, r) => acc.flatMap(x => rectMinus(x, r)), [w]));
-  return { rects: fl.concat(ot), cutIds, G, ctx };
+  return { rects: fl.concat(ot), cutIds, G, ctx, polys };
 }
 export function sectionScene(doc, v, opts = {}) {
-  const { rects, cutIds, G, ctx } = sectionCut(doc, v);
+  const { rects, cutIds, G, ctx, polys } = sectionCut(doc, v);
   const S = ctx.scale, B = new SceneBuilder(S);
   drawDatums(doc, ctx, B, v, G);
   // beyond the cut: as an elevation, hidden behind the cut itself
   const items = gatherElevationItems(doc, ctx, G, cutIds).filter(it => it.depthMax >= -TOL && it.depth >= -TOL && it.depth <= G.depthMax && it.s1 >= 0 && it.s0 <= G.Lv)
     .sort((a, b) => a.depth - b.depth || (a.id < b.id ? -1 : 1));
   const occ = rects.map(r => [[r.s0, r.z0], [r.s1, r.z0], [r.s1, r.z1], [r.s0, r.z1]]);
+  // a cut mesh body hides what is behind it by its box (a convex stand-in for its outline)
+  for (const pg of polys) for (const l of pg.loops) { const xs = l.map(q => q[0]), zs = l.map(q => q[1]); occ.push([[Math.min(...xs), Math.min(...zs)], [Math.max(...xs), Math.min(...zs)], [Math.max(...xs), Math.max(...zs)], [Math.min(...xs), Math.max(...zs)]]); }
   drawProjection(doc, ctx, B, items, G, occ.slice());
   // the cut: fills and hatches per rectangle, then the outline off the grid
   const matOf = m => doc.lib.materials[m] || {};
@@ -936,6 +999,13 @@ export function sectionScene(doc, v, opts = {}) {
     if (pat && doc.lib.patterns[pat]) { const gp = el ? resolveGraphics(doc, ctx, el, "cutPattern", "Layer", r.material) : { colour: mc.lineColour || "#000" }; B.hatch(path, doc.lib.patterns[pat], pat, gp.colour || "#000", penWeight(doc, "hairline", S), cat, r.id, true); }
     B.mat.push({ id: r.id, material: r.material, poly: [[r.s0, r.z0], [r.s1, r.z0], [r.s1, r.z1], [r.s0, r.z1]] });
     B.hit(r.id, [[r.s0, r.z0], [r.s1, r.z0], [r.s1, r.z1], [r.s0, r.z1]]);
+  }
+  for (const pg of polys) {
+    const el = doc.element(pg.id), g = el ? resolveGraphics(doc, ctx, el, "cut") : null; if (g && !g.visible) continue;
+    const mc = (doc.lib.materials[pg.material] || {}).cut || {}, path = pg.loops.flatMap(l => polyPath(l.map(q => B.P(q))));
+    B.fill(path, g && g.pattern === "solid" ? g.fill || "#000" : (g && g.fill) || mc.background || "#e9eaec", pg.cat, pg.id, true);
+    B.stroke(pg.loops.flatMap(l => polyPath(l)), { weight: penWeight(doc, "heavy", S), colour: "#000" }, "Section-Cut", pg.id);
+    for (const l of pg.loops) B.hit(pg.id, l);
   }
   for (const e of cutOutline(rects)) B.stroke([lineSeg(e.a, e.b)], { weight: penWeight(doc, e.outer ? "heavy" : "thin", S), colour: "#000" }, "Section-Cut", e.id);
   drawViewAnnotations(doc, ctx, B, v);

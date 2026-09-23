@@ -36,6 +36,16 @@ The **Parametric CAD** button (top right, or `PC`) swaps the whole interface for
 - **Your own CAD work:** anything you add in the modeller that is not the building's (ids not starting `B_`) is kept.
 - **IFC:** the modeller's IFC package loads automatically.
 - **IFC import (Insert ▸ Import IFC):** walls, slabs, roofs and footings, columns and members, beams, doors and windows, and proxies come in as Walls, Floors, Columns, Beams, Doors/Windows and Generic models. Bodies are read through mapped items (a Revit file's shared beams), boolean clips (taken whole, and reported), breps and face sets (read off their points). `IfcRelConnectsPathElements` becomes wall joins. Each storey gets its floor plan. Anything approximated is named in the import report.
+  - **Everything else, with its own shape** (on by default): stairs, ramps, railings, curtain panels, furniture, plumbing fixtures, lifts and proxies come in as generic models with their exact tessellated body, each in its own Visibility/Graphics category. The reader handles:
+    - extrusions (with holes) and revolutions;
+    - faceted and advanced breps;
+    - triangulated and polygonal face sets;
+    - swept-disk railings, blocks and cylinders;
+    - mapped items;
+    - half-space cuts, applied with a closed cap.
+
+    A family type the file repeats is stored once in the document's mesh library and placed by a frame. These bodies are cut true in plans and sections, show their feature edges below the cut and in elevations, and render in 3D. They move, rotate and mirror like any element.
+  - **Exact shapes** (on by default): walls clipped under a roof, sloped or non-extruded slabs, and sloping or non-extruded members keep their true shape instead of the box they fill. Walls with doors or windows stay walls, to host them.
 - **Units (Manage ▸ Project Units, UN):** the model is millimetres, always. The project chooses how lengths are *shown*: mm, cm, m, feet and fractional inches, or inches. That covers Properties, temporary dimensions, schedules, tags and drawing dimensions (Revit style: `7000`, `7.000`, `22' - 11 9/16"`). Any length field takes any unit and any maths: `10m`, `3'-6"`, `3' 6 1/2"`, `2*1.2m + 300mm`, `W1.Height + 0.5`. A bare number is read in the display unit. A formula remembers the unit its bare numbers were typed in, so switching the display never changes a size.
 - **Elements measure themselves, live:** walls (length, height, width, area, volume), floors (area, perimeter, thickness, volume, holes), beams (length, depth, volume), columns, openings, spaces and generic models. They show read-only in Properties ▸ Dimensions, in the project's units, and update mid-drag.
 - **Show in 3D / Selection Box (BX) / Section Box:** right-click a selection in any view, or use Modify ▸ View. *Show in 3D* opens {3D} centred and framed on it. *Selection Box* also clips {3D} to a box around it. The section box is data on the 3D view (`sectionBox`), axis-aligned always. Its six blue arrows push or pull one face each along its own axis. View ▸ Section Box toggles it and keeps its size. Picking ignores what it cuts away, and the view's hidden-line drawing for sheets is clipped to it (and re-generated when it changes). The cut is not capped yet.

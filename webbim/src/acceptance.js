@@ -17,7 +17,7 @@ import { writePDF, pathOps, PT_PER_MM } from "./pdf.js";
 import { writeDXF, readDXF, dxfLineweight, dxfDrawing } from "./dxf.js";
 import { buildHLRModel, runHLR, elementsBox } from "./hlr.js";
 import { drawScene } from "./render.js";
-import { resolveGraphics, penWeight } from "./styles.js";
+import { resolveGraphics, penWeight, categoryOf } from "./styles.js";
 import { propertyModel, pickCandidates, graphModel, listeningDimensions, dimensionMove, editorFor } from "./props.js";
 import { buildSample } from "./sample.js";
 import { parseLength, setLengthUnit } from "./units.js";
@@ -27,7 +27,7 @@ import { cadSketchOutline } from "./cadsketch.js";
 import { programFromBrief, planSpaceGraph, relaxBubbles, gfaOf, activeLegend, legendColour, groupKey } from "./spacegraph.js";
 import { buildRmuhSample, RMUH_BRIEF } from "./sample_rmuh.js";
 import { buildPavilionSample } from "./sample_pavilion.js";
-import { parseOBJ, storeysFor } from "./massing.js";
+import { parseOBJ, storeysFor, plateAt } from "./massing.js";
 
 export const CASES = [];
 const testCase = (id, name, fn, opts = {}) => CASES.push(Object.assign({ id, name, fn }, opts));
@@ -1062,7 +1062,7 @@ DATA;
 ENDSEC;END-ISO-10303-21;`;
 testCase("M21", "IFC as written by real exporters: mapped beams, brep columns, clipped walls, footings, proxies, path joins, and one floor plan per storey", () => {
   const doc = newDocument("ifc"), ed = new Editor(doc);
-  const r = importIfc(doc, IFC_HARD), res = ed.apply(r.ops);
+  const r = importIfc(doc, IFC_HARD, { exact: false }), res = ed.apply(r.ops);
   const byType = t => doc.elements().filter(f => doc.typeOf(f) === t);
   const beams = byType("Beam").map(f => [doc.argValue(f, "axis"), doc.plan(f)]), col = byType("Column")[0], cp = col && doc.plan(col);
   const walls = byType("Wall"), gm = byType("Generic")[0], gp = gm && doc.plan(gm);
@@ -1626,4 +1626,55 @@ testCase("M54", "The Pavilion House sample: a house after the Barcelona Pavilion
   const ok = !errs.length && cols.length === 8 && cross && areas.every(a => a > 4) && sheets.length === 5 && vps.length === 16 && found && cutsPodium;
   return R(ok, "no errors; 8 cruciform columns (12-point footprint); bedroom, kitchen and bath all enclosed; 5 sheets, 16 viewports all resolving; Section A-A cuts the podium",
     `errors ${errs.join(",") || "none"}; columns ${cols.length}, cross ${cross}; areas ${areas.map(a => a.toFixed(1)).join("/")}; sheets ${sheets.length}, viewports ${vps.length}, found ${found}; section cuts podium ${cutsPodium}`);
+});
+
+const IFC_SHAPES = `ISO-10303-21;
+HEADER;FILE_DESCRIPTION((''),'2;1');FILE_NAME('s.ifc','',(''),(''),'','','');FILE_SCHEMA(('IFC4'));ENDSEC;
+DATA;
+#1=IFCSIUNIT(*,.LENGTHUNIT.,.MILLI.,.METRE.);#2=IFCUNITASSIGNMENT((#1));
+#10=IFCCARTESIANPOINT((0.,0.,0.));#11=IFCDIRECTION((0.,0.,1.));#12=IFCDIRECTION((1.,0.,0.));#13=IFCAXIS2PLACEMENT3D(#10,#11,#12);#14=IFCLOCALPLACEMENT($,#13);
+#20=IFCPROJECT('p',$,'T',$,$,$,$,$,#2);#23=IFCBUILDINGSTOREY('s1',$,'Ground',$,$,#14,$,$,.ELEMENT.,0.);
+#30=IFCCARTESIANPOINT((0.,5000.,0.));#31=IFCCARTESIANPOINT((1000.,5000.,0.));#32=IFCCARTESIANPOINT((1000.,8000.,0.));#33=IFCCARTESIANPOINT((0.,8000.,0.));#34=IFCCARTESIANPOINT((0.,8000.,1500.));#35=IFCCARTESIANPOINT((1000.,8000.,1500.));
+#36=IFCPOLYLOOP((#30,#33,#32,#31));#37=IFCPOLYLOOP((#33,#34,#35,#32));#38=IFCPOLYLOOP((#30,#31,#35,#34));#39=IFCPOLYLOOP((#30,#34,#33));#40=IFCPOLYLOOP((#31,#32,#35));
+#141=IFCFACEOUTERBOUND(#36,.T.);#142=IFCFACEOUTERBOUND(#37,.T.);#143=IFCFACEOUTERBOUND(#38,.T.);#144=IFCFACEOUTERBOUND(#39,.T.);#145=IFCFACEOUTERBOUND(#40,.T.);
+#41=IFCFACE((#141));#42=IFCFACE((#142));#43=IFCFACE((#143));#44=IFCFACE((#144));#45=IFCFACE((#145));
+#46=IFCCLOSEDSHELL((#41,#42,#43,#44,#45));#47=IFCFACETEDBREP(#46);#48=IFCSHAPEREPRESENTATION($,'Body','Brep',(#47));#49=IFCPRODUCTDEFINITIONSHAPE($,$,(#48));#50=IFCSTAIRFLIGHT('st',$,'Stair flight',$,$,#14,#49,$,$,$,$,$,$);
+#51=IFCCARTESIANPOINT((0.,4900.,900.));#52=IFCCARTESIANPOINT((0.,8000.,2400.));#53=IFCPOLYLINE((#51,#52));#54=IFCSWEPTDISKSOLID(#53,25.,$,$,$);
+#55=IFCSHAPEREPRESENTATION($,'Body','AdvancedSweptSolid',(#54));#56=IFCPRODUCTDEFINITIONSHAPE($,$,(#55));#57=IFCRAILING('ra',$,'Handrail',$,$,#14,#56,$,$);
+#60=IFCCARTESIANPOINTLIST3D(((0.,0.,0.),(600.,0.,0.),(300.,500.,0.),(300.,250.,750.)));#61=IFCTRIANGULATEDFACESET(#60,$,.T.,((1,3,2),(1,2,4),(2,3,4),(3,1,4)),$);
+#62=IFCSHAPEREPRESENTATION($,'Body','Tessellation',(#61));#63=IFCREPRESENTATIONMAP(#13,#62);
+#64=IFCCARTESIANPOINT((10000.,0.,0.));#65=IFCCARTESIANTRANSFORMATIONOPERATOR3D($,$,#64,1.,$);#66=IFCMAPPEDITEM(#63,#65);#67=IFCSHAPEREPRESENTATION($,'Body','MappedRepresentation',(#66));#68=IFCPRODUCTDEFINITIONSHAPE($,$,(#67));
+#69=IFCFURNISHINGELEMENT('f1',$,'Chair 1',$,$,#14,#68,$);
+#70=IFCCARTESIANPOINT((12000.,0.,0.));#71=IFCCARTESIANTRANSFORMATIONOPERATOR3D($,$,#70,1.,$);#72=IFCMAPPEDITEM(#63,#71);#73=IFCSHAPEREPRESENTATION($,'Body','MappedRepresentation',(#72));#74=IFCPRODUCTDEFINITIONSHAPE($,$,(#73));
+#75=IFCFURNISHINGELEMENT('f2',$,'Chair 2',$,$,#14,#74,$);
+#80=IFCCARTESIANPOINT((2500.,-2000.));#81=IFCAXIS2PLACEMENT2D(#80,$);#82=IFCRECTANGLEPROFILEDEF(.AREA.,'G',#81,5000.,200.);#83=IFCEXTRUDEDAREASOLID(#82,#13,#11,4000.);
+#84=IFCCARTESIANPOINT((2500.,-2000.,3500.));#85=IFCDIRECTION((0.6,0.,0.8));#86=IFCDIRECTION((0.8,0.,-0.6));#87=IFCAXIS2PLACEMENT3D(#84,#85,#86);#88=IFCPLANE(#87);#89=IFCHALFSPACESOLID(#88,.F.);
+#90=IFCBOOLEANCLIPPINGRESULT(.DIFFERENCE.,#83,#89);#91=IFCSHAPEREPRESENTATION($,'Body','Clipping',(#90));#92=IFCPRODUCTDEFINITIONSHAPE($,$,(#91));#93=IFCWALL('gw',$,'Gable wall',$,$,#14,#92,$,$);
+#100=IFCCARTESIANPOINT((0.,0.));#101=IFCAXIS2PLACEMENT2D(#100,$);#102=IFCRECTANGLEPROFILEDEF(.AREA.,'R',#101,4000.,3000.);#103=IFCCARTESIANPOINT((20000.,0.,3000.));#104=IFCDIRECTION((0.,-0.6,0.8));
+#105=IFCAXIS2PLACEMENT3D(#103,#104,#12);#106=IFCEXTRUDEDAREASOLID(#102,#105,#11,250.);#107=IFCSHAPEREPRESENTATION($,'Body','SweptSolid',(#106));#108=IFCPRODUCTDEFINITIONSHAPE($,$,(#107));#109=IFCSLAB('rf',$,'Sloped roof',$,$,#14,#108,$,.ROOF.);
+#110=IFCCARTESIANPOINTLIST3D(((15000.,0.,800.),(15600.,0.,800.),(15600.,450.,800.),(15000.,450.,800.),(15000.,0.,950.),(15600.,0.,950.),(15600.,450.,950.),(15000.,450.,950.)));
+#111=IFCINDEXEDPOLYGONALFACE((1,4,3,2));#112=IFCINDEXEDPOLYGONALFACE((5,6,7,8));#113=IFCINDEXEDPOLYGONALFACE((1,2,6,5));#114=IFCINDEXEDPOLYGONALFACE((2,3,7,6));#115=IFCINDEXEDPOLYGONALFACE((3,4,8,7));#116=IFCINDEXEDPOLYGONALFACE((4,1,5,8));
+#117=IFCPOLYGONALFACESET(#110,.T.,(#111,#112,#113,#114,#115,#116),$);#118=IFCSHAPEREPRESENTATION($,'Body','Tessellation',(#117));#119=IFCPRODUCTDEFINITIONSHAPE($,$,(#118));#120=IFCSANITARYTERMINAL('sn',$,'Basin',$,$,#14,#119,$,$);
+#130=IFCRELCONTAINEDINSPATIALSTRUCTURE('c1',$,$,$,(#50,#57,#69,#75,#93,#109,#120),#23);
+ENDSEC;END-ISO-10303-21;`;
+testCase("M55", "IFC bodies kept as their own shape: a brep stair, a swept-disk handrail, two chairs sharing one mapped shape, a gable wall clipped by a sloping half-space, a tilted roof slab and a polygonal-face-set basin - each a generic model with its true tessellated body, filed in its category, cut true in plan and section", () => {
+  const doc = newDocument("ifc"), ed = new Editor(doc);
+  const r = importIfc(doc, IFC_SHAPES), res = ed.apply(r.ops);
+  const gm = doc.elements().filter(f => doc.typeOf(f) === "Generic"), by = n => gm.find(f => f.get("Name") === n), cat = n => by(n) && categoryOf(doc, by(n));
+  const shapes = Object.keys(doc.lib.meshes || {});
+  const wall = by("Gable wall"), wp = wall && doc.plan(wall);
+  // the gable: whole 5 m × 200 at 1.2 m; above 3.0 m only where the slope still clears it (x < 2500 + 500 × 0.8 / 0.6 ≈ 3167)
+  const a12 = wp ? plateAt(wp.mesh, 1200).area : 0, a30 = wp ? plateAt(wp.mesh, 3000).area : 0;
+  const stair = doc.plan(by("Stair flight")), rail = doc.plan(by("Handrail")), roof = doc.plan(by("Sloped roof")), basin = doc.plan(by("Basin"));
+  const c1 = doc.plan(by("Chair 1")), c2 = doc.plan(by("Chair 2"));
+  const plan = deriveView(doc, doc.elements().find(f => doc.typeOf(f) === "PlanView"));
+  const drawnStair = plan.prims.some(p => p.id === doc.idOf(by("Stair flight")) || (p.layer === "IfcStair"));
+  const ok = res.ok && !Object.keys(r.report.missed).length && gm.length === 7
+    && cat("Stair flight") === "IfcStair" && cat("Handrail") === "IfcRailing" && cat("Chair 1") === "Furniture" && cat("Basin") === "IfcFlowTerminal" && cat("Gable wall") === "IfcWall"
+    && shapes.length === 6 && F.json(by("Chair 1"), "mesh").shape === F.json(by("Chair 2"), "mesh").shape
+    && Math.abs(c2.mesh.positions[0] - c1.mesh.positions[0] - 2000) < 1
+    && Math.abs(a12 - 1e6) < 2e3 && Math.abs(a30 - 3166.7 * 200) < 4e3 && Math.abs(wp.z1 - 4000) < 1
+    && Math.abs(stair.z1 - 1500) < 1 && Math.abs(rail.z1 - 2425) < 10 && Math.abs(roof.z1 - roof.z0 - 2000) < 2 && Math.abs(basin.z0 - 800) < 1 && drawnStair;
+  return R(ok, "7 generic models, nothing missed; stair/railing/furniture/fixture/wall categories; 6 shapes, the chairs sharing one 2 m apart; gable 1.00 m² at 1.2 m, ≈0.63 m² at 3.0 m, 4 m high; stair 1.5 m; rail to 2.425 m; roof tilted; basin from 0.8 m; the stair drawn in plan",
+    `ok ${res.ok} ${res.error || ""}; missed ${JSON.stringify(r.report.missed)}; generic ${gm.length}; cats ${["Stair flight", "Handrail", "Chair 1", "Basin", "Gable wall"].map(cat).join("/")}; shapes ${shapes.length}; chairs ${c1 && c2 && (c2.mesh.positions[0] - c1.mesh.positions[0])}; gable ${Math.round(a12)} / ${Math.round(a30)} h ${wp && wp.z1}; stair ${stair && stair.z1}; rail ${rail && rail.z1}; roof ${roof && [roof.z0, roof.z1].map(Math.round)}; basin ${basin && basin.z0}; drawn ${drawnStair}; notes ${r.report.notes.join(" | ")}`);
 });
