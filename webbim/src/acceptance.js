@@ -10,7 +10,7 @@ import { wallRegions, solidSpans } from "./joins.js";
 import { pointAt, uOf, boundary, wallPieces } from "./walls.js";
 import { newDocument, openDocument, measureRefs, resolveReference } from "./bim.js";
 import { Editor, propagate } from "./ops.js";
-import { deriveView, planScene, elevationScene, placements, textWidth } from "./scene.js";
+import { deriveView, planScene, elevationScene, placements, textWidth, sheetScene, visibilityKey } from "./scene.js";
 import { writePDF, pathOps, PT_PER_MM } from "./pdf.js";
 import { writeDXF, readDXF, dxfLineweight } from "./dxf.js";
 import { buildHLRModel, runHLR } from "./hlr.js";
@@ -847,4 +847,16 @@ testCase("M7", "Dragging a T end away releases the join; a nearby end makes a co
   ed.apply({ op: "drag", id: "B", key: "centreline.start", value: [5080, 3060] }); ed.apply({ op: "autojoin", ends: [{ id: "B", end: "start" }] });
   const b = doc.argValue(doc.element("B"), "centreline"), corner = doc.joins.some(r => r.a.of === "B" && r.a.end === "start" && r.b.of === "C" && r.b.end === "start");
   return R(released && corner && b.start[0] === 5000 && b.start[1] === 3000, "T released; start snapped to C's start (5000, 3000) with a corner join", `released ${released}, corner ${corner}, start ${b.start}`);
+});
+
+testCase("M8", "Visibility/Graphics is data: walls off in a style leave plan, elevation, sheet and the 3D cache key", () => {
+  const doc = buildSample(), ed = new Editor(doc);
+  const walls = sc => { let n = 0; const walk = ps => { for (const p of ps) { if (p.t === "group") walk(p.prims); else if ((p.layer || "").startsWith("IfcWall")) n++; } }; walk(sc.prims); return n; };
+  const before = [walls(deriveView(doc, doc.element("V-P00"))), walls(deriveView(doc, doc.element("V-E01"))), walls(sheetScene(doc, doc.element("SH-A101")))];
+  const key0 = visibilityKey(doc, doc.element("V-3D01"));
+  const st = clone(doc.lib.viewStyles["VS-CONSTRUCTION"]); st.byCategory = st.byCategory || {}; st.byCategory.IfcWall = Object.assign({}, st.byCategory.IfcWall, { visible: false });
+  ed.apply({ op: "style", id: "VS-CONSTRUCTION", value: st });
+  const after = [walls(deriveView(doc, doc.element("V-P00"))), walls(deriveView(doc, doc.element("V-E01"))), walls(sheetScene(doc, doc.element("SH-A101")))];
+  const key1 = visibilityKey(doc, doc.element("V-3D01"));
+  return R(before.every(n => n > 0) && after[0] === 0 && after[1] === 0 && key0 !== key1, "all wall line-work gone; 3D cache key changed", `before ${before} after ${after} key ${key0 || "∅"}→${key1}`);
 });

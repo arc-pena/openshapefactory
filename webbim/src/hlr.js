@@ -11,6 +11,7 @@ import { TOL, samplePath, segStart, segEnd, dist, add, mul, sub, perp, normalise
 import { wallRegions } from "./joins.js";
 import { pointAt, uOf } from "./walls.js";
 import { F } from "./ocaf.js";
+import { elementParts } from "./solids.js";
 
 const hlrCross = (u, v) => [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
 const hlrDot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
@@ -32,7 +33,9 @@ export function buildHLRModel(doc, opts = {}) {
   const chord = opts.chord || 400;
   for (const f of doc.elements()) {
     if (f.get("Integer") === 0 || doc.error(f)) continue;
+    if (opts.visible && !opts.visible(f)) continue;           // the view's Visibility/Graphics
     const t = doc.typeOf(f);
+    if (t === "Door" || t === "Window" || t === "Floor" || t === "Beam") { for (const pt of elementParts(doc, f)) if (pt.foot && pt.foot.length >= 3) prism(pt.foot, pt.z0, pt.z1, solids, edges, false); continue; }
     if (t === "Wall") { const w = doc.plan(f); if (!w || !w.pieces) continue; wallSolids(w, solids); wallEdges(w, edges, chord); }
     if (t === "Column") { const p = doc.plan(f); if (!p) continue; const foot = p.foot.length ? p.foot : samplePath(p.path).slice(0, -1); prism(foot, p.z0, p.z1, solids, edges, !!(p.foot.length === 16)); }
   }

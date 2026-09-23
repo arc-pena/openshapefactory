@@ -4010,6 +4010,26 @@ function openDocument(json) {
   return doc;
 }
 
+// ===== solids.js =====
+//! Every element's 3D body as prisms: a plan footprint pulled between two heights.
+//!
+//! One list, three readers: the 3D view builds its meshes from it, hidden-line
+//! removal builds its faces from it, and the CAD bridge writes each prism as a
+//! sketch and an extrusion. Families decide what their parts are (bim.js); this
+//! only gathers them, so a door that gains a handle gains it everywhere at once.
+
+
+
+/** [{foot, z0, z1, sub, leaf?, pivot?, topAt?}] for one element; [] when it has no body. */
+function elementParts(doc, f) {
+  const t = doc.typeOf(f), p = doc.plan(f);
+  if (!p) return [];
+  if (t === "Wall") return (p.pieces || []).map(pc => Object.assign({ sub: "Wall" }, pc));
+  if (t === "Column") return [{ foot: p.foot.length ? p.foot : samplePath(p.path).slice(0, -1), z0: p.z0, z1: p.z1, sub: "Column", smooth: p.foot.length === 16 }];
+  if (t === "Door" || t === "Window" || t === "Floor" || t === "Beam") { const d = doc.data(f); return (d && d.parts) || (p.parts || []); }
+  return [];
+}
+
 // ===== styles.js =====
 //! Graphics resolution (§7). Every object knows which pen it draws with; colour
 //! carries no plotting meaning. Seven levels, lowest first, each overriding the
@@ -5195,8 +5215,10 @@ function elevationScene(doc, v, opts = {}) {
   const items = [];
   for (const f of doc.elements()) {
     if (f.get("Integer") === 0 || doc.error(f)) continue;
+    // Visibility/Graphics is data: a category switched off in this view's style is not drawn, here as in plan
+    if (!categoryVisible(ctx, categoryOf(doc, f))) continue;
     const t = doc.typeOf(f);
-    if (t === "Wall") { const w = doc.plan(f); if (!w) continue; const it = elevWall(doc, f, w, V, sOf, depthOf); if (it) items.push(it); }
+    if (t === "Wall") { const w = doc.plan(f); if (!w) continue; const it = elevWall(doc, f, w, V, sOf, depthOf, ctx); if (it) items.push(it); }
     if (t === "Column") { const p = doc.plan(f); if (!p) continue; const pts = p.foot.length ? p.foot : samplePath(p.path); const ss = pts.map(sOf), dd = pts.map(depthOf);
       const s0 = Math.min(...ss), s1 = Math.max(...ss); const sil = [[s0, p.z0 - Z0], [s1, p.z0 - Z0], [s1, p.z1 - Z0], [s0, p.z1 - Z0]];
       items.push({ id: doc.idOf(f), f, depth: Math.min(...dd), depthMax: Math.max(...dd), s0, s1, curves: polyPath(sil).map(x => [x.a, x.b]), sil: [sil], cat: "IfcColumn" }); }
@@ -5206,7 +5228,7 @@ function elevationScene(doc, v, opts = {}) {
   // Datum lines first (never occluded), so the building draws over them.
   const ext = [-1500, Lv + 1500];
   B.stroke([lineSeg([ext[0], 0], [ext[1], 0])], { weight: penWeight(doc, "bold", S), colour: "#000" }, "Ground", null);
-  for (const f of doc.elements()) if (doc.typeOf(f) === "Level") {
+  for (const f of doc.elements()) if (doc.typeOf(f) === "Level" && categoryVisible(ctx, "IfcBuildingStorey")) {
     const z = (doc.data(f) || {}).value - Z0; if (z + Z0 > topZ) continue;
     B.stroke([lineSeg([ext[0], z], [ext[1], z])], { weight: penWeight(doc, "hairline", S), colour: "#000", dash: LINE_TYPES.centre }, "IfcBuildingStorey", doc.idOf(f));
     const hp = B.P([ext[1], z]);
@@ -5216,7 +5238,7 @@ function elevationScene(doc, v, opts = {}) {
     B.hit(doc.idOf(f), [[ext[0], z - 50], [ext[1], z - 50], [ext[1], z + 50], [ext[0], z + 50]]);
   }
   // Grids crossing the view line: vertical datum lines.
-  for (const f of doc.elements()) if (doc.typeOf(f) === "Grid") {
+  for (const f of doc.elements()) if (doc.typeOf(f) === "Grid" && categoryVisible(ctx, "IfcGrid")) {
     const gl = F.json(f, "line"), gd = normalise(sub(gl.end, gl.start));
     const den = d[0] * gd[1] - d[1] * gd[0]; if (Math.abs(den) < 1e-9) continue;
     const t = ((gl.start[0] - c.start[0]) * gd[1] - (gl.start[1] - c.start[1]) * gd[0]) / den;
@@ -5247,7 +5269,7 @@ function elevationScene(doc, v, opts = {}) {
 }
 
 /** A wall's elevation rep and silhouette, from its construction — not from a solid. */
-function elevWall(doc, f, w, V, sOf, depthOf) {
+function elevWall(doc, f, w, V, sOf, depthOf, ctx) {
   const regs = wallRegions(w, "Coarse", -Infinity, []);
   if (!regs.length) return null;
   const foot = samplePath(regs[0].path, 24);
@@ -5278,7 +5300,7 @@ function elevWall(doc, f, w, V, sOf, depthOf) {
     curves.push([[lo, za], [hi, za]], [[hi, za], [hi, zb2]], [[hi, zb2], [lo, zb2]], [[lo, zb2], [lo, za]]);
     if (!op.recess) { const sa = Math.max(Math.min(a1, b1), Math.min(a2, b2)), sb = Math.min(Math.max(a1, b1), Math.max(a2, b2)); if (sb - sa > 1) holes.push([sa, sb, za, zb2]); }
     // the filler's own elevation rep, mapped from host (u, z)
-    for (const g of doc.elements()) if ((doc.typeOf(g) === "Door" || doc.typeOf(g) === "Window") && doc.data(g) && doc.data(g).frame && doc.data(g).frame.u0 === op.u0 && doc.data(g).host === w.id) {
+    for (const g of doc.elements()) if ((doc.typeOf(g) === "Door" || doc.typeOf(g) === "Window") && (!ctx || categoryVisible(ctx, categoryOf(doc, g))) && doc.data(g) && doc.data(g).frame && doc.data(g).frame.u0 === op.u0 && doc.data(g).host === w.id) {
       const er = doc.elev(g); if (!er) continue;
       const mapU = u => sOf(pointAt(w, nearS, u)), mapZ = z => V(foot[0], w.z0 + z)[1];
       for (const r of er.rects || []) { const x0 = mapU(r.u0), x1 = mapU(r.u1), y0 = mapZ(r.z0), y1 = mapZ(r.z1); curves.push([[x0, y0], [x1, y0]], [[x1, y0], [x1, y1]], [[x1, y1], [x0, y1]], [[x0, y1], [x0, y0]]); }
@@ -5314,11 +5336,22 @@ let HLR = null;
 function setHLR(h) { HLR = h; }
 /** A 3D view on a sheet shows cached line-work; it is never interactive. The
  *  cache key is (camera, model revision, visible set); stale is shown as stale. */
+/** What this view's Visibility/Graphics leaves out, as one comparable string: part of the 3D cache key. */
+function visibilityKey(doc, v) {
+  const ctx = viewContext(doc, v);
+  return Object.keys(doc.lib.categories).filter(c => !categoryVisible(ctx, c)).sort().join(",");
+}
+/** Does this view show this element? Hidden elements and categories switched off in its style are out. */
+function shownInView(doc, v, f) {
+  if (f.get("Integer") === 0) return false;
+  return categoryVisible(viewContext(doc, v), categoryOf(doc, f));
+}
 function view3dScene(doc, v, opts = {}) {
   const ctx = viewContext(doc, v), S = ctx.scale, B = new SceneBuilder(S);
   const cache = doc._hlrCache && doc._hlrCache[doc.idOf(v)];
   const cam = JSON.stringify(doc.argValue(v, "camera"));
   const scene = { prims: B.prims, hits: [], links: [], scale: S, kind: "3d" };
+  if (cache && cache.camera === cam && (cache.vis || "") !== visibilityKey(doc, v)) scene.stale = "Visibility/Graphics changed since generation";
   if (!cache || cache.camera !== cam) { scene.stale = "never generated"; B.text([0, 0], "Hidden-line view not generated yet", 3, {}); scene.bbox = [-5, -5, 120, 10]; return scene; }
   if (cache.revision !== doc.modelRevision) scene.stale = `model changed since generation (rev ${cache.revision} → ${doc.modelRevision})`;
   const render = doc.argValue(v, "render") || {};
@@ -5673,6 +5706,7 @@ function dimensionMove(doc, dim, value) {
 
 
 
+
 const hlrCross = (u, v) => [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
 const hlrDot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const sub3 = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -5693,7 +5727,9 @@ function buildHLRModel(doc, opts = {}) {
   const chord = opts.chord || 400;
   for (const f of doc.elements()) {
     if (f.get("Integer") === 0 || doc.error(f)) continue;
+    if (opts.visible && !opts.visible(f)) continue;           // the view's Visibility/Graphics
     const t = doc.typeOf(f);
+    if (t === "Door" || t === "Window" || t === "Floor" || t === "Beam") { for (const pt of elementParts(doc, f)) if (pt.foot && pt.foot.length >= 3) prism(pt.foot, pt.z0, pt.z1, solids, edges, false); continue; }
     if (t === "Wall") { const w = doc.plan(f); if (!w || !w.pieces) continue; wallSolids(w, solids); wallEdges(w, edges, chord); }
     if (t === "Column") { const p = doc.plan(f); if (!p) continue; const foot = p.foot.length ? p.foot : samplePath(p.path).slice(0, -1); prism(foot, p.z0, p.z1, solids, edges, !!(p.foot.length === 16)); }
   }
@@ -7152,6 +7188,17 @@ testCase("M7", "Dragging a T end away releases the join; a nearby end makes a co
   return R(released && corner && b.start[0] === 5000 && b.start[1] === 3000, "T released; start snapped to C's start (5000, 3000) with a corner join", `released ${released}, corner ${corner}, start ${b.start}`);
 });
 
+testCase("M8", "Visibility/Graphics is data: walls off in a style leave plan, elevation, sheet and the 3D cache key", () => {
+  const doc = buildSample(), ed = new Editor(doc);
+  const walls = sc => { let n = 0; const walk = ps => { for (const p of ps) { if (p.t === "group") walk(p.prims); else if ((p.layer || "").startsWith("IfcWall")) n++; } }; walk(sc.prims); return n; };
+  const before = [walls(deriveView(doc, doc.element("V-P00"))), walls(deriveView(doc, doc.element("V-E01"))), walls(sheetScene(doc, doc.element("SH-A101")))];
+  const key0 = visibilityKey(doc, doc.element("V-3D01"));
+  const st = clone(doc.lib.viewStyles["VS-CONSTRUCTION"]); st.byCategory = st.byCategory || {}; st.byCategory.IfcWall = Object.assign({}, st.byCategory.IfcWall, { visible: false });
+  ed.apply({ op: "style", id: "VS-CONSTRUCTION", value: st });
+  const after = [walls(deriveView(doc, doc.element("V-P00"))), walls(deriveView(doc, doc.element("V-E01"))), walls(sheetScene(doc, doc.element("SH-A101")))];
+  const key1 = visibilityKey(doc, doc.element("V-3D01"));
+  return R(before.every(n => n > 0) && after[0] === 0 && after[1] === 0 && key0 !== key1, "all wall line-work gone; 3D cache key changed", `before ${before} after ${after} key ${key0 || "∅"}→${key1}`);
+});
 // ===== ui_util.js =====
 //! Small DOM vocabulary shared by the interface modules. The interface only
 //! mirrors the document: nothing here owns model state.
@@ -8637,26 +8684,6 @@ class ViewCube {
   draw() { if (this.r) this.r.render(this.scene, this.cam); }
 }
 
-// ===== solids.js =====
-//! Every element's 3D body as prisms: a plan footprint pulled between two heights.
-//!
-//! One list, three readers: the 3D view builds its meshes from it, hidden-line
-//! removal builds its faces from it, and the CAD bridge writes each prism as a
-//! sketch and an extrusion. Families decide what their parts are (bim.js); this
-//! only gathers them, so a door that gains a handle gains it everywhere at once.
-
-
-
-/** [{foot, z0, z1, sub, leaf?, pivot?, topAt?}] for one element; [] when it has no body. */
-function elementParts(doc, f) {
-  const t = doc.typeOf(f), p = doc.plan(f);
-  if (!p) return [];
-  if (t === "Wall") return (p.pieces || []).map(pc => Object.assign({ sub: "Wall" }, pc));
-  if (t === "Column") return [{ foot: p.foot.length ? p.foot : samplePath(p.path).slice(0, -1), z0: p.z0, z1: p.z1, sub: "Column", smooth: p.foot.length === 16 }];
-  if (t === "Door" || t === "Window" || t === "Floor" || t === "Beam") { const d = doc.data(f); return (d && d.parts) || (p.parts || []); }
-  return [];
-}
-
 // ===== view3d.js =====
 //! The 3D view. You can work in it, not just look: click selects (the same
 //! selection the plan and the Properties palette use); grips on a selected
@@ -8664,6 +8691,7 @@ function elementParts(doc, f) {
 //! opening and column tools place things on the level plane or on the wall
 //! you click. Every gesture computes a value and sends an ordinary edit (§10.1).
 //! The ViewCube sits top-right; "Generate for sheet" runs hidden-line in slices.
+
 
 
 
@@ -8740,7 +8768,7 @@ class View3D {
   refresh() {
     if (!this.T) return;
     const T = this.T, doc = this.doc, style = this.style;
-    const key = doc.modelRevision + "|" + style;
+    const vw = doc.element(this.viewId), key = doc.modelRevision + "|" + style + "|" + (vw ? visibilityKey(doc, vw) : "");
     if (this.builtKey === key) { this.render(); return; }
     this.builtKey = key;
     for (const g of this.groups.values()) { this.scene.remove(g); g.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) [].concat(o.material).forEach(m => m.dispose()); }); }
@@ -8748,6 +8776,7 @@ class View3D {
     const one = (f, p, t) => buildHLRModel({ elements: () => [f], typeOf: () => t, plan: () => p, error: () => null });
     for (const f of doc.elements()) {
       if (f.get("Integer") === 0 || doc.error(f)) continue;
+      if (vw && !shownInView(doc, vw, f)) continue;          // Visibility/Graphics is data: the 3D view obeys it too
       const t = doc.typeOf(f), p = doc.plan(f);
       if (p && PART_TYPES.has(t)) { this.addParts(f, t, style); continue; }
       if (!p || (t !== "Wall" && t !== "Column")) continue;
@@ -9128,11 +9157,11 @@ class View3D {
     const doc = this.doc, v = doc.element(this.viewId);
     if (this.T && !keepCamera) this.app.apply({ op: "set", id: this.viewId, key: "camera", value: roundCam(this.cam) }, { quiet: true });
     const cam = F.json(v, "camera");
-    const model = buildHLRModel(doc);
+    const model = buildHLRModel(doc, { visible: f => shownInView(doc, v, f) });
     const it = hlrSteps(model, cam); let r; const t0 = performance.now(); let last = t0;
     for (;;) { r = it.next(); if (r.done) break; if (onProgress) onProgress(r.value.done / r.value.total); if (performance.now() - last > 12) { await new Promise(res => setTimeout(res, 0)); last = performance.now(); } }
     const out = r.value;
-    const entry = { camera: JSON.stringify(cam), revision: doc.modelRevision, lines: out.lines, bbox: out.bbox, counts: out.counts };
+    const entry = { camera: JSON.stringify(cam), revision: doc.modelRevision, vis: visibilityKey(doc, v), lines: out.lines, bbox: out.bbox, counts: out.counts };
     const render = F.json(v, "render") || {};
     if (render.mode === "linesOverShaded" && this.renderer) {
       const S = F.int(v, "scale") || 200, wmm = (out.bbox[2] - out.bbox[0]) / S, hmm = (out.bbox[3] - out.bbox[1]) / S;

@@ -13,6 +13,7 @@ import { rasterPixels } from "./acceptance.js";
 import { uOf, pointAt } from "./walls.js";
 import { ViewCube } from "./viewcube.js";
 import { elementParts } from "./solids.js";
+import { shownInView, visibilityKey } from "./scene.js";
 
 export const VISUAL_STYLES = ["Wireframe", "Hidden Line", "Shaded", "Consistent Colors"];
 const GRIP_PX = 9;
@@ -80,7 +81,7 @@ export class View3D {
   refresh() {
     if (!this.T) return;
     const T = this.T, doc = this.doc, style = this.style;
-    const key = doc.modelRevision + "|" + style;
+    const vw = doc.element(this.viewId), key = doc.modelRevision + "|" + style + "|" + (vw ? visibilityKey(doc, vw) : "");
     if (this.builtKey === key) { this.render(); return; }
     this.builtKey = key;
     for (const g of this.groups.values()) { this.scene.remove(g); g.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) [].concat(o.material).forEach(m => m.dispose()); }); }
@@ -88,6 +89,7 @@ export class View3D {
     const one = (f, p, t) => buildHLRModel({ elements: () => [f], typeOf: () => t, plan: () => p, error: () => null });
     for (const f of doc.elements()) {
       if (f.get("Integer") === 0 || doc.error(f)) continue;
+      if (vw && !shownInView(doc, vw, f)) continue;          // Visibility/Graphics is data: the 3D view obeys it too
       const t = doc.typeOf(f), p = doc.plan(f);
       if (p && PART_TYPES.has(t)) { this.addParts(f, t, style); continue; }
       if (!p || (t !== "Wall" && t !== "Column")) continue;
@@ -468,11 +470,11 @@ export class View3D {
     const doc = this.doc, v = doc.element(this.viewId);
     if (this.T && !keepCamera) this.app.apply({ op: "set", id: this.viewId, key: "camera", value: roundCam(this.cam) }, { quiet: true });
     const cam = F.json(v, "camera");
-    const model = buildHLRModel(doc);
+    const model = buildHLRModel(doc, { visible: f => shownInView(doc, v, f) });
     const it = hlrSteps(model, cam); let r; const t0 = performance.now(); let last = t0;
     for (;;) { r = it.next(); if (r.done) break; if (onProgress) onProgress(r.value.done / r.value.total); if (performance.now() - last > 12) { await new Promise(res => setTimeout(res, 0)); last = performance.now(); } }
     const out = r.value;
-    const entry = { camera: JSON.stringify(cam), revision: doc.modelRevision, lines: out.lines, bbox: out.bbox, counts: out.counts };
+    const entry = { camera: JSON.stringify(cam), revision: doc.modelRevision, vis: visibilityKey(doc, v), lines: out.lines, bbox: out.bbox, counts: out.counts };
     const render = F.json(v, "render") || {};
     if (render.mode === "linesOverShaded" && this.renderer) {
       const S = F.int(v, "scale") || 200, wmm = (out.bbox[2] - out.bbox[0]) / S, hmm = (out.bbox[3] - out.bbox[1]) / S;

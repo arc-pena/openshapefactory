@@ -436,8 +436,10 @@ export function elevationScene(doc, v, opts = {}) {
   const items = [];
   for (const f of doc.elements()) {
     if (f.get("Integer") === 0 || doc.error(f)) continue;
+    // Visibility/Graphics is data: a category switched off in this view's style is not drawn, here as in plan
+    if (!categoryVisible(ctx, categoryOf(doc, f))) continue;
     const t = doc.typeOf(f);
-    if (t === "Wall") { const w = doc.plan(f); if (!w) continue; const it = elevWall(doc, f, w, V, sOf, depthOf); if (it) items.push(it); }
+    if (t === "Wall") { const w = doc.plan(f); if (!w) continue; const it = elevWall(doc, f, w, V, sOf, depthOf, ctx); if (it) items.push(it); }
     if (t === "Column") { const p = doc.plan(f); if (!p) continue; const pts = p.foot.length ? p.foot : samplePath(p.path); const ss = pts.map(sOf), dd = pts.map(depthOf);
       const s0 = Math.min(...ss), s1 = Math.max(...ss); const sil = [[s0, p.z0 - Z0], [s1, p.z0 - Z0], [s1, p.z1 - Z0], [s0, p.z1 - Z0]];
       items.push({ id: doc.idOf(f), f, depth: Math.min(...dd), depthMax: Math.max(...dd), s0, s1, curves: polyPath(sil).map(x => [x.a, x.b]), sil: [sil], cat: "IfcColumn" }); }
@@ -447,7 +449,7 @@ export function elevationScene(doc, v, opts = {}) {
   // Datum lines first (never occluded), so the building draws over them.
   const ext = [-1500, Lv + 1500];
   B.stroke([lineSeg([ext[0], 0], [ext[1], 0])], { weight: penWeight(doc, "bold", S), colour: "#000" }, "Ground", null);
-  for (const f of doc.elements()) if (doc.typeOf(f) === "Level") {
+  for (const f of doc.elements()) if (doc.typeOf(f) === "Level" && categoryVisible(ctx, "IfcBuildingStorey")) {
     const z = (doc.data(f) || {}).value - Z0; if (z + Z0 > topZ) continue;
     B.stroke([lineSeg([ext[0], z], [ext[1], z])], { weight: penWeight(doc, "hairline", S), colour: "#000", dash: LINE_TYPES.centre }, "IfcBuildingStorey", doc.idOf(f));
     const hp = B.P([ext[1], z]);
@@ -457,7 +459,7 @@ export function elevationScene(doc, v, opts = {}) {
     B.hit(doc.idOf(f), [[ext[0], z - 50], [ext[1], z - 50], [ext[1], z + 50], [ext[0], z + 50]]);
   }
   // Grids crossing the view line: vertical datum lines.
-  for (const f of doc.elements()) if (doc.typeOf(f) === "Grid") {
+  for (const f of doc.elements()) if (doc.typeOf(f) === "Grid" && categoryVisible(ctx, "IfcGrid")) {
     const gl = F.json(f, "line"), gd = normalise(sub(gl.end, gl.start));
     const den = d[0] * gd[1] - d[1] * gd[0]; if (Math.abs(den) < 1e-9) continue;
     const t = ((gl.start[0] - c.start[0]) * gd[1] - (gl.start[1] - c.start[1]) * gd[0]) / den;
@@ -488,7 +490,7 @@ export function elevationScene(doc, v, opts = {}) {
 }
 
 /** A wall's elevation rep and silhouette, from its construction — not from a solid. */
-function elevWall(doc, f, w, V, sOf, depthOf) {
+function elevWall(doc, f, w, V, sOf, depthOf, ctx) {
   const regs = wallRegions(w, "Coarse", -Infinity, []);
   if (!regs.length) return null;
   const foot = samplePath(regs[0].path, 24);
@@ -519,7 +521,7 @@ function elevWall(doc, f, w, V, sOf, depthOf) {
     curves.push([[lo, za], [hi, za]], [[hi, za], [hi, zb2]], [[hi, zb2], [lo, zb2]], [[lo, zb2], [lo, za]]);
     if (!op.recess) { const sa = Math.max(Math.min(a1, b1), Math.min(a2, b2)), sb = Math.min(Math.max(a1, b1), Math.max(a2, b2)); if (sb - sa > 1) holes.push([sa, sb, za, zb2]); }
     // the filler's own elevation rep, mapped from host (u, z)
-    for (const g of doc.elements()) if ((doc.typeOf(g) === "Door" || doc.typeOf(g) === "Window") && doc.data(g) && doc.data(g).frame && doc.data(g).frame.u0 === op.u0 && doc.data(g).host === w.id) {
+    for (const g of doc.elements()) if ((doc.typeOf(g) === "Door" || doc.typeOf(g) === "Window") && (!ctx || categoryVisible(ctx, categoryOf(doc, g))) && doc.data(g) && doc.data(g).frame && doc.data(g).frame.u0 === op.u0 && doc.data(g).host === w.id) {
       const er = doc.elev(g); if (!er) continue;
       const mapU = u => sOf(pointAt(w, nearS, u)), mapZ = z => V(foot[0], w.z0 + z)[1];
       for (const r of er.rects || []) { const x0 = mapU(r.u0), x1 = mapU(r.u1), y0 = mapZ(r.z0), y1 = mapZ(r.z1); curves.push([[x0, y0], [x1, y0]], [[x1, y0], [x1, y1]], [[x1, y1], [x0, y1]], [[x0, y1], [x0, y0]]); }
@@ -555,11 +557,22 @@ let HLR = null;
 export function setHLR(h) { HLR = h; }
 /** A 3D view on a sheet shows cached line-work; it is never interactive. The
  *  cache key is (camera, model revision, visible set); stale is shown as stale. */
+/** What this view's Visibility/Graphics leaves out, as one comparable string: part of the 3D cache key. */
+export function visibilityKey(doc, v) {
+  const ctx = viewContext(doc, v);
+  return Object.keys(doc.lib.categories).filter(c => !categoryVisible(ctx, c)).sort().join(",");
+}
+/** Does this view show this element? Hidden elements and categories switched off in its style are out. */
+export function shownInView(doc, v, f) {
+  if (f.get("Integer") === 0) return false;
+  return categoryVisible(viewContext(doc, v), categoryOf(doc, f));
+}
 export function view3dScene(doc, v, opts = {}) {
   const ctx = viewContext(doc, v), S = ctx.scale, B = new SceneBuilder(S);
   const cache = doc._hlrCache && doc._hlrCache[doc.idOf(v)];
   const cam = JSON.stringify(doc.argValue(v, "camera"));
   const scene = { prims: B.prims, hits: [], links: [], scale: S, kind: "3d" };
+  if (cache && cache.camera === cam && (cache.vis || "") !== visibilityKey(doc, v)) scene.stale = "Visibility/Graphics changed since generation";
   if (!cache || cache.camera !== cam) { scene.stale = "never generated"; B.text([0, 0], "Hidden-line view not generated yet", 3, {}); scene.bbox = [-5, -5, 120, 10]; return scene; }
   if (cache.revision !== doc.modelRevision) scene.stale = `model changed since generation (rev ${cache.revision} → ${doc.modelRevision})`;
   const render = doc.argValue(v, "render") || {};
