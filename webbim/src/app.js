@@ -300,6 +300,18 @@ function renderOptionsBar() {
   const chk = (key, label) => h("label", {}, h("input", { type: "checkbox", checked: !!o[key], onchange: e => { o[key] = e.target.checked; } }), " " + label);
   const els = [...app.selection].filter(id => doc.element(id));
   let title, kids = [];
+  if (t === "cropsketch" && app.cropView && app.cropView.cropSk) {
+    // Edit Crop: Revit's sketch mode - draw tools, modify tools, and Finish / Cancel
+    const cv = app.cropView, S = cv.cropSk;
+    const tb = (tool, label, tip) => h("button", { class: "btn small" + (S.tool === tool ? " primary" : ""), title: tip, onclick: () => cv.cropSetTool(tool) }, label);
+    const offIn = h("input", { type: "text", value: S.offset, style: { width: "60px" }, "aria-label": "Offset distance", onchange: e => { S.offset = Number(e.target.value) || 0; } });
+    bar.append(h("span", { class: "otitle" }, "Modify | Edit Crop"),
+      h("span", { class: "muted" }, "Draw"), tb("line", "Line", "click points; Enter ends the chain"), tb("rect", "Rectangle", "two corners"), tb("arc", "Arc", "start, through, end"), tb("circle", "Circle", "centre, then radius"), tb("ellipse", "Ellipse", "centre, major axis, minor"), tb("spline", "Spline", "click points; click the first to close, or Enter"),
+      h("span", { class: "muted" }, "Modify"), tb("pick", "Pick", "click elements to pick them (Shift adds); Delete removes"), tb("move", "Move", "base point, then destination"), tb("rotate", "Rotate", "centre, then from, then to"), tb("scale", "Scale", "centre, then from, then to"),
+      h("label", {}, "Offset ", offIn), h("button", { class: "btn small", onclick: () => cv.cropOffset(S.offset) }, "Offset"),
+      h("button", { class: "btn small primary", onclick: () => cv.finishCropSketch() }, "Finish ✓"), h("button", { class: "btn small", onclick: () => cv.cancelCropSketch() }, "Cancel ✗"));
+    return;
+  }
   if (app.pickMode) { title = `Bind ${app.pickMode.label}`; kids = [h("span", {}, "Click an element in the view"), h("button", { class: "btn small", onclick: app.endPick }, "Cancel")]; }
   else if (t === "select") { title = els.length ? `Modify | ${els.length} selected` : "Modify"; kids = els.length ? [h("span", { class: "muted" }, "Drag to move · MV CO RO MM · DE deletes · Esc clears")] : [h("span", { class: "muted" }, "Pick elements, or window-select by dragging on empty space")]; }
   else {
@@ -507,7 +519,11 @@ function renderViewControl() {
     bar.append(h("select", { class: "vsel", title: "View style", "aria-label": "View style", onchange: e => app.apply({ op: "set", id, key: "style", value: { ref: e.target.value } }) }, Object.entries(doc.lib.viewStyles).map(([k, s]) => h("option", { value: k, selected: k === st }, s.name))));
     if (t === "PlanView") {
       const clip = doc.argValue(v, "clip") || {};
-      bar.append(ib("fit", "Crop view", clip.active, () => app.apply({ op: "set", id, key: "clip", value: Object.assign({}, clip, { active: !clip.active, rect: clip.rect || [-5000, -5000, 20000, 15000] }) })));
+      const withRect = c => Object.assign({}, clip, { rect: clip.rect || [-5000, -5000, 20000, 15000] }, c);
+      bar.append(ib("fit", "Crop view", clip.active, () => app.apply({ op: "set", id, key: "clip", value: withRect({ active: !clip.active }) })));
+      bar.append(ib("crop", "Show crop region", clip.visible, () => app.apply({ op: "set", id, key: "clip", value: withRect({ visible: !clip.visible }) })));
+      bar.append(h("button", { class: "btn small", title: "Edit Crop: sketch the boundary - any shape", onclick: () => { if (!clip.rect || !clip.visible) app.apply({ op: "set", id, key: "clip", value: withRect({ visible: true }) }); const v = app.views.get(id); if (v && v.startCropSketch) v.startCropSketch(); } }, "Edit Crop"));
+      if (clip.shape) bar.append(h("button", { class: "btn small", title: "Back to a rectangle", onclick: () => app.apply({ op: "set", id, key: "clip", value: Object.assign({}, clip, { shape: null }) }) }, "Reset Crop"));
       bar.append(h("select", { class: "vsel", "aria-label": "Colour fill", title: "Colour-fill plan", onchange: e => { const ov = Object.assign({}, doc.argValue(v, "overrides") || {}); if (e.target.value) ov.__colourFill = e.target.value; else delete ov.__colourFill; app.apply({ op: "set", id, key: "overrides", value: ov }); } },
         h("option", { value: "" }, "No colour fill"), ["Department", "Number", "Name"].map(k => h("option", { value: k, selected: (doc.argValue(v, "overrides") || {}).__colourFill === k }, "Fill by " + k))));
     }
@@ -870,6 +886,7 @@ window.addEventListener("keydown", e => {
   if (e.key === "Escape") {
     keyBuf = ""; if (openMenu) { closeMenus(); return; }
     if (app.pickMode) { app.endPick(); return; }
+    if (app.tool === "cropsketch" && app.cropView) { app.cropView.cancelCropSketch(); return; }
     if (app.tool !== "select") { app.setTool("select"); return; }
     if (app.selection.size) app.select([]); return;
   }

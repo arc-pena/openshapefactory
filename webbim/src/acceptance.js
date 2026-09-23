@@ -11,6 +11,7 @@ import { pointAt, uOf, boundary, wallPieces } from "./walls.js";
 import { newDocument, openDocument, measureRefs, resolveReference } from "./bim.js";
 import { Editor, propagate } from "./ops.js";
 import { deriveView, planScene, elevationScene, placements, textWidth, sheetScene, visibilityKey } from "./scene.js";
+import { chainLoop } from "./crop.js";
 import { writePDF, pathOps, PT_PER_MM } from "./pdf.js";
 import { writeDXF, readDXF, dxfLineweight } from "./dxf.js";
 import { buildHLRModel, runHLR } from "./hlr.js";
@@ -859,4 +860,16 @@ testCase("M8", "Visibility/Graphics is data: walls off in a style leave plan, el
   const after = [walls(deriveView(doc, doc.element("V-P00"))), walls(deriveView(doc, doc.element("V-E01"))), walls(sheetScene(doc, doc.element("SH-A101")))];
   const key1 = visibilityKey(doc, doc.element("V-3D01"));
   return R(before.every(n => n > 0) && after[0] === 0 && after[1] === 0 && key0 !== key1, "all wall line-work gone; 3D cache key changed", `before ${before} after ${after} key ${key0 || "∅"}→${key1}`);
+});
+testCase("M9", "Edit Crop: a sketched boundary chains into a loop and clips the view and its viewport", () => {
+  const sq = [[0, 0], [10, 0], [10, 10], [0, 10]], els = sq.map((p, i) => ({ type: "line", a: p, b: sq[(i + 1) % 4] }));
+  const shuffled = [els[2], { type: "line", a: els[0].b, b: els[0].a }, els[3], els[1]];   // out of order and one reversed
+  const ok = chainLoop(shuffled).pts, open = chainLoop(els.slice(0, 3)).error;
+  const doc = buildSample(), ed = new Editor(doc);
+  const clip = Object.assign({}, doc.argValue(doc.element("V-P00"), "clip"), { active: true, shape: { elements: [{ type: "circle", c: [6000, 4000], r: 3000 }] } });
+  ed.apply({ op: "set", id: "V-P00", key: "clip", value: clip });
+  const sc = deriveView(doc, doc.element("V-P00")), sh = sheetScene(doc, doc.element("SH-A101"));
+  const vp = sh.prims.find(p => p.t === "group" && p.view === "V-P00"), inner = vp && vp.prims.find(p => p.t === "group" && p.clipPath);
+  return R(ok && ok.length === 4 && /open|close/.test(open || "") && sc.clipPath && sc.clipPath.length > 40 && !!inner,
+    "square chains in any order; open sketch refused; circle becomes the view's clip path and the viewport's", `loop ${ok && ok.length}, open "${open}", path ${sc.clipPath && sc.clipPath.length}, viewport ${!!inner}`);
 });

@@ -16,6 +16,7 @@ import { F, propertyOf, evalParam, displayParam } from "./ocaf.js";
 import { formatValue, parse, evaluate } from "./expr.js";
 import { wallRegions, coarseMaterial } from "./joins.js";
 import { pointAt, uOf, wallSurfaces, cutAtHeight, plane } from "./walls.js";
+import { cropLoop, loopBBox, annotationRect, isAnnotationLayer } from "./crop.js";
 import { resolveGraphics, categoryOf, penWeight, rulesFor, categoryVisible, mix, LINE_TYPES, matches } from "./styles.js";
 import { measureRefs, resolveReference, sheetSize } from "./bim.js";
 import { FONT_WIDTHS, FONT_METRICS } from "./fontdata.js";
@@ -71,6 +72,23 @@ class SceneBuilder {
 const lineSeg = (a, b) => ({ k: "L", a, b });
 const circlePath = (c, r) => [{ k: "A", c, r, a0: 0, a1: TAU }];
 const rectPath = (x0, y0, x1, y1) => polyPath([[x0, y0], [x1, y0], [x1, y1], [x0, y1]]);
+/** The crop region, as data: the model is clipped to the crop (a rectangle or a sketched
+ *  loop), annotation to the annotation crop around it. The prims stay one list; the scene
+ *  carries clip / clipPath / annoClip and every renderer splits by layer the same way. */
+function applyCrop(doc, v, clip, scene, S) {
+  const loop = clip && cropLoop(clip);
+  if (!loop) { scene.bbox = sceneBBox(scene.prims); return; }
+  const paper = loop.map(p => [p[0] / S, p[1] / S]), bb = loopBBox(paper), ann = annotationRect(clip, bb);
+  const shaped = !!(clip.shape && clip.shape.elements && clip.shape.elements.length);
+  const outline = [];
+  if (clip.visible) {
+    outline.push({ t: "stroke", path: polyPath(paper), weight: 0.25, colour: "#1d6fd8", dash: [3, 1.5], layer: "Crop", id: doc.idOf(v) });
+    outline.push({ t: "stroke", path: rectPath(...ann), weight: 0.18, colour: "#7fa6d9", dash: [1.2, 1.2], layer: "Crop", id: doc.idOf(v) });
+  }
+  scene.prims.push(...outline);
+  if (clip.active) { scene.clip = bb; scene.clipPath = shaped ? paper : null; scene.annoClip = ann; }
+  scene.bbox = clip.active ? ann : sceneBBox(scene.prims);
+}
 
 // ---------------------------------------------------------------- context
 export function viewContext(doc, v) {
@@ -189,9 +207,7 @@ export function planScene(doc, v, opts = {}) {
   const clip = doc.argValue(v, "clip");
   const scene = { prims: B.prims, hits: B.hits, links: B.links, scale: S, kind: "plan",
     stats: { walls: stat.walls, offsets: doc.stats.offsets - stat.offsetsBefore } };
-  if (clip && clip.active && clip.rect) scene.clip = [clip.rect[0] / S, clip.rect[1] / S, clip.rect[2] / S, clip.rect[3] / S];
-  if (clip && clip.visible && clip.rect) B.prims.push({ t: "stroke", path: rectPath(...scene.clip || clip.rect.map(x => x / S)), weight: 0.25, colour: "#1d6fd8", dash: [3, 1.5], layer: "Crop", id: doc.idOf(v) });
-  scene.bbox = scene.clip || sceneBBox(B.prims);
+  applyCrop(doc, v, clip, scene, S);
   return scene;
 }
 function curveSegs(c) {
@@ -649,7 +665,12 @@ export function sheetScene(doc, sh, opts = {}) {
     const cx = (bb[0] + bb[2]) / 2, cy = (bb[1] + bb[3]) / 2;
     const off = [vp.at[0] - cx, vp.at[1] - cy];
     const clip = sc.clip ? [sc.clip[0] + off[0], sc.clip[1] + off[1], sc.clip[2] + off[0], sc.clip[3] + off[1]] : null;
-    prims.push({ t: "group", clip, prims: sc.prims.map(p => translatePrim(p, off)), layer: "Viewport", vp: vp.id, view: vp.view.ref, stale: sc.stale || null });
+    // with an annotation crop, the model is clipped to the crop (or its sketched loop) and annotation to the annotation crop
+    const moved = sc.prims.map(p => translatePrim(p, off));
+    const inner = sc.annoClip ? [
+      { t: "group", clip, clipPath: sc.clipPath ? sc.clipPath.map(c => [c[0] + off[0], c[1] + off[1]]) : null, prims: moved.filter(p => !isAnnotationLayer(p.layer)) },
+      { t: "group", clip: [sc.annoClip[0] + off[0], sc.annoClip[1] + off[1], sc.annoClip[2] + off[0], sc.annoClip[3] + off[1]], prims: moved.filter(p => isAnnotationLayer(p.layer)) }] : moved;
+    prims.push({ t: "group", clip: sc.annoClip ? null : clip, prims: inner, layer: "Viewport", vp: vp.id, view: vp.view.ref, stale: sc.stale || null });
     for (const l of sc.links || []) links.push(translatePrim(l, off));
     if (vp.clipVisible && clip) put(rectPath(...clip), 0.18);
     // viewport title
@@ -680,7 +701,7 @@ export function translatePrim(p, o) {
   if (p.path) q.path = tp(p.path);
   if (p.at) q.at = T(p.at);
   if (p.rect) q.rect = [p.rect[0] + o[0], p.rect[1] + o[1], p.rect[2], p.rect[3]];
-  if (p.t === "group") { q.prims = p.prims.map(x => translatePrim(x, o)); if (p.clip) q.clip = [p.clip[0] + o[0], p.clip[1] + o[1], p.clip[2] + o[0], p.clip[3] + o[1]]; }
+  if (p.t === "group") { q.prims = p.prims.map(x => translatePrim(x, o)); if (p.clip) q.clip = [p.clip[0] + o[0], p.clip[1] + o[1], p.clip[2] + o[0], p.clip[3] + o[1]]; if (p.clipPath) q.clipPath = p.clipPath.map(c => [c[0] + o[0], c[1] + o[1]]); }
   if (p.t === "hatch") q.origin = T(p.origin || [0, 0]);
   return q;
 }

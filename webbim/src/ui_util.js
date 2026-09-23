@@ -50,6 +50,7 @@ export const ICONS = {
   unlock: P('<rect x="5" y="9" width="10" height="8" rx="1"/><path d="M7 9V6a3 3 0 0 1 6 0"/>'),
   graph: P('<rect x="2" y="3" width="6" height="5" rx="1"/><rect x="12" y="12" width="6" height="5" rx="1"/><path d="M8 5.5c4 0 0 9 4 9"/>'),
   fit: P('<path d="M3 7V3h4M13 3h4v4M17 13v4h-4M7 17H3v-4"/><rect x="7" y="7" width="6" height="6"/>'),
+  crop: P('<path d="M5 2v13h13"/><path d="M2 5h13v13"/>'),
   move: P('<path d="M10 2v16M2 10h16M10 2l-2.5 2.5M10 2l2.5 2.5M10 18l-2.5-2.5M10 18l2.5-2.5M2 10l2.5-2.5M2 10l2.5 2.5M18 10l-2.5-2.5M18 10l-2.5 2.5"/>'),
   copy: P('<rect x="3" y="3" width="10" height="10"/><rect x="7" y="7" width="10" height="10" fill="currentColor" fill-opacity=".12"/>'),
   rotate: P('<path d="M15.5 6.5A7 7 0 1 0 17 11"/><path d="M16 2v5h-5"/><circle cx="10" cy="10" r="1.2"/>'),

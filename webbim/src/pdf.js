@@ -39,7 +39,12 @@ export function writePDF(pages, meta = {}) {
     out.push("1 J 1 j");
     const localPats = new Set(), localImgs = new Set(), localOC = new Set();
     const emit = (p) => {
-      if (p.t === "group") { out.push("q"); if (p.clip) out.push(`${n3(p.clip[0])} ${n3(p.clip[1])} ${n3(p.clip[2] - p.clip[0])} ${n3(p.clip[3] - p.clip[1])} re W n`); p.prims.forEach(emit); out.push("Q"); return; }
+      if (p.t === "group") {
+        out.push("q");
+        if (p.clipPath) out.push(p.clipPath.map((c, i) => `${n3(c[0])} ${n3(c[1])} ${i ? "l" : "m"}`).join(" ") + " h W n");
+        else if (p.clip) out.push(`${n3(p.clip[0])} ${n3(p.clip[1])} ${n3(p.clip[2] - p.clip[0])} ${n3(p.clip[3] - p.clip[1])} re W n`);
+        p.prims.forEach(emit); out.push("Q"); return;
+      }
       const oc = p.layer ? ocgOf[layerRoot(p.layer)] : null;
       if (oc) { out.push(`/OC /${oc} BDC`); localOC.add(oc); }
       if (p.t === "fill") { out.push(col(p.colour, "rg")); out.push(pathOps(p.path)); out.push("f*"); }

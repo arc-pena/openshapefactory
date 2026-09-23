@@ -3,6 +3,7 @@
 //! paper have opposite clamping rules, deliberately: here widths are clamped to
 //! one device pixel so fine line-work survives zoom-out; the PDF clamps nothing.
 
+import { isAnnotationLayer } from "./crop.js";
 import { segStart, segEnd, samplePath, bboxOf } from "./geom2d.js";
 import { emOf, textWidth } from "./scene.js";
 
@@ -32,7 +33,8 @@ export function drawScene(g, scene, view, opts = {}) {
   const draw = (p) => {
     if (p.t === "group") {
       g.save();
-      if (p.clip) { g.beginPath(); g.rect(X(p.clip[0]), Y(p.clip[3]), (p.clip[2] - p.clip[0]) * view.z, (p.clip[3] - p.clip[1]) * view.z); g.clip(); }
+      if (p.clipPath) { g.beginPath(); p.clipPath.forEach((c, i) => i ? g.lineTo(X(c[0]), Y(c[1])) : g.moveTo(X(c[0]), Y(c[1]))); g.closePath(); g.clip(); }
+      else if (p.clip) { g.beginPath(); g.rect(X(p.clip[0]), Y(p.clip[3]), (p.clip[2] - p.clip[0]) * view.z, (p.clip[3] - p.clip[1]) * view.z); g.clip(); }
       p.prims.forEach(draw); g.restore();
       if (p.stale) { const bb = p.clip || primsBBox(p.prims); g.save(); g.fillStyle = "rgba(179,38,30,.9)"; g.font = `600 ${11}px system-ui, sans-serif`; g.fillText("updating hidden-line…", X(bb[0]) + 4, Y(bb[3]) + 14); g.restore(); }
       return;
@@ -67,6 +69,13 @@ export function drawScene(g, scene, view, opts = {}) {
       g.drawImage(p.img, X(p.rect[0]), Y(p.rect[1] + p.rect[3]), p.rect[2] * view.z, p.rect[3] * view.z);
     }
   };
+  if (scene.annoClip) {
+    // crop region: model to the crop (or its sketched loop), annotation to the annotation crop
+    const clipTo = (rect, path) => { g.save(); g.beginPath(); if (path) { path.forEach((c, i) => i ? g.lineTo(X(c[0]), Y(c[1])) : g.moveTo(X(c[0]), Y(c[1]))); g.closePath(); } else g.rect(X(rect[0]), Y(rect[3]), (rect[2] - rect[0]) * view.z, (rect[3] - rect[1]) * view.z); g.clip(); };
+    clipTo(scene.clip, scene.clipPath); scene.prims.forEach(p => { if (!isAnnotationLayer(p.layer)) draw(p); }); g.restore();
+    clipTo(scene.annoClip, null); scene.prims.forEach(p => { if (isAnnotationLayer(p.layer)) draw(p); }); g.restore();
+    g.restore(); return;
+  }
   if (scene.clip) { g.beginPath(); g.rect(X(scene.clip[0]), Y(scene.clip[3]), (scene.clip[2] - scene.clip[0]) * view.z, (scene.clip[3] - scene.clip[1]) * view.z); g.clip(); }
   scene.prims.forEach(draw);
   g.restore();
