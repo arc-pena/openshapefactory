@@ -299,6 +299,16 @@ export class View2D {
     if (this.kind !== "PlanView" || ids.length !== 1 || this.app.tool !== "select") return;
     const f = doc.element(ids[0]); if (!f) return;
     const decl = doc.declOf(f);
+    // Revit's pin, beside what is selected: the pushpin when pinned, struck through in red when not
+    if (decl && decl.args.some(x => x.key === "pinned")) {
+      const hs = this.scene().hits.filter(x => x.id === ids[0]), pts = hs.flatMap(x => x.pts);
+      if (pts.length) {
+        const xs = pts.map(q => q[0]), ys = pts.map(q => q[1]), at = this.toScreen([Math.max(...xs), Math.max(...ys)]), pinned = F.bool(f, "pinned");
+        this.overlay.append(h("button", { class: "pinbtn" + (pinned ? " on" : ""), title: pinned ? "Pinned: it cannot be moved. Click to unpin (UP)" : "Not pinned: click to pin it where it is (PN)", "aria-label": pinned ? "Unpin" : "Pin", "aria-pressed": String(pinned),
+          style: { left: Math.min(this.W - 20, at[0] + 10) + "px", top: Math.max(4, at[1] - 26) + "px" }, onclick: () => this.app.apply({ op: "pin", id: ids[0], value: !pinned }) }, icon(pinned ? "pin" : "unpin", 18)));
+      }
+      if (F.bool(f, "pinned")) return;                 // pinned: no grips to drag it by
+    }
     if (decl && decl.handles && !doc.error(f)) {
       let hs = []; try { hs = decl.handles(f, doc); } catch (e) { hs = []; }
       for (const hd of hs) {

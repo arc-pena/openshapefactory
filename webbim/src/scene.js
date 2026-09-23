@@ -9,6 +9,7 @@
 //!       {t:"link", rect, sheet}   — all carry {layer, id} for OCGs and picking.
 
 import { fmtLength, fmtArea } from "./units.js";
+import { outline, elementSegs } from "./bimsketch.js";
 import {
   TOL, add, sub, mul, dot, dist, perp, normalise, lerp, samplePath, pathArea, polyPath, bboxOf, segStart, segEnd, segMinusConvex,
   ensureCCW, convexHull, TAU, pointInPoly, reversePath,
@@ -19,7 +20,7 @@ import { wallRegions, coarseMaterial, blocks } from "./joins.js";
 import { pointAt, uOf, wallSurfaces, cutAtHeight, plane, LAYER_PRIORITY } from "./walls.js";
 import { cropLoop, loopBBox, annotationRect, isAnnotationLayer } from "./crop.js";
 import { resolveGraphics, categoryOf, penWeight, rulesFor, categoryVisible, mix, LINE_TYPES, matches } from "./styles.js";
-import { measureRefs, resolveReference, sheetSize, regionAreas } from "./bim.js";
+import { measureRefs, resolveReference, sheetSize, regionAreas, importPlacer, importLayerMap, sketchPath } from "./bim.js";
 import { FONT_WIDTHS, FONT_METRICS } from "./fontdata.js";
 import { readDXF } from "./dxf.js";
 import { NORTH_DXF } from "./library.js";
@@ -225,8 +226,9 @@ export function planScene(doc, v, opts = {}) {
   // 4. detail and annotation belonging to this view
   for (const f of els) {
     const t = doc.typeOf(f); if (!onlyHere(f)) continue;
-    if (t === "DetailLine" && vis(f)) { const c = F.json(f, "curve"); const segs = curveSegs(c); B.stroke(segs, { weight: penWeight(doc, F.choice(f, "pen"), S), colour: "#000000" }, "Detail", doc.idOf(f)); B.hit(doc.idOf(f), samplePath(segs), "curve"); }
-    if (t === "FilledRegion" && vis(f)) { const rs = regionAreas(f), pts = rs[0] ? rs[0].outer : F.json(f, "boundary"), path = rs.flatMap(rg => [...polyPath(rg.outer), ...rg.holes.flatMap(hh => polyPath(hh))]), pid = F.text(f, "pattern"); B.fill(path, "#ffffff", "Detail", doc.idOf(f)); B.hatch(path, doc.lib.patterns[pid], pid, "#000000", penWeight(doc, "hairline", S), "Detail", doc.idOf(f)); B.stroke(path, { weight: penWeight(doc, "thin", S), colour: "#000000" }, "Detail", doc.idOf(f)); B.hit(doc.idOf(f), pts); }
+    if (t === "DetailLine" && vis(f)) { const c = F.json(f, "curve"); const segs = curveSegs(c); B.stroke(segs, { weight: penWeight(doc, F.choice(f, "pen"), S), colour: F.text(f, "colour") || "#000000" }, "Detail", doc.idOf(f)); B.hit(doc.idOf(f), samplePath(segs), "curve"); }
+    if (t === "FilledRegion" && vis(f)) { const rs = regionAreas(f), pts = rs[0] ? rs[0].outer : F.json(f, "boundary"), path = sketchPath(f) || rs.flatMap(rg => [...polyPath(rg.outer), ...rg.holes.flatMap(hh => polyPath(hh))]), pid = F.text(f, "pattern"); B.fill(path, "#ffffff", "Detail", doc.idOf(f)); B.hatch(path, doc.lib.patterns[pid], pid, "#000000", penWeight(doc, "hairline", S), "Detail", doc.idOf(f)); B.stroke(path, { weight: penWeight(doc, "thin", S), colour: "#000000" }, "Detail", doc.idOf(f)); B.hit(doc.idOf(f), pts); }
+    if (t === "CADImport" && vis(f)) drawImport(doc, ctx, B, f);
     if (t === "Text" && categoryVisible(ctx, "Annotation")) drawText(doc, ctx, B, f);
     if (t === "SymbolInstance" && categoryVisible(ctx, "Annotation")) drawSymbol(doc, B, doc.lib.symbols[F.refId(f, "symbol")], B.P(F.point(f, "position")), F.real(f, "rotation"), "Annotation", doc.idOf(f));
     if (t === "Dimension" && categoryVisible(ctx, "Annotation") && measureRefs(doc, F.json(f, "of") || []).kind !== "levels") drawDimension(doc, ctx, B, f);
@@ -919,3 +921,21 @@ export function dimText(doc, v) { const u = (doc.meta && doc.meta.displayUnits) 
 
 /** A 3D view's section box as a cache key: "" when it is off. */
 export function sectionBoxKey(doc, v) { const b = doc.typeOf(v) === "View3D" && doc.argValue(v, "sectionBox"); return b && b.on && b.min && b.max ? JSON.stringify([b.min, b.max]) : ""; }
+
+/** An imported DXF, placed: each visible layer in its colour, its texts and fills; pickable as one. */
+function drawImport(doc, ctx, B, f) {
+  const id = doc.idOf(f), d = F.json(f, "drawing") || {}, ls = importLayerMap(f), P = importPlacer(f), S = ctx.scale, k = F.real(f, "scale") || 1;
+  const on = l => !ls[l] || ls[l].on, col = l => (ls[l] && ls[l].colour) || "#000000";
+  let bb = null; const grow = q => { bb = bb ? [Math.min(bb[0], q[0]), Math.min(bb[1], q[1]), Math.max(bb[2], q[0]), Math.max(bb[3], q[1])] : [q[0], q[1], q[0], q[1]]; };
+  for (const fl of d.fills || []) { if (!on(fl.layer)) continue; const pts = samplePath(fl.path).map(P); if (pts.length > 2) B.fill(polyPath(pts), col(fl.layer), "Detail", id); }
+  for (const el of d.elements || []) {
+    if (!on(el.layer)) continue;
+    // exact: a similarity keeps an arc an arc and a Bézier a Bézier
+    const rot = (F.real(f, "rotation") || 0) * Math.PI / 180;
+    const segs = elementSegs(el).map(s => s.k === "L" ? { k: "L", a: P(s.a), b: P(s.b) } : s.k === "A" ? { k: "A", c: P(s.c), r: s.r * k, a0: s.a0 + rot, a1: s.a1 + rot } : { k: "C", a: P(s.a), c1: P(s.c1), c2: P(s.c2), b: P(s.b) });
+    samplePath(segs, 4).forEach(grow);
+    B.stroke(segs, { weight: penWeight(doc, "thin", S), colour: col(el.layer) }, "Detail", id);
+  }
+  for (const t of d.texts || []) { if (!on(t.layer)) continue; const at = P(t.at); grow(at); B.text(B.P(at), t.text, Math.max(0.5, t.height * k / S), { align: t.align === "centre" ? "centre" : t.align === "right" ? "right" : "left", rot: (t.rot || 0) + (F.real(f, "rotation") || 0), colour: col(t.layer), layer: "Detail", id }); }
+  if (bb) B.hit(id, [[bb[0], bb[1]], [bb[2], bb[1]], [bb[2], bb[3]], [bb[0], bb[3]]]);
+}

@@ -6,10 +6,11 @@
 //! the same coalescing key collapse into one undo step.
 
 import { bareFactor, LENGTH_UNITS, setLengthUnit } from "./units.js";
-import { TOL, add, sub, mul, dot, dist, perp, normalise, lineThrough, signedDistance, offsetLine, rot, len, cross, intersectLines } from "./geom2d.js";
+import { TOL, add, sub, mul, dot, dist, perp, normalise, lineThrough, signedDistance, offsetLine, rot, len, cross, intersectLines, samplePath } from "./geom2d.js";
 import { parse, namesIn, evaluate, saysFormula, readValue, ExprError, formatValue } from "./expr.js";
 import { CATALOGUE, F, clone, documentLookup, MODEL_LIBS } from "./ocaf.js";
-import { resolveReference, orthoLine } from "./bim.js";
+import { resolveReference, orthoLine, importPlacer, importLayerMap } from "./bim.js";
+import { outline } from "./bimsketch.js";
 
 export class Editor {
   constructor(doc) {
@@ -190,6 +191,37 @@ const HANDLERS = {
     doc.setArg(f, o.key, typeof val === "number" ? val : 0);
     return { said: `${o.key} was bound to ${v.ref} (${formula}); it is now the literal ${typeof val === "number" ? Math.round(val * 1000) / 1000 : 0}` };
   },
+  /** Pin or unpin: a pinned element cannot be dragged, moved, rotated or mirrored. */
+  pin(doc, o) {
+    const ids = [].concat(o.ids || o.id), done = [];
+    for (const id of ids) { const f = doc.element(id); if (!f) continue; const decl = doc.declOf(f); if (!decl || !decl.args.some(a => a.key === "pinned")) continue; doc.setArg(f, "pinned", !!o.value); done.push(id); }
+    if (!done.length) throw new Error("nothing selected can be pinned");
+    return { said: `${done.join(", ")} ${o.value ? "pinned" : "unpinned"}` };
+  },
+  /** Explode an import: its elements become detail lines in its view, each keeping its layer (and colour);
+   *  texts become text notes, fills filled regions. The import itself goes. */
+  explode(doc, o) {
+    const f = doc.element(o.id); if (!f || doc.typeOf(f) !== "CADImport") throw new Error("explode works on an imported CAD drawing");
+    const d = F.json(f, "drawing") || {}, ls = importLayerMap(f), P = importPlacer(f), view = F.refId(f, "view"), made = [];
+    const add = (type, args, name) => { const id = doc.freshId(type); doc.addElement({ id, type, name, args }); made.push(id); };
+    const deg = r => r * 180 / Math.PI;
+    for (const el of d.elements || []) {
+      if (ls[el.layer || "0"] && !ls[el.layer || "0"].on) continue;          // a layer switched off is not exploded into lines
+      const layer = el.layer || "0", colour = (ls[layer] && ls[layer].colour) || "#000000", base = { view: view ? { ref: view } : null, layer, colour, pen: "thin" };
+      let curve;
+      if (el.type === "line") curve = { type: "line", start: P(el.a), end: P(el.b) };
+      else if (el.type === "arc" || el.type === "circle") {
+        const k = F.real(f, "scale") || 1, rot = F.real(f, "rotation") || 0, c = P(el.c), a0 = el.type === "arc" ? deg(el.a0) : 0, a1 = el.type === "arc" ? deg(el.a1) : 180;
+        curve = { type: "arc", centre: c, radius: el.r * k, start: a0 + rot, end: a1 + rot, ccw: true };
+        if (el.type === "circle") add("DetailLine", Object.assign({ curve: { type: "arc", centre: c, radius: el.r * k, start: 180 + rot, end: 360 + rot, ccw: true } }, base));
+      } else { const pts = outline(el, 48).map(P); curve = { type: "spline", points: pts.filter((_, i, A) => i % 3 === 0 || i === A.length - 1) }; }
+      add("DetailLine", Object.assign({ curve }, base));
+    }
+    for (const t of d.texts || []) add("Text", { content: t.text, position: P(t.at), rotation: (t.rot || 0) + (F.real(f, "rotation") || 0), view: view ? { ref: view } : null }, null);
+    for (const fl of d.fills || []) { const pts = samplePath(fl.path).map(P); if (pts.length > 2) add("FilledRegion", { boundary: pts, pattern: doc.lib.patterns["P-SOLID"] ? "P-SOLID" : Object.keys(doc.lib.patterns)[0], view: view ? { ref: view } : null }, null); }
+    doc.removeElement(o.id);
+    return { ids: made, said: `${o.id} exploded into ${made.length} elements, layers kept` };
+  },
   /** The project's display unit: how lengths are written, never what they are (the model is mm). */
   units(doc, o) {
     if (!LENGTH_UNITS[o.value]) throw new Error(`there is no unit setting "${o.value}" - try ${Object.keys(LENGTH_UNITS).join(", ")}`);
@@ -253,9 +285,18 @@ const HANDLERS = {
     if (!T) throw new Error("transform needs move, rotate or mirror");
     const skipped = [];
     if (o.copy) return copyElements(doc, ids, T);
-    const before = new Map();
+    const before = new Map(), pinned = [];
     for (const id of ids) {
       const f = doc.element(id), k = geomKey(f, doc);
+      // a pinned element stays where it is: Move, Rotate, Mirror and dragging all leave it
+      if (isPinned(doc, f)) { pinned.push(id); continue; }
+      if (doc.typeOf(f) === "CADImport") {
+        // an import moves by its origin: the offset follows the transform, a rotation turns it too
+        const o0 = [F.real(f, "offsetX") || 0, F.real(f, "offsetY") || 0], o1 = T.P(o0);
+        doc.setArg(f, "offsetX", o1[0]); doc.setArg(f, "offsetY", o1[1]);
+        if (o.rotate) doc.setArg(f, "rotation", (F.real(f, "rotation") || 0) + o.rotate.a * 180 / Math.PI);
+        continue;
+      }
       if (!k) { skipped.push(id); continue; }
       const g = doc.argValue(f, k);
       if (doc.typeOf(f) === "Wall") before.set(id, clone(g));
@@ -264,13 +305,14 @@ const HANDLERS = {
     }
     followJoins(doc, new Set(ids), before);
     // padlocked dimensions hold: what is locked to the moved elements comes along (§10.5)
-    const movedIds = ids.filter(id => !skipped.includes(id));
+    const movedIds = ids.filter(id => !skipped.includes(id) && !pinned.includes(id));
     if (movedIds.length) {
       const res = propagate(doc, movedIds);
       if (res.conflicts.length) return { conflicts: res.conflicts, error: res.conflicts.map(c => c.say).join("; ") };
       for (const [id, cl] of res.set) if (!movedIds.includes(id)) { const g = doc.element(id), bw = doc.typeOf(g) === "Wall" ? clone(doc.argValue(g, "centreline")) : null; doc.setArg(g, geomKey(g, doc), cl); if (bw) followJoins(doc, new Set([id]), new Map([[id, bw]])); movedIds.push(id); }
     }
-    return { moved: movedIds, said: skipped.length ? `${skipped.join(", ")} move with their host — drag their handle instead` : undefined };
+    if (pinned.length && !movedIds.length && ids.every(id => pinned.includes(id) || skipped.includes(id))) throw new Error(`${pinned.join(", ")} ${pinned.length > 1 ? "are" : "is"} pinned - unpin ${pinned.length > 1 ? "them" : "it"} to move (UP, or the pin)`);
+    return { moved: movedIds, said: pinned.length ? `${pinned.join(", ")} pinned: left where ${pinned.length > 1 ? "they are" : "it is"}` : skipped.length ? `${skipped.join(", ")} move with their host — drag their handle instead` : undefined };
   },
   /** Node positions ride in the file, so undo restores layout too. */
   layout(doc, o) { if (o.reset) doc.graph.layout = {}; else doc.graph.layout[o.id] = o.at; return {}; },
@@ -278,6 +320,7 @@ const HANDLERS = {
    *  pinned element; conflicts are named and nothing is applied (§10.5). */
   drag(doc, o) {
     const f = doc.element(o.id);
+    if (isPinned(doc, f)) throw new Error(`${o.id} is pinned - unpin it to move it (UP, or click its pin)`);
     // Dragging a note moves the text and its elbows, never what it points at (§9.2).
     if (doc.typeOf(f) === "Text" && o.key === "position") {
       const was = doc.argValue(f, "position"), d = sub(o.value, was);
@@ -476,7 +519,7 @@ export function geomKey(f, doc) { return geomKeyOf(doc.typeOf(f)); }
 export function geomKeyOf(t) {
   return t === "Wall" ? "centreline" : t === "Grid" || t === "RoomSeparator" || t === "ElevationView" || t === "SectionView" ? "line"
     : t === "Column" || t === "Furniture" || t === "Text" || t === "SymbolInstance" ? "position" : t === "Space" ? "anchor"
-    : t === "DetailLine" ? "curve" : t === "FilledRegion" ? "boundary" : null;
+    : t === "DetailLine" ? "curve" : t === "FilledRegion" ? "boundary" : t === "CADImport" ? "offsetX" : null;
 }
 
 // ---------------------------------------------------------------- transforms
@@ -548,7 +591,8 @@ function copyElements(doc, ids, T) {
   }
   for (const rec of recs) {
     const k = geomKeyOf(rec.type);
-    if (k && rec.args[k] !== undefined) rec.args[k] = T.geom(rec.args[k], rec.type);
+    if (rec.type === "CADImport") { const o1 = T.P([rec.args.offsetX || 0, rec.args.offsetY || 0]); rec.args.offsetX = o1[0]; rec.args.offsetY = o1[1]; rec.args.pinned = false; }
+    else if (k && rec.args[k] !== undefined) rec.args[k] = T.geom(rec.args[k], rec.type);
     const rw = v => v && typeof v === "object" ? (Array.isArray(v) ? v.map(rw) : Object.fromEntries(Object.entries(v).map(([a, b]) => [a, a === "ref" && map.has(b) ? map.get(b) : rw(b)]))) : v;
     rec.args = rw(rec.args);
     doc.addElement(rec);
@@ -659,3 +703,6 @@ function solveFor(doc, C, fm, mk, gm, fo, ok, go) {
   }
   return null;
 }
+
+/** Is this element pinned? Only what declares a Pinned argument can be. */
+export function isPinned(doc, f) { const decl = f && doc.declOf(f); return !!(decl && decl.args.some(a => a.key === "pinned") && F.bool(f, "pinned")); }

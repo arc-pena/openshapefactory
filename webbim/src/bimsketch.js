@@ -15,7 +15,7 @@
 //! what they measure, between passes of the CAD solver.
 
 import { cadSketchLoops, cadSketchNesting, cadSketchOutline, cadSketchEnds, cadSketchEndKeys, cadSketchHandles, cadSketchMoveHandle,
-  cadSolveSketch, cadCoincidentGroup, cadSketchFillet, cadNextSketchId, cadSketchDistanceTo, cadEllipseAt } from "./cadsketch.js";
+  cadSolveSketch, cadCoincidentGroup, cadSketchFillet, cadNextSketchId, cadSketchDistanceTo, cadEllipseAt, cadUniformKnots } from "./cadsketch.js";
 
 const skAdd = (a, b) => [a[0] + b[0], a[1] + b[1]];
 const skSub = (a, b) => [a[0] - b[0], a[1] - b[1]];
@@ -479,3 +479,96 @@ export function toCentreline(el) {
   if (el.type === "bspline") { const pts = cadSketchOutline(el, 64).filter((_, i, A) => i % 4 === 0 || i === A.length - 1); return { type: "spline", points: pts.map(p => p.slice()) }; }
   return null;
 }
+
+// ---------------------------------------------------------------- exact curves: no facets
+//! Drawing a curve as a polyline is how facets reach paper. The plan, the sheet and the PDF all take
+//! {k:"A"} arcs and {k:"C"} cubic Béziers natively, so a sketch is handed to them as those: an arc is
+//! an arc, a through-points spline is its cubic spans exactly, a B-spline is cut into its Bézier spans
+//! by knot insertion (exact), and an ellipse is the affine image of a circle's quarter-arc Béziers
+//! (the same 3e-4 of the radius a circle drawn by PDF itself carries). Only 3D tessellates, and it
+//! shades smooth.
+
+/** One knot inserted into a B-spline (Boehm): the same curve, one more control point. */
+function insertKnot(P, U, p, u) {
+  let k = p; while (k < U.length - p - 2 && u >= U[k + 1]) k++;
+  const Q = [];
+  for (let i = 0; i <= P.length; i++) {
+    if (i <= k - p) Q.push(P[i]);
+    else if (i > k) Q.push(P[i - 1]);
+    else { const a = (u - U[i]) / ((U[i + p] - U[i]) || 1); Q.push([(1 - a) * P[i - 1][0] + a * P[i][0], (1 - a) * P[i - 1][1] + a * P[i][1]]); }
+  }
+  const V = U.slice(0, k + 1).concat([u], U.slice(k + 1));
+  return { P: Q, U: V };
+}
+/** A non-rational B-spline as cubic Bézier segments, exactly (degree 2 is raised, degree 1 is lines). */
+function bsplineSegs(el) {
+  const given = el.ctrl || []; if (given.length < 2) return [];
+  if (el.weights && el.weights.some(w => Math.abs(w - 1) > 1e-12)) return null;            // rational: not a Bézier chain
+  const wrap = el.closed ? Math.min(el.degree || 3, given.length) : 0;
+  let P = el.closed ? given.concat(given.slice(0, wrap)) : given.slice();
+  const p = Math.max(1, Math.min(el.degree || 3, P.length - 1));
+  if (p > 3) return null;
+  let U = el.knots && el.knots.length === P.length + p + 1 ? el.knots.slice() : cadUniformKnots(P.length, p, !!el.closed);
+  const lo = U[p], hi = U[P.length];
+  // every distinct knot in the domain, ends included, to multiplicity p
+  const values = [...new Set(U.filter(u => u >= lo - 1e-12 && u <= hi + 1e-12))];
+  for (const u of values) { let m = U.filter(x => Math.abs(x - u) < 1e-12).length; while (m < p) { ({ P, U } = insertKnot(P, U, p, u)); m++; } }
+  const segs = [];
+  for (let k = p; k < U.length - p - 1; k++) {
+    if (U[k + 1] - U[k] < 1e-12 || U[k] < lo - 1e-12 || U[k + 1] > hi + 1e-12) continue;
+    const c = P.slice(k - p, k + 1);
+    if (p === 1) segs.push({ k: "L", a: c[0], b: c[1] });
+    else if (p === 2) segs.push({ k: "C", a: c[0], c1: skAdd(c[0], skMul(skSub(c[1], c[0]), 2 / 3)), c2: skAdd(c[2], skMul(skSub(c[1], c[2]), 2 / 3)), b: c[2] });
+    else segs.push({ k: "C", a: c[0], c1: c[1], c2: c[2], b: c[3] });
+  }
+  return segs;
+}
+/** A through-points (Catmull-Rom) spline as its cubic spans - exactly, not approximately. */
+function catmullSegs(el) {
+  const pts = el.pts || [], n = pts.length; if (n < 2) return [];
+  if (n === 2 && !el.closed) return [{ k: "L", a: pts[0], b: pts[1] }];
+  const at = i => pts[el.closed ? ((i % n) + n) % n : Math.max(0, Math.min(n - 1, i))], segs = [];
+  for (let i = 0; i < (el.closed ? n : n - 1); i++) {
+    const p0 = at(i - 1), p1 = at(i), p2 = at(i + 1), p3 = at(i + 2);
+    segs.push({ k: "C", a: p1, c1: skAdd(p1, skMul(skSub(p2, p0), 1 / 6)), c2: skSub(p2, skMul(skSub(p3, p1), 1 / 6)), b: p2 });
+  }
+  return segs;
+}
+/** An ellipse (or its arc) as Béziers: the unit circle's quarter arcs, mapped by the ellipse's own affine map. */
+function ellipseSegs(el) {
+  const whole = el.a0 === undefined || el.a1 === undefined, t0 = whole ? 0 : el.a0, t1 = whole ? SK_TAU : el.a1;
+  const c = Math.cos(el.rot || 0), s = Math.sin(el.rot || 0), M = q => [el.c[0] + el.rx * q[0] * c - el.ry * q[1] * s, el.c[1] + el.rx * q[0] * s + el.ry * q[1] * c];
+  const n = Math.max(1, Math.ceil(Math.abs(t1 - t0) / (Math.PI / 4) - 1e-9)), segs = [];          // eighth-arcs: ~1e-5 of the radius
+  for (let i = 0; i < n; i++) {
+    const a = t0 + (t1 - t0) * i / n, b = t0 + (t1 - t0) * (i + 1) / n, k = 4 / 3 * Math.tan((b - a) / 4);
+    const p0 = [Math.cos(a), Math.sin(a)], p3 = [Math.cos(b), Math.sin(b)];
+    segs.push({ k: "C", a: M(p0), c1: M([p0[0] - k * p0[1], p0[1] + k * p0[0]]), c2: M([p3[0] + k * p3[1], p3[1] - k * p3[0]]), b: M(p3) });
+  }
+  return segs;
+}
+/** Any sketch element as exact path segments ({k:"L"|"A"|"C"}), in its own direction. */
+export function elementSegs(el) {
+  if (el.type === "line") return [{ k: "L", a: el.a, b: el.b }];
+  if (el.type === "arc") return [{ k: "A", c: el.c, r: el.r, a0: el.a0, a1: el.a1 }];
+  if (el.type === "circle") return [{ k: "A", c: el.c, r: el.r, a0: 0, a1: SK_TAU }];
+  if (el.type === "ellipse") return ellipseSegs(el);
+  if (el.type === "spline") return catmullSegs(el);
+  if (el.type === "bspline") { const s = bsplineSegs(el); if (s) return s; }
+  if (el.type === "rect") { const [x0, y0] = el.a, [x1, y1] = el.b, q = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]; return q.map((p, i) => ({ k: "L", a: p, b: q[(i + 1) % 4] })); }
+  // what has no exact form here (a rational B-spline): finely sampled, and said so by being the only case
+  const pts = cadSketchOutline(el, 256); return pts.slice(1).map((p, i) => ({ k: "L", a: pts[i], b: p }));
+}
+const revSeg = s => s.k === "L" ? { k: "L", a: s.b, b: s.a } : s.k === "A" ? { k: "A", c: s.c, r: s.r, a0: s.a1, a1: s.a0 } : { k: "C", a: s.b, c1: s.c2, c2: s.c1, b: s.a };
+/** The closed loops as exact paths, nested into regions: [{ outer: segs, holes: [segs] }]. */
+export function regionPaths(d) {
+  const w = weld(sketchOf(d)), { loops, open } = cadSketchLoops(w, WELD_TOL);
+  if (open.length || !loops.length) return [];
+  const byId = new Map(w.elements.map(e => [e.id, e])), nest = cadSketchNesting(w, loops, 48);
+  const chainSegs = ch => ch.flatMap(st => { const s = elementSegs(byId.get(st.id)); return st.reversed ? s.slice().reverse().map(revSeg) : s; });
+  const out = [];
+  nest.forEach((n, i) => { if (!n.hole) out.push({ index: i, outer: chainSegs(n.chain), holes: [] }); });
+  nest.forEach(n => { if (n.hole) { const r = out.find(x => x.index === n.parent); if (r) r.holes.push(chainSegs(n.chain)); } });
+  return out.map(({ outer, holes }) => ({ outer, holes }));
+}
+/** Rings fine enough for 3D, areas and cuts: a curve gets a point every ~2° (a 10 m radius strays 1.5 mm). */
+export const FINE = 180;

@@ -74,6 +74,7 @@ export function renderPanel(app, root) {
   }
   if (viewMode && ["PlanView", "ElevationView", "View3D"].includes(doc.typeOf(f0))) pp.append(h("div", { style: { padding: "12px 14px" } }, h("button", { class: "btn", onclick: () => vvDialog(app, ids[0]) }, "Visibility / Graphics…")));
   root.append(pp);
+  if (ids.length === 1 && doc.typeOf(doc.element(ids[0])) === "CADImport") root.append(importLayers(app, doc.element(ids[0])));
 }
 function countUsers(doc, typeId) { return doc.elements().filter(f => TYPE_KEYS.some(k => F.refId(f, k) === typeId)).length; }
 
@@ -368,4 +369,17 @@ function liveEdit(app, body, makeOps) {
   return { push, status,
     revert: ops => { app.apply(ops, { quiet: true, coalesce: key }); app.editor.seal(); app.refresh({ keepMain: true }); },
     done: () => { app.editor.seal(); app.refresh({ keepMain: true }); } };
+}
+
+/** An import's DXF layers: shown or hidden, and each one's colour - the layers the file came with. */
+function importLayers(app, f) {
+  const doc = app.doc, id = doc.idOf(f), d = JSON.parse(JSON.stringify(doc.argValue(f, "drawing") || {}));
+  const count = {}; for (const e of d.elements || []) count[e.layer || "0"] = (count[e.layer || "0"] || 0) + 1;
+  const set = () => app.apply({ op: "set", id, key: "drawing", value: d });
+  const rows = (d.layers || []).slice().sort((a, b) => a.name.localeCompare(b.name)).map(L => h("tr", {},
+    h("td", {}, h("input", { type: "checkbox", checked: L.on !== false, "aria-label": `Show layer ${L.name}`, onchange: e => { L.on = e.target.checked; set(); } })),
+    h("td", {}, h("input", { type: "color", value: L.colour || "#000000", "aria-label": `Colour of layer ${L.name}`, onchange: e => { L.colour = e.target.value; set(); } })),
+    h("td", { class: "mono" }, L.name), h("td", { class: "muted" }, String(count[L.name] || 0))));
+  return h("section", { class: "pgrid-group" }, h("div", { class: "pgrid-head" }, "DXF layers"),
+    h("table", { class: "layers", style: { width: "100%", fontSize: "12px" } }, h("tbody", {}, rows)));
 }

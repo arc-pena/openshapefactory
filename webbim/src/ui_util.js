@@ -31,6 +31,9 @@ export function clear(el) { el.replaceChildren(); return el; } // one step: a bl
 const P = d => `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
 export const ICONS = {
   select: P('<path d="M4 3l11 6-5 1.5L8 16z"/>'),
+  // Revit's pushpin: pinned, and the same pin struck through in red when not
+  pin: P('<path d="M8 3h5l-.8 5 2.8 2.5H6L8.8 8z"/><path d="M10.5 10.5V17"/>'),
+  unpin: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3h5l-.8 5 2.8 2.5H6L8.8 8z"/><path d="M10.5 10.5V17"/><path d="M12.5 12.5l5 5M17.5 12.5l-5 5" stroke="#d11f1f" stroke-width="2"/></svg>',
   skline: P('<path d="M3 16L9 5l8 9"/><circle cx="3" cy="16" r="1.3"/><circle cx="9" cy="5" r="1.3"/><circle cx="17" cy="14" r="1.3"/>'),
   skrect: P('<rect x="3" y="5" width="14" height="10"/>'),
   skpoly: P('<path d="M10 3l6 4v6l-6 4-6-4V7z"/>'),

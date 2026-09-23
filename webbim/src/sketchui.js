@@ -13,7 +13,7 @@ import { h, fmtLen, icon } from "./ui_util.js";
 import { parseLength, parseAngle, fmtArea } from "./units.js";
 import { F } from "./ocaf.js";
 import { add, sub, mul, dot, dist, perp, normalise, lerp } from "./geom2d.js";
-import { weld, sketchOf, regionsOf, outline, distanceTo, endsOf, addElements, remove, transform, scale1d, dragHandle, offsetChain,
+import { elementSegs, weld, sketchOf, regionsOf, outline, distanceTo, endsOf, addElements, remove, transform, scale1d, dragHandle, offsetChain,
   fillet, arcThrough3, tempDimsFor, measureDim, setDimValue, toggleLock, addDim, handlesOf, newId, solve } from "./bimsketch.js";
 
 const RED = "#8f0000", BLUE = "#1d6fd8";
@@ -389,13 +389,21 @@ export class SketchSession {
     const V = this.view, S = p => V.toScreen(p);
     g.fillStyle = "rgba(255,255,255,0.62)"; g.fillRect(0, 0, V.W, V.H);
     const heavy = Math.max(2, Math.min(4, V.cam.z * 0.9));
+    // an element traced as what it is - arcs as arcs, splines as Béziers - so zooming in shows no facets
+    const exact = el => { g.beginPath(); let cur = null; for (const sg of elementSegs(el)) {
+      const a = sg.k === "A" ? [sg.c[0] + sg.r * Math.cos(sg.a0), sg.c[1] + sg.r * Math.sin(sg.a0)] : sg.a, A = S(a);
+      if (!cur || Math.hypot(A[0] - cur[0], A[1] - cur[1]) > 0.01) g.moveTo(A[0], A[1]);
+      if (sg.k === "L") { const B_ = S(sg.b); g.lineTo(B_[0], B_[1]); cur = B_; }
+      else if (sg.k === "A") { const C = S(sg.c); g.arc(C[0], C[1], sg.r * V.cam.z / V.S, -sg.a0, -sg.a1, sg.a1 > sg.a0); cur = S([sg.c[0] + sg.r * Math.cos(sg.a1), sg.c[1] + sg.r * Math.sin(sg.a1)]); }
+      else { const c1 = S(sg.c1), c2 = S(sg.c2), B_ = S(sg.b); g.bezierCurveTo(c1[0], c1[1], c2[0], c2[1], B_[0], B_[1]); cur = B_; }
+    } g.stroke(); };
     const path = (pts, close) => { g.beginPath(); pts.forEach((p, i) => { const q = S(p); i ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1]); }); if (close) g.closePath(); g.stroke(); };
     // the areas it makes, faintly
     const r = regionsOf(this.d);
     if (!r.error) { g.fillStyle = "rgba(143,0,0,0.06)"; g.beginPath(); for (const rg of r.regions) for (const ring of [rg.outer, ...rg.holes]) ring.forEach((p, i) => { const q = S(p); i ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1]); if (i === ring.length - 1) g.closePath(); }); g.fill("evenodd"); }
     for (const x of this.d.elements) {
       const on = this.sel.has(x.id), hov = this.hoverEl === x.id;
-      g.strokeStyle = on ? BLUE : hov ? "#d23b3b" : RED; g.lineWidth = on ? heavy + 1 : heavy; path(outline(x, 96));
+      g.strokeStyle = on ? BLUE : hov ? "#d23b3b" : RED; g.lineWidth = on ? heavy + 1 : heavy; exact(x);
       if (x.type === "bspline" && (on || hov)) { g.strokeStyle = "rgba(29,111,216,.6)"; g.lineWidth = 1; g.setLineDash([4, 3]); path(x.ctrl, x.closed); g.setLineDash([]); }
     }
     if (this.hoverWall) { const w = this.app.doc.plan(this.app.doc.element(this.hoverWall.id)); if (w && w.curve.type === "line") { const n = perp(w.d), c = w.curve; g.strokeStyle = BLUE; g.lineWidth = 2; for (const s_ of [Math.max(...w.stack.s), Math.min(...w.stack.s)]) path([add(c.start, mul(n, s_)), add(c.end, mul(n, s_))]); } }

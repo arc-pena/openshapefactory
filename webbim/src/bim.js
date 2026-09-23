@@ -15,7 +15,7 @@ import {
 import { wallRecord, wallReferences, pointAt, uOf, sideOf, boundary, wallPieces, faceLine, layerStack } from "./walls.js";
 import { resolveJoins, wallRegions, solidSpans, coarseMaterial, JOIN_TOL } from "./joins.js";
 import { findLoops, claimLoops, filterWallFaces, interiorPoint } from "./spaces.js";
-import { regionsOf } from "./bimsketch.js";
+import { regionsOf, regionPaths, FINE } from "./bimsketch.js";
 import {
   PEN_ISO, PATTERNS, MATERIALS, PARAM_SPECS, CATEGORIES, FAMILIES, TYPES, TEXT_TYPES, SYMBOLS, VS_PRESENTATION, VS_CONSTRUCTION,
 } from "./library.js";
@@ -38,7 +38,7 @@ declare({ type: "Grid", guid: "wb-0002", category: "IfcGrid", kind: "grid", idPr
   summary: "A datum line with a bubble. Publishes its line as a reference.",
   args: [ text("name", "Label", "A", { group: "Identity Data" }), curve2d("line", "Line", ["line"], { type: "line", start: [0, 0], end: [0, 10000] }),
           // ticked, a grid only runs horizontal or vertical - its ends slide along it; unticked, they go anywhere
-          bool("orthogonal", "Orthogonal", true, { group: "Constraints" }) ],
+          bool("orthogonal", "Orthogonal", true, { group: "Constraints" }), bool("pinned", "Pinned", false, { group: "Constraints" }) ],
   handles: (f) => {
     const c = F.json(f, "line");
     if (F.bool(f, "orthogonal") !== false) {
@@ -374,8 +374,13 @@ const hasSketch = s => !!(s && Array.isArray(s.elements) && s.elements.length);
 /** A floor's areas: the sketch's closed loops with their holes, or the plain boundary. */
 export function floorRegions(f) {
   const sk = F.json(f, "sketch");
-  if (hasSketch(sk)) { const r = regionsOf(sk); if (r.error) throw new Error(r.error); return r.regions; }
+  if (hasSketch(sk)) { const r = regionsOf(sk, FINE); if (r.error) throw new Error(r.error); return r.regions; }
   return [{ outer: F.json(f, "boundary"), holes: [] }];
+}
+/** A sketched element's outline as exact arcs and Béziers (what plan and paper draw); null for a plain polygon. */
+export function sketchPath(f) {
+  const sk = F.json(f, "sketch"); if (!hasSketch(sk)) return null;
+  const rp = regionPaths(sk); return rp.length ? rp.flatMap(rg => [...rg.outer, ...rg.holes.flat()]) : null;
 }
 BUILDERS.Floor = {
   precondition: (f) => {
@@ -394,7 +399,8 @@ BUILDERS.Floor = {
     const area = regions.reduce((a, rg) => a + ringArea(rg.outer) - rg.holes.reduce((s, h) => s + ringArea(h), 0), 0);
     const per = regions.reduce((a, rg) => a + ringLen(rg.outer) + rg.holes.reduce((s, h) => s + ringLen(h), 0), 0);
     const main = regions.reduce((b, rg) => (ringArea(rg.outer) > ringArea(b.outer) ? rg : b), regions[0]), b = main.outer;
-    const path = regions.flatMap(rg => [...polyPath(rg.outer), ...rg.holes.flatMap(h => polyPath(h))]);
+    // drawn from the sketch's own curves - arcs as arcs, splines as Béziers - never from the sampled rings
+    const path = sketchPath(f) || regions.flatMap(rg => [...polyPath(rg.outer), ...rg.holes.flatMap(h => polyPath(h))]);
     return { plan: { path, foot: b, regions, z0: z, z1: top, material: layers[layers.length > 1 ? 1 : 0].material, parts },
       data: { value: area, kind: "Area", parts, props: { Area: { kind: "Area", v: area }, Thickness: L(T_), Perimeter: L(per), Volume: { kind: "Volume", v: area * T_ }, "Top elevation": L(top), "Bottom elevation": L(z), Holes: { kind: "Number", v: regions.reduce((s, rg) => s + rg.holes.length, 0) }, TypeMark: T(t.mark || t.id) } } };
   },
@@ -556,7 +562,8 @@ BUILDERS.Text = { build: () => ({ data: {} }) };
 
 declare({ type: "DetailLine", guid: "wb-0702", category: "Detail", kind: "detail", idPrefix: "DL",
   summary: "A line that lives in one view. No 3D; appears nowhere else.",
-  args: [ curve2d("curve", "Curve", ["line", "arc", "spline"], { type: "line", start: [0, 0], end: [1000, 0] }), choice("pen", "Pen", ["hairline", "thin", "medium", "heavy", "bold"], 1), ref("view", "View", ["view"], { view: true }) ] });
+  args: [ curve2d("curve", "Curve", ["line", "arc", "spline"], { type: "line", start: [0, 0], end: [1000, 0] }), choice("pen", "Pen", ["hairline", "thin", "medium", "heavy", "bold"], 1), ref("view", "View", ["view"], { view: true }),
+          text("layer", "Layer", "", { group: "Graphics" }), text("colour", "Colour", "#000000", { group: "Graphics" }) ] });
 BUILDERS.DetailLine = { build: () => ({ data: {} }) };
 
 declare({ type: "FilledRegion", guid: "wb-0703", category: "Detail", kind: "detail", idPrefix: "FR",
@@ -566,7 +573,7 @@ declare({ type: "FilledRegion", guid: "wb-0703", category: "Detail", kind: "deta
 /** A filled region's areas: its sketch's loops and holes (as a floor's), or the plain boundary. */
 export function regionAreas(f) {
   const sk = F.json(f, "sketch");
-  if (hasSketch(sk)) { const r = regionsOf(sk); if (!r.error) return r.regions; }
+  if (hasSketch(sk)) { const r = regionsOf(sk, FINE); if (!r.error) return r.regions; }
   return [{ outer: F.json(f, "boundary"), holes: [] }];
 }
 BUILDERS.FilledRegion = { build: (f) => {
@@ -576,9 +583,33 @@ BUILDERS.FilledRegion = { build: (f) => {
 
 declare({ type: "SymbolInstance", guid: "wb-0704", category: "Annotation", kind: "detail", idPrefix: "SY",
   summary: "A placed symbol. Paper symbols keep their size on the sheet; model symbols scale with the drawing.",
-  args: [ ref("symbol", "Symbol", ["symbol"], { view: true }), point2d("position", "Position", [0, 0]), real("rotation", "Rotation", 0, -360, 360, 1, "°"), ref("view", "View", ["view"], { view: true }) ],
+  args: [ ref("symbol", "Symbol", ["symbol"], { view: true }), point2d("position", "Position", [0, 0]), real("rotation", "Rotation", 0, -360, 360, 1, "°"), ref("view", "View", ["view"], { view: true }),
+          bool("pinned", "Pinned", false, { group: "Constraints" }) ],
   handles: (f) => [{ key: "move", at: F.point(f, "position"), constraint: "free2d", writes: "position" }] });
 BUILDERS.SymbolInstance = { build: () => ({ data: {} }) };
+
+//! An imported CAD drawing (Revit's Import CAD): ONE element in one view, its DXF kept as a sketch in
+//! the parametric CAD's format with every element on its DXF layer. Placed by an offset of the file's
+//! origin, a scale and a rotation about that origin - numbers in Properties, so it can be put exactly
+//! - and pinned by default, so a stray drag cannot move it. Explode turns it into detail lines.
+declare({ type: "CADImport", guid: "wb-0706", category: "Detail", kind: "detail", idPrefix: "CAD",
+  summary: "An imported DXF: one element, its layers kept. Pinned, it cannot be dragged; X/Y offset, scale and rotation place it.",
+  args: [ text("file", "File", "", { group: "Identity Data" }), json("drawing", "Drawing", { elements: [], constraints: [], texts: [], fills: [], layers: [] }),
+          ref("view", "View", ["view"], { view: true }),
+          real("offsetX", "X offset", 0, -1e9, 1e9, 1, "mm", { group: "Position" }), real("offsetY", "Y offset", 0, -1e9, 1e9, 1, "mm", { group: "Position" }),
+          real("scale", "Scale", 1, 1e-6, 1e6, 0.001, "", { group: "Position" }), real("rotation", "Rotation", 0, -360, 360, 1, "°", { group: "Position" }),
+          bool("pinned", "Pinned", true, { group: "Position" }) ] });
+/** File coordinates to model: scaled and turned about the file's origin, then moved by the offset. */
+export function importPlacer(f) {
+  const k = F.real(f, "scale") || 1, a = (F.real(f, "rotation") || 0) * Math.PI / 180, c = Math.cos(a), s = Math.sin(a), ox = F.real(f, "offsetX") || 0, oy = F.real(f, "offsetY") || 0;
+  return p => [ox + k * (p[0] * c - p[1] * s), oy + k * (p[0] * s + p[1] * c)];
+}
+/** An import's layers by name: { on, colour } - read from the drawing's own (CAD-format) layer list. */
+export function importLayerMap(f) { const out = {}; for (const l of (F.json(f, "drawing") || {}).layers || []) out[l.name] = { on: l.on !== false, colour: l.colour || "#000000" }; return out; }
+BUILDERS.CADImport = { build: (f) => {
+  const d = F.json(f, "drawing") || {}, ls = importLayerMap(f);
+  return { data: { props: { Elements: { kind: "Number", v: (d.elements || []).length }, Layers: { kind: "Number", v: Object.keys(ls).length }, File: T(F.text(f, "file")) } } };
+} };
 
 declare({ type: "Dimension", guid: "wb-0705", category: "Annotation", kind: "dimension", idPrefix: "DIM",
   summary: "Binds to references, never to points (§10.2). Padlocked, it is a constraint row.",

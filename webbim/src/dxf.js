@@ -861,3 +861,28 @@ export function makeZip(files) {
   u32(0x06054b50); u16(0); u16(0); u16(items.length); u16(items.length); u32(cdSize); u32(cd); u16(0);
   return out;
 }
+
+/** What readDXF read, as a sketch drawing in the parametric CAD's format, each element keeping the
+ *  DXF layer it was on: lines, arcs and circles as themselves, Béziers (splines and ellipses as the
+ *  reader writes them) as the cubic B-splines they are. Texts and solid fills ride beside it. */
+export function dxfDrawing(r) {
+  const elements = [], layers = {}, TAU_D = Math.PI * 2;
+  const PAL = ["#000000", "#b3261e", "#1d6fd8", "#2e7d32", "#8e44ad", "#e8591a", "#00838f", "#6d4c41"];
+  const layerOf = name => { if (!layers[name]) layers[name] = { visible: true, colour: name === "0" ? "#000000" : PAL[Object.keys(layers).length % PAL.length] }; return name; };
+  let n = 0; const id = () => "d" + (++n);
+  for (const { path, layer } of r.paths || []) {
+    const L = layerOf(layer || "0");
+    for (const s of path) {
+      if (s.k === "L") elements.push({ id: id(), type: "line", a: s.a, b: s.b, layer: L });
+      else if (s.k === "A") {
+        const whole = Math.abs(Math.abs(s.a1 - s.a0) - TAU_D) < 1e-9;
+        elements.push(whole ? { id: id(), type: "circle", c: s.c, r: s.r, layer: L } : { id: id(), type: "arc", c: s.c, r: s.r, a0: s.a0, a1: s.a1, layer: L });
+      }
+      else if (s.k === "C") elements.push({ id: id(), type: "bspline", ctrl: [s.a, s.c1, s.c2, s.b], degree: 3, closed: false, layer: L });
+    }
+  }
+  const texts = (r.texts || []).map(t => Object.assign({}, t, { layer: layerOf(t.layer || "0") }));
+  const fills = (r.fills || []).map(f => ({ path: f.path, layer: layerOf(f.layer || "0") }));
+  // layers in the CAD sketcher's own format (drawing.layers, el.layer): the same drawing in both interfaces
+  return { drawing: { elements, constraints: [], texts, fills, layers: Object.entries(layers).map(([name, l]) => ({ name, on: true, locked: false, colour: l.colour })) } };
+}

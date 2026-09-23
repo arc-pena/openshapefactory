@@ -17,7 +17,7 @@ import { F, CATALOGUE } from "./ocaf.js";
 import { deriveView, sheetScene, shownInView } from "./scene.js";
 import { elementsBox } from "./hlr.js";
 import { writePDF } from "./pdf.js";
-import { writeDXF, readDXF, makeZip } from "./dxf.js";
+import { writeDXF, readDXF, dxfDrawing, makeZip } from "./dxf.js";
 import { runAll, CASES } from "./acceptance.js";
 import { renderPanel, renderSchedule, typeEditor, vvDialog } from "./panel.js";
 import { renderGraph } from "./graph.js";
@@ -218,6 +218,10 @@ const COMMANDS = {
   fliphand: { label: "Flip Hand", icon: "mirror", run: () => flipDoors("flipHand") },
   flipfacing: { label: "Flip Facing", icon: "mirror", run: () => flipDoors("flipFacing") },
   closehidden: { label: "Close Inactive", icon: "close", run: () => { app.tabs = app.tabs.filter(t => t === app.activeView); app.refresh(); } },
+  importcad: { label: "Import CAD", icon: "importI", key: "IC", hint: "A DXF into this view as ONE element, its layers kept, pinned at the file's origin. X/Y offset, scale and rotation in Properties; Explode makes it detail lines.", run: () => importCAD() },
+  pin: { label: "Pin", icon: "pin", key: "PN", hint: "Pinned elements cannot be dragged, moved or rotated", run: () => { const ids = [...app.selection]; if (ids.length) app.apply({ op: "pin", ids, value: true }); } },
+  unpin: { label: "Unpin", icon: "unpin", key: "UP", hint: "Let a pinned element be moved again", run: () => { const ids = [...app.selection]; if (ids.length) app.apply({ op: "pin", ids, value: false }); } },
+  explode: { label: "Explode", icon: "skline", hint: "The import becomes detail lines in this view, each on its DXF layer", run: () => { const id = [...app.selection].find(i => app.doc.element(i) && app.doc.typeOf(app.doc.element(i)) === "CADImport"); if (!id) return app.say("select an imported drawing", "note"); const r = app.apply({ op: "explode", id }); if (r.ok) app.select(r.ids || []); } },
   region: { label: "Filled Region", icon: "skrect", key: "FR", hint: "Sketch a hatched region in this view: closed loops, holes inside; Finish ✓ makes it", run: () => startRegionSketch() },
   edittype: { label: "Edit Type", icon: "edittype", run: () => { const t = selectedType(); if (t) typeEditor(app, t); else app.say("select an element with a type", "note"); } },
   props: { label: "Properties", icon: "props", key: "PP", active: () => !document.body.classList.contains("hide-props"), run: () => document.body.classList.toggle("hide-props") },
@@ -261,7 +265,7 @@ const RIBBON = [
     { title: "Datum", items: [big("grid"), big("level")] },
   ] },
   { tab: "Insert", panels: [
-    { title: "Import", items: [big("importifc"), big("importdxf"), big("open")] },
+    { title: "Import", items: [big("importcad"), big("importifc"), big("importdxf"), big("open")] },
     { title: "Load from Library", items: [big("placesymbol")] },
   ] },
   { tab: "Annotate", panels: [
@@ -306,6 +310,8 @@ function contextTab() {
     { title: "Modify", items: [big("move"), big("copy"), big("rotate"), big("mirror"), big("del")] },
     ...(hasWall ? [{ title: "Mode", items: [big("flip")] }] : []),
     ...(els.length === 1 && app.doc.typeOf(els[0]) === "Floor" ? [{ title: "Mode", items: [big("editboundary")] }] : []),
+    ...(els.some(f => app.doc.typeOf(f) === "CADImport") ? [{ title: "Import CAD", items: [big("explode")] }] : []),
+    ...(els.some(f => (app.doc.declOf(f) || { args: [] }).args.some(a => a.key === "pinned")) ? [{ title: "Pin", items: [big(els.some(f => F.bool(f, "pinned")) ? "unpin" : "pin")] }] : []),
     ...(els.some(f => app.doc.typeOf(f) === "Door") ? [{ title: "Door", items: [big("dooranim"), big("swingnext"), small("fliphand"), small("flipfacing")] }] : []),
     { title: "View", items: [small("showin3d"), small("selectionbox")] },
     { title: "Select", items: [small("selectall"), small("select")] },
@@ -816,6 +822,32 @@ function importIfcFile() {
       missed ? h("div", { class: "banner note" }, `Not mapped (kept out, counted here): ${missed}. The Parametric CAD interface's IFC package can bring these in as geometry.`) : null,
       ...r.report.notes.map(n => h("div", { class: "muted" }, n))), [{ label: "OK", primary: true, run: () => true }]);
     app.say(`${file.name}: ${made}`, "ok");
+  });
+  inp.click();
+}
+/** Revit's Import CAD: the DXF into the active 2D view as one element, origin to origin, pinned. */
+function importCAD() {
+  const v = app.views.get(app.activeView);
+  if (!v || !["PlanView", "ElevationView", "SectionView", "Sheet"].includes(v.kind)) return app.say("open a plan, elevation, section or sheet to import into", "error");
+  const inp = h("input", { type: "file", accept: ".dxf", hidden: true }); document.body.append(inp);
+  inp.addEventListener("change", async () => {
+    const file = inp.files[0]; inp.remove(); if (!file) return;
+    const text = await file.text();
+    const place = r => {
+      const { drawing } = dxfDrawing(r), layers = drawing.layers;
+      if (!drawing.elements.length && !drawing.texts.length) return app.say(`${file.name}: nothing drawable in it (${r.message})`, "error");
+      const res = app.apply({ op: "add", element: { type: "CADImport", name: file.name, args: { file: file.name, drawing, view: { ref: app.activeView }, offsetX: 0, offsetY: 0, scale: 1, rotation: 0, pinned: true } } });
+      if (!res.ok) return;
+      app.select([res.id]); const vv = app.views.get(app.activeView); if (vv && vv.fit) vv.fit();
+      const skipped = Object.entries(r.manifest.skipped || {}).map(([k, n]) => `${n} × ${k}`).join(", ");
+      app.say(`${file.name}: ${drawing.elements.length} elements on ${Object.keys(layers).length} layers, pinned at the origin${skipped ? ` · not read: ${skipped}` : ""}`, "ok");
+    };
+    const r = readDXF(text);
+    if (r.needsUnits) {
+      const sel = h("select", { "aria-label": "Units" }, ["mm", "cm", "m", "in", "ft"].map(u => h("option", {}, u)));
+      dialog("This DXF does not say its units", h("div", { style: { display: "grid", gap: "8px" } }, h("div", {}, "$INSUNITS is missing or 0. Which unit was it drawn in?"), sel),
+        [{ label: "Cancel", run: () => true }, { label: "Import", primary: true, run: () => { place(readDXF(text, { askUnits: () => sel.value })); return true; } }]);
+    } else place(r);
   });
   inp.click();
 }

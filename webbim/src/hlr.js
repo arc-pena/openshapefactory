@@ -36,10 +36,12 @@ export function buildHLRModel(doc, opts = {}) {
     if (opts.visible && !opts.visible(f)) continue;           // the view's Visibility/Graphics
     const t = doc.typeOf(f);
     if (t === "Door" || t === "Window" || t === "Floor" || t === "Beam" || t === "Generic") { for (const pt of elementParts(doc, f)) if (pt.foot && pt.foot.length >= 3) {
-      prism(pt.foot, pt.z0, pt.z1, solids, edges, false);
+      prism(pt.foot, pt.z0, pt.z1, solids, edges, "auto");
       // a hole's edges are drawn; its opening does not yet let the line-work see through (the occluder is the outline)
       for (const hole of pt.holes || []) for (let i = 0; i < hole.length; i++) { const a = hole[i], b = hole[(i + 1) % hole.length];
-        edges.push({ a: [a[0], a[1], pt.z0], b: [b[0], b[1], pt.z0], kind: "sharp" }, { a: [a[0], a[1], pt.z1], b: [b[0], b[1], pt.z1], kind: "sharp" }, { a: [a[0], a[1], pt.z0], b: [a[0], a[1], pt.z1], kind: "sharp" }); }
+        const p = hole[(i - 1 + hole.length) % hole.length], u = [a[0] - p[0], a[1] - p[1]], v = [b[0] - a[0], b[1] - a[1]], corner = (u[0] * v[0] + u[1] * v[1]) / (Math.hypot(...u) * Math.hypot(...v) || 1) < Math.cos(25 * Math.PI / 180);
+        edges.push({ a: [a[0], a[1], pt.z0], b: [b[0], b[1], pt.z0], kind: "sharp" }, { a: [a[0], a[1], pt.z1], b: [b[0], b[1], pt.z1], kind: "sharp" });
+        if (corner) edges.push({ a: [a[0], a[1], pt.z0], b: [a[0], a[1], pt.z1], kind: "sharp" }); }
     } continue; }
     if (t === "Wall") { const w = doc.plan(f); if (!w || !w.pieces) continue; wallSolids(w, solids); wallEdges(w, edges, chord); }
     if (t === "Column") { const p = doc.plan(f); if (!p) continue; const foot = p.foot.length ? p.foot : samplePath(p.path).slice(0, -1); prism(foot, p.z0, p.z1, solids, edges, !!(p.foot.length === 16)); }
@@ -98,7 +100,9 @@ function prism(foot, z0, z1, solids, edges, smooth) {
   for (let i = 0; i < n; i++) {
     const j = (i + 1) % n;
     edges.push({ a: b[i], b: b[j], kind: "sharp" }, { a: t[i], b: t[j], kind: "sharp" });
-    if (smooth) { const fa = s.faces[2 + ((i - 1 + n) % n)].n, fb = s.faces[2 + i].n; edges.push({ a: b[i], b: t[i], kind: "smooth", n1: fa, n2: fb }); }
+    // "auto": smooth where the outline only bends (a tessellated curve), sharp where it turns a corner
+    const bend = () => { const p = foot[(i - 1 + n) % n], q = foot[i], r_ = foot[(i + 1) % n], u = [q[0] - p[0], q[1] - p[1]], v = [r_[0] - q[0], r_[1] - q[1]], L = Math.hypot(...u) * Math.hypot(...v) || 1; return (u[0] * v[0] + u[1] * v[1]) / L > Math.cos(25 * Math.PI / 180); };
+    if (smooth === true || (smooth === "auto" && bend())) { const fa = s.faces[2 + ((i - 1 + n) % n)].n, fb = s.faces[2 + i].n; edges.push({ a: b[i], b: t[i], kind: "smooth", n1: fa, n2: fb }); }
     else edges.push({ a: b[i], b: t[i], kind: "sharp" });
   }
 }

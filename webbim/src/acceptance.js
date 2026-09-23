@@ -8,13 +8,13 @@ import { parse, evaluate, formatValue } from "./expr.js";
 import { CATALOGUE, F, loadDocument, danglingRefs, clone } from "./ocaf.js";
 import { wallRegions, solidSpans } from "./joins.js";
 import { pointAt, uOf, boundary, wallPieces } from "./walls.js";
-import { newDocument, openDocument, measureRefs, resolveReference } from "./bim.js";
+import { newDocument, openDocument, measureRefs, resolveReference, importPlacer } from "./bim.js";
 import { Editor, propagate } from "./ops.js";
 import { sectionBoxKey, dimText, deriveView, planScene, elevationScene, placements, textWidth, sheetScene, visibilityKey, sectionCut, cutOutline } from "./scene.js";
 import { chainLoop } from "./crop.js";
 import { importIfc } from "./ifcimport.js";
 import { writePDF, pathOps, PT_PER_MM } from "./pdf.js";
-import { writeDXF, readDXF, dxfLineweight } from "./dxf.js";
+import { writeDXF, readDXF, dxfLineweight, dxfDrawing } from "./dxf.js";
 import { buildHLRModel, runHLR, elementsBox } from "./hlr.js";
 import { drawScene } from "./render.js";
 import { resolveGraphics, penWeight } from "./styles.js";
@@ -22,7 +22,8 @@ import { propertyModel, pickCandidates, graphModel, listeningDimensions, dimensi
 import { buildSample } from "./sample.js";
 import { parseLength, setLengthUnit } from "./units.js";
 import { bimToCad, cadEditsToOps } from "./cadbridge.js";
-import { fromPolygon, addElements, fillet, toggleLock, measureDim, dragHandle, regionsOf, shapeFromClicks, filletCorners, toCentreline } from "./bimsketch.js";
+import { fromPolygon, addElements, fillet, toggleLock, measureDim, dragHandle, regionsOf, shapeFromClicks, filletCorners, toCentreline, elementSegs } from "./bimsketch.js";
+import { cadSketchOutline } from "./cadsketch.js";
 
 export const CASES = [];
 const testCase = (id, name, fn, opts = {}) => CASES.push(Object.assign({ id, name, fn }, opts));
@@ -1170,4 +1171,51 @@ testCase("M26", "Walls draw from the sketcher's shapes (rounded rectangle, circl
     && endH && endH.constraint && endH.constraint.axis && skew.end[0] === 900 && straight.end[0] === 0 && Math.abs(straight.end[1] - 10000) < 1;
   return R(ok, "4 lines + 4 quarter arcs as walls with no errors; a circle wall; grid end handles slide along the grid; ticking straightens a skewed grid",
     `ok ${res.ok}; kinds ${kinds}; errors ${errs.join("; ")}; corner arc length ${Math.round(arcLen)}; circle ${JSON.stringify(circle)}; grid handle ${JSON.stringify(endH && endH.constraint)}; skew ${JSON.stringify(skew.end)} → ${JSON.stringify(straight.end)}`);
+});
+
+const DXF_SMALL = ["0", "SECTION", "2", "HEADER", "9", "$INSUNITS", "70", "4", "0", "ENDSEC", "0", "SECTION", "2", "ENTITIES",
+  "0", "LINE", "8", "WALLS", "10", "0", "20", "0", "11", "1000", "21", "0",
+  "0", "LINE", "8", "WALLS", "10", "1000", "20", "0", "11", "1000", "21", "500",
+  "0", "CIRCLE", "8", "FURN", "10", "500", "20", "250", "40", "100",
+  "0", "LWPOLYLINE", "8", "FURN", "90", "2", "70", "0", "10", "0", "20", "500", "42", "1", "10", "200", "20", "500",
+  "0", "TEXT", "8", "NOTES", "10", "0", "20", "700", "40", "50", "1", "HELLO",
+  "0", "ENDSEC", "0", "EOF"].join("\n");
+testCase("M27", "Import CAD: one element with its DXF layers; X/Y offset, scale and rotation place it; pinned it will not move; explode keeps layers", () => {
+  const doc = buildSample(), ed = new Editor(doc);
+  const { drawing } = dxfDrawing(readDXF(DXF_SMALL));
+  const r0 = ed.apply({ op: "add", element: { id: "CAD1", type: "CADImport", args: { file: "t.dxf", drawing, view: { ref: "V-P00" }, offsetX: 0, offsetY: 0, scale: 1, rotation: 0, pinned: true } } });
+  const f = doc.element("CAD1"), layers = drawing.layers.map(l => l.name).sort().join(",");
+  const types = drawing.elements.map(e => e.type).sort().join(",");
+  const moveWhilePinned = ed.apply({ op: "transform", ids: ["CAD1"], move: [500, 0] });
+  ed.apply([{ op: "set", id: "CAD1", key: "offsetX", value: 2000 }, { op: "set", id: "CAD1", key: "scale", value: 2 }, { op: "set", id: "CAD1", key: "rotation", value: 90 }]);
+  const P = importPlacer(f), end = P([1000, 0]);                          // (1000,0) doubled and turned 90°, then moved 2000 in x
+  ed.apply({ op: "pin", id: "CAD1", value: false });
+  const moved = ed.apply({ op: "transform", ids: ["CAD1"], move: [0, 300] }), oy = F.real(f, "offsetY");
+  const sc = planScene(doc, doc.element("V-P00")), strokes = sc.prims.filter(p => p.id === "CAD1").length;
+  // switch FURN off, then explode: the lines keep their layers; FURN is not exploded
+  const d2 = JSON.parse(JSON.stringify(doc.argValue(f, "drawing"))); d2.layers.find(l => l.name === "FURN").on = false;
+  ed.apply({ op: "set", id: "CAD1", key: "drawing", value: d2 });
+  const ex = ed.apply({ op: "explode", id: "CAD1" });
+  const dls = (ex.ids || []).map(id => doc.element(id)).filter(g => doc.typeOf(g) === "DetailLine");
+  const ok = r0.ok && layers === "FURN,NOTES,WALLS" && /arc/.test(types) && /circle/.test(types) && !moveWhilePinned.ok && /pinned/.test(moveWhilePinned.error || "")
+    && Math.abs(end[0] - 2000) < 1e-6 && Math.abs(end[1] - 2000) < 1e-6 && moved.ok && oy === 300 && strokes > 3
+    && !doc.element("CAD1") && dls.length === 2 && dls.every(g => F.text(g, "layer") === "WALLS");
+  return R(ok, "3 layers; a pinned import refuses to move; offset 2000 + scale 2 + 90° puts (1000,0) at (2000,2000); unpinned it moves; explode leaves the 2 WALLS lines (FURN off)",
+    `add ${r0.ok}; layers ${layers}; types ${types}; pinned move: ${moveWhilePinned.error}; end ${end}; unpinned move ${moved.ok} → y ${oy}; prims ${strokes}; exploded ${(ex.ids || []).length}, lines ${dls.map(g => F.text(g, "layer")).join(",")}`);
+});
+
+testCase("M28", "No facets: a sketched floor draws its circles as arcs and its splines as exact Béziers; 3D shades a round hole smooth", () => {
+  const doc = buildSample(), ed = new Editor(doc);
+  const L = (id, a, b) => ({ id, type: "line", a, b });
+  const sk = { elements: [L("e1", [20000, 0], [26000, 0]), { id: "s1", type: "bspline", ctrl: [[26000, 0], [28000, 2000], [24000, 3000], [26000, 5000]], degree: 3, closed: false }, L("e2", [26000, 5000], [20000, 5000]), L("e3", [20000, 5000], [20000, 0]),
+    { id: "h1", type: "circle", c: [22000, 2500], r: 800 }, { id: "h2", type: "spline", pts: [[23500, 2000], [24200, 2600], [23500, 3200], [23000, 2600]], closed: true }], constraints: [], dims: [] };
+  const ft = Object.keys(doc.lib.types).find(k => doc.lib.types[k].family === "F-FLOOR");
+  const r = ed.apply({ op: "add", element: { id: "FLX", type: "Floor", args: { boundary: [[20000, 0], [26000, 0], [26000, 5000]], floorType: { ref: ft }, level: { ref: "L0" }, heightOffset: 0, sketch: sk } } });
+  const p = doc.plan(doc.element("FLX")), kinds = {}; for (const s of p.path) kinds[s.k] = (kinds[s.k] || 0) + 1;
+  // the B-spline's Bézier spans pass through the kernel's own curve points
+  const segs = elementSegs(sk.elements[1]), ref = cadSketchOutline(sk.elements[1], 64);
+  const near = q => Math.min(...segs.flatMap(s => Array.from({ length: 2001 }, (_, i) => { const t = i / 2000, b = bez(s.a, s.c1, s.c2, s.b, t); return Math.hypot(b[0] - q[0], b[1] - q[1]); })));
+  const err = Math.max(...ref.map(near));
+  const ok = r.ok && !doc.error(doc.element("FLX")) && kinds.A === 1 && (kinds.C || 0) >= 5 && kinds.L === 3 && err < 0.1 && p.foot.length >= 45;
+  return R(ok, "3 lines + 1 arc (the circle) + Bézier spans (B-spline, closed spline); the spans lie on the kernel's curve (< 0.1 mm); the 3D ring is fine", `ok ${r.ok}; path ${JSON.stringify(kinds)}; B-spline off by ${err.toFixed(4)} mm; ring ${p.foot.length} points`);
 });
