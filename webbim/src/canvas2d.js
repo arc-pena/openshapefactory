@@ -20,7 +20,7 @@ import { shapeFromClicks, SHAPE_CLICKS, filletCorners, toCentreline, weld, offse
 export const SNAP_PX = 8;
 export const SNAP_KINDS = ["endpoint", "midpoint", "centre", "intersection", "perpendicular", "nearest", "grid", "angle"];
 const SNAP_SHORT = { endpoint: "end", midpoint: "mid", centre: "cen", intersection: "int", perpendicular: "perp", nearest: "near", grid: "grid", angle: "ang" };
-const TOOLS_NEED_PLAN = new Set(["section", "floor", "beam", "wall", "opening", "door", "window", "column", "grid", "text", "dim", "space", "elev", "sep", "move", "copy", "rotate", "mirror"]);
+const TOOLS_NEED_PLAN = new Set(["section", "floor", "beam", "wall", "opening", "door", "window", "column", "grid", "text", "dim", "space", "elev", "sep", "move", "copy", "rotate", "mirror", "split"]);
 export const MODIFY_TOOLS = new Set(["move", "copy", "rotate", "mirror"]);
 
 export class View2D {
@@ -253,6 +253,11 @@ export class View2D {
       }
     }
     this.drawViewExtents(g);
+    if (this.app.tool === "split" && this.tool.cursor) {
+      // the cut, shown where it will fall
+      const q = this.toScreen(this.tool.cursor); g.strokeStyle = "#d11f1f"; g.lineWidth = 2; g.beginPath(); g.moveTo(q[0] - 6, q[1] + 10); g.lineTo(q[0] + 6, q[1] - 10); g.stroke();
+      g.fillStyle = "#d11f1f"; g.beginPath(); g.arc(q[0], q[1], 3, 0, 7); g.fill();
+    }
     const T = this.tool, wShape = this.app.tool === "wall" ? (this.app.toolOpts.wallShape || "line") : null;
     if (wShape && wShape !== "line" && wShape !== "pick" && T.pts.length && T.cursor) {
       // the shape the next click completes, dashed, as the sketcher previews it
@@ -772,9 +777,24 @@ export class View2D {
   }
 
   // ---------------------------------------------------------------- tools
+  /** The splittable element under a model point: nearest of walls, beams, detail lines, separators. */
+  splittableAt(p) {
+    const [sx, sy] = this.toScreen(p), ok = new Set(["Wall", "Beam", "DetailLine", "RoomSeparator"]);
+    const hit = this.hitsAt(sx, sy).find(x => { const f = this.doc.element(x.id); return f && ok.has(this.doc.typeOf(f)); });
+    return hit ? hit.id : null;
+  }
   toolHover(p, sx, sy, e) {
     const T = this.tool, tool = this.app.tool;
     if (MODIFY_TOOLS.has(tool)) return this.modifyHover(p, sx, sy, e);
+    if (tool === "split") {
+      const id = this.splittableAt(p), f = id && this.doc.element(id);
+      const key = f && { Wall: "centreline", Beam: "axis", DetailLine: "curve", RoomSeparator: "line" }[this.doc.typeOf(f)], c = f && this.doc.argValue(f, key);
+      T.cursor = null; this.hover = id;
+      if (c && c.type === "line") { const d = normalise(sub(c.end, c.start)), t = Math.max(0, Math.min(dist(c.start, c.end), dot(sub(p, c.start), d))); T.cursor = add(c.start, mul(d, t)); this.showHud(sx, sy, `split ${id} at ${fmtLen(t)} · ${fmtLen(dist(c.start, c.end) - t)}`); }
+      else if (c && c.type === "arc") { T.cursor = add(c.centre, mul(normalise(sub(p, c.centre)), c.radius)); this.showHud(sx, sy, `split ${id}`); }
+      else this.showHud(sx, sy, id ? `${id} is not straight or an arc` : "hover a wall, beam or line");
+      this.draw(); return;
+    }
     const sn = this.snap(p, { from: T.pts[T.pts.length - 1], shift: e.shiftKey });
     this.showSnap(sn);
     const q = sn ? sn.point : this.quantise(p);
@@ -809,6 +829,12 @@ export class View2D {
   toolClick(p, e) {
     const T = this.tool, tool = this.app.tool, o = this.app.toolOpts, doc = this.doc;
     if (MODIFY_TOOLS.has(tool)) return this.modifyClick();
+    if (tool === "split") {
+      // cut what is under the click, where it was clicked; the tool stays on for the next cut
+      const hit = this.splittableAt(p); if (!hit) return this.app.say("click on a wall, beam, detail line or room separator", "note");
+      const r = this.app.apply({ op: "split", id: hit, at: T.cursor || p }); if (r.ok) this.app.select(r.ids || []);
+      return;
+    }
     const q = T.cursor || p;
     const level = F.refId(this.view, "level");
     const addEl = (element, msg) => { const r = this.app.apply({ op: "add", element }); this.app.say(r.ok ? msg || `Added ${r.id}` : r.error, r.ok ? "ok" : "error"); if (r.ok) this.app.select([r.id]); return r; };

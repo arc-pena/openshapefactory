@@ -5712,7 +5712,8 @@ function fillet(d, idA, pickA, idB, pickB, radius = 0) {
   const A = w.elements.find(e => e.id === idA), B = w.elements.find(e => e.id === idB);
   if (!A || !B) throw new Error("pick two elements of the sketch");
   const ok = e => e.type === "line" || e.type === "arc";
-  if (!ok(A) || !ok(B)) throw new Error("fillet works between lines and arcs");
+  // a spline on either side: trimmed exactly by knot insertion, the fillet solved against the true curve
+  if (!ok(A) || !ok(B)) { const r = filletGeneral(w, idA, pickA, idB, pickB, radius); r.dims = d.dims || []; return r; }
   const near = skMul(skAdd(pickA, pickB), 0.5), X = meetPoint(A, B, near);
   if (!X) throw new Error("those two are parallel - they never meet");
   const before = skClone(w);
@@ -5917,6 +5918,147 @@ function regionPaths(d) {
 }
 /** Rings fine enough for 3D, areas and cuts: a curve gets a point every ~2° (a 10 m radius strays 1.5 mm). */
 const FINE = 180;
+
+// ---------------------------------------------------------------- split
+/** Split a sketch element where p is nearest: a line or arc into two; a B-spline exactly, by inserting
+ *  the knot there until the curve is cut; a through-points spline is first written as the B-spline it
+ *  exactly is (its Bézier spans), so its shape does not change. Circles and ellipses have no end to
+ *  split from and are left alone. The two pieces are welded where they meet. */
+function splitElement(d, id, p) {
+  const w = skClone(d), el = w.elements.find(e => e.id === id); if (!el) throw new Error("pick an element of the sketch");
+  const nid = newId(w, "s"); let a, b;
+  if (el.type === "line") {
+    const u = skUnit(skSub(el.b, el.a)), L = skDist(el.a, el.b), t = Math.max(0, Math.min(L, skDot(skSub(p, el.a), u)));
+    if (t < 1 || t > L - 1) throw new Error("click away from the ends");
+    const q = skAdd(el.a, skMul(u, t)); a = Object.assign({}, el, { b: q }); b = Object.assign({}, el, { id: nid, a: q });
+  } else if (el.type === "arc") {
+    const ang = Math.atan2(p[1] - el.c[1], p[0] - el.c[0]), sw = el.a1 - el.a0, dir = Math.sign(sw) || 1;
+    let t = ((ang - el.a0) * dir % SK_TAU + SK_TAU) % SK_TAU; if (t > Math.abs(sw)) throw new Error("click on the arc");
+    const at = el.a0 + dir * t; a = Object.assign({}, el, { a1: at }); b = Object.assign({}, el, { id: nid, a0: at });
+  } else if (el.type === "bspline" || el.type === "spline") {
+    const bs = el.type === "bspline" ? el : splineAsBspline(el);
+    if (bs.closed) throw new Error("a closed spline has no end to split from - split it after opening it");
+    [a, b] = splitBspline(bs, p); a = Object.assign({ layer: el.layer }, a, { id: el.id }); b = Object.assign({ layer: el.layer }, b, { id: nid });
+  } else throw new Error(`a ${el.type} has no ends to split between`);
+  w.elements = w.elements.flatMap(e => (e.id === id ? [a, b] : [e]));
+  return weld(w);
+}
+/** A through-points spline as the cubic B-spline it is: its Bézier spans, knots tripled between them. */
+function splineAsBspline(el) {
+  const segs = catmullSegs(el); if (!segs.length) throw new Error("that spline is empty");
+  const ctrl = [segs[0].a]; for (const s of segs) ctrl.push(s.c1, s.c2, s.b);
+  const knots = [0, 0, 0, 0]; for (let i = 1; i < segs.length; i++) knots.push(i, i, i); knots.push(segs.length, segs.length, segs.length, segs.length);
+  return { type: "bspline", ctrl, degree: 3, knots, closed: !!el.closed };
+}
+function splitBspline(el, p) {
+  let P = el.ctrl.map(q => q.slice()); const deg = Math.max(1, Math.min(el.degree || 3, P.length - 1));
+  let U = el.knots && el.knots.length === P.length + deg + 1 ? el.knots.slice() : cadUniformKnots(P.length, deg, false);
+  const lo = U[deg], hi = U[P.length];
+  // the parameter nearest p, found on a fine walk of the curve and refined
+  const pt = u => { const k = Math.min(Math.max(deg, U.findIndex((x, i) => i >= deg && U[i + 1] > u) === -1 ? P.length - 1 : U.findIndex((x, i) => i >= deg && U[i + 1] > u)), P.length - 1); const dd = P.slice(k - deg, k + 1).map(q => q.slice()); for (let r = 1; r <= deg; r++) for (let j = deg; j >= r; j--) { const i = k - deg + j, al = (u - U[i]) / ((U[i + deg - r + 1] - U[i]) || 1); dd[j] = [(1 - al) * dd[j - 1][0] + al * dd[j][0], (1 - al) * dd[j - 1][1] + al * dd[j][1]]; } return dd[deg]; };
+  let best = lo, bd = Infinity; for (let i = 0; i <= 400; i++) { const u = lo + (hi - lo) * i / 400, q = pt(u), dd = skDist(q, p); if (dd < bd) { bd = dd; best = u; } }
+  for (let step = (hi - lo) / 400; step > (hi - lo) * 1e-9; step /= 2) for (const u of [best - step, best + step]) if (u > lo && u < hi) { const dd = skDist(pt(u), p); if (dd < bd) { bd = dd; best = u; } }
+  if (best - lo < (hi - lo) * 1e-4 || hi - best < (hi - lo) * 1e-4) throw new Error("click away from the ends");
+  let m = U.filter(x => Math.abs(x - best) < 1e-12).length; while (m < deg) { ({ P, U } = insertKnot(P, U, deg, best)); m++; }
+  // the curve now passes through a control point at best: cut there
+  const k = U.findIndex(x => Math.abs(x - best) < 1e-12), cut = k - 1;              // the control point on the curve
+  const left = { type: "bspline", degree: deg, closed: false, ctrl: P.slice(0, cut + 1), knots: U.slice(0, k + deg).concat([best]) };
+  const right = { type: "bspline", degree: deg, closed: false, ctrl: P.slice(cut), knots: [best].concat(U.slice(k)) };
+  return [left, right];
+}
+
+// ---------------------------------------------------------------- B-splines evaluated, trimmed exactly
+/** A B-spline's working form: control points, knots, degree and domain (open curves). */
+function bsParts(el) {
+  const P = el.ctrl.map(q => q.slice()), p = Math.max(1, Math.min(el.degree || 3, P.length - 1));
+  const U = el.knots && el.knots.length === P.length + p + 1 ? el.knots.slice() : cadUniformKnots(P.length, p, false);
+  return { P, U, p, lo: U[p], hi: U[P.length] };
+}
+/** de Boor: the point at parameter u. */
+function bsEval(B, u) {
+  const { P, U, p } = B; let k = p; while (k < P.length - 1 && u >= U[k + 1]) k++;
+  const d = P.slice(k - p, k + 1).map(q => q.slice());
+  for (let r = 1; r <= p; r++) for (let j = p; j >= r; j--) { const i = k - p + j, a = (u - U[i]) / ((U[i + p - r + 1] - U[i]) || 1); d[j] = [(1 - a) * d[j - 1][0] + a * d[j][0], (1 - a) * d[j - 1][1] + a * d[j][1]]; }
+  return d[p];
+}
+/** Cut a B-spline at parameter u by knot insertion: two B-splines that ARE the original curve, each with
+ *  its own control points - not a trimmed spline pointing back at the old one (Rhino's behaviour). */
+function bsSplitAt(el, u) {
+  let { P, U, p } = bsParts(el);
+  let m = U.filter(x => Math.abs(x - u) < 1e-12).length; while (m < p) { ({ P, U } = insertKnot(P, U, p, u)); m++; }
+  const k = U.findIndex(x => Math.abs(x - u) < 1e-12), cut = k - 1;
+  return [{ type: "bspline", degree: p, closed: false, ctrl: P.slice(0, cut + 1), knots: U.slice(0, k + p).concat([u]), layer: el.layer },
+          { type: "bspline", degree: p, closed: false, ctrl: P.slice(cut), knots: [u].concat(U.slice(k)), layer: el.layer }];
+}
+/** A uniform view of the three kinds a fillet meets: position, closest parameter, samples. Lines are
+ *  taken as infinite (a fillet may extend a line, as AutoCAD's does); arcs as their whole circle for
+ *  finding the corner; B-splines only on their own domain - a spline is never extended. */
+function curveView(el) {
+  if (el.type === "line") {
+    const u = skUnit(skSub(el.b, el.a)), L = skDist(el.a, el.b);
+    return { at: t => skAdd(el.a, skMul(u, t)), tan: () => u, closest: q => skDot(skSub(q, el.a), u), samples: () => [-1e5, ...Array.from({ length: 201 }, (_, i) => -L + 3 * L * i / 200), 1e5 + L] };
+  }
+  if (el.type === "arc" || el.type === "circle") {
+    return { at: t => [el.c[0] + el.r * Math.cos(t), el.c[1] + el.r * Math.sin(t)], tan: t => [-Math.sin(t), Math.cos(t)], closest: q => Math.atan2(q[1] - el.c[1], q[0] - el.c[0]), samples: () => Array.from({ length: 361 }, (_, i) => i * SK_TAU / 360) };
+  }
+  const B = bsParts(el);
+  const at = t => bsEval(B, Math.max(B.lo, Math.min(B.hi, t)));
+  const closest = q => { let best = B.lo, bd = Infinity; for (let i = 0; i <= 600; i++) { const t = B.lo + (B.hi - B.lo) * i / 600, dd = skDist(at(t), q); if (dd < bd) { bd = dd; best = t; } }
+    for (let s = (B.hi - B.lo) / 600; s > (B.hi - B.lo) * 1e-12; s /= 2) for (const t of [best - s, best + s]) if (t >= B.lo && t <= B.hi) { const dd = skDist(at(t), q); if (dd < bd) { bd = dd; best = t; } } return best; };
+  const tan = t => { const h = (B.hi - B.lo) * 1e-6, a = at(Math.max(B.lo, t - h)), b = at(Math.min(B.hi, t + h)); return skUnit(skSub(b, a)); };
+  return { at, tan, closest, samples: () => Array.from({ length: 801 }, (_, i) => B.lo + (B.hi - B.lo) * i / 800), lo: B.lo, hi: B.hi };
+}
+const polyX = (P, Q) => { const out = []; for (let i = 0; i + 1 < P.length; i++) for (let j = 0; j + 1 < Q.length; j++) { const x = segX(P[i], P[i + 1], Q[j], Q[j + 1]); if (x) out.push(x); } return out; };
+function segX(a, b, c, d) { const r = skSub(b, a), s = skSub(d, c), den = r[0] * s[1] - r[1] * s[0]; if (Math.abs(den) < 1e-12) return null; const t = ((c[0] - a[0]) * s[1] - (c[1] - a[1]) * s[0]) / den, u = ((c[0] - a[0]) * r[1] - (c[1] - a[1]) * r[0]) / den; return t >= 0 && t <= 1 && u >= 0 && u <= 1 ? skAdd(a, skMul(r, t)) : null; }
+/** Trim an element so it ends at parameter t, keeping the part the pick was on. Lines move an end; arcs
+ *  an angle; B-splines are cut exactly and the picked piece kept. */
+function trimAt(el, cv, t, pick) {
+  const q = cv.at(t);
+  if (el.type === "line" || el.type === "arc") { trimToward(el, q, pick); return el; }
+  const [l, r] = bsSplitAt(el, t), d = x => Math.min(...cadSketchOutline(x, 64).map(z => skDist(z, pick)));
+  return Object.assign(d(l) <= d(r) ? l : r, { id: el.id });
+}
+/** Fillet or trim between any two of line, arc and spline (a through-points spline becomes the exact
+ *  B-spline it is first). Radius 0 cuts both to the corner where they cross; above 0 an arc tangent to
+ *  both is solved against the true curves and each is trimmed to its tangent point, exactly. */
+function filletGeneral(w, idA, pickA, idB, pickB, radius) {
+  const get = id => { const i = w.elements.findIndex(e => e.id === id); let el = w.elements[i]; if (el.type === "spline") { el = Object.assign(splineAsBspline(el), { id: el.id, layer: el.layer }); w.elements[i] = el; } return el; };
+  const A = get(idA), B = get(idB);
+  for (const el of [A, B]) if (el.closed || el.type === "ellipse") throw new Error(`${el.id} is a closed ${el.type}: it has no end to trim`);
+  const cA = curveView(A), cB = curveView(B), mid = skMul(skAdd(pickA, pickB), 0.5);
+  const polyA = cA.samples().map(cA.at), polyB = cB.samples().map(cB.at);
+  const cross = polyX(polyA, polyB).sort((x, y) => skDist(x, mid) - skDist(y, mid))[0];
+  if (radius <= 0) {
+    if (!cross) throw new Error("these two do not cross (a spline is not extended) - move one, or use a radius");
+    let X = cross; for (let k = 0; k < 60; k++) { const pa = cA.at(cA.closest(X)); X = skMul(skAdd(pa, cB.at(cB.closest(pa))), 0.5); }
+    const nA = trimAt(A, cA, cA.closest(X), pickA), nB = trimAt(B, cB, cB.closest(X), pickB);
+    w.elements = w.elements.map(e => (e.id === idA ? nA : e.id === idB ? nB : e));
+    return weld(w);
+  }
+  // the centre: on the side of A the other pick is on, and on the side of B the first pick is on
+  const side = (cv, t, q) => { const p = cv.at(t), tg = cv.tan(t); return Math.sign(tg[0] * (q[1] - p[1]) - tg[1] * (q[0] - p[0])) || 1; };
+  const sA = side(cA, cA.closest(pickB), pickB), sB = side(cB, cB.closest(pickA), pickA);
+  const off = (cv, poly, ts, s) => ts.map((t, i) => { const tg = cv.tan(t); return skAdd(poly[i], skMul([-tg[1], tg[0]], s * radius)); });
+  const oA = off(cA, polyA, cA.samples(), sA), oB = off(cB, polyB, cB.samples(), sB);
+  let C = polyX(oA, oB).sort((x, y) => skDist(x, cross || mid) - skDist(y, cross || mid))[0];
+  if (!C) throw new Error(`no arc of ${radius} fits between ${idA} and ${idB} - try a smaller radius`);
+  for (let k = 0; k < 80; k++) {
+    const tA = cA.closest(C), tB = cB.closest(C), pa = cA.at(tA), pb = cB.at(tB), ga = cA.tan(tA), gb = cB.tan(tB);
+    const la = skAdd(pa, skMul([-ga[1], ga[0]], sA * radius)), lb = skAdd(pb, skMul([-gb[1], gb[0]], sB * radius));
+    const X2 = lineX(la, skAdd(la, ga), lb, skAdd(lb, gb)); if (!X2 || skDist(X2, C) < 1e-9) { if (X2) C = X2; break; } C = X2;
+  }
+  const tA = cA.closest(C), tB = cB.closest(C), TA = cA.at(tA), TB = cB.at(tB);
+  if (Math.abs(skDist(TA, C) - radius) > 0.5 || Math.abs(skDist(TB, C) - radius) > 0.5) throw new Error(`no arc of ${radius} fits there - the curve bends too tightly, or the radius is too big`);
+  const M = skAdd(C, skMul(skUnit(skAdd(skSub(TA, C), skSub(TB, C))), radius)), arc = arcThrough3(TA, TB, M);
+  if (!arc) throw new Error("those two already meet smoothly - there is no corner to round");
+  const nA = trimAt(A, cA, tA, pickA), nB = trimAt(B, cB, tB, pickB);
+  w.elements = w.elements.map(e => (e.id === idA ? nA : e.id === idB ? nB : e));
+  w.elements.push(Object.assign({ id: newId(w, "f") }, arc));
+  return weld(w);
+}
+/** A B-spline's point at parameter u (for checks: a trimmed piece and its original agree at the same u). */
+function bsplineAt(el, u) { return bsEval(bsParts(el), u); }
+const bsplineDomain = el => { const B = bsParts(el); return [B.lo, B.hi]; };
 
 // ===== bim.js =====
 //! The application layer (spec §4–§11): every element type is two declarations —
@@ -7117,6 +7259,42 @@ const HANDLERS = {
     const formula = ex ? doc.argValue(ex, "formula") : v.ref;
     doc.setArg(f, o.key, typeof val === "number" ? val : 0);
     return { said: `${o.key} was bound to ${v.ref} (${formula}); it is now the literal ${typeof val === "number" ? Math.round(val * 1000) / 1000 : 0}` };
+  },
+  /** Split Element (SL): the element is cut where it was clicked into two of the same kind. A wall's
+   *  halves are joined end to end; what was joined at its far end, T-joined along its second half or
+   *  hosted there (doors, windows, openings) goes with the second half. */
+  split(doc, o) {
+    const f = doc.element(o.id); if (!f) throw new Error(`there is no element ${o.id}`);
+    if (isPinned(doc, f)) throw new Error(`${o.id} is pinned - unpin it to split it`);
+    const t = doc.typeOf(f), key = t === "Wall" ? "centreline" : t === "Beam" ? "axis" : t === "DetailLine" ? "curve" : t === "RoomSeparator" ? "line" : null;
+    if (!key) throw new Error(`a ${t} cannot be split - walls, beams, detail lines and room separators can`);
+    const c = doc.argValue(f, key), cv = curveOf(c);
+    if (c.type !== "line" && c.type !== "arc") throw new Error(`${o.id} is a ${c.type}; only straight and arc elements split (a closed or free curve has no single place to cut)`);
+    // where on the curve the click is: its projection, and the length along to it
+    let u, P;
+    if (c.type === "line") { const d = normalise(sub(c.end, c.start)); u = Math.max(0, Math.min(cv.length, dot(sub(o.at, c.start), d))); P = add(c.start, mul(d, u)); }
+    else { const ang = Math.atan2(o.at[1] - c.centre[1], o.at[0] - c.centre[0]); let t0 = ang - cv.a0; const sw = cv.sweep; const T = Math.PI * 2; t0 = sw > 0 ? ((t0 % T) + T) % T : -((((-t0) % T) + T) % T); u = Math.max(0, Math.min(cv.length, Math.abs(t0) * c.radius)); P = cv.at(u / cv.length); }
+    if (u < 10 || u > cv.length - 10) throw new Error("click away from the ends: a split needs something on both sides");
+    const rec = clone(doc.elementJSON(f)); let n = 1; const pre = (CATALOGUE.get(t) || {}).idPrefix || "X"; while (doc.element(pre + n)) n++;
+    const nid = pre + n; rec.id = nid; if (rec.name === o.id || !rec.name) delete rec.name;
+    const first = clone(c), second = clone(c);
+    if (c.type === "line") { first.end = P; second.start = P; }
+    else { const deg = Math.atan2(P[1] - c.centre[1], P[0] - c.centre[0]) * 180 / Math.PI; first.end = deg; second.start = deg; }
+    rec.args[key] = second; doc.setArg(f, key, first); doc.addElement(rec);
+    if (t === "Wall") {
+      // joins: the far end's row moves to the new wall; T-joins along the second half re-anchor on it
+      for (const j of doc.joins) for (const side of ["a", "b"]) {
+        const e = j[side]; if (!e || e.of !== o.id) continue;
+        if (e.end === "end") e.of = nid;
+        else if (e.u !== undefined && e.u > u) { e.of = nid; e.u = e.u - u; }
+      }
+      HANDLERS.relate(doc, { store: "joins", row: { a: { of: o.id, end: "end" }, b: { of: nid, end: "start" }, kind: "auto", order: 0, allowed: true } });
+      // hosted openings past the cut change host, measured from the new wall's start
+      for (const g of doc.elements()) if (doc.typeOf(g) === "Opening" && F.refId(g, "host") === o.id) {
+        const pr = clone(doc.argValue(g, "profile")); if (pr.at > u) { pr.at -= u; doc.setArg(g, "profile", pr); doc.setArg(g, "host", { ref: nid }); }
+      }
+    }
+    return { ids: [o.id, nid], said: `${o.id} split at ${Math.round(u)} mm: ${o.id} and ${nid}` };
   },
   /** Pin or unpin: a pinned element cannot be dragged, moved, rotated or mirrored. */
   pin(doc, o) {
@@ -13339,6 +13517,43 @@ testCase("M28", "No facets: a sketched floor draws its circles as arcs and its s
   return R(ok, "3 lines + 1 arc (the circle) + Bézier spans (B-spline, closed spline); the spans lie on the kernel's curve (< 0.1 mm); the 3D ring is fine", `ok ${r.ok}; path ${JSON.stringify(kinds)}; B-spline off by ${err.toFixed(4)} mm; ring ${p.foot.length} points`);
 });
 
+testCase("M29", "Split Element: a wall cut in two keeps its joins and its doors on the right half; a sketch spline splits without changing shape", () => {
+  const doc = buildSample(), ed = new Editor(doc);
+  const c = doc.argValue(doc.element("W1"), "centreline"), L = Math.hypot(c.end[0] - c.start[0], c.end[1] - c.start[1]);
+  const ops = doc.elements().filter(g => doc.typeOf(g) === "Opening" && F.refId(g, "host") === "W1").map(g => [doc.idOf(g), doc.argValue(g, "profile").at]);
+  const endJoin = doc.joins.find(j => (j.a.of === "W1" && j.a.end === "end") || (j.b.of === "W1" && j.b.end === "end"));
+  const cutU = 7000, d = [(c.end[0] - c.start[0]) / L, (c.end[1] - c.start[1]) / L], at = [c.start[0] + d[0] * cutU, c.start[1] + d[1] * cutU + 40];
+  const r = ed.apply({ op: "split", id: "W1", at });
+  const [a, b] = r.ids || [], ca = doc.argValue(doc.element(a), "centreline"), cb = doc.argValue(doc.element(b), "centreline");
+  const mid = Math.abs(Math.hypot(ca.end[0] - ca.start[0], ca.end[1] - ca.start[1]) - cutU) < 1 && Math.abs(ca.end[0] - cb.start[0]) < 1e-6 && Math.abs(ca.end[1] - cb.start[1]) < 1e-6;
+  const hosted = ops.map(([id, u]) => { const g = doc.element(id); return [id, u, F.refId(g, "host"), doc.argValue(g, "profile").at]; });
+  const hostsOk = hosted.every(([, u, host, at2]) => (u > cutU ? host === b && Math.abs(at2 - (u - cutU)) < 1e-6 : host === a && at2 === u));
+  const joinsOk = doc.joins.some(j => (j.a.of === a && j.a.end === "end" && j.b.of === b) || (j.b.of === a && j.b.end === "end" && j.a.of === b)) && (!endJoin || doc.joins.some(j => j.a.of === b && j.a.end === "end" || j.b.of === b && j.b.end === "end"));
+  const errs = [a, b].map(id => doc.error(doc.element(id))).filter(Boolean);
+  // sketch: a through-points spline split in two, the curve unchanged at its middle
+  const sk = splitElement({ elements: [{ id: "e1", type: "spline", pts: [[0, 0], [1000, 800], [2500, -300], [4000, 500]], closed: false }], constraints: [], dims: [] }, "e1", [1800, 300]);
+  const ok = r.ok && mid && hostsOk && joinsOk && !errs.length && sk.elements.length === 2 && sk.elements.every(e => e.type === "bspline") && sk.constraints.some(x => x.type === "coincident");
+  return R(ok, "W1 → two walls meeting at 7000, joined end to start; doors past the cut re-hosted with u reduced; the far-end join moved; no errors; sketch spline → 2 welded B-splines",
+    `ok ${r.ok} ${r.error || ""} ids ${r.ids}; meet ${mid}; hosted ${JSON.stringify(hosted)}; joins ${joinsOk}; errors ${errs.join(";")}; sketch ${sk.elements.map(e => e.type)}`);
+});
+
+testCase("M30", "Fillet a line to a spline: the spline is trimmed to a new control-point spline of exactly the same shape; the arc is tangent to both", () => {
+  const spl = { id: "s", type: "bspline", ctrl: [[0, -2000], [2000, 1000], [4000, -1500], [6000, 2000]], degree: 3, closed: false };
+  const line = { id: "l", type: "line", a: [-1000, 0], b: [2500, 0] };
+  const d = fillet({ elements: [line, spl], constraints: [], dims: [] }, "l", [-500, 0], "s", [4000, -1000], 400);
+  const s2 = d.elements.find(e => e.id === "s"), arc = d.elements.find(e => e.type === "arc"), l2 = d.elements.find(e => e.id === "l");
+  // same parameter, same point: the kept piece IS the original curve
+  const [a, b] = bsplineDomain(s2);
+  let worst = 0; for (let i = 0; i <= 200; i++) { const u = a + (b - a) * i / 200, p = bsplineAt(s2, u), q = bsplineAt(spl, u); worst = Math.max(worst, Math.hypot(p[0] - q[0], p[1] - q[1])); }
+  // tangency: the arc's centre is r from the line, and r from the spline at the arc's end, along the spline's normal
+  const lineOff = Math.abs(arc.c[1]), endS = s2.ctrl[0], toS = Math.hypot(arc.c[0] - endS[0], arc.c[1] - endS[1]);
+  const h = (b - a) * 1e-5, t0 = bsplineAt(s2, a), t1 = bsplineAt(s2, a + h), tg = [t1[0] - t0[0], t1[1] - t0[1]], rad = [endS[0] - arc.c[0], endS[1] - arc.c[1]];
+  const perpErr = Math.abs(tg[0] * rad[0] + tg[1] * rad[1]) / (Math.hypot(...tg) * Math.hypot(...rad));
+  const ok = s2.type === "bspline" && worst < 1e-4 && Math.abs(lineOff - 400) < 1e-3 && Math.abs(toS - 400) < 0.5 && perpErr < 1e-3 && Math.abs(l2.b[1]) < 1e-9 && d.constraints.filter(c => c.type === "coincident").length === 2;
+  return R(ok, "trimmed spline = original at every parameter (< 1e-4 mm); arc 400 from the line and 400 from the spline, radius ⟂ spline tangent; all welded",
+    `shape error ${worst.toExponential(2)} mm; centre→line ${lineOff.toFixed(4)}, centre→spline end ${toS.toFixed(4)}, cos(radius, tangent) ${perpErr.toExponential(2)}; ctrl ${spl.ctrl.length}→${s2.ctrl.length}`);
+});
+
 // ===== ui_util.js =====
 //! Small DOM vocabulary shared by the interface modules. The interface only
 //! mirrors the document: nothing here owns model state.
@@ -13373,6 +13588,8 @@ function clear(el) { el.replaceChildren(); return el; } // one step: a blur fire
 const P = d => `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
 const ICONS = {
   select: P('<path d="M4 3l11 6-5 1.5L8 16z"/>'),
+  // Revit's Split Element: a line cut by a small blade
+  split: P('<path d="M2 12h6M12 12h6"/><path d="M11 4l-3 12" stroke-width="1.8"/><circle cx="8" cy="12" r="1" fill="currentColor"/><circle cx="12" cy="12" r="1" fill="currentColor"/>'),
   // Revit's pushpin: pinned, and the same pin struck through in red when not
   pin: P('<path d="M8 3h5l-.8 5 2.8 2.5H6L8.8 8z"/><path d="M10.5 10.5V17"/>'),
   unpin: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3h5l-.8 5 2.8 2.5H6L8.8 8z"/><path d="M10.5 10.5V17"/><path d="M12.5 12.5l5 5M17.5 12.5l-5 5" stroke="#d11f1f" stroke-width="2"/></svg>',
@@ -14049,6 +14266,7 @@ const SKETCH_MODIFY = [
   ["scale1d", "Scale 1D", "skscale1d", "base point, a reference point (sets the direction), then where it goes: stretched along that one direction"],
   ["offset", "Offset", "skoffset", "set the distance in the options bar; click an element on the side to offset toward (its whole chain goes)"],
   ["fillet", "Fillet", "skfillet", "set the radius in the options bar (0 = sharp corner); click two elements on the parts to keep"],
+  ["split", "Split", "split", "click anywhere on a line, arc or spline: it becomes two, welded where you clicked (splines stay exactly the same curve)"],
   ["dim", "Dimension", "dim", "click a line (length) or an arc (radius); click two lines for the distance or angle between them"],
 ];
 
@@ -14104,7 +14322,7 @@ class SketchSession {
   hover(p, e) {
     this.cursorRaw = p; this.cursor = this.point(p, e);
     this.view.showSnap(this.snapNow ? { kind: this.snapNow.kind, point: this.snapNow.point, of: "sketch" } : null);
-    this.hoverEl = ["select", "offset", "fillet", "dim", "move", "copy", "rotate", "mirror", "scale", "scale1d"].includes(this.tool) ? this.hitEl(p) : null;
+    this.hoverEl = ["select", "offset", "fillet", "split", "dim", "move", "copy", "rotate", "mirror", "scale", "scale1d"].includes(this.tool) ? this.hitEl(p) : null;
     this.hoverWall = this.tool === "pickwalls" ? this.wallNear(p) : null;
     this.view.draw();
   }
@@ -14116,6 +14334,7 @@ class SketchSession {
     const q = this.point(raw, e);
     if (t === "offset") return this.offsetClick(raw);
     if (t === "fillet") return this.filletClick(raw);
+    if (t === "split") { const id = this.hitEl(raw); if (!id) return this.say("click on an element to split it"); try { this.commit(splitElement(this.d, id, raw), `${id} split in two`); } catch (err) { this.say(err.message, "error"); } return; }
     if (t === "dim") return this.dimClick(raw);
     if (t === "pickwalls") return this.pickWall(raw);
     if (["move", "copy", "rotate", "mirror", "scale", "scale1d"].includes(t)) return this.modifyClick(q, raw, e);
@@ -14546,7 +14765,7 @@ const skArea = r => r.reduce((s, p, i) => { const q = r[(i + 1) % r.length]; ret
 const SNAP_PX = 8;
 const SNAP_KINDS = ["endpoint", "midpoint", "centre", "intersection", "perpendicular", "nearest", "grid", "angle"];
 const SNAP_SHORT = { endpoint: "end", midpoint: "mid", centre: "cen", intersection: "int", perpendicular: "perp", nearest: "near", grid: "grid", angle: "ang" };
-const TOOLS_NEED_PLAN = new Set(["section", "floor", "beam", "wall", "opening", "door", "window", "column", "grid", "text", "dim", "space", "elev", "sep", "move", "copy", "rotate", "mirror"]);
+const TOOLS_NEED_PLAN = new Set(["section", "floor", "beam", "wall", "opening", "door", "window", "column", "grid", "text", "dim", "space", "elev", "sep", "move", "copy", "rotate", "mirror", "split"]);
 const MODIFY_TOOLS = new Set(["move", "copy", "rotate", "mirror"]);
 
 class View2D {
@@ -14779,6 +14998,11 @@ class View2D {
       }
     }
     this.drawViewExtents(g);
+    if (this.app.tool === "split" && this.tool.cursor) {
+      // the cut, shown where it will fall
+      const q = this.toScreen(this.tool.cursor); g.strokeStyle = "#d11f1f"; g.lineWidth = 2; g.beginPath(); g.moveTo(q[0] - 6, q[1] + 10); g.lineTo(q[0] + 6, q[1] - 10); g.stroke();
+      g.fillStyle = "#d11f1f"; g.beginPath(); g.arc(q[0], q[1], 3, 0, 7); g.fill();
+    }
     const T = this.tool, wShape = this.app.tool === "wall" ? (this.app.toolOpts.wallShape || "line") : null;
     if (wShape && wShape !== "line" && wShape !== "pick" && T.pts.length && T.cursor) {
       // the shape the next click completes, dashed, as the sketcher previews it
@@ -15298,9 +15522,24 @@ class View2D {
   }
 
   // ---------------------------------------------------------------- tools
+  /** The splittable element under a model point: nearest of walls, beams, detail lines, separators. */
+  splittableAt(p) {
+    const [sx, sy] = this.toScreen(p), ok = new Set(["Wall", "Beam", "DetailLine", "RoomSeparator"]);
+    const hit = this.hitsAt(sx, sy).find(x => { const f = this.doc.element(x.id); return f && ok.has(this.doc.typeOf(f)); });
+    return hit ? hit.id : null;
+  }
   toolHover(p, sx, sy, e) {
     const T = this.tool, tool = this.app.tool;
     if (MODIFY_TOOLS.has(tool)) return this.modifyHover(p, sx, sy, e);
+    if (tool === "split") {
+      const id = this.splittableAt(p), f = id && this.doc.element(id);
+      const key = f && { Wall: "centreline", Beam: "axis", DetailLine: "curve", RoomSeparator: "line" }[this.doc.typeOf(f)], c = f && this.doc.argValue(f, key);
+      T.cursor = null; this.hover = id;
+      if (c && c.type === "line") { const d = normalise(sub(c.end, c.start)), t = Math.max(0, Math.min(dist(c.start, c.end), dot(sub(p, c.start), d))); T.cursor = add(c.start, mul(d, t)); this.showHud(sx, sy, `split ${id} at ${fmtLen(t)} · ${fmtLen(dist(c.start, c.end) - t)}`); }
+      else if (c && c.type === "arc") { T.cursor = add(c.centre, mul(normalise(sub(p, c.centre)), c.radius)); this.showHud(sx, sy, `split ${id}`); }
+      else this.showHud(sx, sy, id ? `${id} is not straight or an arc` : "hover a wall, beam or line");
+      this.draw(); return;
+    }
     const sn = this.snap(p, { from: T.pts[T.pts.length - 1], shift: e.shiftKey });
     this.showSnap(sn);
     const q = sn ? sn.point : this.quantise(p);
@@ -15335,6 +15574,12 @@ class View2D {
   toolClick(p, e) {
     const T = this.tool, tool = this.app.tool, o = this.app.toolOpts, doc = this.doc;
     if (MODIFY_TOOLS.has(tool)) return this.modifyClick();
+    if (tool === "split") {
+      // cut what is under the click, where it was clicked; the tool stays on for the next cut
+      const hit = this.splittableAt(p); if (!hit) return this.app.say("click on a wall, beam, detail line or room separator", "note");
+      const r = this.app.apply({ op: "split", id: hit, at: T.cursor || p }); if (r.ok) this.app.select(r.ids || []);
+      return;
+    }
     const q = T.cursor || p;
     const level = F.refId(this.view, "level");
     const addEl = (element, msg) => { const r = this.app.apply({ op: "add", element }); this.app.say(r.ok ? msg || `Added ${r.id}` : r.error, r.ok ? "ok" : "error"); if (r.ok) this.app.select([r.id]); return r; };
@@ -16542,6 +16787,7 @@ const COMMANDS = {
   copy: tool("copy", "Copy", "copy", "CO", "Click a base point, then where the copy goes."),
   rotate: tool("rotate", "Rotate", "rotate", "RO", "Click the start of the angle, then its end (or type degrees + Enter)."),
   mirror: tool("mirror", "Mirror", "mirror", "MM", "Click two points on the mirror axis."),
+  split: tool("split", "Split Element", "split", "SL", "Click anywhere on a wall, beam, detail line or room separator: it is cut in two there, joins and hosted doors kept."),
   del: { label: "Delete", icon: "del", key: "DE", run: () => deleteSelection() },
   undo: { label: "Undo", icon: "undo", run: () => { app.editor.undo(); app.refresh(); saveDraftSoon(); } },
   redo: { label: "Redo", icon: "redo", run: () => { app.editor.redo(); app.refresh(); saveDraftSoon(); } },
@@ -16634,7 +16880,7 @@ const RIBBON = [
   { tab: "Modify", panels: [
     { title: "Select", items: [big("select")] },
     { title: "Properties", items: [big("props"), big("edittype")] },
-    { title: "Modify", items: [small("move"), small("copy"), small("rotate"), small("mirror"), small("del"), small("selectall")] },
+    { title: "Modify", items: [small("move"), small("copy"), small("rotate"), small("mirror"), small("split"), small("del"), small("selectall")] },
     { title: "View", items: [small("zoomfit"), small("thin")] },
   ] },
 ];
@@ -16646,7 +16892,7 @@ for (const [k, label, ic] of WALL_SHAPES) COMMANDS["wallshape_" + k] = { label, 
 function contextTab() {
   if (app.tool === "wall") return { tab: "__context", label: "Modify | Place Wall", panels: [
     { title: "Draw", items: WALL_SHAPES.map(([k], i) => (i < 5 || k === "pick" ? big : small)("wallshape_" + k)) },
-    { title: "Modify", items: [small("move"), small("copy"), small("rotate")] },
+    { title: "Modify", items: [small("move"), small("copy"), small("rotate"), small("split")] },
   ] };
   const els = [...app.selection].map(id => app.doc.element(id)).filter(Boolean);
   if (!els.length) return null;
@@ -16654,7 +16900,7 @@ function contextTab() {
   const hasWall = els.some(f => ["Wall", "Door"].includes(app.doc.typeOf(f)));
   return { tab: "__context", label: `Modify | ${cats.length === 1 ? cats[0] : "Multi-Select"}`, panels: [
     { title: "Properties", items: [big("props"), big("edittype")] },
-    { title: "Modify", items: [big("move"), big("copy"), big("rotate"), big("mirror"), big("del")] },
+    { title: "Modify", items: [big("move"), big("copy"), big("rotate"), big("mirror"), big("split"), big("del")] },
     ...(hasWall ? [{ title: "Mode", items: [big("flip")] }] : []),
     ...(els.length === 1 && app.doc.typeOf(els[0]) === "Floor" ? [{ title: "Mode", items: [big("editboundary")] }] : []),
     ...(els.some(f => app.doc.typeOf(f) === "CADImport") ? [{ title: "Import CAD", items: [big("explode")] }] : []),
@@ -17478,7 +17724,7 @@ window.addEventListener("keydown", e => {
     if (mod || e.altKey || !/^[a-z]$/i.test(e.key)) return;
     keyBuf = (keyBuf + e.key.toUpperCase()).slice(-2);
     clearTimeout(keyTimer); keyTimer = setTimeout(() => { keyBuf = ""; }, 1200);
-    const SK = { LI: "line", RC: "rect", RE: "rect", PG: "polygon", AR: "arc", CI: "circle", EL: "ellipse", SP: "spline", BS: "bspline", PW: "pickwalls", MV: "move", CO: "copy", RO: "rotate", MM: "mirror", SC: "scale", S1: "scale1d", OF: "offset", FL: "fillet", TR: "fillet", DI: "dim", MD: "select" };
+    const SK = { LI: "line", RC: "rect", RE: "rect", PG: "polygon", AR: "arc", CI: "circle", EL: "ellipse", SP: "spline", BS: "bspline", PW: "pickwalls", MV: "move", CO: "copy", RO: "rotate", MM: "mirror", SC: "scale", S1: "scale1d", OF: "offset", FL: "fillet", TR: "fillet", SL: "split", DI: "dim", MD: "select" };
     if (keyBuf.length === 2 && SK[keyBuf]) { app.sketch.setTool(SK[keyBuf]); keyBuf = ""; e.preventDefault(); }
     if (keyBuf === "ZF" || keyBuf === "ZE") { app.run("zoomfit"); keyBuf = ""; }
     return;

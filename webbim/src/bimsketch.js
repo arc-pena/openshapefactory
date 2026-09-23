@@ -367,7 +367,8 @@ export function fillet(d, idA, pickA, idB, pickB, radius = 0) {
   const A = w.elements.find(e => e.id === idA), B = w.elements.find(e => e.id === idB);
   if (!A || !B) throw new Error("pick two elements of the sketch");
   const ok = e => e.type === "line" || e.type === "arc";
-  if (!ok(A) || !ok(B)) throw new Error("fillet works between lines and arcs");
+  // a spline on either side: trimmed exactly by knot insertion, the fillet solved against the true curve
+  if (!ok(A) || !ok(B)) { const r = filletGeneral(w, idA, pickA, idB, pickB, radius); r.dims = d.dims || []; return r; }
   const near = skMul(skAdd(pickA, pickB), 0.5), X = meetPoint(A, B, near);
   if (!X) throw new Error("those two are parallel - they never meet");
   const before = skClone(w);
@@ -572,3 +573,144 @@ export function regionPaths(d) {
 }
 /** Rings fine enough for 3D, areas and cuts: a curve gets a point every ~2° (a 10 m radius strays 1.5 mm). */
 export const FINE = 180;
+
+// ---------------------------------------------------------------- split
+/** Split a sketch element where p is nearest: a line or arc into two; a B-spline exactly, by inserting
+ *  the knot there until the curve is cut; a through-points spline is first written as the B-spline it
+ *  exactly is (its Bézier spans), so its shape does not change. Circles and ellipses have no end to
+ *  split from and are left alone. The two pieces are welded where they meet. */
+export function splitElement(d, id, p) {
+  const w = skClone(d), el = w.elements.find(e => e.id === id); if (!el) throw new Error("pick an element of the sketch");
+  const nid = newId(w, "s"); let a, b;
+  if (el.type === "line") {
+    const u = skUnit(skSub(el.b, el.a)), L = skDist(el.a, el.b), t = Math.max(0, Math.min(L, skDot(skSub(p, el.a), u)));
+    if (t < 1 || t > L - 1) throw new Error("click away from the ends");
+    const q = skAdd(el.a, skMul(u, t)); a = Object.assign({}, el, { b: q }); b = Object.assign({}, el, { id: nid, a: q });
+  } else if (el.type === "arc") {
+    const ang = Math.atan2(p[1] - el.c[1], p[0] - el.c[0]), sw = el.a1 - el.a0, dir = Math.sign(sw) || 1;
+    let t = ((ang - el.a0) * dir % SK_TAU + SK_TAU) % SK_TAU; if (t > Math.abs(sw)) throw new Error("click on the arc");
+    const at = el.a0 + dir * t; a = Object.assign({}, el, { a1: at }); b = Object.assign({}, el, { id: nid, a0: at });
+  } else if (el.type === "bspline" || el.type === "spline") {
+    const bs = el.type === "bspline" ? el : splineAsBspline(el);
+    if (bs.closed) throw new Error("a closed spline has no end to split from - split it after opening it");
+    [a, b] = splitBspline(bs, p); a = Object.assign({ layer: el.layer }, a, { id: el.id }); b = Object.assign({ layer: el.layer }, b, { id: nid });
+  } else throw new Error(`a ${el.type} has no ends to split between`);
+  w.elements = w.elements.flatMap(e => (e.id === id ? [a, b] : [e]));
+  return weld(w);
+}
+/** A through-points spline as the cubic B-spline it is: its Bézier spans, knots tripled between them. */
+function splineAsBspline(el) {
+  const segs = catmullSegs(el); if (!segs.length) throw new Error("that spline is empty");
+  const ctrl = [segs[0].a]; for (const s of segs) ctrl.push(s.c1, s.c2, s.b);
+  const knots = [0, 0, 0, 0]; for (let i = 1; i < segs.length; i++) knots.push(i, i, i); knots.push(segs.length, segs.length, segs.length, segs.length);
+  return { type: "bspline", ctrl, degree: 3, knots, closed: !!el.closed };
+}
+function splitBspline(el, p) {
+  let P = el.ctrl.map(q => q.slice()); const deg = Math.max(1, Math.min(el.degree || 3, P.length - 1));
+  let U = el.knots && el.knots.length === P.length + deg + 1 ? el.knots.slice() : cadUniformKnots(P.length, deg, false);
+  const lo = U[deg], hi = U[P.length];
+  // the parameter nearest p, found on a fine walk of the curve and refined
+  const pt = u => { const k = Math.min(Math.max(deg, U.findIndex((x, i) => i >= deg && U[i + 1] > u) === -1 ? P.length - 1 : U.findIndex((x, i) => i >= deg && U[i + 1] > u)), P.length - 1); const dd = P.slice(k - deg, k + 1).map(q => q.slice()); for (let r = 1; r <= deg; r++) for (let j = deg; j >= r; j--) { const i = k - deg + j, al = (u - U[i]) / ((U[i + deg - r + 1] - U[i]) || 1); dd[j] = [(1 - al) * dd[j - 1][0] + al * dd[j][0], (1 - al) * dd[j - 1][1] + al * dd[j][1]]; } return dd[deg]; };
+  let best = lo, bd = Infinity; for (let i = 0; i <= 400; i++) { const u = lo + (hi - lo) * i / 400, q = pt(u), dd = skDist(q, p); if (dd < bd) { bd = dd; best = u; } }
+  for (let step = (hi - lo) / 400; step > (hi - lo) * 1e-9; step /= 2) for (const u of [best - step, best + step]) if (u > lo && u < hi) { const dd = skDist(pt(u), p); if (dd < bd) { bd = dd; best = u; } }
+  if (best - lo < (hi - lo) * 1e-4 || hi - best < (hi - lo) * 1e-4) throw new Error("click away from the ends");
+  let m = U.filter(x => Math.abs(x - best) < 1e-12).length; while (m < deg) { ({ P, U } = insertKnot(P, U, deg, best)); m++; }
+  // the curve now passes through a control point at best: cut there
+  const k = U.findIndex(x => Math.abs(x - best) < 1e-12), cut = k - 1;              // the control point on the curve
+  const left = { type: "bspline", degree: deg, closed: false, ctrl: P.slice(0, cut + 1), knots: U.slice(0, k + deg).concat([best]) };
+  const right = { type: "bspline", degree: deg, closed: false, ctrl: P.slice(cut), knots: [best].concat(U.slice(k)) };
+  return [left, right];
+}
+
+// ---------------------------------------------------------------- B-splines evaluated, trimmed exactly
+/** A B-spline's working form: control points, knots, degree and domain (open curves). */
+function bsParts(el) {
+  const P = el.ctrl.map(q => q.slice()), p = Math.max(1, Math.min(el.degree || 3, P.length - 1));
+  const U = el.knots && el.knots.length === P.length + p + 1 ? el.knots.slice() : cadUniformKnots(P.length, p, false);
+  return { P, U, p, lo: U[p], hi: U[P.length] };
+}
+/** de Boor: the point at parameter u. */
+function bsEval(B, u) {
+  const { P, U, p } = B; let k = p; while (k < P.length - 1 && u >= U[k + 1]) k++;
+  const d = P.slice(k - p, k + 1).map(q => q.slice());
+  for (let r = 1; r <= p; r++) for (let j = p; j >= r; j--) { const i = k - p + j, a = (u - U[i]) / ((U[i + p - r + 1] - U[i]) || 1); d[j] = [(1 - a) * d[j - 1][0] + a * d[j][0], (1 - a) * d[j - 1][1] + a * d[j][1]]; }
+  return d[p];
+}
+/** Cut a B-spline at parameter u by knot insertion: two B-splines that ARE the original curve, each with
+ *  its own control points - not a trimmed spline pointing back at the old one (Rhino's behaviour). */
+function bsSplitAt(el, u) {
+  let { P, U, p } = bsParts(el);
+  let m = U.filter(x => Math.abs(x - u) < 1e-12).length; while (m < p) { ({ P, U } = insertKnot(P, U, p, u)); m++; }
+  const k = U.findIndex(x => Math.abs(x - u) < 1e-12), cut = k - 1;
+  return [{ type: "bspline", degree: p, closed: false, ctrl: P.slice(0, cut + 1), knots: U.slice(0, k + p).concat([u]), layer: el.layer },
+          { type: "bspline", degree: p, closed: false, ctrl: P.slice(cut), knots: [u].concat(U.slice(k)), layer: el.layer }];
+}
+/** A uniform view of the three kinds a fillet meets: position, closest parameter, samples. Lines are
+ *  taken as infinite (a fillet may extend a line, as AutoCAD's does); arcs as their whole circle for
+ *  finding the corner; B-splines only on their own domain - a spline is never extended. */
+function curveView(el) {
+  if (el.type === "line") {
+    const u = skUnit(skSub(el.b, el.a)), L = skDist(el.a, el.b);
+    return { at: t => skAdd(el.a, skMul(u, t)), tan: () => u, closest: q => skDot(skSub(q, el.a), u), samples: () => [-1e5, ...Array.from({ length: 201 }, (_, i) => -L + 3 * L * i / 200), 1e5 + L] };
+  }
+  if (el.type === "arc" || el.type === "circle") {
+    return { at: t => [el.c[0] + el.r * Math.cos(t), el.c[1] + el.r * Math.sin(t)], tan: t => [-Math.sin(t), Math.cos(t)], closest: q => Math.atan2(q[1] - el.c[1], q[0] - el.c[0]), samples: () => Array.from({ length: 361 }, (_, i) => i * SK_TAU / 360) };
+  }
+  const B = bsParts(el);
+  const at = t => bsEval(B, Math.max(B.lo, Math.min(B.hi, t)));
+  const closest = q => { let best = B.lo, bd = Infinity; for (let i = 0; i <= 600; i++) { const t = B.lo + (B.hi - B.lo) * i / 600, dd = skDist(at(t), q); if (dd < bd) { bd = dd; best = t; } }
+    for (let s = (B.hi - B.lo) / 600; s > (B.hi - B.lo) * 1e-12; s /= 2) for (const t of [best - s, best + s]) if (t >= B.lo && t <= B.hi) { const dd = skDist(at(t), q); if (dd < bd) { bd = dd; best = t; } } return best; };
+  const tan = t => { const h = (B.hi - B.lo) * 1e-6, a = at(Math.max(B.lo, t - h)), b = at(Math.min(B.hi, t + h)); return skUnit(skSub(b, a)); };
+  return { at, tan, closest, samples: () => Array.from({ length: 801 }, (_, i) => B.lo + (B.hi - B.lo) * i / 800), lo: B.lo, hi: B.hi };
+}
+const polyX = (P, Q) => { const out = []; for (let i = 0; i + 1 < P.length; i++) for (let j = 0; j + 1 < Q.length; j++) { const x = segX(P[i], P[i + 1], Q[j], Q[j + 1]); if (x) out.push(x); } return out; };
+function segX(a, b, c, d) { const r = skSub(b, a), s = skSub(d, c), den = r[0] * s[1] - r[1] * s[0]; if (Math.abs(den) < 1e-12) return null; const t = ((c[0] - a[0]) * s[1] - (c[1] - a[1]) * s[0]) / den, u = ((c[0] - a[0]) * r[1] - (c[1] - a[1]) * r[0]) / den; return t >= 0 && t <= 1 && u >= 0 && u <= 1 ? skAdd(a, skMul(r, t)) : null; }
+/** Trim an element so it ends at parameter t, keeping the part the pick was on. Lines move an end; arcs
+ *  an angle; B-splines are cut exactly and the picked piece kept. */
+function trimAt(el, cv, t, pick) {
+  const q = cv.at(t);
+  if (el.type === "line" || el.type === "arc") { trimToward(el, q, pick); return el; }
+  const [l, r] = bsSplitAt(el, t), d = x => Math.min(...cadSketchOutline(x, 64).map(z => skDist(z, pick)));
+  return Object.assign(d(l) <= d(r) ? l : r, { id: el.id });
+}
+/** Fillet or trim between any two of line, arc and spline (a through-points spline becomes the exact
+ *  B-spline it is first). Radius 0 cuts both to the corner where they cross; above 0 an arc tangent to
+ *  both is solved against the true curves and each is trimmed to its tangent point, exactly. */
+function filletGeneral(w, idA, pickA, idB, pickB, radius) {
+  const get = id => { const i = w.elements.findIndex(e => e.id === id); let el = w.elements[i]; if (el.type === "spline") { el = Object.assign(splineAsBspline(el), { id: el.id, layer: el.layer }); w.elements[i] = el; } return el; };
+  const A = get(idA), B = get(idB);
+  for (const el of [A, B]) if (el.closed || el.type === "ellipse") throw new Error(`${el.id} is a closed ${el.type}: it has no end to trim`);
+  const cA = curveView(A), cB = curveView(B), mid = skMul(skAdd(pickA, pickB), 0.5);
+  const polyA = cA.samples().map(cA.at), polyB = cB.samples().map(cB.at);
+  const cross = polyX(polyA, polyB).sort((x, y) => skDist(x, mid) - skDist(y, mid))[0];
+  if (radius <= 0) {
+    if (!cross) throw new Error("these two do not cross (a spline is not extended) - move one, or use a radius");
+    let X = cross; for (let k = 0; k < 60; k++) { const pa = cA.at(cA.closest(X)); X = skMul(skAdd(pa, cB.at(cB.closest(pa))), 0.5); }
+    const nA = trimAt(A, cA, cA.closest(X), pickA), nB = trimAt(B, cB, cB.closest(X), pickB);
+    w.elements = w.elements.map(e => (e.id === idA ? nA : e.id === idB ? nB : e));
+    return weld(w);
+  }
+  // the centre: on the side of A the other pick is on, and on the side of B the first pick is on
+  const side = (cv, t, q) => { const p = cv.at(t), tg = cv.tan(t); return Math.sign(tg[0] * (q[1] - p[1]) - tg[1] * (q[0] - p[0])) || 1; };
+  const sA = side(cA, cA.closest(pickB), pickB), sB = side(cB, cB.closest(pickA), pickA);
+  const off = (cv, poly, ts, s) => ts.map((t, i) => { const tg = cv.tan(t); return skAdd(poly[i], skMul([-tg[1], tg[0]], s * radius)); });
+  const oA = off(cA, polyA, cA.samples(), sA), oB = off(cB, polyB, cB.samples(), sB);
+  let C = polyX(oA, oB).sort((x, y) => skDist(x, cross || mid) - skDist(y, cross || mid))[0];
+  if (!C) throw new Error(`no arc of ${radius} fits between ${idA} and ${idB} - try a smaller radius`);
+  for (let k = 0; k < 80; k++) {
+    const tA = cA.closest(C), tB = cB.closest(C), pa = cA.at(tA), pb = cB.at(tB), ga = cA.tan(tA), gb = cB.tan(tB);
+    const la = skAdd(pa, skMul([-ga[1], ga[0]], sA * radius)), lb = skAdd(pb, skMul([-gb[1], gb[0]], sB * radius));
+    const X2 = lineX(la, skAdd(la, ga), lb, skAdd(lb, gb)); if (!X2 || skDist(X2, C) < 1e-9) { if (X2) C = X2; break; } C = X2;
+  }
+  const tA = cA.closest(C), tB = cB.closest(C), TA = cA.at(tA), TB = cB.at(tB);
+  if (Math.abs(skDist(TA, C) - radius) > 0.5 || Math.abs(skDist(TB, C) - radius) > 0.5) throw new Error(`no arc of ${radius} fits there - the curve bends too tightly, or the radius is too big`);
+  const M = skAdd(C, skMul(skUnit(skAdd(skSub(TA, C), skSub(TB, C))), radius)), arc = arcThrough3(TA, TB, M);
+  if (!arc) throw new Error("those two already meet smoothly - there is no corner to round");
+  const nA = trimAt(A, cA, tA, pickA), nB = trimAt(B, cB, tB, pickB);
+  w.elements = w.elements.map(e => (e.id === idA ? nA : e.id === idB ? nB : e));
+  w.elements.push(Object.assign({ id: newId(w, "f") }, arc));
+  return weld(w);
+}
+/** A B-spline's point at parameter u (for checks: a trimmed piece and its original agree at the same u). */
+export function bsplineAt(el, u) { return bsEval(bsParts(el), u); }
+export const bsplineDomain = el => { const B = bsParts(el); return [B.lo, B.hi]; };

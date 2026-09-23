@@ -6,7 +6,7 @@
 //! the same coalescing key collapse into one undo step.
 
 import { bareFactor, LENGTH_UNITS, setLengthUnit } from "./units.js";
-import { TOL, add, sub, mul, dot, dist, perp, normalise, lineThrough, signedDistance, offsetLine, rot, len, cross, intersectLines, samplePath } from "./geom2d.js";
+import { TOL, add, sub, mul, dot, dist, perp, normalise, lineThrough, signedDistance, offsetLine, rot, len, cross, intersectLines, samplePath, curveOf } from "./geom2d.js";
 import { parse, namesIn, evaluate, saysFormula, readValue, ExprError, formatValue } from "./expr.js";
 import { CATALOGUE, F, clone, documentLookup, MODEL_LIBS } from "./ocaf.js";
 import { resolveReference, orthoLine, importPlacer, importLayerMap } from "./bim.js";
@@ -190,6 +190,42 @@ const HANDLERS = {
     const formula = ex ? doc.argValue(ex, "formula") : v.ref;
     doc.setArg(f, o.key, typeof val === "number" ? val : 0);
     return { said: `${o.key} was bound to ${v.ref} (${formula}); it is now the literal ${typeof val === "number" ? Math.round(val * 1000) / 1000 : 0}` };
+  },
+  /** Split Element (SL): the element is cut where it was clicked into two of the same kind. A wall's
+   *  halves are joined end to end; what was joined at its far end, T-joined along its second half or
+   *  hosted there (doors, windows, openings) goes with the second half. */
+  split(doc, o) {
+    const f = doc.element(o.id); if (!f) throw new Error(`there is no element ${o.id}`);
+    if (isPinned(doc, f)) throw new Error(`${o.id} is pinned - unpin it to split it`);
+    const t = doc.typeOf(f), key = t === "Wall" ? "centreline" : t === "Beam" ? "axis" : t === "DetailLine" ? "curve" : t === "RoomSeparator" ? "line" : null;
+    if (!key) throw new Error(`a ${t} cannot be split - walls, beams, detail lines and room separators can`);
+    const c = doc.argValue(f, key), cv = curveOf(c);
+    if (c.type !== "line" && c.type !== "arc") throw new Error(`${o.id} is a ${c.type}; only straight and arc elements split (a closed or free curve has no single place to cut)`);
+    // where on the curve the click is: its projection, and the length along to it
+    let u, P;
+    if (c.type === "line") { const d = normalise(sub(c.end, c.start)); u = Math.max(0, Math.min(cv.length, dot(sub(o.at, c.start), d))); P = add(c.start, mul(d, u)); }
+    else { const ang = Math.atan2(o.at[1] - c.centre[1], o.at[0] - c.centre[0]); let t0 = ang - cv.a0; const sw = cv.sweep; const T = Math.PI * 2; t0 = sw > 0 ? ((t0 % T) + T) % T : -((((-t0) % T) + T) % T); u = Math.max(0, Math.min(cv.length, Math.abs(t0) * c.radius)); P = cv.at(u / cv.length); }
+    if (u < 10 || u > cv.length - 10) throw new Error("click away from the ends: a split needs something on both sides");
+    const rec = clone(doc.elementJSON(f)); let n = 1; const pre = (CATALOGUE.get(t) || {}).idPrefix || "X"; while (doc.element(pre + n)) n++;
+    const nid = pre + n; rec.id = nid; if (rec.name === o.id || !rec.name) delete rec.name;
+    const first = clone(c), second = clone(c);
+    if (c.type === "line") { first.end = P; second.start = P; }
+    else { const deg = Math.atan2(P[1] - c.centre[1], P[0] - c.centre[0]) * 180 / Math.PI; first.end = deg; second.start = deg; }
+    rec.args[key] = second; doc.setArg(f, key, first); doc.addElement(rec);
+    if (t === "Wall") {
+      // joins: the far end's row moves to the new wall; T-joins along the second half re-anchor on it
+      for (const j of doc.joins) for (const side of ["a", "b"]) {
+        const e = j[side]; if (!e || e.of !== o.id) continue;
+        if (e.end === "end") e.of = nid;
+        else if (e.u !== undefined && e.u > u) { e.of = nid; e.u = e.u - u; }
+      }
+      HANDLERS.relate(doc, { store: "joins", row: { a: { of: o.id, end: "end" }, b: { of: nid, end: "start" }, kind: "auto", order: 0, allowed: true } });
+      // hosted openings past the cut change host, measured from the new wall's start
+      for (const g of doc.elements()) if (doc.typeOf(g) === "Opening" && F.refId(g, "host") === o.id) {
+        const pr = clone(doc.argValue(g, "profile")); if (pr.at > u) { pr.at -= u; doc.setArg(g, "profile", pr); doc.setArg(g, "host", { ref: nid }); }
+      }
+    }
+    return { ids: [o.id, nid], said: `${o.id} split at ${Math.round(u)} mm: ${o.id} and ${nid}` };
   },
   /** Pin or unpin: a pinned element cannot be dragged, moved, rotated or mirrored. */
   pin(doc, o) {

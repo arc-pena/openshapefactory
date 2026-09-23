@@ -195,6 +195,7 @@ const COMMANDS = {
   copy: tool("copy", "Copy", "copy", "CO", "Click a base point, then where the copy goes."),
   rotate: tool("rotate", "Rotate", "rotate", "RO", "Click the start of the angle, then its end (or type degrees + Enter)."),
   mirror: tool("mirror", "Mirror", "mirror", "MM", "Click two points on the mirror axis."),
+  split: tool("split", "Split Element", "split", "SL", "Click anywhere on a wall, beam, detail line or room separator: it is cut in two there, joins and hosted doors kept."),
   del: { label: "Delete", icon: "del", key: "DE", run: () => deleteSelection() },
   undo: { label: "Undo", icon: "undo", run: () => { app.editor.undo(); app.refresh(); saveDraftSoon(); } },
   redo: { label: "Redo", icon: "redo", run: () => { app.editor.redo(); app.refresh(); saveDraftSoon(); } },
@@ -287,7 +288,7 @@ const RIBBON = [
   { tab: "Modify", panels: [
     { title: "Select", items: [big("select")] },
     { title: "Properties", items: [big("props"), big("edittype")] },
-    { title: "Modify", items: [small("move"), small("copy"), small("rotate"), small("mirror"), small("del"), small("selectall")] },
+    { title: "Modify", items: [small("move"), small("copy"), small("rotate"), small("mirror"), small("split"), small("del"), small("selectall")] },
     { title: "View", items: [small("zoomfit"), small("thin")] },
   ] },
 ];
@@ -299,7 +300,7 @@ for (const [k, label, ic] of WALL_SHAPES) COMMANDS["wallshape_" + k] = { label, 
 function contextTab() {
   if (app.tool === "wall") return { tab: "__context", label: "Modify | Place Wall", panels: [
     { title: "Draw", items: WALL_SHAPES.map(([k], i) => (i < 5 || k === "pick" ? big : small)("wallshape_" + k)) },
-    { title: "Modify", items: [small("move"), small("copy"), small("rotate")] },
+    { title: "Modify", items: [small("move"), small("copy"), small("rotate"), small("split")] },
   ] };
   const els = [...app.selection].map(id => app.doc.element(id)).filter(Boolean);
   if (!els.length) return null;
@@ -307,7 +308,7 @@ function contextTab() {
   const hasWall = els.some(f => ["Wall", "Door"].includes(app.doc.typeOf(f)));
   return { tab: "__context", label: `Modify | ${cats.length === 1 ? cats[0] : "Multi-Select"}`, panels: [
     { title: "Properties", items: [big("props"), big("edittype")] },
-    { title: "Modify", items: [big("move"), big("copy"), big("rotate"), big("mirror"), big("del")] },
+    { title: "Modify", items: [big("move"), big("copy"), big("rotate"), big("mirror"), big("split"), big("del")] },
     ...(hasWall ? [{ title: "Mode", items: [big("flip")] }] : []),
     ...(els.length === 1 && app.doc.typeOf(els[0]) === "Floor" ? [{ title: "Mode", items: [big("editboundary")] }] : []),
     ...(els.some(f => app.doc.typeOf(f) === "CADImport") ? [{ title: "Import CAD", items: [big("explode")] }] : []),
@@ -1131,7 +1132,7 @@ window.addEventListener("keydown", e => {
     if (mod || e.altKey || !/^[a-z]$/i.test(e.key)) return;
     keyBuf = (keyBuf + e.key.toUpperCase()).slice(-2);
     clearTimeout(keyTimer); keyTimer = setTimeout(() => { keyBuf = ""; }, 1200);
-    const SK = { LI: "line", RC: "rect", RE: "rect", PG: "polygon", AR: "arc", CI: "circle", EL: "ellipse", SP: "spline", BS: "bspline", PW: "pickwalls", MV: "move", CO: "copy", RO: "rotate", MM: "mirror", SC: "scale", S1: "scale1d", OF: "offset", FL: "fillet", TR: "fillet", DI: "dim", MD: "select" };
+    const SK = { LI: "line", RC: "rect", RE: "rect", PG: "polygon", AR: "arc", CI: "circle", EL: "ellipse", SP: "spline", BS: "bspline", PW: "pickwalls", MV: "move", CO: "copy", RO: "rotate", MM: "mirror", SC: "scale", S1: "scale1d", OF: "offset", FL: "fillet", TR: "fillet", SL: "split", DI: "dim", MD: "select" };
     if (keyBuf.length === 2 && SK[keyBuf]) { app.sketch.setTool(SK[keyBuf]); keyBuf = ""; e.preventDefault(); }
     if (keyBuf === "ZF" || keyBuf === "ZE") { app.run("zoomfit"); keyBuf = ""; }
     return;

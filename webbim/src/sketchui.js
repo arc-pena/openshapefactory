@@ -14,7 +14,7 @@ import { parseLength, parseAngle, fmtArea } from "./units.js";
 import { F } from "./ocaf.js";
 import { add, sub, mul, dot, dist, perp, normalise, lerp } from "./geom2d.js";
 import { elementSegs, weld, sketchOf, regionsOf, outline, distanceTo, endsOf, addElements, remove, transform, scale1d, dragHandle, offsetChain,
-  fillet, arcThrough3, tempDimsFor, measureDim, setDimValue, toggleLock, addDim, handlesOf, newId, solve } from "./bimsketch.js";
+  fillet, splitElement, arcThrough3, tempDimsFor, measureDim, setDimValue, toggleLock, addDim, handlesOf, newId, solve } from "./bimsketch.js";
 
 const RED = "#8f0000", BLUE = "#1d6fd8";
 export const SKETCH_DRAW = [
@@ -38,6 +38,7 @@ export const SKETCH_MODIFY = [
   ["scale1d", "Scale 1D", "skscale1d", "base point, a reference point (sets the direction), then where it goes: stretched along that one direction"],
   ["offset", "Offset", "skoffset", "set the distance in the options bar; click an element on the side to offset toward (its whole chain goes)"],
   ["fillet", "Fillet", "skfillet", "set the radius in the options bar (0 = sharp corner); click two elements on the parts to keep"],
+  ["split", "Split", "split", "click anywhere on a line, arc or spline: it becomes two, welded where you clicked (splines stay exactly the same curve)"],
   ["dim", "Dimension", "dim", "click a line (length) or an arc (radius); click two lines for the distance or angle between them"],
 ];
 
@@ -93,7 +94,7 @@ export class SketchSession {
   hover(p, e) {
     this.cursorRaw = p; this.cursor = this.point(p, e);
     this.view.showSnap(this.snapNow ? { kind: this.snapNow.kind, point: this.snapNow.point, of: "sketch" } : null);
-    this.hoverEl = ["select", "offset", "fillet", "dim", "move", "copy", "rotate", "mirror", "scale", "scale1d"].includes(this.tool) ? this.hitEl(p) : null;
+    this.hoverEl = ["select", "offset", "fillet", "split", "dim", "move", "copy", "rotate", "mirror", "scale", "scale1d"].includes(this.tool) ? this.hitEl(p) : null;
     this.hoverWall = this.tool === "pickwalls" ? this.wallNear(p) : null;
     this.view.draw();
   }
@@ -105,6 +106,7 @@ export class SketchSession {
     const q = this.point(raw, e);
     if (t === "offset") return this.offsetClick(raw);
     if (t === "fillet") return this.filletClick(raw);
+    if (t === "split") { const id = this.hitEl(raw); if (!id) return this.say("click on an element to split it"); try { this.commit(splitElement(this.d, id, raw), `${id} split in two`); } catch (err) { this.say(err.message, "error"); } return; }
     if (t === "dim") return this.dimClick(raw);
     if (t === "pickwalls") return this.pickWall(raw);
     if (["move", "copy", "rotate", "mirror", "scale", "scale1d"].includes(t)) return this.modifyClick(q, raw, e);

@@ -22,7 +22,7 @@ import { propertyModel, pickCandidates, graphModel, listeningDimensions, dimensi
 import { buildSample } from "./sample.js";
 import { parseLength, setLengthUnit } from "./units.js";
 import { bimToCad, cadEditsToOps } from "./cadbridge.js";
-import { fromPolygon, addElements, fillet, toggleLock, measureDim, dragHandle, regionsOf, shapeFromClicks, filletCorners, toCentreline, elementSegs } from "./bimsketch.js";
+import { fromPolygon, addElements, fillet, toggleLock, measureDim, dragHandle, regionsOf, shapeFromClicks, filletCorners, toCentreline, elementSegs, splitElement, bsplineAt, bsplineDomain } from "./bimsketch.js";
 import { cadSketchOutline } from "./cadsketch.js";
 
 export const CASES = [];
@@ -1218,4 +1218,41 @@ testCase("M28", "No facets: a sketched floor draws its circles as arcs and its s
   const err = Math.max(...ref.map(near));
   const ok = r.ok && !doc.error(doc.element("FLX")) && kinds.A === 1 && (kinds.C || 0) >= 5 && kinds.L === 3 && err < 0.1 && p.foot.length >= 45;
   return R(ok, "3 lines + 1 arc (the circle) + Bézier spans (B-spline, closed spline); the spans lie on the kernel's curve (< 0.1 mm); the 3D ring is fine", `ok ${r.ok}; path ${JSON.stringify(kinds)}; B-spline off by ${err.toFixed(4)} mm; ring ${p.foot.length} points`);
+});
+
+testCase("M29", "Split Element: a wall cut in two keeps its joins and its doors on the right half; a sketch spline splits without changing shape", () => {
+  const doc = buildSample(), ed = new Editor(doc);
+  const c = doc.argValue(doc.element("W1"), "centreline"), L = Math.hypot(c.end[0] - c.start[0], c.end[1] - c.start[1]);
+  const ops = doc.elements().filter(g => doc.typeOf(g) === "Opening" && F.refId(g, "host") === "W1").map(g => [doc.idOf(g), doc.argValue(g, "profile").at]);
+  const endJoin = doc.joins.find(j => (j.a.of === "W1" && j.a.end === "end") || (j.b.of === "W1" && j.b.end === "end"));
+  const cutU = 7000, d = [(c.end[0] - c.start[0]) / L, (c.end[1] - c.start[1]) / L], at = [c.start[0] + d[0] * cutU, c.start[1] + d[1] * cutU + 40];
+  const r = ed.apply({ op: "split", id: "W1", at });
+  const [a, b] = r.ids || [], ca = doc.argValue(doc.element(a), "centreline"), cb = doc.argValue(doc.element(b), "centreline");
+  const mid = Math.abs(Math.hypot(ca.end[0] - ca.start[0], ca.end[1] - ca.start[1]) - cutU) < 1 && Math.abs(ca.end[0] - cb.start[0]) < 1e-6 && Math.abs(ca.end[1] - cb.start[1]) < 1e-6;
+  const hosted = ops.map(([id, u]) => { const g = doc.element(id); return [id, u, F.refId(g, "host"), doc.argValue(g, "profile").at]; });
+  const hostsOk = hosted.every(([, u, host, at2]) => (u > cutU ? host === b && Math.abs(at2 - (u - cutU)) < 1e-6 : host === a && at2 === u));
+  const joinsOk = doc.joins.some(j => (j.a.of === a && j.a.end === "end" && j.b.of === b) || (j.b.of === a && j.b.end === "end" && j.a.of === b)) && (!endJoin || doc.joins.some(j => j.a.of === b && j.a.end === "end" || j.b.of === b && j.b.end === "end"));
+  const errs = [a, b].map(id => doc.error(doc.element(id))).filter(Boolean);
+  // sketch: a through-points spline split in two, the curve unchanged at its middle
+  const sk = splitElement({ elements: [{ id: "e1", type: "spline", pts: [[0, 0], [1000, 800], [2500, -300], [4000, 500]], closed: false }], constraints: [], dims: [] }, "e1", [1800, 300]);
+  const ok = r.ok && mid && hostsOk && joinsOk && !errs.length && sk.elements.length === 2 && sk.elements.every(e => e.type === "bspline") && sk.constraints.some(x => x.type === "coincident");
+  return R(ok, "W1 → two walls meeting at 7000, joined end to start; doors past the cut re-hosted with u reduced; the far-end join moved; no errors; sketch spline → 2 welded B-splines",
+    `ok ${r.ok} ${r.error || ""} ids ${r.ids}; meet ${mid}; hosted ${JSON.stringify(hosted)}; joins ${joinsOk}; errors ${errs.join(";")}; sketch ${sk.elements.map(e => e.type)}`);
+});
+
+testCase("M30", "Fillet a line to a spline: the spline is trimmed to a new control-point spline of exactly the same shape; the arc is tangent to both", () => {
+  const spl = { id: "s", type: "bspline", ctrl: [[0, -2000], [2000, 1000], [4000, -1500], [6000, 2000]], degree: 3, closed: false };
+  const line = { id: "l", type: "line", a: [-1000, 0], b: [2500, 0] };
+  const d = fillet({ elements: [line, spl], constraints: [], dims: [] }, "l", [-500, 0], "s", [4000, -1000], 400);
+  const s2 = d.elements.find(e => e.id === "s"), arc = d.elements.find(e => e.type === "arc"), l2 = d.elements.find(e => e.id === "l");
+  // same parameter, same point: the kept piece IS the original curve
+  const [a, b] = bsplineDomain(s2);
+  let worst = 0; for (let i = 0; i <= 200; i++) { const u = a + (b - a) * i / 200, p = bsplineAt(s2, u), q = bsplineAt(spl, u); worst = Math.max(worst, Math.hypot(p[0] - q[0], p[1] - q[1])); }
+  // tangency: the arc's centre is r from the line, and r from the spline at the arc's end, along the spline's normal
+  const lineOff = Math.abs(arc.c[1]), endS = s2.ctrl[0], toS = Math.hypot(arc.c[0] - endS[0], arc.c[1] - endS[1]);
+  const h = (b - a) * 1e-5, t0 = bsplineAt(s2, a), t1 = bsplineAt(s2, a + h), tg = [t1[0] - t0[0], t1[1] - t0[1]], rad = [endS[0] - arc.c[0], endS[1] - arc.c[1]];
+  const perpErr = Math.abs(tg[0] * rad[0] + tg[1] * rad[1]) / (Math.hypot(...tg) * Math.hypot(...rad));
+  const ok = s2.type === "bspline" && worst < 1e-4 && Math.abs(lineOff - 400) < 1e-3 && Math.abs(toS - 400) < 0.5 && perpErr < 1e-3 && Math.abs(l2.b[1]) < 1e-9 && d.constraints.filter(c => c.type === "coincident").length === 2;
+  return R(ok, "trimmed spline = original at every parameter (< 1e-4 mm); arc 400 from the line and 400 from the spline, radius ⟂ spline tangent; all welded",
+    `shape error ${worst.toExponential(2)} mm; centre→line ${lineOff.toFixed(4)}, centre→spline end ${toS.toFixed(4)}, cos(radius, tangent) ${perpErr.toExponential(2)}; ctrl ${spl.ctrl.length}→${s2.ctrl.length}`);
 });
