@@ -174,7 +174,7 @@ function setDocument(doc, note) {
 }
 function default3D() { const f = app.doc.elements().find(g => app.doc.typeOf(g) === "View3D" && g.get("Name") === "{3D}") || app.doc.elements().find(g => app.doc.typeOf(g) === "View3D"); return f ? app.doc.idOf(f) : null; }
 let draftTimer = null;
-function saveDraftSoon() { clearTimeout(draftTimer); draftTimer = setTimeout(() => { try { store("draft-v5", app.doc.toJSON()); } catch (e) { /* too big or blocked: the draft is a convenience only */ } }, 800); }
+function saveDraftSoon() { clearTimeout(draftTimer); draftTimer = setTimeout(() => { try { store("draft-v6", app.doc.toJSON()); } catch (e) { /* too big or blocked: the draft is a convenience only */ } }, 800); }
 
 // ---------------------------------------------------------------- the command registry
 //! Ribbon buttons, the Quick Access Toolbar, keyboard shortcuts and the
@@ -546,8 +546,8 @@ function fileMenu(anchor) {
   menuAt(r.left, r.bottom, [
     { label: "New", icon: "sheet", run: () => newEmpty() }, { label: "Open…", icon: "open", run: () => openFile() }, { label: "Save", icon: "save", run: () => saveModel() },
     "-", { label: "Export…", icon: "exportI", run: () => exportDialog() }, { label: "Import IFC…", icon: "importI", run: () => importIfcFile() }, { label: "Import DXF Symbol…", icon: "importI", run: () => importDXF() },
-    "-", { label: "Project Information…", icon: "info", run: () => projectInfo() }, { label: "Reset to Sample Project (D1 RMUH)", icon: "house", run: () => { forget("draft-v5"); forget("tabs"); setDocument(buildRmuhSample(), { msg: "D1 RMUH sample loaded: the brief analysed, the client's plot as the site boundary", kind: "ok" }); app.openView("__spacegraph"); } },
-    { label: "Studio House Sample", icon: "house", run: () => { forget("draft-v5"); forget("tabs"); setDocument(buildSample(), { msg: "Studio House sample loaded", kind: "ok" }); } },
+    "-", { label: "Project Information…", icon: "info", run: () => projectInfo() }, { label: "Reset to Sample Project (D1 RMUH)", icon: "house", run: () => { forget("draft-v6"); forget("tabs"); setDocument(buildRmuhSample(), { msg: "D1 RMUH sample loaded: the brief analysed, the client's plot as the site boundary", kind: "ok" }); app.openView("__spacegraph"); } },
+    { label: "Studio House Sample", icon: "house", run: () => { forget("draft-v6"); forget("tabs"); setDocument(buildSample(), { msg: "Studio House sample loaded", kind: "ok" }); } },
   ]);
 }
 
@@ -903,7 +903,7 @@ function openFile() {
 }
 async function saveModel() { const r = await saveFile(`${app.doc.meta.name || "model"}.json`, app.doc.serialise(), "application/json"); app.say(r.ok ? "Model saved" : r.error, r.ok ? "ok" : "error"); }
 function newEmpty() {
-  forget("draft-v5"); forget("tabs");
+  forget("draft-v6"); forget("tabs");
   const doc = newDocument("Untitled");
   doc.addElement({ id: "L0", type: "Level", name: "Level 1", args: { name: "Level 1", elevation: 0 } });
   doc.addElement({ id: "L1", type: "Level", name: "Level 2", args: { name: "Level 2", elevation: 3000 } });
@@ -1280,7 +1280,7 @@ async function boot() {
   const split = store("split"); if (split) document.getElementById("left").style.setProperty("--split", (split * 100).toFixed(1) + "%");
   await loadDrawingFont();
   let doc = null, note = null;
-  const draft = store("draft-v5");
+  const draft = store("draft-v6");
   if (draft) { try { doc = openDocument(draft); doc.regenerate(); note = { msg: "Restored your draft from this browser. File › New to start empty.", kind: "note" }; } catch (e) { doc = null; } }
   if (!doc) { try { doc = buildRmuhSample(); } catch (e) { console.error(e); doc = buildSample(); } }
   setDocument(doc, note || { msg: doc.meta.brief ? `D1 RMUH: the brief read into a space graph (${(doc.meta.brief.report || [])[0] || ""}) and a first massing built on the client's plot. File › Studio House Sample for the small house.` : `Studio House: ${doc.elements().length} elements.`, kind: "ok" });
