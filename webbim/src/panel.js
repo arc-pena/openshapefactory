@@ -86,6 +86,27 @@ function rowEditor(app, ids, f, r) {
   const under = h("div", { class: "under" });
   const setKey = r.source === "param" ? "params." + r.key : r.key;
   const commit = (op) => { const res = app.apply(Object.assign({ op: "set", ids, key: setKey }, op)); if (!res.ok) { under.textContent = res.error; under.classList.add("err"); } return res; };
+  // a plan's View Range, as Revit's dialog has it: four planes measured from the level, any unit
+  if (r.key === "viewRange" && r.source === "arg") {
+    const cur = Object.assign({ top: 2300, cut: 1200, bottom: 0 }, r.value || {}); if (cur.depth === undefined) cur.depth = cur.bottom;
+    const rows = [["top", "Top"], ["cut", "Cut plane"], ["bottom", "Bottom"], ["depth", "View depth"]];
+    const grid = h("div", { class: "vrange", style: { display: "grid", gridTemplateColumns: "auto 1fr", gap: "2px 6px", alignItems: "center" } });
+    for (const [k, lab] of rows) {
+      const inp = h("input", { type: "text", value: fmtLen(cur[k]), "aria-label": `View range ${lab}`, style: { width: "100%" } });
+      inp.addEventListener("keydown", e => { if (e.key === "Enter") inp.blur(); });
+      inp.addEventListener("change", () => {
+        let v; try { v = parseLength(inp.value); } catch (e) { under.textContent = e.message; under.classList.add("err"); return; }
+        const next = Object.assign({}, cur, { [k]: v });
+        // Revit's rule: top ≥ cut ≥ bottom ≥ depth
+        if (!(next.top >= next.cut && next.cut >= next.bottom && next.bottom >= next.depth)) { under.textContent = "keep top ≥ cut plane ≥ bottom ≥ view depth"; under.classList.add("err"); inp.value = fmtLen(cur[k]); return; }
+        commit({ value: next });
+      });
+      grid.append(h("span", { class: "muted" }, lab), inp);
+    }
+    under.textContent = "from the view's level. Below Bottom, down to View depth, is drawn as seen beyond; deeper is not shown";
+    val.append(grid, under);
+    return h("div", { class: "prow" }, label, val);
+  }
   switch (r.editor) {
     case "value": {
       const bound = r.bound;

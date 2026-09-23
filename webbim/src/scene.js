@@ -143,9 +143,11 @@ export function planScene(doc, v, opts = {}) {
   const ctx = viewContext(doc, v);
   const S = ctx.scale, B = new SceneBuilder(S);
   const lv = F.reference(v, "level"), E = lv ? (doc.data(lv) || {}).value || 0 : 0;
-  const vr = doc.argValue(v, "viewRange") || { top: 2300, cut: 1200, bottom: 0 };
-  const cutZ = E + vr.cut, topZ = E + vr.top, botZ = E + vr.bottom;
-  const band = (z0, z1) => z0 > topZ + TOL ? "above" : z1 < botZ - TOL ? "below" : (z0 <= cutZ + TOL && z1 >= cutZ - TOL) ? "cut" : z1 < cutZ ? "projection" : "beyond";
+  // Revit's View Range: Top, Cut plane and Bottom from the level, and View Depth below the bottom.
+  // What lies between the bottom and the depth is seen beyond (lighter); deeper than that, nothing.
+  const vr = Object.assign({ top: 2300, cut: 1200, bottom: 0 }, doc.argValue(v, "viewRange") || {});
+  const cutZ = E + vr.cut, topZ = E + vr.top, botZ = E + vr.bottom, depthZ = E + (vr.depth ?? vr.bottom);
+  const band = (z0, z1) => z0 > topZ + TOL ? "above" : z1 < botZ - TOL ? (z1 >= depthZ - TOL ? "beyond" : "below") : (z0 <= cutZ + TOL && z1 >= cutZ - TOL) ? "cut" : z1 < cutZ ? "projection" : "beyond";
   // floors first: a floor meeting a wall disappears under the wall's cut, as it does on paper
   const els = doc.elements().filter(f => f.get("Integer") !== 0 && !doc.error(f) || doc.typeOf(f) === "Wall")
     .map((f, i) => [f, i]).sort((a, b) => (doc.typeOf(b[0]) === "Floor") - (doc.typeOf(a[0]) === "Floor") || a[1] - b[1]).map(([f]) => f);
@@ -171,7 +173,7 @@ export function planScene(doc, v, opts = {}) {
       // a floor reads in plan as its edge; cut, it is poché like any cut element
       const p = doc.plan(f); if (!p) continue; const bnd = band(p.z0, p.z1);
       if (bnd === "above" || bnd === "below") continue;
-      const g = resolveGraphics(doc, ctx, f, bnd === "cut" ? "cut" : "projection");
+      const g = resolveGraphics(doc, ctx, f, bnd === "cut" ? "cut" : bnd === "beyond" ? "beyond" : "projection");
       if (bnd === "cut") B.fill(p.path, g.fill || ((doc.lib.materials[p.material] || {}).cut || {}).background || "#e9eaec", "IfcSlab", doc.idOf(f));
       B.stroke(p.path, g, "IfcSlab", doc.idOf(f)); B.hit(doc.idOf(f), p.foot);
     }

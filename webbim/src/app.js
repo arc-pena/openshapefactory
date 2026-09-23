@@ -549,8 +549,43 @@ function rowClick(key, single, dbl) {
   if (dbl && lastRowClick.key === key && now - lastRowClick.t < 500) { lastRowClick = { key: null, t: 0 }; dbl(); return; }
   lastRowClick = { key, t: now }; if (single) single();
 }
-function node(label, kids, opts = {}) {
+const ELEMENT_ICON = { Wall: "wall", Door: "door", Window: "window", Column: "column", Floor: "floor", Beam: "beam", Grid: "grid", Level: "level", Space: "room", Text: "text", Dimension: "dim",
+  SectionView: "section", ElevationView: "elevview", PlanView: "plan", RoomSeparator: "sepline", DetailLine: "skline", FilledRegion: "skrect", SymbolInstance: "symbol", CADImport: "importI", Generic: "column", Furniture: "select" };
+const BODY_TYPES = new Set(["Wall", "Column", "Door", "Window", "Floor", "Beam", "Generic"]);
+/** What a view shows that can be picked in it - the inclusion test is "visible and editable here": the
+ *  ids its drawing publishes as hits (plans, elevations, sections), or the bodies it shows (3D).
+ *  Cached per model and view revision; with `quick`, an uncached view is worked out in the background
+ *  (the browser shows its count when it arrives) rather than now. */
+const CONTENTS = new Map(); let contentsQueue = [], contentsTimer = null;
+function viewContents(vid, quick = false) {
+  const doc = app.doc, v = doc.element(vid); if (!v) return null;
+  const t = doc.typeOf(v); if (!["PlanView", "ElevationView", "SectionView", "View3D"].includes(t)) return null;
+  const key = [doc.modelRevision, doc.viewRevision, JSON.stringify(doc.elementJSON(v))].join("|"), hit = CONTENTS.get(vid);
+  if (hit && hit.key === key && hit.doc === doc) return hit.ids;
+  if (quick) { if (!contentsQueue.includes(vid)) contentsQueue.push(vid); if (!contentsTimer) contentsTimer = setTimeout(drainContents, 30); return null; }
+  let ids;
+  if (t === "View3D") ids = doc.elements().filter(f => BODY_TYPES.has(doc.typeOf(f)) && !doc.error(f) && shownInView(doc, v, f)).map(f => doc.idOf(f));
+  else ids = [...new Set(deriveView(doc, v).hits.map(x => x.id).filter(id => id && id !== vid && doc.element(id)))];
+  const order = id => doc.typeOf(doc.element(id));
+  ids.sort((a, b) => order(a).localeCompare(order(b)) || a.localeCompare(b, undefined, { numeric: true }));
+  CONTENTS.set(vid, { key, ids, doc });
+  return ids;
+}
+function drainContents() {
+  contentsTimer = null; const t0 = performance.now();
+  while (contentsQueue.length && performance.now() - t0 < 40) { try { viewContents(contentsQueue.shift()); } catch (e) { /* a view that cannot draw shows no count */ } }
+  if (contentsQueue.length) contentsTimer = setTimeout(drainContents, 30); else renderPalettes();
+}
+function renameElement(id) {
+  const f = app.doc.element(id); if (!f) return;
+  const inp = h("input", { type: "text", value: f.get("Name") || id, style: { width: "280px" }, "aria-label": "Name" });
+  dialog(`Rename ${id}`, h("label", { style: { display: "grid", gap: "6px" } }, "Name", inp), [{ label: "Cancel", run: () => true }, { label: "OK", primary: true, run: () => { app.apply({ op: "rename", id, name: inp.value }); return true; } }]);
+  setTimeout(() => { inp.focus(); inp.select(); }, 30);
+}
+function node(label, kidsIn, opts = {}) {
   const key = opts.key || label, open = app.expanded.has(key);
+  // children may be a function: built only when the node is open (a view's contents are not free)
+  const kids = typeof kidsIn === "function" ? (open ? kidsIn() : []) : kidsIn;
   const toggle = () => { if (app.expanded.has(key)) app.expanded.delete(key); else app.expanded.add(key); renderPalettes(); };
   const li = h("li");
   const row = h("div", { class: "row" + (opts.sel ? " sel" : "") + (opts.active ? " active" : ""), draggable: opts.drag ? "true" : null, tabindex: 0,
@@ -569,9 +604,25 @@ function renderBrowser(body) {
   const byType = t => els.filter(f => doc.typeOf(f) === t);
   const placed = new Map(); for (const sh of byType("Sheet")) for (const vp of doc.argValue(sh, "viewports") || []) placed.set(vp.view.ref, doc.argValue(sh, "number"));
   // single click selects the view (its properties show above); double-click opens it; drag it onto a sheet
-  const viewRow = (f, ic) => { const id = doc.idOf(f); return node(f.get("Name"), null, { key: "view:" + id, ic, sel: app.selection.has(id), active: app.activeView === id, drag: id,
-    onclick: () => app.select([id]), ondbl: () => app.openView(id),
-    extra: placed.has(id) ? h("span", { class: "chip", title: "placed on sheet" }, placed.get(id)) : null }); };
+  const viewRow = (f, ic) => {
+    const id = doc.idOf(f), got = viewContents(id, true), n = got ? got.length : null;
+    const count = n === null ? null : h("span", { class: "chip" + (n === 0 ? " warn" : ""), title: n === 0 ? "nothing visible and editable in this view" : `${n} element${n > 1 ? "s" : ""} visible and editable here - open the view's list` }, n === 0 ? "empty" : String(n));
+    const kids = n === 0 ? null : () => (viewContents(id) || []).map(eid => elementRow(id, eid));
+    return node(f.get("Name"), kids, { key: "view:" + id, ic, sel: app.selection.has(id), active: app.activeView === id, drag: id,
+      onclick: () => app.select([id]), ondbl: () => app.openView(id),
+      extra: h("span", { class: "extras" }, count, placed.has(id) ? h("span", { class: "chip", title: "placed on sheet" }, placed.get(id)) : null) });
+  };
+  /** One element in a view's list: click selects it (in that view), double-click steps into it, and
+   *  its small tools rename or delete it. What is selected in the view is highlighted here. */
+  const elementRow = (vid, eid) => {
+    const f = doc.element(eid); if (!f) return null;
+    const t = doc.typeOf(f), nm = f.get("Name"), label = `${t} ${eid}${nm && nm !== eid ? " · " + nm : ""}`;
+    const tools = h("span", { class: "rowtools" },
+      h("button", { class: "iconbtn", title: "Rename", "aria-label": `Rename ${eid}`, onclick: e => { e.stopPropagation(); renameElement(eid); } }, "✎"),
+      h("button", { class: "iconbtn", title: "Delete", "aria-label": `Delete ${eid}`, onclick: e => { e.stopPropagation(); app.select([eid]); deleteSelection(); } }, "✕"));
+    return node(label, null, { key: `in:${vid}:${eid}`, ic: ELEMENT_ICON[t] || "select", sel: app.selection.has(eid),
+      onclick: () => { if (app.activeView !== vid) app.openView(vid); app.select([eid]); }, ondbl: () => app.stepInto(eid, app.views.get(vid)), extra: tools });
+  };
   const tree = h("ul", { class: "tree" });
   tree.append(node("Views (all)", [
     node("Floor Plans", byType("PlanView").map(f => viewRow(f, "plan"))),

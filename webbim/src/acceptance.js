@@ -1256,3 +1256,16 @@ testCase("M30", "Fillet a line to a spline: the spline is trimmed to a new contr
   return R(ok, "trimmed spline = original at every parameter (< 1e-4 mm); arc 400 from the line and 400 from the spline, radius ⟂ spline tangent; all welded",
     `shape error ${worst.toExponential(2)} mm; centre→line ${lineOff.toFixed(4)}, centre→spline end ${toS.toFixed(4)}, cos(radius, tangent) ${perpErr.toExponential(2)}; ctrl ${spl.ctrl.length}→${s2.ctrl.length}`);
 });
+
+testCase("M31", "View range: a plan sees below its bottom only down to its View Depth, drawn as beyond", () => {
+  const doc = buildSample(), ed = new Editor(doc);
+  const v = doc.element("V-P01"), hits = () => new Set(deriveView(doc, v).hits.map(x => x.id));
+  const before = hits().has("FL1");                                   // the ground slab, 3000 below the first floor
+  ed.apply({ op: "set", id: "V-P01", key: "viewRange", value: { top: 2300, cut: 1200, bottom: 0, depth: -3500 } });
+  const withDepth = hits().has("FL1");
+  const prims = deriveView(doc, v).prims.filter(p => p.id === "FL1" && p.t === "stroke");
+  ed.apply({ op: "set", id: "V-P01", key: "viewRange", value: { top: 2300, cut: 1200, bottom: 0, depth: -100 } });
+  const shallow = hits().has("FL1");
+  const ok = !before && withDepth && prims.length > 0 && !shallow;
+  return R(ok, "FL1 not in the first-floor plan; in it with View Depth -3500 (as beyond); gone again at -100", `before ${before}; depth -3500 ${withDepth} (${prims.length} strokes); depth -100 ${shallow}`);
+});

@@ -244,6 +244,11 @@ body.cad-switching .app { transform: scale(.985); filter: saturate(.6); }
 .handle.crop.annotation { border-color: #7fa6d9; border-style: dashed; }
 .levelinput { position: absolute; z-index: 7; width: 84px; height: 24px; border: 1.5px solid #1d6fd8; border-radius: 3px; padding: 0 6px; font: 600 12px var(--mono); background: #fff; }
 .btn.cropedit { position: absolute; transform: translateX(-50%); z-index: 6; }
+.tree .row .rowtools { display: none; margin-left: auto; gap: 2px; }
+.tree .row:hover .rowtools, .tree .row.sel .rowtools { display: inline-flex; }
+.tree .row .rowtools .iconbtn { width: 20px; height: 20px; font-size: 11px; padding: 0; }
+.tree .row .extras { margin-left: auto; display: inline-flex; gap: 4px; }
+.chip.warn { background: #fdecea; color: #b3261e; border-color: #f2b8b5; }
 .pinbtn { position: absolute; z-index: 7; width: 26px; height: 26px; display: grid; place-items: center; border: 1px solid #9aa4b2; border-radius: 4px; background: #fff; color: #334; cursor: pointer; padding: 0; box-shadow: 0 1px 3px rgba(0,0,0,.15); }
 .pinbtn.on { color: #1d6fd8; border-color: #1d6fd8; }
 .tdim { position: absolute; z-index: 6; display: flex; gap: 2px; align-items: center; transform: translate(-50%, -50%); }
@@ -7954,9 +7959,11 @@ function planScene(doc, v, opts = {}) {
   const ctx = viewContext(doc, v);
   const S = ctx.scale, B = new SceneBuilder(S);
   const lv = F.reference(v, "level"), E = lv ? (doc.data(lv) || {}).value || 0 : 0;
-  const vr = doc.argValue(v, "viewRange") || { top: 2300, cut: 1200, bottom: 0 };
-  const cutZ = E + vr.cut, topZ = E + vr.top, botZ = E + vr.bottom;
-  const band = (z0, z1) => z0 > topZ + TOL ? "above" : z1 < botZ - TOL ? "below" : (z0 <= cutZ + TOL && z1 >= cutZ - TOL) ? "cut" : z1 < cutZ ? "projection" : "beyond";
+  // Revit's View Range: Top, Cut plane and Bottom from the level, and View Depth below the bottom.
+  // What lies between the bottom and the depth is seen beyond (lighter); deeper than that, nothing.
+  const vr = Object.assign({ top: 2300, cut: 1200, bottom: 0 }, doc.argValue(v, "viewRange") || {});
+  const cutZ = E + vr.cut, topZ = E + vr.top, botZ = E + vr.bottom, depthZ = E + (vr.depth ?? vr.bottom);
+  const band = (z0, z1) => z0 > topZ + TOL ? "above" : z1 < botZ - TOL ? (z1 >= depthZ - TOL ? "beyond" : "below") : (z0 <= cutZ + TOL && z1 >= cutZ - TOL) ? "cut" : z1 < cutZ ? "projection" : "beyond";
   // floors first: a floor meeting a wall disappears under the wall's cut, as it does on paper
   const els = doc.elements().filter(f => f.get("Integer") !== 0 && !doc.error(f) || doc.typeOf(f) === "Wall")
     .map((f, i) => [f, i]).sort((a, b) => (doc.typeOf(b[0]) === "Floor") - (doc.typeOf(a[0]) === "Floor") || a[1] - b[1]).map(([f]) => f);
@@ -7982,7 +7989,7 @@ function planScene(doc, v, opts = {}) {
       // a floor reads in plan as its edge; cut, it is poché like any cut element
       const p = doc.plan(f); if (!p) continue; const bnd = band(p.z0, p.z1);
       if (bnd === "above" || bnd === "below") continue;
-      const g = resolveGraphics(doc, ctx, f, bnd === "cut" ? "cut" : "projection");
+      const g = resolveGraphics(doc, ctx, f, bnd === "cut" ? "cut" : bnd === "beyond" ? "beyond" : "projection");
       if (bnd === "cut") B.fill(p.path, g.fill || ((doc.lib.materials[p.material] || {}).cut || {}).background || "#e9eaec", "IfcSlab", doc.idOf(f));
       B.stroke(p.path, g, "IfcSlab", doc.idOf(f)); B.hit(doc.idOf(f), p.foot);
     }
@@ -13554,6 +13561,19 @@ testCase("M30", "Fillet a line to a spline: the spline is trimmed to a new contr
     `shape error ${worst.toExponential(2)} mm; centre→line ${lineOff.toFixed(4)}, centre→spline end ${toS.toFixed(4)}, cos(radius, tangent) ${perpErr.toExponential(2)}; ctrl ${spl.ctrl.length}→${s2.ctrl.length}`);
 });
 
+testCase("M31", "View range: a plan sees below its bottom only down to its View Depth, drawn as beyond", () => {
+  const doc = buildSample(), ed = new Editor(doc);
+  const v = doc.element("V-P01"), hits = () => new Set(deriveView(doc, v).hits.map(x => x.id));
+  const before = hits().has("FL1");                                   // the ground slab, 3000 below the first floor
+  ed.apply({ op: "set", id: "V-P01", key: "viewRange", value: { top: 2300, cut: 1200, bottom: 0, depth: -3500 } });
+  const withDepth = hits().has("FL1");
+  const prims = deriveView(doc, v).prims.filter(p => p.id === "FL1" && p.t === "stroke");
+  ed.apply({ op: "set", id: "V-P01", key: "viewRange", value: { top: 2300, cut: 1200, bottom: 0, depth: -100 } });
+  const shallow = hits().has("FL1");
+  const ok = !before && withDepth && prims.length > 0 && !shallow;
+  return R(ok, "FL1 not in the first-floor plan; in it with View Depth -3500 (as beyond); gone again at -100", `before ${before}; depth -3500 ${withDepth} (${prims.length} strokes); depth -100 ${shallow}`);
+});
+
 // ===== ui_util.js =====
 //! Small DOM vocabulary shared by the interface modules. The interface only
 //! mirrors the document: nothing here owns model state.
@@ -13814,6 +13834,27 @@ function rowEditor(app, ids, f, r) {
   const under = h("div", { class: "under" });
   const setKey = r.source === "param" ? "params." + r.key : r.key;
   const commit = (op) => { const res = app.apply(Object.assign({ op: "set", ids, key: setKey }, op)); if (!res.ok) { under.textContent = res.error; under.classList.add("err"); } return res; };
+  // a plan's View Range, as Revit's dialog has it: four planes measured from the level, any unit
+  if (r.key === "viewRange" && r.source === "arg") {
+    const cur = Object.assign({ top: 2300, cut: 1200, bottom: 0 }, r.value || {}); if (cur.depth === undefined) cur.depth = cur.bottom;
+    const rows = [["top", "Top"], ["cut", "Cut plane"], ["bottom", "Bottom"], ["depth", "View depth"]];
+    const grid = h("div", { class: "vrange", style: { display: "grid", gridTemplateColumns: "auto 1fr", gap: "2px 6px", alignItems: "center" } });
+    for (const [k, lab] of rows) {
+      const inp = h("input", { type: "text", value: fmtLen(cur[k]), "aria-label": `View range ${lab}`, style: { width: "100%" } });
+      inp.addEventListener("keydown", e => { if (e.key === "Enter") inp.blur(); });
+      inp.addEventListener("change", () => {
+        let v; try { v = parseLength(inp.value); } catch (e) { under.textContent = e.message; under.classList.add("err"); return; }
+        const next = Object.assign({}, cur, { [k]: v });
+        // Revit's rule: top ≥ cut ≥ bottom ≥ depth
+        if (!(next.top >= next.cut && next.cut >= next.bottom && next.bottom >= next.depth)) { under.textContent = "keep top ≥ cut plane ≥ bottom ≥ view depth"; under.classList.add("err"); inp.value = fmtLen(cur[k]); return; }
+        commit({ value: next });
+      });
+      grid.append(h("span", { class: "muted" }, lab), inp);
+    }
+    under.textContent = "from the view's level. Below Bottom, down to View depth, is drawn as seen beyond; deeper is not shown";
+    val.append(grid, under);
+    return h("div", { class: "prow" }, label, val);
+  }
   switch (r.editor) {
     case "value": {
       const bound = r.bound;
@@ -17141,8 +17182,43 @@ function rowClick(key, single, dbl) {
   if (dbl && lastRowClick.key === key && now - lastRowClick.t < 500) { lastRowClick = { key: null, t: 0 }; dbl(); return; }
   lastRowClick = { key, t: now }; if (single) single();
 }
-function node(label, kids, opts = {}) {
+const ELEMENT_ICON = { Wall: "wall", Door: "door", Window: "window", Column: "column", Floor: "floor", Beam: "beam", Grid: "grid", Level: "level", Space: "room", Text: "text", Dimension: "dim",
+  SectionView: "section", ElevationView: "elevview", PlanView: "plan", RoomSeparator: "sepline", DetailLine: "skline", FilledRegion: "skrect", SymbolInstance: "symbol", CADImport: "importI", Generic: "column", Furniture: "select" };
+const BODY_TYPES = new Set(["Wall", "Column", "Door", "Window", "Floor", "Beam", "Generic"]);
+/** What a view shows that can be picked in it - the inclusion test is "visible and editable here": the
+ *  ids its drawing publishes as hits (plans, elevations, sections), or the bodies it shows (3D).
+ *  Cached per model and view revision; with `quick`, an uncached view is worked out in the background
+ *  (the browser shows its count when it arrives) rather than now. */
+const CONTENTS = new Map(); let contentsQueue = [], contentsTimer = null;
+function viewContents(vid, quick = false) {
+  const doc = app.doc, v = doc.element(vid); if (!v) return null;
+  const t = doc.typeOf(v); if (!["PlanView", "ElevationView", "SectionView", "View3D"].includes(t)) return null;
+  const key = [doc.modelRevision, doc.viewRevision, JSON.stringify(doc.elementJSON(v))].join("|"), hit = CONTENTS.get(vid);
+  if (hit && hit.key === key && hit.doc === doc) return hit.ids;
+  if (quick) { if (!contentsQueue.includes(vid)) contentsQueue.push(vid); if (!contentsTimer) contentsTimer = setTimeout(drainContents, 30); return null; }
+  let ids;
+  if (t === "View3D") ids = doc.elements().filter(f => BODY_TYPES.has(doc.typeOf(f)) && !doc.error(f) && shownInView(doc, v, f)).map(f => doc.idOf(f));
+  else ids = [...new Set(deriveView(doc, v).hits.map(x => x.id).filter(id => id && id !== vid && doc.element(id)))];
+  const order = id => doc.typeOf(doc.element(id));
+  ids.sort((a, b) => order(a).localeCompare(order(b)) || a.localeCompare(b, undefined, { numeric: true }));
+  CONTENTS.set(vid, { key, ids, doc });
+  return ids;
+}
+function drainContents() {
+  contentsTimer = null; const t0 = performance.now();
+  while (contentsQueue.length && performance.now() - t0 < 40) { try { viewContents(contentsQueue.shift()); } catch (e) { /* a view that cannot draw shows no count */ } }
+  if (contentsQueue.length) contentsTimer = setTimeout(drainContents, 30); else renderPalettes();
+}
+function renameElement(id) {
+  const f = app.doc.element(id); if (!f) return;
+  const inp = h("input", { type: "text", value: f.get("Name") || id, style: { width: "280px" }, "aria-label": "Name" });
+  dialog(`Rename ${id}`, h("label", { style: { display: "grid", gap: "6px" } }, "Name", inp), [{ label: "Cancel", run: () => true }, { label: "OK", primary: true, run: () => { app.apply({ op: "rename", id, name: inp.value }); return true; } }]);
+  setTimeout(() => { inp.focus(); inp.select(); }, 30);
+}
+function node(label, kidsIn, opts = {}) {
   const key = opts.key || label, open = app.expanded.has(key);
+  // children may be a function: built only when the node is open (a view's contents are not free)
+  const kids = typeof kidsIn === "function" ? (open ? kidsIn() : []) : kidsIn;
   const toggle = () => { if (app.expanded.has(key)) app.expanded.delete(key); else app.expanded.add(key); renderPalettes(); };
   const li = h("li");
   const row = h("div", { class: "row" + (opts.sel ? " sel" : "") + (opts.active ? " active" : ""), draggable: opts.drag ? "true" : null, tabindex: 0,
@@ -17161,9 +17237,25 @@ function renderBrowser(body) {
   const byType = t => els.filter(f => doc.typeOf(f) === t);
   const placed = new Map(); for (const sh of byType("Sheet")) for (const vp of doc.argValue(sh, "viewports") || []) placed.set(vp.view.ref, doc.argValue(sh, "number"));
   // single click selects the view (its properties show above); double-click opens it; drag it onto a sheet
-  const viewRow = (f, ic) => { const id = doc.idOf(f); return node(f.get("Name"), null, { key: "view:" + id, ic, sel: app.selection.has(id), active: app.activeView === id, drag: id,
-    onclick: () => app.select([id]), ondbl: () => app.openView(id),
-    extra: placed.has(id) ? h("span", { class: "chip", title: "placed on sheet" }, placed.get(id)) : null }); };
+  const viewRow = (f, ic) => {
+    const id = doc.idOf(f), got = viewContents(id, true), n = got ? got.length : null;
+    const count = n === null ? null : h("span", { class: "chip" + (n === 0 ? " warn" : ""), title: n === 0 ? "nothing visible and editable in this view" : `${n} element${n > 1 ? "s" : ""} visible and editable here - open the view's list` }, n === 0 ? "empty" : String(n));
+    const kids = n === 0 ? null : () => (viewContents(id) || []).map(eid => elementRow(id, eid));
+    return node(f.get("Name"), kids, { key: "view:" + id, ic, sel: app.selection.has(id), active: app.activeView === id, drag: id,
+      onclick: () => app.select([id]), ondbl: () => app.openView(id),
+      extra: h("span", { class: "extras" }, count, placed.has(id) ? h("span", { class: "chip", title: "placed on sheet" }, placed.get(id)) : null) });
+  };
+  /** One element in a view's list: click selects it (in that view), double-click steps into it, and
+   *  its small tools rename or delete it. What is selected in the view is highlighted here. */
+  const elementRow = (vid, eid) => {
+    const f = doc.element(eid); if (!f) return null;
+    const t = doc.typeOf(f), nm = f.get("Name"), label = `${t} ${eid}${nm && nm !== eid ? " · " + nm : ""}`;
+    const tools = h("span", { class: "rowtools" },
+      h("button", { class: "iconbtn", title: "Rename", "aria-label": `Rename ${eid}`, onclick: e => { e.stopPropagation(); renameElement(eid); } }, "✎"),
+      h("button", { class: "iconbtn", title: "Delete", "aria-label": `Delete ${eid}`, onclick: e => { e.stopPropagation(); app.select([eid]); deleteSelection(); } }, "✕"));
+    return node(label, null, { key: `in:${vid}:${eid}`, ic: ELEMENT_ICON[t] || "select", sel: app.selection.has(eid),
+      onclick: () => { if (app.activeView !== vid) app.openView(vid); app.select([eid]); }, ondbl: () => app.stepInto(eid, app.views.get(vid)), extra: tools });
+  };
   const tree = h("ul", { class: "tree" });
   tree.append(node("Views (all)", [
     node("Floor Plans", byType("PlanView").map(f => viewRow(f, "plan"))),
