@@ -419,15 +419,30 @@ declare({ type: "PlanView", guid: "wb-0501", category: "View", kind: "view", idP
           json("overrides", "Element overrides", {}, { group: "Graphics" }) ] });
 BUILDERS.PlanView = { precondition: (f) => F.reference(f, "level") ? null : "pick a level", build: () => ({ data: {} }) };
 
+/** What an elevation or section sees, in plan: the view line swept along its look direction to
+ *  the far clip. A rectangle: the line is its near edge, `depth` its far one. */
+export function viewExtent(f) {
+  const c = F.json(f, "line"), d = normalise(sub(c.end, c.start)), look = mul(perp(d), -1), D = F.real(f, "depth");
+  return { c, d, look, depth: D, corners: [c.start, c.end, add(c.end, mul(look, D)), add(c.start, mul(look, D))] };
+}
+/** Grips on the view extent: the line's ends and the whole line, the far clip, and the two
+ *  sides at the far edge (which slide the line's ends along it: the view's width). */
+function viewLineHandles(f) {
+  const { c, d, look, depth } = viewExtent(f), m = lerp(c.start, c.end, 0.5);
+  return [
+    { key: "start", at: c.start, constraint: "free2d", writes: "line.start" }, { key: "end", at: c.end, constraint: "free2d", writes: "line.end" },
+    { key: "move", at: m, constraint: "free2d", writes: "line" },
+    { key: "far clip", at: add(m, mul(look, depth)), constraint: { axis: look, origin: m, scalar: true, min: 100 }, writes: "depth", readout: "depth" },
+    { key: "width start", at: add(c.start, mul(look, depth)), constraint: { axis: d, origin: c.start }, writes: "line.start" },
+    { key: "width end", at: add(c.end, mul(look, depth)), constraint: { axis: d, origin: c.end }, writes: "line.end" } ];
+}
 declare({ type: "ElevationView", guid: "wb-0502", category: "View", kind: "view", idPrefix: "V-E",
   summary: "A line in plan: the view plane is the line extruded in z, looking along its right-hand normal.",
   args: [ curve2d("line", "View line", ["line"], { type: "line", start: [0, -3000], end: [12000, -3000] }), real("depth", "Depth", 15000, 1, 1e6, 1),
           integer("scale", "Scale 1:", 100, 1, 5000, { group: "Graphics" }), ref("baseLevel", "Base level", ["level"]), real("top", "Top", 6000, 1, 1e5, 1),
           ref("style", "View style", ["viewStyle"], { group: "Graphics" }), choice("detailLevel", "Detail level", ["Coarse", "Medium", "Fine"], 0, { group: "Graphics" }),
           json("clip", "Crop region", { rect: null, visible: false, active: false }, { group: "Extents" }) ],
-  handles: (f) => { const c = F.json(f, "line"); return [
-    { key: "start", at: c.start, constraint: "free2d", writes: "line.start" }, { key: "end", at: c.end, constraint: "free2d", writes: "line.end" },
-    { key: "move", at: lerp(c.start, c.end, 0.5), constraint: "free2d", writes: "line" } ]; } });
+  handles: viewLineHandles });
 BUILDERS.ElevationView = { build: () => ({ data: {} }) };
 declare({ type: "SectionView", guid: "wb-0505", category: "View", kind: "view", idPrefix: "V-S",
   summary: "A line in plan cutting the building: what it crosses is drawn cut, layer by layer, and what lies beyond it as in an elevation.",
@@ -435,9 +450,7 @@ declare({ type: "SectionView", guid: "wb-0505", category: "View", kind: "view", 
           integer("scale", "Scale 1:", 50, 1, 5000, { group: "Graphics" }), ref("baseLevel", "Base level", ["level"]), real("top", "Top", 6000, 1, 1e5, 1),
           ref("style", "View style", ["viewStyle"], { group: "Graphics" }), choice("detailLevel", "Detail level", ["Coarse", "Medium", "Fine"], 2, { group: "Graphics" }),
           json("clip", "Crop region", { rect: null, visible: false, active: false }, { group: "Extents" }) ],
-  handles: (f) => { const c = F.json(f, "line"); return [
-    { key: "start", at: c.start, constraint: "free2d", writes: "line.start" }, { key: "end", at: c.end, constraint: "free2d", writes: "line.end" },
-    { key: "move", at: lerp(c.start, c.end, 0.5), constraint: "free2d", writes: "line" } ]; } });
+  handles: viewLineHandles });
 BUILDERS.SectionView = { build: () => ({ data: {} }) };
 
 declare({ type: "View3D", guid: "wb-0503", category: "View", kind: "view", idPrefix: "V-3D",

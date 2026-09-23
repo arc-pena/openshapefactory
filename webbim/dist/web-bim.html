@@ -3887,15 +3887,30 @@ declare({ type: "PlanView", guid: "wb-0501", category: "View", kind: "view", idP
           json("overrides", "Element overrides", {}, { group: "Graphics" }) ] });
 BUILDERS.PlanView = { precondition: (f) => F.reference(f, "level") ? null : "pick a level", build: () => ({ data: {} }) };
 
+/** What an elevation or section sees, in plan: the view line swept along its look direction to
+ *  the far clip. A rectangle: the line is its near edge, `depth` its far one. */
+function viewExtent(f) {
+  const c = F.json(f, "line"), d = normalise(sub(c.end, c.start)), look = mul(perp(d), -1), D = F.real(f, "depth");
+  return { c, d, look, depth: D, corners: [c.start, c.end, add(c.end, mul(look, D)), add(c.start, mul(look, D))] };
+}
+/** Grips on the view extent: the line's ends and the whole line, the far clip, and the two
+ *  sides at the far edge (which slide the line's ends along it: the view's width). */
+function viewLineHandles(f) {
+  const { c, d, look, depth } = viewExtent(f), m = lerp(c.start, c.end, 0.5);
+  return [
+    { key: "start", at: c.start, constraint: "free2d", writes: "line.start" }, { key: "end", at: c.end, constraint: "free2d", writes: "line.end" },
+    { key: "move", at: m, constraint: "free2d", writes: "line" },
+    { key: "far clip", at: add(m, mul(look, depth)), constraint: { axis: look, origin: m, scalar: true, min: 100 }, writes: "depth", readout: "depth" },
+    { key: "width start", at: add(c.start, mul(look, depth)), constraint: { axis: d, origin: c.start }, writes: "line.start" },
+    { key: "width end", at: add(c.end, mul(look, depth)), constraint: { axis: d, origin: c.end }, writes: "line.end" } ];
+}
 declare({ type: "ElevationView", guid: "wb-0502", category: "View", kind: "view", idPrefix: "V-E",
   summary: "A line in plan: the view plane is the line extruded in z, looking along its right-hand normal.",
   args: [ curve2d("line", "View line", ["line"], { type: "line", start: [0, -3000], end: [12000, -3000] }), real("depth", "Depth", 15000, 1, 1e6, 1),
           integer("scale", "Scale 1:", 100, 1, 5000, { group: "Graphics" }), ref("baseLevel", "Base level", ["level"]), real("top", "Top", 6000, 1, 1e5, 1),
           ref("style", "View style", ["viewStyle"], { group: "Graphics" }), choice("detailLevel", "Detail level", ["Coarse", "Medium", "Fine"], 0, { group: "Graphics" }),
           json("clip", "Crop region", { rect: null, visible: false, active: false }, { group: "Extents" }) ],
-  handles: (f) => { const c = F.json(f, "line"); return [
-    { key: "start", at: c.start, constraint: "free2d", writes: "line.start" }, { key: "end", at: c.end, constraint: "free2d", writes: "line.end" },
-    { key: "move", at: lerp(c.start, c.end, 0.5), constraint: "free2d", writes: "line" } ]; } });
+  handles: viewLineHandles });
 BUILDERS.ElevationView = { build: () => ({ data: {} }) };
 declare({ type: "SectionView", guid: "wb-0505", category: "View", kind: "view", idPrefix: "V-S",
   summary: "A line in plan cutting the building: what it crosses is drawn cut, layer by layer, and what lies beyond it as in an elevation.",
@@ -3903,9 +3918,7 @@ declare({ type: "SectionView", guid: "wb-0505", category: "View", kind: "view", 
           integer("scale", "Scale 1:", 50, 1, 5000, { group: "Graphics" }), ref("baseLevel", "Base level", ["level"]), real("top", "Top", 6000, 1, 1e5, 1),
           ref("style", "View style", ["viewStyle"], { group: "Graphics" }), choice("detailLevel", "Detail level", ["Coarse", "Medium", "Fine"], 2, { group: "Graphics" }),
           json("clip", "Crop region", { rect: null, visible: false, active: false }, { group: "Extents" }) ],
-  handles: (f) => { const c = F.json(f, "line"); return [
-    { key: "start", at: c.start, constraint: "free2d", writes: "line.start" }, { key: "end", at: c.end, constraint: "free2d", writes: "line.end" },
-    { key: "move", at: lerp(c.start, c.end, 0.5), constraint: "free2d", writes: "line" } ]; } });
+  handles: viewLineHandles });
 BUILDERS.SectionView = { build: () => ({ data: {} }) };
 
 declare({ type: "View3D", guid: "wb-0503", category: "View", kind: "view", idPrefix: "V-3D",
@@ -10129,6 +10142,19 @@ testCase("M19", "A door's type sizes its opening: changing type or widening the 
   const t = clone(doc.lib.types["T-DOOR915"]); t.width = 1200; ed.apply({ op: "type", lib: "types", id: "T-DOOR915", value: t });
   return R(w1 === 915 && !note1 && prof().w === 1200, "915 after the type change, 1200 after widening the type, no mismatch note", `${w1}, ${prof().w}, note ${note1}`);
 });
+testCase("M20", "Elevations and sections show their extent in plan: grips set the far clip and the width, and the view sees only what lies inside", () => {
+  const doc = buildSample(), ed = new Editor(doc);
+  const hs = CATALOGUE.get("SectionView").handles(doc.element("V-S01"), doc), far = hs.find(x => x.key === "far clip");
+  const beyond = () => deriveView(doc, doc.element("V-S01")).stats.beyond;
+  const eItems = () => deriveView(doc, doc.element("V-E01")).stats.items;
+  const b0 = beyond(), e0 = eItems();
+  ed.apply({ op: "drag", id: "V-S01", key: "depth", value: 1000 });
+  ed.apply({ op: "set", id: "V-E01", key: "depth", value: 1500 });
+  const b1 = beyond(), e1 = eItems();
+  const ok = far && far.writes === "depth" && Math.abs(far.at[0] - 15000) < 1 && hs.some(x => x.key === "width end") && b1 < b0 && e1 < e0;
+  return R(ok, "far-clip grip 12000 beyond the line; shrinking the far clip drops what lies past it", `far at ${far && far.at}, section beyond ${b0}→${b1}, elevation items ${e0}→${e1}`);
+});
+
 // ===== ui_util.js =====
 //! Small DOM vocabulary shared by the interface modules. The interface only
 //! mirrors the document: nothing here owns model state.
@@ -11079,6 +11105,25 @@ class View2D {
     };
     requestAnimationFrame(step); return true;
   }
+  /** A selected (or hovered) elevation or section shows what it sees: its line swept to the far clip.
+   *  The grips on it (see viewLineHandles) set the far clip and the width. */
+  drawViewExtents(g) {
+    if (this.kind !== "PlanView") return;
+    const ids = new Set([...this.app.selection, this.hover].filter(Boolean));
+    for (const id of ids) {
+      const f = this.doc.element(id); if (!f || !["ElevationView", "SectionView"].includes(this.doc.typeOf(f))) continue;
+      const ex = viewExtent(f), P = ex.corners.map(q => this.toScreen(q)), sel = this.app.selection.has(id);
+      g.fillStyle = sel ? "rgba(29,111,216,.07)" : "rgba(29,111,216,.04)"; g.strokeStyle = "#1d6fd8"; g.lineWidth = sel ? 1.4 : 1; g.setLineDash([7, 4]);
+      g.beginPath(); P.forEach((q, i) => i ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1])); g.closePath(); g.fill(); g.stroke(); g.setLineDash([]);
+      if (!sel) continue;
+      // the far clip labelled with its depth, like a temporary dimension
+      // outside the far edge, so it never sits on the drawing
+      const out = normalise(sub(lerp(P[2], P[3], 0.5), lerp(P[0], P[1], 0.5))), mid = add(lerp(P[2], P[3], 0.5), mul(out, 16)), a = Math.atan2(P[3][1] - P[2][1], P[3][0] - P[2][0]);
+      g.save(); g.translate(mid[0], mid[1]); g.rotate(Math.abs(a) > Math.PI / 2 ? a + Math.PI : a); g.textBaseline = "middle";
+      g.font = "11px system-ui, sans-serif"; g.textAlign = "center"; g.fillStyle = "#1d6fd8";
+      g.fillText(`${this.doc.typeOf(f) === "SectionView" ? "far clip" : "depth"} ${fmtLen(ex.depth)} · width ${fmtLen(dist(ex.c.start, ex.c.end))}`, 0, 0); g.restore();
+    }
+  }
   drawTemp(g) {
     g.save(); g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     const blue = "#1d6fd8";
@@ -11093,6 +11138,7 @@ class View2D {
         g.beginPath(); P.forEach((q, i) => i ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1])); g.closePath(); g.fill(); g.stroke();
       }
     }
+    this.drawViewExtents(g);
     const T = this.tool;
     if (T.pts.length && T.cursor) {
       g.strokeStyle = blue; g.lineWidth = 1.5; g.setLineDash([6, 4]);
@@ -11305,7 +11351,7 @@ class View2D {
     let typed = "";
     const valueFor = (p) => {
       const c = hd.constraint;
-      if (c && c.axis) { const t = dot(sub(p, c.origin), c.axis); if (hd.writes === "mountOffset") return -t; return add(c.origin, mul(c.axis, t)); }
+      if (c && c.axis) { const t = dot(sub(p, c.origin), c.axis); if (hd.writes === "mountOffset") return -t; if (c.scalar) return Math.max(c.min || 0, Math.round(t)); return add(c.origin, mul(c.axis, t)); }
       if (c && c.onCurve) { const w = this.doc.plan(this.doc.element(c.onCurve)); return Math.max(0, Math.min(w.L, Math.round(uOf(w, p)))); }
       if (hd.key === "move" || (orig && typeof orig === "object" && !Array.isArray(orig))) { const d = sub(p, grab); return translateGeom(orig, d); }
       return p;
@@ -11335,7 +11381,7 @@ class View2D {
         const n = Number(typed); const c = this.doc.argValue(f, hd.writes.split(".")[0]);
         let v = null;
         if (hd.readout === "length" && c && c.start) { const d = normalise(sub(c.end, c.start)); v = add(c.start, mul(d, n)); }
-        else if (hd.constraint && hd.constraint.onCurve) v = n;
+        else if (hd.constraint && (hd.constraint.onCurve || hd.constraint.scalar)) v = Math.max(hd.constraint.min || 0, n);
         if (v !== null) { send(v); this.app.say(`${id}: exactly ${fmtLen(n)} mm`, "ok"); }
         finish(); return;
       }

@@ -98,6 +98,7 @@ The Artifact publishes `dist/web-bim-studio.html`. The CAD page rides in it as i
   - Crossings are two T's, and T's onto curved walls resolve.
   - In section, a floor meeting a wall resolves by the same priority rule: a slab bears over a wall's structure. The outline is drawn only where the material changes.
 - **Sections:** `SE` draws a section line. It cuts walls, floors, beams (I-sections) and columns layer by layer, and draws what lies beyond as an elevation hidden behind the cut.
+- **View extents:** selecting (or hovering) an elevation or section in plan shows what it sees: the view line swept to the far clip, as a dashed rectangle. Its grips move the line's ends and the whole line, set the far clip (`depth`), and slide the sides to set the width. In an elevation or section, clicks take what is nearest the viewer; Tab steps back through the rest.
 - **Two-letter shortcuts:** WA DR WN OP CL GR RM RS DI TX EL MV CO RO MM DE LL VV TL ZF 3D SA PP MD. Ctrl+Z / Ctrl+Y undo and redo; Esc cancels, then clears the selection.
 
 ## Known gaps (said, not hidden)

@@ -1005,3 +1005,15 @@ testCase("M19", "A door's type sizes its opening: changing type or widening the 
   const t = clone(doc.lib.types["T-DOOR915"]); t.width = 1200; ed.apply({ op: "type", lib: "types", id: "T-DOOR915", value: t });
   return R(w1 === 915 && !note1 && prof().w === 1200, "915 after the type change, 1200 after widening the type, no mismatch note", `${w1}, ${prof().w}, note ${note1}`);
 });
+testCase("M20", "Elevations and sections show their extent in plan: grips set the far clip and the width, and the view sees only what lies inside", () => {
+  const doc = buildSample(), ed = new Editor(doc);
+  const hs = CATALOGUE.get("SectionView").handles(doc.element("V-S01"), doc), far = hs.find(x => x.key === "far clip");
+  const beyond = () => deriveView(doc, doc.element("V-S01")).stats.beyond;
+  const eItems = () => deriveView(doc, doc.element("V-E01")).stats.items;
+  const b0 = beyond(), e0 = eItems();
+  ed.apply({ op: "drag", id: "V-S01", key: "depth", value: 1000 });
+  ed.apply({ op: "set", id: "V-E01", key: "depth", value: 1500 });
+  const b1 = beyond(), e1 = eItems();
+  const ok = far && far.writes === "depth" && Math.abs(far.at[0] - 15000) < 1 && hs.some(x => x.key === "width end") && b1 < b0 && e1 < e0;
+  return R(ok, "far-clip grip 12000 beyond the line; shrinking the far clip drops what lies past it", `far at ${far && far.at}, section beyond ${b0}→${b1}, elevation items ${e0}→${e1}`);
+});

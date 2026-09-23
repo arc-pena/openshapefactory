@@ -11,7 +11,7 @@ import { drawScene, primsBBox } from "./render.js";
 import { F, CATALOGUE } from "./ocaf.js";
 import { uOf, pointAt } from "./walls.js";
 import { listeningDimensions, dimensionMove, pickCandidates } from "./props.js";
-import { resolveReference, measureRefs, sheetSize } from "./bim.js";
+import { resolveReference, measureRefs, sheetSize, viewExtent } from "./bim.js";
 import { getPath, geomKey, wallEnds } from "./ops.js";
 import { chainLoop, sampleCropElement, cropLoop, loopBBox, ANNOTATION_CROP } from "./crop.js";
 
@@ -313,6 +313,25 @@ export class View2D {
     };
     requestAnimationFrame(step); return true;
   }
+  /** A selected (or hovered) elevation or section shows what it sees: its line swept to the far clip.
+   *  The grips on it (see viewLineHandles) set the far clip and the width. */
+  drawViewExtents(g) {
+    if (this.kind !== "PlanView") return;
+    const ids = new Set([...this.app.selection, this.hover].filter(Boolean));
+    for (const id of ids) {
+      const f = this.doc.element(id); if (!f || !["ElevationView", "SectionView"].includes(this.doc.typeOf(f))) continue;
+      const ex = viewExtent(f), P = ex.corners.map(q => this.toScreen(q)), sel = this.app.selection.has(id);
+      g.fillStyle = sel ? "rgba(29,111,216,.07)" : "rgba(29,111,216,.04)"; g.strokeStyle = "#1d6fd8"; g.lineWidth = sel ? 1.4 : 1; g.setLineDash([7, 4]);
+      g.beginPath(); P.forEach((q, i) => i ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1])); g.closePath(); g.fill(); g.stroke(); g.setLineDash([]);
+      if (!sel) continue;
+      // the far clip labelled with its depth, like a temporary dimension
+      // outside the far edge, so it never sits on the drawing
+      const out = normalise(sub(lerp(P[2], P[3], 0.5), lerp(P[0], P[1], 0.5))), mid = add(lerp(P[2], P[3], 0.5), mul(out, 16)), a = Math.atan2(P[3][1] - P[2][1], P[3][0] - P[2][0]);
+      g.save(); g.translate(mid[0], mid[1]); g.rotate(Math.abs(a) > Math.PI / 2 ? a + Math.PI : a); g.textBaseline = "middle";
+      g.font = "11px system-ui, sans-serif"; g.textAlign = "center"; g.fillStyle = "#1d6fd8";
+      g.fillText(`${this.doc.typeOf(f) === "SectionView" ? "far clip" : "depth"} ${fmtLen(ex.depth)} · width ${fmtLen(dist(ex.c.start, ex.c.end))}`, 0, 0); g.restore();
+    }
+  }
   drawTemp(g) {
     g.save(); g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     const blue = "#1d6fd8";
@@ -327,6 +346,7 @@ export class View2D {
         g.beginPath(); P.forEach((q, i) => i ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1])); g.closePath(); g.fill(); g.stroke();
       }
     }
+    this.drawViewExtents(g);
     const T = this.tool;
     if (T.pts.length && T.cursor) {
       g.strokeStyle = blue; g.lineWidth = 1.5; g.setLineDash([6, 4]);
@@ -539,7 +559,7 @@ export class View2D {
     let typed = "";
     const valueFor = (p) => {
       const c = hd.constraint;
-      if (c && c.axis) { const t = dot(sub(p, c.origin), c.axis); if (hd.writes === "mountOffset") return -t; return add(c.origin, mul(c.axis, t)); }
+      if (c && c.axis) { const t = dot(sub(p, c.origin), c.axis); if (hd.writes === "mountOffset") return -t; if (c.scalar) return Math.max(c.min || 0, Math.round(t)); return add(c.origin, mul(c.axis, t)); }
       if (c && c.onCurve) { const w = this.doc.plan(this.doc.element(c.onCurve)); return Math.max(0, Math.min(w.L, Math.round(uOf(w, p)))); }
       if (hd.key === "move" || (orig && typeof orig === "object" && !Array.isArray(orig))) { const d = sub(p, grab); return translateGeom(orig, d); }
       return p;
@@ -569,7 +589,7 @@ export class View2D {
         const n = Number(typed); const c = this.doc.argValue(f, hd.writes.split(".")[0]);
         let v = null;
         if (hd.readout === "length" && c && c.start) { const d = normalise(sub(c.end, c.start)); v = add(c.start, mul(d, n)); }
-        else if (hd.constraint && hd.constraint.onCurve) v = n;
+        else if (hd.constraint && (hd.constraint.onCurve || hd.constraint.scalar)) v = Math.max(hd.constraint.min || 0, n);
         if (v !== null) { send(v); this.app.say(`${id}: exactly ${fmtLen(n)} mm`, "ok"); }
         finish(); return;
       }
