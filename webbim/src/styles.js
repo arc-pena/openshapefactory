@@ -53,7 +53,7 @@ export function familyChainOf(doc, f) {
 /** Parameter value as a filter sees it: Category, instance, type, computed. */
 export function paramForFilter(doc, f, name) {
   if (name === "Category") return categoryOf(doc, f);
-  if (name === "Type") { const t = ["wallType", "doorType", "windowType", "columnType"].map(k => F.refId(f, k)).find(Boolean); return t || null; }
+  if (name === "Type") { const t = ["wallType", "doorType", "windowType", "columnType", "floorType", "beamType"].map(k => F.refId(f, k)).find(Boolean); return t || null; }
   if (name === "Family") return familyChainOf(doc, f)[0] || null;
   const p = doc.getParam(f, name);
   if (p !== undefined) { const v = evalParam(doc, f, p); return v && !v.error ? v.v : undefined; }

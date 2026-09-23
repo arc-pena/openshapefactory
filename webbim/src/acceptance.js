@@ -18,7 +18,7 @@ import { writeDXF, readDXF, dxfLineweight, dxfDrawing } from "./dxf.js";
 import { buildHLRModel, runHLR, elementsBox } from "./hlr.js";
 import { drawScene } from "./render.js";
 import { resolveGraphics, penWeight, categoryOf } from "./styles.js";
-import { propertyModel, pickCandidates, graphModel, listeningDimensions, dimensionMove, editorFor } from "./props.js";
+import { propertyModel, pickCandidates, graphModel, listeningDimensions, dimensionMove, editorFor, referenceOptions } from "./props.js";
 import { buildSample } from "./sample.js";
 import { parseLength, setLengthUnit } from "./units.js";
 import { bimToCad, cadEditsToOps } from "./cadbridge.js";
@@ -1718,4 +1718,16 @@ testCase("M57", "IFC heights land on their levels with no offset: a stair flight
     && walls.every(w => w && lvName(w) === "Level 3" && Math.abs(off(w)) < 1 && Math.abs(doc.plan(w).z0 - 8000) < 1) && r.report.notes.some(n => /twice/.test(n));
   return R(ok, "the flight on Level 2 at offset 0 (z 4000); the free rail on Level 2 at offset 0; the three Level 3 walls at offset 0 (z 8000, brought down from 16000); the report says so",
     `ok ${res.ok} ${res.error || ""}; flight ${flight && [lvName(flight), off(flight), doc.plan(flight).z0]}; rail ${rail && [lvName(rail), off(rail)]}; walls ${walls.map(w => w && [lvName(w), off(w), doc.plan(w).z0]).join(" | ")}; notes ${r.report.notes.join(" | ")}`);
+});
+
+testCase("M58", "Slabs and beams have types like walls: selected, a floor shows its type (among every slab type) with Edit Type, and so does a beam; a type change rebuilds the slab to the new thickness", () => {
+  const doc = buildPavilionSample(), ed = new Editor(doc);
+  ed.apply({ op: "add", element: { id: "BMX", type: "Beam", args: { axis: { type: "line", start: [15500, 5500], end: [20500, 5500] }, beamType: { ref: "T-UB406" }, level: { ref: "LR" }, topOffset: -350 } } });
+  const fl = doc.element("FL-POD"), bm = doc.element("BMX"), mf = propertyModel(doc, ["FL-POD"]), mb = propertyModel(doc, ["BMX"]);
+  const opts = referenceOptions(doc, doc.declOf(fl).args.find(a => a.key === "floorType"), fl).map(o => o.value);
+  const r = ed.apply({ op: "set", id: "FL-POD", key: "floorType", value: { ref: "T-SLAB230T" } }), p = doc.plan(fl);
+  const ok = mf.typeKey === "floorType" && mf.typeIds[0] === "T-PODIUM" && mb.typeKey === "beamType" && mb.typeIds[0] === "T-UB406"
+    && ["T-PODIUM", "T-SLAB100", "T-SLAB200", "T-SLAB300", "T-SLAB230T"].every(t => opts.includes(t)) && !opts.includes("T-EXTCAV300") && r.ok && Math.abs(p.z1 - p.z0 - 230) < 1;
+  return R(ok, "floor: type key floorType, T-PODIUM, every slab type offered (no wall types); beam: beamType, T-UB406; switched to 230 mm it is 230 thick",
+    `floor ${mf.typeKey} ${mf.typeIds}; beam ${mb.typeKey} ${mb.typeIds}; options ${opts.join(",")}; thickness ${p && p.z1 - p.z0}`);
 });

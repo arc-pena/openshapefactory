@@ -191,8 +191,9 @@ body.cad-switching .app { transform: scale(.985); filter: saturate(.6); }
 .chip.accent { background: var(--accent-2); color: var(--accent); }
 .banner { margin: 8px 14px 0; padding: 7px 10px; border-radius: 5px; font-size: 12.5px; overflow-wrap: anywhere; }
 .banner.error { background: var(--error-bg); color: var(--error); } .banner.note { background: var(--note-bg); color: var(--note); } .banner.ok { background: var(--ok-bg); color: var(--ok); }
-.typebar { display: flex; gap: 6px; align-items: center; }
-.typebar select { flex: 1; min-width: 0; }
+.typebar { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.typebar .btn { flex: none; }
+.typebar select { flex: 1 1 0; width: 0; min-width: 0; }
 .pgrid-head { display: grid; grid-template-columns: 45% 1fr; position: sticky; top: 0; z-index: 2; background: var(--chrome-2); border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); font-size: 12px; color: var(--ink-2); }
 .pgrid-head span { padding: 3px 6px; text-align: center; }
 .pgrid-head span:first-child { border-right: 1px solid var(--rule); }

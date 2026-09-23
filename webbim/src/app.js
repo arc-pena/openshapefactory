@@ -103,7 +103,7 @@ app.startPick = pm => { app.pickMode = pm; app.revealInView(pm.ids[0]); app.say(
 app.endPick = () => { app.pickMode = null; app.refresh(); };
 app.hoverInfo = id => {
   const f = app.doc.element(id); if (!f) return;
-  const tk = ["wallType", "doorType", "windowType", "columnType"].find(k => F.refId(f, k));
+  const tk = ["wallType", "doorType", "windowType", "columnType", "floorType", "beamType"].find(k => F.refId(f, k));
   const t = tk && app.doc.resolveType(F.refId(f, tk));
   const cat = (app.doc.lib.categories[categoryOf(app.doc, f)] || {}).name || app.doc.typeOf(f);
   app.say(`${cat} : ${t ? `${(t.chain[0] || {}).name || ""} : ${t.name}` : f.get("Name")}  ·  ${id}`, "");
@@ -260,7 +260,7 @@ const COMMANDS = {
   selectall: { label: "Select All Instances", icon: "select", key: "SA", run: () => selectAllInstances() },
   flip: { label: "Flip", icon: "mirror", run: () => { for (const id of app.selection) { const f = app.doc.element(id); if (f && app.doc.typeOf(f) === "Wall") app.apply({ op: "set", id, key: "flipped", value: !F.bool(f, "flipped") }); if (f && app.doc.typeOf(f) === "Door") app.apply({ op: "set", id, key: "flipFacing", value: !F.bool(f, "flipFacing") }); } } },
 };
-function selectedType() { for (const id of app.selection) { const f = app.doc.element(id); if (!f) continue; const k = ["wallType", "doorType", "windowType", "columnType"].find(k => F.refId(f, k)); if (k) return F.refId(f, k); } return null; }
+function selectedType() { for (const id of app.selection) { const f = app.doc.element(id); if (!f) continue; const k = ["wallType", "doorType", "windowType", "columnType", "floorType", "beamType"].find(k => F.refId(f, k)); if (k) return F.refId(f, k); } return null; }
 app.setTool = k => {
   if (!canUseTool(k)) { if (PLACE_TOOLS.has(k) || MODIFY_TOOLS.has(k)) { const plan = firstOf("PlanView"); if (plan) app.openView(plan); } }
   if (PLACE_TOOLS.has(k)) app.selection.clear(); // placing starts from a clean selection, as in Revit
@@ -819,7 +819,7 @@ function deleteSelection() {
 function selectAllInstances() {
   const t = selectedType(); const f0 = app.doc.element([...app.selection][0]);
   if (!f0) return app.say("select one element first", "note");
-  const ids = app.doc.elements().filter(f => t ? ["wallType", "doorType", "windowType", "columnType"].some(k => F.refId(f, k) === t) : app.doc.typeOf(f) === app.doc.typeOf(f0)).map(f => app.doc.idOf(f));
+  const ids = app.doc.elements().filter(f => t ? ["wallType", "doorType", "windowType", "columnType", "floorType", "beamType"].some(k => F.refId(f, k) === t) : app.doc.typeOf(f) === app.doc.typeOf(f0)).map(f => app.doc.idOf(f));
   app.select(ids); app.say(`${ids.length} instances selected`, "note");
 }
 /** Levels with no floor plan yet: one plan per level, so these are the only ones a new plan can be for. */

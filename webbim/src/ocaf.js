@@ -504,7 +504,7 @@ export function propertyOf(doc, f, key) {
   if (a && (a.kind === "Text" || a.kind === "Choice")) return { kind: "Text", v: String(doc.argValue(f, key)) };
   const p = doc.getParam(f, key);
   if (p !== undefined) return evalParam(doc, f, p);
-  for (const tk of ["wallType", "doorType", "windowType", "columnType"]) {
+  for (const tk of ["wallType", "doorType", "windowType", "columnType", "floorType", "beamType"]) {
     const id = a ? null : (decl && decl.args.some(x => x.key === tk) ? (doc.argValue(f, tk) || {}).ref : null);
     if (id) { const t = doc.resolveType(id); if (t && t.params[key] !== undefined) return evalParam(doc, f, t.params[key]); if (key === "TypeMark" && t) return { kind: "Text", v: t.mark || t.name || id }; }
   }

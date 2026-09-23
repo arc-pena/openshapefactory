@@ -12,7 +12,7 @@ import { categoryOf } from "./styles.js";
 import { resolveReference } from "./bim.js";
 
 const GROUP_ORDER = ["Constraints", "Dimensions", "Graphics", "Extents", "Construction", "Identity Data", "Phasing", "Finishes", "Other"];
-export const TYPE_KEYS = ["wallType", "doorType", "windowType", "columnType"];
+export const TYPE_KEYS = ["wallType", "doorType", "windowType", "columnType", "floorType", "beamType"];
 
 /** Which editor a kind gets. Geometry is never a text box (§4.5, test 37e). */
 export function editorFor(arg) {
@@ -100,7 +100,7 @@ export function propertyModel(doc, ids) {
 export function referenceOptions(doc, arg, self) {
   const out = [];
   for (const g of doc.elements()) { if (g === self) continue; const d = doc.declOf(g); if (d && arg.kinds.includes(d.kind)) out.push({ value: doc.idOf(g), label: `${g.get("Name")} (${doc.idOf(g)})` }); }
-  const libKind = { wallType: "IfcWall", doorType: "IfcDoor", windowType: "IfcWindow", columnType: "IfcColumn" };
+  const libKind = { wallType: "IfcWall", doorType: "IfcDoor", windowType: "IfcWindow", columnType: "IfcColumn", floorType: "IfcSlab", beamType: "IfcBeam" };
   for (const k of arg.kinds) {
     if (libKind[k]) for (const [id, t] of Object.entries(doc.lib.types)) { const r = doc.resolveType(id); if (r && r.category === libKind[k]) out.push({ value: id, label: t.name || id }); }
     if (k === "viewStyle") for (const [id, s] of Object.entries(doc.lib.viewStyles)) out.push({ value: id, label: s.name || id });

@@ -191,8 +191,9 @@ body.cad-switching .app { transform: scale(.985); filter: saturate(.6); }
 .chip.accent { background: var(--accent-2); color: var(--accent); }
 .banner { margin: 8px 14px 0; padding: 7px 10px; border-radius: 5px; font-size: 12.5px; overflow-wrap: anywhere; }
 .banner.error { background: var(--error-bg); color: var(--error); } .banner.note { background: var(--note-bg); color: var(--note); } .banner.ok { background: var(--ok-bg); color: var(--ok); }
-.typebar { display: flex; gap: 6px; align-items: center; }
-.typebar select { flex: 1; min-width: 0; }
+.typebar { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.typebar .btn { flex: none; }
+.typebar select { flex: 1 1 0; width: 0; min-width: 0; }
 .pgrid-head { display: grid; grid-template-columns: 45% 1fr; position: sticky; top: 0; z-index: 2; background: var(--chrome-2); border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); font-size: 12px; color: var(--ink-2); }
 .pgrid-head span { padding: 3px 6px; text-align: center; }
 .pgrid-head span:first-child { border-right: 1px solid var(--rule); }
@@ -1676,7 +1677,7 @@ function propertyOf(doc, f, key) {
   if (a && (a.kind === "Text" || a.kind === "Choice")) return { kind: "Text", v: String(doc.argValue(f, key)) };
   const p = doc.getParam(f, key);
   if (p !== undefined) return evalParam(doc, f, p);
-  for (const tk of ["wallType", "doorType", "windowType", "columnType"]) {
+  for (const tk of ["wallType", "doorType", "windowType", "columnType", "floorType", "beamType"]) {
     const id = a ? null : (decl && decl.args.some(x => x.key === tk) ? (doc.argValue(f, tk) || {}).ref : null);
     if (id) { const t = doc.resolveType(id); if (t && t.params[key] !== undefined) return evalParam(doc, f, t.params[key]); if (key === "TypeMark" && t) return { kind: "Text", v: t.mark || t.name || id }; }
   }
@@ -7682,7 +7683,7 @@ function familyChainOf(doc, f) {
 /** Parameter value as a filter sees it: Category, instance, type, computed. */
 function paramForFilter(doc, f, name) {
   if (name === "Category") return categoryOf(doc, f);
-  if (name === "Type") { const t = ["wallType", "doorType", "windowType", "columnType"].map(k => F.refId(f, k)).find(Boolean); return t || null; }
+  if (name === "Type") { const t = ["wallType", "doorType", "windowType", "columnType", "floorType", "beamType"].map(k => F.refId(f, k)).find(Boolean); return t || null; }
   if (name === "Family") return familyChainOf(doc, f)[0] || null;
   const p = doc.getParam(f, name);
   if (p !== undefined) { const v = evalParam(doc, f, p); return v && !v.error ? v.v : undefined; }
@@ -11230,7 +11231,7 @@ function drawImport(doc, ctx, B, f) {
 
 
 const GROUP_ORDER = ["Constraints", "Dimensions", "Graphics", "Extents", "Construction", "Identity Data", "Phasing", "Finishes", "Other"];
-const TYPE_KEYS = ["wallType", "doorType", "windowType", "columnType"];
+const TYPE_KEYS = ["wallType", "doorType", "windowType", "columnType", "floorType", "beamType"];
 
 /** Which editor a kind gets. Geometry is never a text box (§4.5, test 37e). */
 function editorFor(arg) {
@@ -11318,7 +11319,7 @@ function propertyModel(doc, ids) {
 function referenceOptions(doc, arg, self) {
   const out = [];
   for (const g of doc.elements()) { if (g === self) continue; const d = doc.declOf(g); if (d && arg.kinds.includes(d.kind)) out.push({ value: doc.idOf(g), label: `${g.get("Name")} (${doc.idOf(g)})` }); }
-  const libKind = { wallType: "IfcWall", doorType: "IfcDoor", windowType: "IfcWindow", columnType: "IfcColumn" };
+  const libKind = { wallType: "IfcWall", doorType: "IfcDoor", windowType: "IfcWindow", columnType: "IfcColumn", floorType: "IfcSlab", beamType: "IfcBeam" };
   for (const k of arg.kinds) {
     if (libKind[k]) for (const [id, t] of Object.entries(doc.lib.types)) { const r = doc.resolveType(id); if (r && r.category === libKind[k]) out.push({ value: id, label: t.name || id }); }
     if (k === "viewStyle") for (const [id, s] of Object.entries(doc.lib.viewStyles)) out.push({ value: id, label: s.name || id });
@@ -16975,6 +16976,18 @@ testCase("M57", "IFC heights land on their levels with no offset: a stair flight
     `ok ${res.ok} ${res.error || ""}; flight ${flight && [lvName(flight), off(flight), doc.plan(flight).z0]}; rail ${rail && [lvName(rail), off(rail)]}; walls ${walls.map(w => w && [lvName(w), off(w), doc.plan(w).z0]).join(" | ")}; notes ${r.report.notes.join(" | ")}`);
 });
 
+testCase("M58", "Slabs and beams have types like walls: selected, a floor shows its type (among every slab type) with Edit Type, and so does a beam; a type change rebuilds the slab to the new thickness", () => {
+  const doc = buildPavilionSample(), ed = new Editor(doc);
+  ed.apply({ op: "add", element: { id: "BMX", type: "Beam", args: { axis: { type: "line", start: [15500, 5500], end: [20500, 5500] }, beamType: { ref: "T-UB406" }, level: { ref: "LR" }, topOffset: -350 } } });
+  const fl = doc.element("FL-POD"), bm = doc.element("BMX"), mf = propertyModel(doc, ["FL-POD"]), mb = propertyModel(doc, ["BMX"]);
+  const opts = referenceOptions(doc, doc.declOf(fl).args.find(a => a.key === "floorType"), fl).map(o => o.value);
+  const r = ed.apply({ op: "set", id: "FL-POD", key: "floorType", value: { ref: "T-SLAB230T" } }), p = doc.plan(fl);
+  const ok = mf.typeKey === "floorType" && mf.typeIds[0] === "T-PODIUM" && mb.typeKey === "beamType" && mb.typeIds[0] === "T-UB406"
+    && ["T-PODIUM", "T-SLAB100", "T-SLAB200", "T-SLAB300", "T-SLAB230T"].every(t => opts.includes(t)) && !opts.includes("T-EXTCAV300") && r.ok && Math.abs(p.z1 - p.z0 - 230) < 1;
+  return R(ok, "floor: type key floorType, T-PODIUM, every slab type offered (no wall types); beam: beamType, T-UB406; switched to 230 mm it is 230 thick",
+    `floor ${mf.typeKey} ${mf.typeIds}; beam ${mb.typeKey} ${mb.typeIds}; options ${opts.join(",")}; thickness ${p && p.z1 - p.z0}`);
+});
+
 // ===== ui_util.js =====
 //! Small DOM vocabulary shared by the interface modules. The interface only
 //! mirrors the document: nothing here owns model state.
@@ -21706,7 +21719,7 @@ app.startPick = pm => { app.pickMode = pm; app.revealInView(pm.ids[0]); app.say(
 app.endPick = () => { app.pickMode = null; app.refresh(); };
 app.hoverInfo = id => {
   const f = app.doc.element(id); if (!f) return;
-  const tk = ["wallType", "doorType", "windowType", "columnType"].find(k => F.refId(f, k));
+  const tk = ["wallType", "doorType", "windowType", "columnType", "floorType", "beamType"].find(k => F.refId(f, k));
   const t = tk && app.doc.resolveType(F.refId(f, tk));
   const cat = (app.doc.lib.categories[categoryOf(app.doc, f)] || {}).name || app.doc.typeOf(f);
   app.say(`${cat} : ${t ? `${(t.chain[0] || {}).name || ""} : ${t.name}` : f.get("Name")}  ·  ${id}`, "");
@@ -21863,7 +21876,7 @@ const COMMANDS = {
   selectall: { label: "Select All Instances", icon: "select", key: "SA", run: () => selectAllInstances() },
   flip: { label: "Flip", icon: "mirror", run: () => { for (const id of app.selection) { const f = app.doc.element(id); if (f && app.doc.typeOf(f) === "Wall") app.apply({ op: "set", id, key: "flipped", value: !F.bool(f, "flipped") }); if (f && app.doc.typeOf(f) === "Door") app.apply({ op: "set", id, key: "flipFacing", value: !F.bool(f, "flipFacing") }); } } },
 };
-function selectedType() { for (const id of app.selection) { const f = app.doc.element(id); if (!f) continue; const k = ["wallType", "doorType", "windowType", "columnType"].find(k => F.refId(f, k)); if (k) return F.refId(f, k); } return null; }
+function selectedType() { for (const id of app.selection) { const f = app.doc.element(id); if (!f) continue; const k = ["wallType", "doorType", "windowType", "columnType", "floorType", "beamType"].find(k => F.refId(f, k)); if (k) return F.refId(f, k); } return null; }
 app.setTool = k => {
   if (!canUseTool(k)) { if (PLACE_TOOLS.has(k) || MODIFY_TOOLS.has(k)) { const plan = firstOf("PlanView"); if (plan) app.openView(plan); } }
   if (PLACE_TOOLS.has(k)) app.selection.clear(); // placing starts from a clean selection, as in Revit
@@ -22422,7 +22435,7 @@ function deleteSelection() {
 function selectAllInstances() {
   const t = selectedType(); const f0 = app.doc.element([...app.selection][0]);
   if (!f0) return app.say("select one element first", "note");
-  const ids = app.doc.elements().filter(f => t ? ["wallType", "doorType", "windowType", "columnType"].some(k => F.refId(f, k) === t) : app.doc.typeOf(f) === app.doc.typeOf(f0)).map(f => app.doc.idOf(f));
+  const ids = app.doc.elements().filter(f => t ? ["wallType", "doorType", "windowType", "columnType", "floorType", "beamType"].some(k => F.refId(f, k) === t) : app.doc.typeOf(f) === app.doc.typeOf(f0)).map(f => app.doc.idOf(f));
   app.select(ids); app.say(`${ids.length} instances selected`, "note");
 }
 /** Levels with no floor plan yet: one plan per level, so these are the only ones a new plan can be for. */
