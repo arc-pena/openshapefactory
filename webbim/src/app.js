@@ -745,6 +745,8 @@ window.addEventListener("keydown", e => {
   if (keyBuf.length === 2 && SHORTCUTS[keyBuf]) { const id = SHORTCUTS[keyBuf]; keyBuf = ""; if (m) m.dataset.keys = ""; e.preventDefault(); app.run(id); return; }
   if (keyBuf.length === 1 && e.key.toLowerCase() === "f" && !Object.keys(SHORTCUTS).some(k => k[0] === "F")) { keyBuf = ""; app.run("zoomfit"); }
 });
+// typing a value into Properties while "pick to bind" is waiting means you meant the value: stop picking
+document.addEventListener("focusin", e => { if (app.pickMode && e.target.closest && e.target.closest("#left") && e.target.tagName === "INPUT") { app.pickMode = null; app.say("Pick cancelled: type the value and press Enter", "note"); renderOptionsBar(); } });
 document.addEventListener("pointerdown", e => { if (openMenu && !openMenu.contains(e.target)) closeMenus(); }, true);
 window.addEventListener("resize", () => { const v = app.views.get(app.activeView); if (v && v.resize) v.resize(); });
 

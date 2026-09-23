@@ -24,7 +24,7 @@ export function s(tag, attrs = {}, ...kids) {
   for (const k of kids.flat()) if (k) el.append(k instanceof Node ? k : document.createTextNode(String(k)));
   return el;
 }
-export function clear(el) { while (el.firstChild) el.removeChild(el.firstChild); return el; }
+export function clear(el) { el.replaceChildren(); return el; } // one step: a blur fired by removing a focused field cannot interleave
 
 /** Tool icons, drawn at 18px on a 20-unit grid: a plan-view vocabulary. */
 const P = d => `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;

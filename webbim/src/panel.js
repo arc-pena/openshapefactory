@@ -89,7 +89,8 @@ function rowEditor(app, ids, f, r) {
       const base = bound ? (bound.error ? `⚠ ${bound.expr}: ${bound.error}` : `= ${bound.result} · ${bound.id}`) : r.arg && r.arg.unit ? `${r.arg.unit === "mm" ? "length, mm" : r.arg.unit}` : "";
       under.textContent = base; if (bound && bound.error) under.classList.add("err");
       inp.addEventListener("input", () => { if (!inp.value.trim()) { under.textContent = base; return; } const p = preview(app, f, r, inp.value); under.textContent = p.text; under.classList.toggle("err", !p.ok); });
-      const done = () => { if (inp.value.trim() === String(shown).trim() || !inp.value.trim()) return; if (r.source === "param") commit({ value: Number(inp.value) }); else commit({ text: inp.value }); };
+      let committed = false; // Enter commits, then the re-render blurs the field: never commit twice
+      const done = () => { if (committed || inp.value.trim() === String(shown).trim() || !inp.value.trim()) return; committed = true; if (r.source === "param") commit({ value: Number(inp.value) }); else commit({ text: inp.value }); };
       inp.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); done(); inp.blur(); } if (e.key === "Escape") { inp.value = shown; under.textContent = base; inp.blur(); } });
       inp.addEventListener("change", done);
       const line = h("div", { class: "line" }, inp);
