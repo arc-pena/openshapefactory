@@ -19,7 +19,7 @@ import { wallRegions, coarseMaterial, blocks } from "./joins.js";
 import { pointAt, uOf, wallSurfaces, cutAtHeight, plane, LAYER_PRIORITY } from "./walls.js";
 import { cropLoop, loopBBox, annotationRect, isAnnotationLayer } from "./crop.js";
 import { resolveGraphics, categoryOf, penWeight, rulesFor, categoryVisible, mix, LINE_TYPES, matches } from "./styles.js";
-import { measureRefs, resolveReference, sheetSize } from "./bim.js";
+import { measureRefs, resolveReference, sheetSize, regionAreas } from "./bim.js";
 import { FONT_WIDTHS, FONT_METRICS } from "./fontdata.js";
 import { readDXF } from "./dxf.js";
 import { NORTH_DXF } from "./library.js";
@@ -226,7 +226,7 @@ export function planScene(doc, v, opts = {}) {
   for (const f of els) {
     const t = doc.typeOf(f); if (!onlyHere(f)) continue;
     if (t === "DetailLine" && vis(f)) { const c = F.json(f, "curve"); const segs = curveSegs(c); B.stroke(segs, { weight: penWeight(doc, F.choice(f, "pen"), S), colour: "#000000" }, "Detail", doc.idOf(f)); B.hit(doc.idOf(f), samplePath(segs), "curve"); }
-    if (t === "FilledRegion" && vis(f)) { const pts = F.json(f, "boundary"), path = polyPath(pts), pid = F.text(f, "pattern"); B.fill(path, "#ffffff", "Detail", doc.idOf(f)); B.hatch(path, doc.lib.patterns[pid], pid, "#000000", penWeight(doc, "hairline", S), "Detail", doc.idOf(f)); B.stroke(path, { weight: penWeight(doc, "thin", S), colour: "#000000" }, "Detail", doc.idOf(f)); B.hit(doc.idOf(f), pts); }
+    if (t === "FilledRegion" && vis(f)) { const rs = regionAreas(f), pts = rs[0] ? rs[0].outer : F.json(f, "boundary"), path = rs.flatMap(rg => [...polyPath(rg.outer), ...rg.holes.flatMap(hh => polyPath(hh))]), pid = F.text(f, "pattern"); B.fill(path, "#ffffff", "Detail", doc.idOf(f)); B.hatch(path, doc.lib.patterns[pid], pid, "#000000", penWeight(doc, "hairline", S), "Detail", doc.idOf(f)); B.stroke(path, { weight: penWeight(doc, "thin", S), colour: "#000000" }, "Detail", doc.idOf(f)); B.hit(doc.idOf(f), pts); }
     if (t === "Text" && categoryVisible(ctx, "Annotation")) drawText(doc, ctx, B, f);
     if (t === "SymbolInstance" && categoryVisible(ctx, "Annotation")) drawSymbol(doc, B, doc.lib.symbols[F.refId(f, "symbol")], B.P(F.point(f, "position")), F.real(f, "rotation"), "Annotation", doc.idOf(f));
     if (t === "Dimension" && categoryVisible(ctx, "Annotation") && measureRefs(doc, F.json(f, "of") || []).kind !== "levels") drawDimension(doc, ctx, B, f);

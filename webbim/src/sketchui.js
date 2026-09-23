@@ -50,7 +50,7 @@ export class SketchSession {
     app.sketchOpts = this.opts;
     this.undoStack = []; this.redoStack = []; this.typed = "";
   }
-  get title() { return this.target.kind === "crop" ? "Edit Crop" : this.target.id ? "Edit Boundary" : "Create Floor Boundary"; }
+  get title() { return this.target.kind === "crop" ? "Edit Crop" : this.target.id ? "Edit Boundary" : this.target.kind === "region" ? "Create Filled Region Boundary" : "Create Floor Boundary"; }
   say(msg, kind = "note") { this.app.say(msg, kind); }
   commit(next, msg) { this.undoStack.push(this.d); this.redoStack = []; this.d = next; if (msg) this.say(msg, "ok"); this.refresh(); }
   refresh() { this.view.draw(); this.app.renderOptions && this.app.renderOptions(); }
@@ -354,6 +354,17 @@ export class SketchSession {
       if (res.ok) this.say(onlyRect ? "Crop region set" : `Crop region follows the sketch: ${sketch.elements.length} elements`, "ok");
       return true;
     }
+    if (this.target.kind === "region") {
+      // a filled region: the same loops and holes, in this view only, hatched with its pattern
+      const pattern = this.target.pattern || this.app.toolOpts.regionPattern || "P-DIAG";
+      const res2 = this.target.id
+        ? this.app.apply([{ op: "set", id: this.target.id, key: "sketch", value: sketch }, { op: "set", id: this.target.id, key: "boundary", value: boundary }])
+        : this.app.apply({ op: "add", element: { type: "FilledRegion", args: { boundary, pattern, view: { ref: this.view.viewId }, sketch } } });
+      if (!res2.ok) { this.say(res2.error, "error"); return false; }
+      const rid = this.target.id || res2.id; this.app.endSketch(); this.app.select([rid]);
+      this.say(`Filled region ${rid}${r.regions.some(x => x.holes.length) ? ", with holes" : ""}`, "ok");
+      return true;
+    }
     const areaM2 = r.regions.reduce((s, x) => s + Math.abs(skArea(x.outer)) - x.holes.reduce((a2, hh) => a2 + Math.abs(skArea(hh)), 0), 0) / 1e6;
     const holes = r.regions.reduce((s, x) => s + x.holes.length, 0);
     let res;
@@ -458,9 +469,9 @@ export class SketchSession {
   // ------------------------------------------------------------ ribbon and options bar
   ribbonPanels() {
     const b = ([id, label, ic, hint], size) => ({ label, icon: ic, hint, size, on: this.tool === id, run: () => this.setTool(id) });
-    const draw = SKETCH_DRAW.filter(r => r[0] !== "pickwalls" || this.target.kind === "floor");
+    const draw = SKETCH_DRAW.filter(r => r[0] !== "pickwalls" || this.target.kind !== "crop");
     return [
-      { title: "Mode", items: [{ label: "Finish", icon: "skfinish", hint: "Finish Edit Mode: the sketch becomes the " + (this.target.kind === "crop" ? "crop" : "floor"), size: "big", run: () => this.finish(), finish: true }, { label: "Cancel", icon: "close", hint: "Cancel Edit Mode: nothing changes", size: "big", run: () => this.cancel() }] },
+      { title: "Mode", items: [{ label: "Finish", icon: "skfinish", hint: "Finish Edit Mode: the sketch becomes the " + ({ crop: "crop", region: "filled region" }[this.target.kind] || "floor"), size: "big", run: () => this.finish(), finish: true }, { label: "Cancel", icon: "close", hint: "Cancel Edit Mode: nothing changes", size: "big", run: () => this.cancel() }] },
       { title: "Draw", items: draw.map((r, i) => b(r, i < 5 || r[0] === "pickwalls" ? "big" : "small")) },
       { title: "Modify", items: SKETCH_MODIFY.filter(r => r[0] !== "dim").map((r, i) => b(r, i < 1 ? "big" : "small")) },
       { title: "Measure", items: [b(SKETCH_MODIFY.find(r => r[0] === "dim"), "big")] },
@@ -474,6 +485,11 @@ export class SketchSession {
     if (t === "offset") kids.push(num("offset", "Offset"), h("label", {}, h("input", { type: "checkbox", checked: !!o.copy, onchange: e => { o.copy = e.target.checked; } }), " Copy"));
     if (t === "fillet") kids.push(num("radius", "Radius"), h("span", { class: "muted" }, "0 = a sharp corner (trim / extend)"));
     if (t === "polygon") kids.push(num("sides", "Sides", 40, true));
+    if (this.target.kind === "region") {
+      const pats = Object.entries(this.app.doc.lib.patterns || {});
+      const cur = this.target.pattern || this.app.toolOpts.regionPattern || "P-DIAG";
+      kids.push(h("label", {}, "Pattern ", h("select", { onchange: e => { this.target.pattern = this.app.toolOpts.regionPattern = e.target.value; if (this.target.id) this.app.apply({ op: "set", id: this.target.id, key: "pattern", value: e.target.value }, { quiet: true }); } }, pats.map(([id, pt]) => h("option", { value: id, selected: id === cur }, pt.name || id)))));
+    }
     if (this.target.kind === "floor" && !this.target.id) {
       const doc = this.app.doc, ts = Object.entries(doc.lib.types).filter(([id]) => (doc.resolveType(id) || {}).category === "IfcSlab");
       kids.push(h("label", {}, "Type ", h("select", { onchange: e => { this.app.toolOpts.floorType = e.target.value; } }, ts.map(([id, ty]) => h("option", { value: id, selected: this.app.toolOpts.floorType === id }, ty.name)))),

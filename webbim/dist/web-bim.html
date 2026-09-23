@@ -5736,6 +5736,68 @@ function fromPolygon(pts) {
 const ellipsePoint = (el, t) => cadEllipseAt(el, t);
 const handlesOf = el => cadSketchHandles(el);
 
+// ---------------------------------------------------------------- shapes from clicks (walls, and anything else that draws)
+/** How many clicks finish a shape; 0 = a chain, ended by Enter, a double-click or closing on its start. */
+const SHAPE_CLICKS = { line: 0, rect: 2, polygon: 2, arc: 3, circle: 2, ellipse: 3, spline: 0, bspline: 0 };
+/** The sketch elements a run of clicks makes (the cursor may be the last one, for a preview). */
+function shapeFromClicks(shape, P, { sides = 6, closed = false } = {}) {
+  const n = P.length, out = [];
+  if (shape === "line") { for (let i = 0; i + 1 < n; i++) if (skDist(P[i], P[i + 1]) > 1e-6) out.push({ type: "line", a: P[i], b: P[i + 1] }); if (closed && n > 2) out.push({ type: "line", a: P[n - 1], b: P[0] }); }
+  else if (shape === "rect" && n >= 2) { const [a, b] = P, c = [[a[0], a[1]], [b[0], a[1]], [b[0], b[1]], [a[0], b[1]]]; for (let k = 0; k < 4; k++) out.push({ type: "line", a: c[k], b: c[(k + 1) % 4] }); }
+  else if (shape === "polygon" && n >= 2) {
+    const [c, v] = P, N = Math.max(3, Math.round(sides) || 6), r = skDist(c, v), a0 = Math.atan2(v[1] - c[1], v[0] - c[0]);
+    const cs = Array.from({ length: N }, (_, k) => [c[0] + r * Math.cos(a0 + k * SK_TAU / N), c[1] + r * Math.sin(a0 + k * SK_TAU / N)]);
+    cs.forEach((p, k) => out.push({ type: "line", a: p, b: cs[(k + 1) % N] }));
+  }
+  else if (shape === "arc" && n === 2) out.push({ type: "line", a: P[0], b: P[1] });
+  else if (shape === "arc" && n >= 3) { const el = arcThrough3(P[0], P[1], P[2]); if (el) out.push(el); }
+  else if (shape === "circle" && n >= 2) out.push({ type: "circle", c: P[0], r: Math.max(1, skDist(P[0], P[1])) });
+  else if (shape === "ellipse" && n >= 2) {
+    const ax = P[1], rx = skDist(P[0], ax), rot = Math.atan2(ax[1] - P[0][1], ax[0] - P[0][0]);
+    const v = n >= 3 ? skSub(P[2], P[0]) : null, ry = v ? Math.abs(-Math.sin(rot) * v[0] + Math.cos(rot) * v[1]) : rx / 2;
+    out.push({ type: "ellipse", c: P[0], rx: Math.max(1, rx), ry: Math.max(1, Math.min(ry, rx * 0.999 + 1e-6)), rot });
+  }
+  else if (shape === "spline" && n >= 2) out.push({ type: "spline", pts: P.slice(), closed });
+  else if (shape === "bspline" && n >= 2) out.push({ type: "bspline", ctrl: P.slice(), degree: 3, closed });
+  return out.map((e, i) => Object.assign({ id: "e" + (i + 1) }, e));
+}
+/** Round every corner where two lines meet (Revit's Radius option on a wall chain). */
+function filletCorners(d, radius) {
+  let w = weld(sketchOf(d));
+  for (let guard = 0; guard < 200; guard++) {
+    const lines = w.elements.filter(e => e.type === "line");
+    let pair = null;
+    for (const c of w.constraints) {
+      if (c.type !== "coincident") continue;
+      const [ra, rb] = c.of.map(r => r.split(".")[0]), A = lines.find(e => e.id === ra), B = lines.find(e => e.id === rb);
+      if (!A || !B) continue;
+      const ua = skUnit(skSub(A.b, A.a)), ub = skUnit(skSub(B.b, B.a));
+      if (Math.abs(ua[0] * ub[1] - ua[1] * ub[0]) < 1e-6) continue;                 // straight on: no corner
+      if (w.constraints.some(t => t.type === "tangent" && t.of.includes(ra) && t.of.includes(rb))) continue;
+      if (w.elements.some(e => e.type === "arc" && w.constraints.some(t => t.type === "tangent" && t.of.includes(e.id) && t.of.includes(ra)) && w.constraints.some(t => t.type === "tangent" && t.of.includes(e.id) && t.of.includes(rb)))) continue;
+      pair = [A, B]; break;
+    }
+    if (!pair) break;
+    const [A, B] = pair;
+    try { w = fillet(w, A.id, skMul(skAdd(A.a, A.b), 0.5), B.id, skMul(skAdd(B.a, B.b), 0.5), radius); }
+    catch (e) { w.constraints.push({ type: "tangent", of: [A.id, B.id] }); }            // cannot round this one: leave it sharp, and move on
+  }
+  w.constraints = w.constraints.filter(c => !(c.type === "tangent" && c.of.length === 2 && w.elements.filter(e => c.of.includes(e.id)).every(e => e.type === "line")));
+  return w;
+}
+/** A sketch element as a wall centreline (geom2d's curve JSON). A spline by control points has no
+ *  wall curve of its own, so it becomes the through-points spline of points sampled on it. */
+function toCentreline(el) {
+  const deg = r => r * 180 / Math.PI;
+  if (el.type === "line") return { type: "line", start: el.a.slice(), end: el.b.slice() };
+  if (el.type === "arc") { const ccw = el.a1 > el.a0; return { type: "arc", centre: el.c.slice(), radius: el.r, start: deg(ccw ? el.a0 : el.a0), end: deg(el.a1), ccw }; }
+  if (el.type === "circle") return { type: "circle", centre: el.c.slice(), radius: el.r };
+  if (el.type === "ellipse") return { type: "ellipse", centre: el.c.slice(), rx: el.rx, ry: el.ry, rotation: deg(el.rot || 0) };
+  if (el.type === "spline") { const pts = el.pts.map(p => p.slice()); if (el.closed) pts.push(pts[0].slice()); return { type: "spline", points: pts }; }
+  if (el.type === "bspline") { const pts = cadSketchOutline(el, 64).filter((_, i, A) => i % 4 === 0 || i === A.length - 1); return { type: "spline", points: pts.map(p => p.slice()) }; }
+  return null;
+}
+
 // ===== bim.js =====
 //! The application layer (spec §4–§11): every element type is two declarations —
 //! a catalogue entry and a driver — and nothing else. The panel, the tree, the
@@ -5767,10 +5829,24 @@ BUILDERS.Level = { build: (f) => {
 
 declare({ type: "Grid", guid: "wb-0002", category: "IfcGrid", kind: "grid", idPrefix: "G-",
   summary: "A datum line with a bubble. Publishes its line as a reference.",
-  args: [ text("name", "Label", "A", { group: "Identity Data" }), curve2d("line", "Line", ["line"], { type: "line", start: [0, 0], end: [0, 10000] }) ],
-  handles: (f) => { const c = F.json(f, "line"); return [
+  args: [ text("name", "Label", "A", { group: "Identity Data" }), curve2d("line", "Line", ["line"], { type: "line", start: [0, 0], end: [0, 10000] }),
+          // ticked, a grid only runs horizontal or vertical - its ends slide along it; unticked, they go anywhere
+          bool("orthogonal", "Orthogonal", true, { group: "Constraints" }) ],
+  handles: (f) => {
+    const c = F.json(f, "line");
+    if (F.bool(f, "orthogonal") !== false) {
+      const u = orthoAxis(c.start, c.end);
+      return [{ key: "start", at: c.start, constraint: { axis: u, origin: c.end }, writes: "line.start" }, { key: "end", at: c.end, constraint: { axis: u, origin: c.start }, writes: "line.end" },
+        { key: "move", at: lerp(c.start, c.end, 0.5), constraint: "free2d", writes: "line" }];
+    }
+    return [
     { key: "start", at: c.start, constraint: "free2d", writes: "line.start" },
-    { key: "end", at: c.end, constraint: "free2d", writes: "line.end" } ]; } });
+    { key: "end", at: c.end, constraint: "free2d", writes: "line.end" },
+    { key: "move", at: lerp(c.start, c.end, 0.5), constraint: "free2d", writes: "line" } ]; } });
+/** The axis (x or y) nearest a line's direction, pointing the way it runs. */
+function orthoAxis(a, b) { const d = sub(b, a); return Math.abs(d[0]) >= Math.abs(d[1]) ? [Math.sign(d[0]) || 1, 0] : [0, Math.sign(d[1]) || 1]; }
+/** A grid line made orthogonal: its end moved onto the nearest axis through its start. */
+function orthoLine(c) { const u = orthoAxis(c.start, c.end), L = dot(sub(c.end, c.start), u); return Object.assign({}, c, { end: add(c.start, mul(u, L)) }); }
 BUILDERS.Grid = { build: (f) => {
   const c = F.json(f, "line");
   return { data: { value: dist(c.start, c.end), kind: "Length", refs: [{ key: "line", kind: "line", geom: lineThrough(c.start, c.end) }],
@@ -6278,8 +6354,18 @@ BUILDERS.DetailLine = { build: () => ({ data: {} }) };
 
 declare({ type: "FilledRegion", guid: "wb-0703", category: "Detail", kind: "detail", idPrefix: "FR",
   summary: "A hatched region that lives in one view.",
-  args: [ json("boundary", "Boundary", [[0, 0], [1000, 0], [1000, 1000], [0, 1000]]), text("pattern", "Pattern", "P-DIAG"), ref("view", "View", ["view"], { view: true }) ] });
-BUILDERS.FilledRegion = { build: () => ({ data: { props: {} } }) };
+  args: [ json("boundary", "Boundary", [[0, 0], [1000, 0], [1000, 1000], [0, 1000]]), text("pattern", "Pattern", "P-DIAG"), ref("view", "View", ["view"], { view: true }),
+          json("sketch", "Boundary sketch", null) ] });
+/** A filled region's areas: its sketch's loops and holes (as a floor's), or the plain boundary. */
+function regionAreas(f) {
+  const sk = F.json(f, "sketch");
+  if (hasSketch(sk)) { const r = regionsOf(sk); if (!r.error) return r.regions; }
+  return [{ outer: F.json(f, "boundary"), holes: [] }];
+}
+BUILDERS.FilledRegion = { build: (f) => {
+  const rs = regionAreas(f), a = r => Math.abs(polyArea(r));
+  return { data: { props: { Area: { kind: "Area", v: rs.reduce((s, rg) => s + a(rg.outer) - rg.holes.reduce((t, hh) => t + a(hh), 0), 0) } } } };
+} };
 
 declare({ type: "SymbolInstance", guid: "wb-0704", category: "Annotation", kind: "detail", idPrefix: "SY",
   summary: "A placed symbol. Paper symbols keep their size on the sheet; model symbols scale with the drawing.",
@@ -6865,6 +6951,8 @@ const HANDLERS = {
       setPath(doc, f, o.key, value);
       // a door or window sizes its opening: changing its type resizes the hole to the new type
       if ((o.key === "doorType" || o.key === "windowType") && value && value.ref) sizeOpeningsToType(doc, [f]);
+      // ticking a grid's Orthogonal straightens it onto the nearest axis, about its start
+      if (doc.typeOf(f) === "Grid" && o.key === "orthogonal" && value) setPath(doc, f, "line", orthoLine(doc.argValue(f, "line")));
       // a level moved drags the levels padlocked to it, keeping each locked height
       if (doc.typeOf(f) === "Level" && o.key === "elevation") holdLevelGaps(doc, id);
     }
@@ -7573,7 +7661,7 @@ function planScene(doc, v, opts = {}) {
   for (const f of els) {
     const t = doc.typeOf(f); if (!onlyHere(f)) continue;
     if (t === "DetailLine" && vis(f)) { const c = F.json(f, "curve"); const segs = curveSegs(c); B.stroke(segs, { weight: penWeight(doc, F.choice(f, "pen"), S), colour: "#000000" }, "Detail", doc.idOf(f)); B.hit(doc.idOf(f), samplePath(segs), "curve"); }
-    if (t === "FilledRegion" && vis(f)) { const pts = F.json(f, "boundary"), path = polyPath(pts), pid = F.text(f, "pattern"); B.fill(path, "#ffffff", "Detail", doc.idOf(f)); B.hatch(path, doc.lib.patterns[pid], pid, "#000000", penWeight(doc, "hairline", S), "Detail", doc.idOf(f)); B.stroke(path, { weight: penWeight(doc, "thin", S), colour: "#000000" }, "Detail", doc.idOf(f)); B.hit(doc.idOf(f), pts); }
+    if (t === "FilledRegion" && vis(f)) { const rs = regionAreas(f), pts = rs[0] ? rs[0].outer : F.json(f, "boundary"), path = rs.flatMap(rg => [...polyPath(rg.outer), ...rg.holes.flatMap(hh => polyPath(hh))]), pid = F.text(f, "pattern"); B.fill(path, "#ffffff", "Detail", doc.idOf(f)); B.hatch(path, doc.lib.patterns[pid], pid, "#000000", penWeight(doc, "hairline", S), "Detail", doc.idOf(f)); B.stroke(path, { weight: penWeight(doc, "thin", S), colour: "#000000" }, "Detail", doc.idOf(f)); B.hit(doc.idOf(f), pts); }
     if (t === "Text" && categoryVisible(ctx, "Annotation")) drawText(doc, ctx, B, f);
     if (t === "SymbolInstance" && categoryVisible(ctx, "Annotation")) drawSymbol(doc, B, doc.lib.symbols[F.refId(f, "symbol")], B.P(F.point(f, "position")), F.real(f, "rotation"), "Annotation", doc.idOf(f));
     if (t === "Dimension" && categoryVisible(ctx, "Annotation") && measureRefs(doc, F.json(f, "of") || []).kind !== "levels") drawDimension(doc, ctx, B, f);
@@ -12959,6 +13047,28 @@ testCase("M25", "A sheet draws a viewport the same whether or not its view was d
   return R(fresh > 50 && fresh === afterPlan, "same number of strokes and fills either way", `fresh ${fresh}, after drawing the plan first ${afterPlan}`);
 });
 
+testCase("M26", "Walls draw from the sketcher's shapes (rounded rectangle, circle, spline); grids stay orthogonal while ticked", () => {
+  const doc = buildSample(), ed = new Editor(doc);
+  // a rectangle with R 1000 corners: 4 lines and 4 arcs, every one a wall, ends joined
+  const d = filletCorners({ elements: shapeFromClicks("rect", [[20000, 0], [26000, 4000]]), constraints: [], dims: [] }, 1000);
+  const cls = d.elements.map(toCentreline), kinds = cls.map(c => c.type).sort().join(",");
+  const ops = cls.map((c, i) => ({ op: "add", element: { id: "RW" + i, type: "Wall", args: { centreline: c, mounting: "Centred", wallType: { ref: "T-BLOCK215" }, baseLevel: { ref: "L0" }, height: 3000 } } }));
+  const res = ed.apply(ops.concat([{ op: "autojoin", ends: cls.flatMap((_, i) => [{ id: "RW" + i, end: "start" }, { id: "RW" + i, end: "end" }]) }]));
+  const errs = cls.map((_, i) => doc.error(doc.element("RW" + i))).filter(Boolean);
+  const arcLen = doc.plan(doc.element("RW" + cls.findIndex(c => c.type === "arc"))).L;
+  const circle = toCentreline(shapeFromClicks("circle", [[0, 0], [2000, 0]])[0]);
+  // grids: ticked, an end handle slides along the grid; ticking a skewed grid straightens it
+  const hs = CATALOGUE.get("Grid").handles(doc.element("G-A"), doc), endH = hs.find(x => x.key === "end");
+  ed.apply([{ op: "set", id: "G-A", key: "orthogonal", value: false }, { op: "set", id: "G-A", key: "line", value: { type: "line", start: [0, -2000], end: [900, 10000] } }]);
+  const skew = doc.argValue(doc.element("G-A"), "line");
+  ed.apply({ op: "set", id: "G-A", key: "orthogonal", value: true });
+  const straight = doc.argValue(doc.element("G-A"), "line");
+  const ok = res.ok && !errs.length && kinds === "arc,arc,arc,arc,line,line,line,line" && Math.abs(arcLen - Math.PI * 1000 / 2) < 5 && circle.type === "circle" && circle.radius === 2000
+    && endH && endH.constraint && endH.constraint.axis && skew.end[0] === 900 && straight.end[0] === 0 && Math.abs(straight.end[1] - 10000) < 1;
+  return R(ok, "4 lines + 4 quarter arcs as walls with no errors; a circle wall; grid end handles slide along the grid; ticking straightens a skewed grid",
+    `ok ${res.ok}; kinds ${kinds}; errors ${errs.join("; ")}; corner arc length ${Math.round(arcLen)}; circle ${JSON.stringify(circle)}; grid handle ${JSON.stringify(endH && endH.constraint)}; skew ${JSON.stringify(skew.end)} → ${JSON.stringify(straight.end)}`);
+});
+
 // ===== ui_util.js =====
 //! Small DOM vocabulary shared by the interface modules. The interface only
 //! mirrors the document: nothing here owns model state.
@@ -13664,7 +13774,7 @@ class SketchSession {
     app.sketchOpts = this.opts;
     this.undoStack = []; this.redoStack = []; this.typed = "";
   }
-  get title() { return this.target.kind === "crop" ? "Edit Crop" : this.target.id ? "Edit Boundary" : "Create Floor Boundary"; }
+  get title() { return this.target.kind === "crop" ? "Edit Crop" : this.target.id ? "Edit Boundary" : this.target.kind === "region" ? "Create Filled Region Boundary" : "Create Floor Boundary"; }
   say(msg, kind = "note") { this.app.say(msg, kind); }
   commit(next, msg) { this.undoStack.push(this.d); this.redoStack = []; this.d = next; if (msg) this.say(msg, "ok"); this.refresh(); }
   refresh() { this.view.draw(); this.app.renderOptions && this.app.renderOptions(); }
@@ -13968,6 +14078,17 @@ class SketchSession {
       if (res.ok) this.say(onlyRect ? "Crop region set" : `Crop region follows the sketch: ${sketch.elements.length} elements`, "ok");
       return true;
     }
+    if (this.target.kind === "region") {
+      // a filled region: the same loops and holes, in this view only, hatched with its pattern
+      const pattern = this.target.pattern || this.app.toolOpts.regionPattern || "P-DIAG";
+      const res2 = this.target.id
+        ? this.app.apply([{ op: "set", id: this.target.id, key: "sketch", value: sketch }, { op: "set", id: this.target.id, key: "boundary", value: boundary }])
+        : this.app.apply({ op: "add", element: { type: "FilledRegion", args: { boundary, pattern, view: { ref: this.view.viewId }, sketch } } });
+      if (!res2.ok) { this.say(res2.error, "error"); return false; }
+      const rid = this.target.id || res2.id; this.app.endSketch(); this.app.select([rid]);
+      this.say(`Filled region ${rid}${r.regions.some(x => x.holes.length) ? ", with holes" : ""}`, "ok");
+      return true;
+    }
     const areaM2 = r.regions.reduce((s, x) => s + Math.abs(skArea(x.outer)) - x.holes.reduce((a2, hh) => a2 + Math.abs(skArea(hh)), 0), 0) / 1e6;
     const holes = r.regions.reduce((s, x) => s + x.holes.length, 0);
     let res;
@@ -14072,9 +14193,9 @@ class SketchSession {
   // ------------------------------------------------------------ ribbon and options bar
   ribbonPanels() {
     const b = ([id, label, ic, hint], size) => ({ label, icon: ic, hint, size, on: this.tool === id, run: () => this.setTool(id) });
-    const draw = SKETCH_DRAW.filter(r => r[0] !== "pickwalls" || this.target.kind === "floor");
+    const draw = SKETCH_DRAW.filter(r => r[0] !== "pickwalls" || this.target.kind !== "crop");
     return [
-      { title: "Mode", items: [{ label: "Finish", icon: "skfinish", hint: "Finish Edit Mode: the sketch becomes the " + (this.target.kind === "crop" ? "crop" : "floor"), size: "big", run: () => this.finish(), finish: true }, { label: "Cancel", icon: "close", hint: "Cancel Edit Mode: nothing changes", size: "big", run: () => this.cancel() }] },
+      { title: "Mode", items: [{ label: "Finish", icon: "skfinish", hint: "Finish Edit Mode: the sketch becomes the " + ({ crop: "crop", region: "filled region" }[this.target.kind] || "floor"), size: "big", run: () => this.finish(), finish: true }, { label: "Cancel", icon: "close", hint: "Cancel Edit Mode: nothing changes", size: "big", run: () => this.cancel() }] },
       { title: "Draw", items: draw.map((r, i) => b(r, i < 5 || r[0] === "pickwalls" ? "big" : "small")) },
       { title: "Modify", items: SKETCH_MODIFY.filter(r => r[0] !== "dim").map((r, i) => b(r, i < 1 ? "big" : "small")) },
       { title: "Measure", items: [b(SKETCH_MODIFY.find(r => r[0] === "dim"), "big")] },
@@ -14088,6 +14209,11 @@ class SketchSession {
     if (t === "offset") kids.push(num("offset", "Offset"), h("label", {}, h("input", { type: "checkbox", checked: !!o.copy, onchange: e => { o.copy = e.target.checked; } }), " Copy"));
     if (t === "fillet") kids.push(num("radius", "Radius"), h("span", { class: "muted" }, "0 = a sharp corner (trim / extend)"));
     if (t === "polygon") kids.push(num("sides", "Sides", 40, true));
+    if (this.target.kind === "region") {
+      const pats = Object.entries(this.app.doc.lib.patterns || {});
+      const cur = this.target.pattern || this.app.toolOpts.regionPattern || "P-DIAG";
+      kids.push(h("label", {}, "Pattern ", h("select", { onchange: e => { this.target.pattern = this.app.toolOpts.regionPattern = e.target.value; if (this.target.id) this.app.apply({ op: "set", id: this.target.id, key: "pattern", value: e.target.value }, { quiet: true }); } }, pats.map(([id, pt]) => h("option", { value: id, selected: id === cur }, pt.name || id)))));
+    }
     if (this.target.kind === "floor" && !this.target.id) {
       const doc = this.app.doc, ts = Object.entries(doc.lib.types).filter(([id]) => (doc.resolveType(id) || {}).category === "IfcSlab");
       kids.push(h("label", {}, "Type ", h("select", { onchange: e => { this.app.toolOpts.floorType = e.target.value; } }, ts.map(([id, ty]) => h("option", { value: id, selected: this.app.toolOpts.floorType === id }, ty.name)))),
@@ -14108,6 +14234,7 @@ const skArea = r => r.reduce((s, p, i) => { const q = r[(i + 1) % r.length]; ret
 //! A handle never moves geometry: it computes a value for a named argument and
 //! sends an ordinary edit (§10.1). In 2D that is pointer events and one affine
 //! transform — no ray casting.
+
 
 
 
@@ -14357,8 +14484,16 @@ class View2D {
       }
     }
     this.drawViewExtents(g);
-    const T = this.tool;
-    if (T.pts.length && T.cursor) {
+    const T = this.tool, wShape = this.app.tool === "wall" ? (this.app.toolOpts.wallShape || "line") : null;
+    if (wShape && wShape !== "line" && wShape !== "pick" && T.pts.length && T.cursor) {
+      // the shape the next click completes, dashed, as the sketcher previews it
+      const els = shapeFromClicks(wShape, [...T.pts, T.cursor], { sides: this.app.toolOpts.wallSides || 6 });
+      g.strokeStyle = blue; g.lineWidth = 1.5; g.setLineDash([6, 4]);
+      for (const el of els) { g.beginPath(); outline(el, 96).forEach((q, i) => { const s_ = this.toScreen(q); i ? g.lineTo(s_[0], s_[1]) : g.moveTo(s_[0], s_[1]); }); g.stroke(); }
+      if (wShape === "bspline") { g.lineWidth = 1; g.beginPath(); [...T.pts, T.cursor].forEach((q, i) => { const s_ = this.toScreen(q); i ? g.lineTo(s_[0], s_[1]) : g.moveTo(s_[0], s_[1]); }); g.stroke(); }
+      g.setLineDash([]);
+      for (const p of T.pts) { const q = this.toScreen(p); g.fillStyle = blue; g.fillRect(q[0] - 3, q[1] - 3, 6, 6); }
+    } else if (T.pts.length && T.cursor) {
       g.strokeStyle = blue; g.lineWidth = 1.5; g.setLineDash([6, 4]);
       g.beginPath(); const a = this.toScreen(T.pts[0]); g.moveTo(a[0], a[1]);
       for (const p of T.pts.slice(1).concat([T.cursor])) { const q = this.toScreen(p); g.lineTo(q[0], q[1]); }
@@ -14822,12 +14957,9 @@ class View2D {
     if (this.app.tool === "wall" && this.tool.pts.length >= 2) return this.finishWall(false);
     const hit = this.hitAt(sx, sy);
     if (!hit) return;
-    // double-click is "step into": a viewport opens its view, a view marker opens its view
+    // double-click is "step into": a viewport opens its view; anything else goes where it is edited
     if (this.kind === "Sheet") return this.app.openView(hit.view);
-    const f = this.doc.element(hit.id);
-    if (f && ["ElevationView", "SectionView", "PlanView", "View3D"].includes(this.doc.typeOf(f))) this.app.openView(hit.id);
-    // double-click a floor: into its boundary sketch, as in Revit
-    if (f && this.doc.typeOf(f) === "Floor" && this.kind === "PlanView") this.app.editBoundary(hit.id);
+    this.app.stepInto(hit.id, this);
   }
   /** Viewports snap to the sheet's margins, the other viewports' edges and centres, with guides. */
   dragViewport(d, sx, sy) {
@@ -14867,7 +14999,7 @@ class View2D {
     const sn = this.snap(p, { from: T.pts[T.pts.length - 1], shift: e.shiftKey });
     this.showSnap(sn);
     const q = sn ? sn.point : this.quantise(p);
-    T.cursor = q; T.preview = null;
+    T.cursor = tool === "grid" && T.pts.length === 1 && this.app.toolOpts.gridOrtho !== false ? orthoLine({ start: T.pts[0], end: q }).end : q; T.preview = null;
     if (["opening", "door", "window"].includes(tool)) {
       const hit = this.nearestWall(q);
       if (hit) { const o = this.app.toolOpts; const w = hit.w, u = uOf(w, q); const half = (o.width || 1000) / 2; T.preview = [pointAt(w, w.stack.s[0], u - half), pointAt(w, w.stack.s[0], u + half), pointAt(w, w.stack.s[w.stack.s.length - 1], u + half), pointAt(w, w.stack.s[w.stack.s.length - 1], u - half), pointAt(w, w.stack.s[0], u - half)]; this.showHud(sx, sy, `${hit.id} · u = ${fmtLen(u)}`); }
@@ -14901,7 +15033,17 @@ class View2D {
     const q = T.cursor || p;
     const level = F.refId(this.view, "level");
     const addEl = (element, msg) => { const r = this.app.apply({ op: "add", element }); this.app.say(r.ok ? msg || `Added ${r.id}` : r.error, r.ok ? "ok" : "error"); if (r.ok) this.app.select([r.id]); return r; };
-    if (tool === "wall") { T.pts.push(q); if (T.pts.length >= 2 && o.closeOnStart && dist(q, T.pts[0]) < 1) return this.finishWall(true); this.draw(); return; }
+    if (tool === "wall") {
+      // the wall tool draws with the sketcher's shapes; each shape becomes walls as soon as it is complete
+      const shape = o.wallShape || "line";
+      if (shape === "pick") return this.pickLineForWall(p);
+      T.pts.push(q);
+      const need = SHAPE_CLICKS[shape];
+      if (need && T.pts.length >= need) return this.finishWall(false);
+      if ((shape === "line" || shape === "spline" || shape === "bspline") && T.pts.length > 2 && dist(q, T.pts[0]) < 1) { T.pts.pop(); return this.finishWall(true); }
+      if (shape === "line" && T.pts.length >= 2 && o.closeOnStart && dist(q, T.pts[0]) < 1) return this.finishWall(true);
+      this.draw(); return;
+    }
     if (tool === "floor") {
       // click the boundary; clicking the first point again (or Enter) closes it
       if (T.pts.length >= 3 && dist(q, T.pts[0]) < 12 * this.modelPerPx()) return this.finishFloor();
@@ -14913,7 +15055,9 @@ class View2D {
       return addEl({ type: "Beam", args: { axis: { type: "line", start: a, end: b }, beamType: { ref: o.beamType }, level: level ? { ref: level } : null, topOffset: o.beamTop ?? 3000 } }, `Beam ${fmtLen(dist(a, b))}`);
     }
     if (["grid", "elev", "sep", "section"].includes(tool)) {
-      T.pts.push(q);
+      // a grid drawn with Orthogonal on (the default) runs straight across or straight up
+      const q2 = tool === "grid" && T.pts.length === 1 && o.gridOrtho !== false ? orthoLine({ start: T.pts[0], end: q }).end : q;
+      T.pts.push(q2);
       if (T.pts.length < 2) { this.draw(); return; }
       const [a, b] = T.pts; T.pts = [];
       if (tool === "grid") { const used = new Set(doc.elements().filter(f => doc.typeOf(f) === "Grid").map(f => F.text(f, "name"))); let n = 1; while (used.has(String(n))) n++; addEl({ type: "Grid", name: "Grid " + n, args: { name: String(n), line: { type: "line", start: a, end: b } } }); }
@@ -15007,12 +15151,58 @@ class View2D {
     return best;
   }
   finishWall(closed) {
-    const T = this.tool, o = this.app.toolOpts;
+    const T = this.tool, o = this.app.toolOpts, shape = o.wallShape || "line";
     const pts = T.pts.slice(); T.pts = []; T.cursor = null;
     if (pts.length < 2) return;
+    // a plain chain of lines keeps the chain-draw op (its joins are exact); every other shape, and a
+    // chain with an offset or rounded corners, goes through the sketcher and then becomes walls
+    if (shape !== "line" || o.wallRadiusOn || o.wallOffset) return this.wallsFromShape(shape, pts, closed);
     const r = this.app.apply({ op: "draw", points: pts, closed, wallType: o.wallType, level: F.refId(this.view, "level"), height: o.height || 3000, mounting: o.mounting || "Centred", tol: 1 });
     this.app.say(r.ok ? `${r.ids.length} wall${r.ids.length > 1 ? "s" : ""} drawn and joined` : r.error, r.ok ? "ok" : "error");
     if (r.ok) this.app.select(r.ids);
+  }
+  /** The sketcher's elements for a finished shape - rounded at the corners and offset as the options
+   *  bar says - each become a wall, and their ends are joined as walls join. */
+  wallsFromShape(shape, pts, closed) {
+    const o = this.app.toolOpts, level = F.refId(this.view, "level");
+    let d = weld({ elements: shapeFromClicks(shape, pts, { sides: o.wallSides || 6, closed }), constraints: [], dims: [] });
+    if (o.wallRadiusOn && (o.wallRadius || 0) > 0) d = filletCorners(d, o.wallRadius);
+    if (o.wallOffset) {
+      // positive to the left of the way it was drawn, negative to the right
+      const first = d.elements[0], pts2 = outline(first, 16), mid = pts2[Math.floor(pts2.length / 2)], nx = pts2[Math.min(pts2.length - 1, Math.floor(pts2.length / 2) + 1)];
+      const dir = normalise(sub(nx, mid)), toward = add(mid, mul(perp(dir), Math.sign(o.wallOffset) * 10));
+      d = offsetChain(d, first.id, toward, Math.abs(o.wallOffset), false).drawing;
+    }
+    const ops = [], ids = [];
+    for (const el of d.elements) {
+      const c = toCentreline(el); if (!c) continue;
+      let k = 1; while (this.doc.element("W" + k) || ids.includes("W" + k)) k++; const id = "W" + k;
+      ops.push({ op: "add", element: { id, type: "Wall", args: { centreline: c, mounting: o.mounting || "Centred", wallType: { ref: o.wallType }, baseLevel: level ? { ref: level } : null, height: o.height || 3000 } } }); ids.push(id);
+    }
+    if (!ops.length) return;
+    const ends = [];
+    for (const [i, el] of d.elements.entries()) if (el.type === "line" || el.type === "arc" || (el.type === "spline" && !el.closed) || el.type === "bspline") ends.push({ id: ids[i], end: "start" }, { id: ids[i], end: "end" });
+    const r = this.app.apply(ends.length ? ops.concat([{ op: "autojoin", ends }]) : ops);
+    this.app.say(r.ok ? `${ids.length} wall${ids.length > 1 ? "s" : ""} from the ${{ line: "chain", rect: "rectangle", polygon: "polygon", arc: "arc", circle: "circle", ellipse: "ellipse", spline: "spline", bspline: "spline" }[shape]}${o.wallRadiusOn ? `, corners R ${fmtLen(o.wallRadius)}` : ""}${o.wallOffset ? `, offset ${fmtLen(o.wallOffset)}` : ""}` : r.error, r.ok ? "ok" : "error");
+    if (r.ok) this.app.select(ids);
+  }
+  /** Revit's Pick Lines for walls: a wall on a grid, a detail line, a room separator, a floor's edge
+   *  or another wall's face - whichever straight line is nearest the click. */
+  pickLineForWall(p) {
+    const doc = this.doc, tol = 10 * this.modelPerPx(), cands = [];
+    const seg = (a, b, what) => { const t = Math.max(0, Math.min(1, dot(sub(p, a), sub(b, a)) / Math.max(1e-9, dot(sub(b, a), sub(b, a))))), q = add(a, mul(sub(b, a), t)); cands.push({ a, b, what, d: dist(p, q) }); };
+    for (const f of doc.elements()) {
+      const t = doc.typeOf(f), id = doc.idOf(f);
+      if (t === "Grid" || t === "RoomSeparator") { const c = F.json(f, "line"); seg(c.start, c.end, `${t === "Grid" ? "grid" : "separator"} ${F.text(f, "name") || id}`); }
+      if (t === "DetailLine") { const c = F.json(f, "curve"); if (c && c.type === "line" && F.refId(f, "view") === this.viewId) seg(c.start, c.end, `detail line ${id}`); }
+      if (t === "Floor") { const b = F.json(f, "boundary") || []; b.forEach((q, i) => seg(q, b[(i + 1) % b.length], `${id}'s edge`)); }
+      if (t === "Wall") { const w = doc.plan(f); if (w && w.curve.type === "line") for (const s_ of [Math.max(...w.stack.s), Math.min(...w.stack.s)]) seg(add(w.curve.start, mul(perp(w.d), s_)), add(w.curve.end, mul(perp(w.d), s_)), `${id}'s face`); }
+    }
+    const best = cands.filter(c => c.d < tol).sort((x, y) => x.d - y.d)[0];
+    if (!best) return this.app.say("Pick Lines: click a grid, a detail line, a room separator, a floor edge or a wall face", "note");
+    const o = this.app.toolOpts, keep = o.wallShape; o.wallShape = "line";
+    this.wallsFromShape("line", [best.a, best.b], false); o.wallShape = keep;
+    this.app.say(`wall on ${best.what}`, "ok");
   }
   /** Keys while this view has focus: Enter/Esc/C for the chain, digits for length. */
   key(e) {
@@ -15582,7 +15772,11 @@ class View3D {
       if (g.button === 2) return this.app.contextMenu(e, "3d");
       this.click(e);
     });
-    el.addEventListener("dblclick", () => { if (this.app.tool === "wall" && this.tool.pts.length >= 2) this.finishWall(false); });
+    el.addEventListener("dblclick", e => {
+      if (this.app.tool === "wall" && this.tool.pts.length >= 2) return this.finishWall(false);
+      if (this.app.tool !== "select") return;
+      const hit = this.pickElement(e); if (hit) this.app.stepInto(hit.id, null);       // step into, as in plan
+    });
     el.addEventListener("contextmenu", e => e.preventDefault());
     el.addEventListener("auxclick", e => { if (e.button === 1) e.preventDefault(); });
     el.addEventListener("wheel", e => {
@@ -16050,6 +16244,7 @@ const COMMANDS = {
   fliphand: { label: "Flip Hand", icon: "mirror", run: () => flipDoors("flipHand") },
   flipfacing: { label: "Flip Facing", icon: "mirror", run: () => flipDoors("flipFacing") },
   closehidden: { label: "Close Inactive", icon: "close", run: () => { app.tabs = app.tabs.filter(t => t === app.activeView); app.refresh(); } },
+  region: { label: "Filled Region", icon: "skrect", key: "FR", hint: "Sketch a hatched region in this view: closed loops, holes inside; Finish ✓ makes it", run: () => startRegionSketch() },
   edittype: { label: "Edit Type", icon: "edittype", run: () => { const t = selectedType(); if (t) typeEditor(app, t); else app.say("select an element with a type", "note"); } },
   props: { label: "Properties", icon: "props", key: "PP", active: () => !document.body.classList.contains("hide-props"), run: () => document.body.classList.toggle("hide-props") },
   pens: { label: "Object Styles & Pens", icon: "pens", run: () => { const v = app.activeView && app.doc.element(app.activeView); vvDialog(app, v && ["PlanView", "ElevationView", "SectionView", "View3D"].includes(app.doc.typeOf(v)) ? app.activeView : firstOf("PlanView")); } },
@@ -16071,6 +16266,8 @@ app.setTool = k => {
   app.tool = k; app.pickMode = null; app.lastCommand = k !== "select" ? k : app.lastCommand;
   const v = app.views.get(app.activeView); if (v && v.tool) { v.tool.pts = []; v.tool.refs = []; v.tool.preview = null; v.tool.ghost = null; v.tool.centre = null; }
   if (k !== "select" && app.ribbonTab === "__context" && !MODIFY_TOOLS.has(k)) { app.ribbonTab = app.ribbonAuto || "Architecture"; }
+  // the wall tool brings up its own tab (Modify | Place Wall), with the sketcher's draw shapes
+  if (k === "wall") { app.ribbonAuto = app.ribbonTab === "__context" ? app.ribbonAuto : app.ribbonTab; app.ribbonTab = "__context"; }
   app.refresh({ keepMain: true });
   app.say((COMMANDS[k] && COMMANDS[k].hint) || "", "note");
 };
@@ -16096,6 +16293,7 @@ const RIBBON = [
   { tab: "Annotate", panels: [
     { title: "Dimension", items: [big("dim")] },
     { title: "Text", items: [big("text")] },
+    { title: "Detail", items: [big("region")] },
     { title: "Symbol", items: [big("placesymbol")] },
   ] },
   { tab: "View", panels: [
@@ -16115,7 +16313,16 @@ const RIBBON = [
     { title: "View", items: [small("zoomfit"), small("thin")] },
   ] },
 ];
+/** The wall tool's draw shapes: the sketcher's, without its Finish - each shape is walls at once. */
+const WALL_SHAPES = [["line", "Line", "skline"], ["rect", "Rectangle", "skrect"], ["polygon", "Polygon", "skpoly"], ["arc", "Arc", "skarc"], ["circle", "Circle", "skcircle"],
+  ["ellipse", "Ellipse", "skellipse"], ["bspline", "Spline (control points)", "skbspline"], ["spline", "Spline (through points)", "skspline"], ["pick", "Pick Lines", "pick"]];
+for (const [k, label, ic] of WALL_SHAPES) COMMANDS["wallshape_" + k] = { label, icon: ic, hint: k === "pick" ? "Click a grid, detail line, room separator, floor edge or wall face: a wall along it" : `Draw walls as a ${label.toLowerCase()}`, active: () => app.tool === "wall" && (app.toolOpts.wallShape || "line") === k,
+  run: () => { app.toolOpts.wallShape = k; const v = app.views.get(app.activeView); if (v && v.tool) { v.tool.pts = []; v.tool.cursor = null; } app.refresh({ keepMain: true }); } };
 function contextTab() {
+  if (app.tool === "wall") return { tab: "__context", label: "Modify | Place Wall", panels: [
+    { title: "Draw", items: WALL_SHAPES.map(([k], i) => (i < 5 || k === "pick" ? big : small)("wallshape_" + k)) },
+    { title: "Modify", items: [small("move"), small("copy"), small("rotate")] },
+  ] };
   const els = [...app.selection].map(id => app.doc.element(id)).filter(Boolean);
   if (!els.length) return null;
   const cats = [...new Set(els.map(f => (app.doc.lib.categories[categoryOf(app.doc, f)] || {}).name || app.doc.typeOf(f)))];
@@ -16201,6 +16408,36 @@ function startFloorSketch() {
   const v = planViewForSketch(null); if (!v) return app.say("open a floor plan to sketch a floor in", "error");
   app.startSketch(v, { kind: "floor", id: null }, null);
 }
+function startRegionSketch() {
+  const v = app.views.get(app.activeView);
+  if (!v || v.kind !== "PlanView") return app.say("open a plan to sketch a filled region in", "error");
+  app.startSketch(v, { kind: "region", id: null }, null);
+}
+/** Double-click is "step into": whatever the element is, go where it is edited - its view, its
+ *  sketch, its text, its value, its type - rather than select-then-find-the-button. */
+app.stepInto = (id, view) => {
+  const doc = app.doc, f = doc.element(id); if (!f) return;
+  const t = doc.typeOf(f);
+  if (["ElevationView", "SectionView", "PlanView", "View3D", "Schedule", "Sheet"].includes(t)) return app.openView(id);
+  if (t === "Floor") return app.editBoundary(id);
+  if (t === "FilledRegion") {
+    const vv = view && view.kind === "PlanView" ? view : app.views.get(app.activeView); if (!vv || vv.kind !== "PlanView") return;
+    const sk = doc.argValue(f, "sketch");
+    return app.startSketch(vv, { kind: "region", id, pattern: F.text(f, "pattern") }, sk && sk.elements && sk.elements.length ? sk : fromPolygon(F.json(f, "boundary") || []));
+  }
+  app.select([id]);
+  const ask = (title, label, value, apply) => {
+    const inp = h(label === "Text" ? "textarea" : "input", { type: "text", value, rows: 4, style: { width: "320px" }, "aria-label": label }); if (label === "Text") inp.value = value;
+    dialog(title, h("label", { style: { display: "grid", gap: "6px" } }, label, inp), [{ label: "Cancel", run: () => true }, { label: "OK", primary: true, run: () => { apply(inp.value); return true; } }]);
+    setTimeout(() => { inp.focus(); inp.select && inp.select(); }, 30);
+  };
+  if (t === "Text") return ask(`Edit text ${id}`, "Text", F.text(f, "content"), v => app.apply({ op: "set", id, key: "content", value: v }));
+  if (t === "Grid") return ask(`Grid ${F.text(f, "name")}`, "Name", F.text(f, "name"), v => app.apply([{ op: "set", id, key: "name", value: v }, { op: "rename", id, name: "Grid " + v }]));
+  if (t === "Level") return ask(`Level ${F.text(f, "name")}`, "Name", F.text(f, "name"), v => app.apply([{ op: "set", id, key: "name", value: v }, { op: "rename", id, name: v }]));
+  if (t === "Space") return ask(`Room ${id}`, "Name", f.get("Name") || "", v => app.apply({ op: "rename", id, name: v }));
+  if (t === "Dimension") { setTimeout(() => { const b = document.querySelector("#main .overlay .tdim button:not(.lock)"); if (b) b.click(); }, 60); return; }
+  if (["Door", "Window", "Wall", "Column", "Beam"].includes(t)) return app.run("edittype");
+};
 /** A floor's boundary, back in its sketch. A floor drawn before sketches (or imported) opens as its polygon. */
 app.editBoundary = id => {
   const f = app.doc.element(id); if (!f || app.doc.typeOf(f) !== "Floor") return;
@@ -16238,7 +16475,13 @@ function renderOptionsBar() {
   else if (t === "select") { title = els.length ? `Modify | ${els.length} selected` : "Modify"; kids = els.length ? [h("span", { class: "muted" }, "Drag to move · MV CO RO MM · DE deletes · Esc clears")] : [h("span", { class: "muted" }, "Pick elements, or window-select by dragging on empty space")]; }
   else {
     title = `Modify | Place ${COMMANDS[t] ? COMMANDS[t].label : t}`;
-    if (t === "wall") kids = [sel("wallType", typesOf("IfcWall").map(([id, x]) => [id, x.name]), "Type:"), sel("mounting", ["Centred", "Core centre", "Core exterior", "Core interior", "Finish exterior", "Finish interior"].map(x => [x, x]), "Location Line:"), num("height", "Height:"), levelPicker()];
+    if (t === "wall") {
+      // Revit's wall options: location line, offset from what is drawn, rounded chain corners
+      const radiusOn = h("label", {}, h("input", { type: "checkbox", checked: !!o.wallRadiusOn, onchange: e => { o.wallRadiusOn = e.target.checked; } }), " Radius");
+      kids = [sel("wallType", typesOf("IfcWall").map(([id, x]) => [id, x.name]), "Type:"), sel("mounting", ["Centred", "Core centre", "Core exterior", "Core interior", "Finish exterior", "Finish interior"].map(x => [x, x]), "Location Line:"), num("height", "Height:"), levelPicker(),
+        num("wallOffset", "Offset:"), radiusOn, num("wallRadius", ""), ...((o.wallShape || "line") === "polygon" ? [h("label", {}, "Sides ", h("input", { type: "text", value: o.wallSides || 6, style: { width: "40px" }, onchange: e => { o.wallSides = Math.max(3, Math.round(Number(e.target.value)) || 6); } }))] : [])];
+    }
+    if (t === "grid") kids = [h("label", { title: "Ticked: new grids run horizontal or vertical" }, h("input", { type: "checkbox", checked: o.gridOrtho !== false, onchange: e => { o.gridOrtho = e.target.checked; } }), " Orthogonal")];
     if (t === "door") kids = [sel("doorType", typesOf("IfcDoor").map(([id, x]) => [id, x.name]), "Type:")];
     if (t === "window") kids = [sel("windowType", typesOf("IfcWindow").map(([id, x]) => [id, x.name]), "Type:"), num("sill", "Sill Height:")];
     if (t === "opening") kids = [num("width", "Width:"), num("height_", "Height:"), num("openSill", "Sill:")];
@@ -16889,6 +17132,9 @@ window.addEventListener("keydown", e => {
   }
   if (mod && e.key.toLowerCase() === "z") { e.preventDefault(); app.run(e.shiftKey ? "redo" : "undo"); return; }
   if (mod && e.key.toLowerCase() === "y") { e.preventDefault(); app.run("redo"); return; }
+  // a drawing tool keeps its keys (Enter ends a chain, digits type a length) wherever focus is -
+  // clicking a ribbon button to change shape must not leave Enter with nothing to do
+  if (!mod && app.tool !== "select") { const av = app.views.get(app.activeView); if (av && av.key && !(av.canvas && document.activeElement === av.canvas) && av.key(e)) { e.preventDefault(); return; } }
   if (mod && e.key.toLowerCase() === "s") { e.preventDefault(); app.run("save"); return; }
   if (e.key === "Escape") {
     keyBuf = ""; if (openMenu) { closeMenus(); return; }

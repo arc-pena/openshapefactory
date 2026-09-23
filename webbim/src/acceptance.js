@@ -22,7 +22,7 @@ import { propertyModel, pickCandidates, graphModel, listeningDimensions, dimensi
 import { buildSample } from "./sample.js";
 import { parseLength, setLengthUnit } from "./units.js";
 import { bimToCad, cadEditsToOps } from "./cadbridge.js";
-import { fromPolygon, addElements, fillet, toggleLock, measureDim, dragHandle, regionsOf } from "./bimsketch.js";
+import { fromPolygon, addElements, fillet, toggleLock, measureDim, dragHandle, regionsOf, shapeFromClicks, filletCorners, toCentreline } from "./bimsketch.js";
 
 export const CASES = [];
 const testCase = (id, name, fn, opts = {}) => CASES.push(Object.assign({ id, name, fn }, opts));
@@ -1148,4 +1148,26 @@ testCase("M25", "A sheet draws a viewport the same whether or not its view was d
   const win = { x: 180, y: 300, z: 6, W: 900, H: 700, dpr: 1 };
   const fresh = count(false, win), afterPlan = count(true, win);
   return R(fresh > 50 && fresh === afterPlan, "same number of strokes and fills either way", `fresh ${fresh}, after drawing the plan first ${afterPlan}`);
+});
+
+testCase("M26", "Walls draw from the sketcher's shapes (rounded rectangle, circle, spline); grids stay orthogonal while ticked", () => {
+  const doc = buildSample(), ed = new Editor(doc);
+  // a rectangle with R 1000 corners: 4 lines and 4 arcs, every one a wall, ends joined
+  const d = filletCorners({ elements: shapeFromClicks("rect", [[20000, 0], [26000, 4000]]), constraints: [], dims: [] }, 1000);
+  const cls = d.elements.map(toCentreline), kinds = cls.map(c => c.type).sort().join(",");
+  const ops = cls.map((c, i) => ({ op: "add", element: { id: "RW" + i, type: "Wall", args: { centreline: c, mounting: "Centred", wallType: { ref: "T-BLOCK215" }, baseLevel: { ref: "L0" }, height: 3000 } } }));
+  const res = ed.apply(ops.concat([{ op: "autojoin", ends: cls.flatMap((_, i) => [{ id: "RW" + i, end: "start" }, { id: "RW" + i, end: "end" }]) }]));
+  const errs = cls.map((_, i) => doc.error(doc.element("RW" + i))).filter(Boolean);
+  const arcLen = doc.plan(doc.element("RW" + cls.findIndex(c => c.type === "arc"))).L;
+  const circle = toCentreline(shapeFromClicks("circle", [[0, 0], [2000, 0]])[0]);
+  // grids: ticked, an end handle slides along the grid; ticking a skewed grid straightens it
+  const hs = CATALOGUE.get("Grid").handles(doc.element("G-A"), doc), endH = hs.find(x => x.key === "end");
+  ed.apply([{ op: "set", id: "G-A", key: "orthogonal", value: false }, { op: "set", id: "G-A", key: "line", value: { type: "line", start: [0, -2000], end: [900, 10000] } }]);
+  const skew = doc.argValue(doc.element("G-A"), "line");
+  ed.apply({ op: "set", id: "G-A", key: "orthogonal", value: true });
+  const straight = doc.argValue(doc.element("G-A"), "line");
+  const ok = res.ok && !errs.length && kinds === "arc,arc,arc,arc,line,line,line,line" && Math.abs(arcLen - Math.PI * 1000 / 2) < 5 && circle.type === "circle" && circle.radius === 2000
+    && endH && endH.constraint && endH.constraint.axis && skew.end[0] === 900 && straight.end[0] === 0 && Math.abs(straight.end[1] - 10000) < 1;
+  return R(ok, "4 lines + 4 quarter arcs as walls with no errors; a circle wall; grid end handles slide along the grid; ticking straightens a skewed grid",
+    `ok ${res.ok}; kinds ${kinds}; errors ${errs.join("; ")}; corner arc length ${Math.round(arcLen)}; circle ${JSON.stringify(circle)}; grid handle ${JSON.stringify(endH && endH.constraint)}; skew ${JSON.stringify(skew.end)} → ${JSON.stringify(straight.end)}`);
 });

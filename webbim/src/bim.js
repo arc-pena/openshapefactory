@@ -36,10 +36,24 @@ BUILDERS.Level = { build: (f) => {
 
 declare({ type: "Grid", guid: "wb-0002", category: "IfcGrid", kind: "grid", idPrefix: "G-",
   summary: "A datum line with a bubble. Publishes its line as a reference.",
-  args: [ text("name", "Label", "A", { group: "Identity Data" }), curve2d("line", "Line", ["line"], { type: "line", start: [0, 0], end: [0, 10000] }) ],
-  handles: (f) => { const c = F.json(f, "line"); return [
+  args: [ text("name", "Label", "A", { group: "Identity Data" }), curve2d("line", "Line", ["line"], { type: "line", start: [0, 0], end: [0, 10000] }),
+          // ticked, a grid only runs horizontal or vertical - its ends slide along it; unticked, they go anywhere
+          bool("orthogonal", "Orthogonal", true, { group: "Constraints" }) ],
+  handles: (f) => {
+    const c = F.json(f, "line");
+    if (F.bool(f, "orthogonal") !== false) {
+      const u = orthoAxis(c.start, c.end);
+      return [{ key: "start", at: c.start, constraint: { axis: u, origin: c.end }, writes: "line.start" }, { key: "end", at: c.end, constraint: { axis: u, origin: c.start }, writes: "line.end" },
+        { key: "move", at: lerp(c.start, c.end, 0.5), constraint: "free2d", writes: "line" }];
+    }
+    return [
     { key: "start", at: c.start, constraint: "free2d", writes: "line.start" },
-    { key: "end", at: c.end, constraint: "free2d", writes: "line.end" } ]; } });
+    { key: "end", at: c.end, constraint: "free2d", writes: "line.end" },
+    { key: "move", at: lerp(c.start, c.end, 0.5), constraint: "free2d", writes: "line" } ]; } });
+/** The axis (x or y) nearest a line's direction, pointing the way it runs. */
+export function orthoAxis(a, b) { const d = sub(b, a); return Math.abs(d[0]) >= Math.abs(d[1]) ? [Math.sign(d[0]) || 1, 0] : [0, Math.sign(d[1]) || 1]; }
+/** A grid line made orthogonal: its end moved onto the nearest axis through its start. */
+export function orthoLine(c) { const u = orthoAxis(c.start, c.end), L = dot(sub(c.end, c.start), u); return Object.assign({}, c, { end: add(c.start, mul(u, L)) }); }
 BUILDERS.Grid = { build: (f) => {
   const c = F.json(f, "line");
   return { data: { value: dist(c.start, c.end), kind: "Length", refs: [{ key: "line", kind: "line", geom: lineThrough(c.start, c.end) }],
@@ -547,8 +561,18 @@ BUILDERS.DetailLine = { build: () => ({ data: {} }) };
 
 declare({ type: "FilledRegion", guid: "wb-0703", category: "Detail", kind: "detail", idPrefix: "FR",
   summary: "A hatched region that lives in one view.",
-  args: [ json("boundary", "Boundary", [[0, 0], [1000, 0], [1000, 1000], [0, 1000]]), text("pattern", "Pattern", "P-DIAG"), ref("view", "View", ["view"], { view: true }) ] });
-BUILDERS.FilledRegion = { build: () => ({ data: { props: {} } }) };
+  args: [ json("boundary", "Boundary", [[0, 0], [1000, 0], [1000, 1000], [0, 1000]]), text("pattern", "Pattern", "P-DIAG"), ref("view", "View", ["view"], { view: true }),
+          json("sketch", "Boundary sketch", null) ] });
+/** A filled region's areas: its sketch's loops and holes (as a floor's), or the plain boundary. */
+export function regionAreas(f) {
+  const sk = F.json(f, "sketch");
+  if (hasSketch(sk)) { const r = regionsOf(sk); if (!r.error) return r.regions; }
+  return [{ outer: F.json(f, "boundary"), holes: [] }];
+}
+BUILDERS.FilledRegion = { build: (f) => {
+  const rs = regionAreas(f), a = r => Math.abs(polyArea(r));
+  return { data: { props: { Area: { kind: "Area", v: rs.reduce((s, rg) => s + a(rg.outer) - rg.holes.reduce((t, hh) => t + a(hh), 0), 0) } } } };
+} };
 
 declare({ type: "SymbolInstance", guid: "wb-0704", category: "Annotation", kind: "detail", idPrefix: "SY",
   summary: "A placed symbol. Paper symbols keep their size on the sheet; model symbols scale with the drawing.",

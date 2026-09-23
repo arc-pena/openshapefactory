@@ -9,7 +9,7 @@ import { bareFactor, LENGTH_UNITS, setLengthUnit } from "./units.js";
 import { TOL, add, sub, mul, dot, dist, perp, normalise, lineThrough, signedDistance, offsetLine, rot, len, cross, intersectLines } from "./geom2d.js";
 import { parse, namesIn, evaluate, saysFormula, readValue, ExprError, formatValue } from "./expr.js";
 import { CATALOGUE, F, clone, documentLookup, MODEL_LIBS } from "./ocaf.js";
-import { resolveReference } from "./bim.js";
+import { resolveReference, orthoLine } from "./bim.js";
 
 export class Editor {
   constructor(doc) {
@@ -175,6 +175,8 @@ const HANDLERS = {
       setPath(doc, f, o.key, value);
       // a door or window sizes its opening: changing its type resizes the hole to the new type
       if ((o.key === "doorType" || o.key === "windowType") && value && value.ref) sizeOpeningsToType(doc, [f]);
+      // ticking a grid's Orthogonal straightens it onto the nearest axis, about its start
+      if (doc.typeOf(f) === "Grid" && o.key === "orthogonal" && value) setPath(doc, f, "line", orthoLine(doc.argValue(f, "line")));
       // a level moved drags the levels padlocked to it, keeping each locked height
       if (doc.typeOf(f) === "Level" && o.key === "elevation") holdLevelGaps(doc, id);
     }

@@ -417,3 +417,65 @@ export function fromPolygon(pts) {
 }
 export const ellipsePoint = (el, t) => cadEllipseAt(el, t);
 export const handlesOf = el => cadSketchHandles(el);
+
+// ---------------------------------------------------------------- shapes from clicks (walls, and anything else that draws)
+/** How many clicks finish a shape; 0 = a chain, ended by Enter, a double-click or closing on its start. */
+export const SHAPE_CLICKS = { line: 0, rect: 2, polygon: 2, arc: 3, circle: 2, ellipse: 3, spline: 0, bspline: 0 };
+/** The sketch elements a run of clicks makes (the cursor may be the last one, for a preview). */
+export function shapeFromClicks(shape, P, { sides = 6, closed = false } = {}) {
+  const n = P.length, out = [];
+  if (shape === "line") { for (let i = 0; i + 1 < n; i++) if (skDist(P[i], P[i + 1]) > 1e-6) out.push({ type: "line", a: P[i], b: P[i + 1] }); if (closed && n > 2) out.push({ type: "line", a: P[n - 1], b: P[0] }); }
+  else if (shape === "rect" && n >= 2) { const [a, b] = P, c = [[a[0], a[1]], [b[0], a[1]], [b[0], b[1]], [a[0], b[1]]]; for (let k = 0; k < 4; k++) out.push({ type: "line", a: c[k], b: c[(k + 1) % 4] }); }
+  else if (shape === "polygon" && n >= 2) {
+    const [c, v] = P, N = Math.max(3, Math.round(sides) || 6), r = skDist(c, v), a0 = Math.atan2(v[1] - c[1], v[0] - c[0]);
+    const cs = Array.from({ length: N }, (_, k) => [c[0] + r * Math.cos(a0 + k * SK_TAU / N), c[1] + r * Math.sin(a0 + k * SK_TAU / N)]);
+    cs.forEach((p, k) => out.push({ type: "line", a: p, b: cs[(k + 1) % N] }));
+  }
+  else if (shape === "arc" && n === 2) out.push({ type: "line", a: P[0], b: P[1] });
+  else if (shape === "arc" && n >= 3) { const el = arcThrough3(P[0], P[1], P[2]); if (el) out.push(el); }
+  else if (shape === "circle" && n >= 2) out.push({ type: "circle", c: P[0], r: Math.max(1, skDist(P[0], P[1])) });
+  else if (shape === "ellipse" && n >= 2) {
+    const ax = P[1], rx = skDist(P[0], ax), rot = Math.atan2(ax[1] - P[0][1], ax[0] - P[0][0]);
+    const v = n >= 3 ? skSub(P[2], P[0]) : null, ry = v ? Math.abs(-Math.sin(rot) * v[0] + Math.cos(rot) * v[1]) : rx / 2;
+    out.push({ type: "ellipse", c: P[0], rx: Math.max(1, rx), ry: Math.max(1, Math.min(ry, rx * 0.999 + 1e-6)), rot });
+  }
+  else if (shape === "spline" && n >= 2) out.push({ type: "spline", pts: P.slice(), closed });
+  else if (shape === "bspline" && n >= 2) out.push({ type: "bspline", ctrl: P.slice(), degree: 3, closed });
+  return out.map((e, i) => Object.assign({ id: "e" + (i + 1) }, e));
+}
+/** Round every corner where two lines meet (Revit's Radius option on a wall chain). */
+export function filletCorners(d, radius) {
+  let w = weld(sketchOf(d));
+  for (let guard = 0; guard < 200; guard++) {
+    const lines = w.elements.filter(e => e.type === "line");
+    let pair = null;
+    for (const c of w.constraints) {
+      if (c.type !== "coincident") continue;
+      const [ra, rb] = c.of.map(r => r.split(".")[0]), A = lines.find(e => e.id === ra), B = lines.find(e => e.id === rb);
+      if (!A || !B) continue;
+      const ua = skUnit(skSub(A.b, A.a)), ub = skUnit(skSub(B.b, B.a));
+      if (Math.abs(ua[0] * ub[1] - ua[1] * ub[0]) < 1e-6) continue;                 // straight on: no corner
+      if (w.constraints.some(t => t.type === "tangent" && t.of.includes(ra) && t.of.includes(rb))) continue;
+      if (w.elements.some(e => e.type === "arc" && w.constraints.some(t => t.type === "tangent" && t.of.includes(e.id) && t.of.includes(ra)) && w.constraints.some(t => t.type === "tangent" && t.of.includes(e.id) && t.of.includes(rb)))) continue;
+      pair = [A, B]; break;
+    }
+    if (!pair) break;
+    const [A, B] = pair;
+    try { w = fillet(w, A.id, skMul(skAdd(A.a, A.b), 0.5), B.id, skMul(skAdd(B.a, B.b), 0.5), radius); }
+    catch (e) { w.constraints.push({ type: "tangent", of: [A.id, B.id] }); }            // cannot round this one: leave it sharp, and move on
+  }
+  w.constraints = w.constraints.filter(c => !(c.type === "tangent" && c.of.length === 2 && w.elements.filter(e => c.of.includes(e.id)).every(e => e.type === "line")));
+  return w;
+}
+/** A sketch element as a wall centreline (geom2d's curve JSON). A spline by control points has no
+ *  wall curve of its own, so it becomes the through-points spline of points sampled on it. */
+export function toCentreline(el) {
+  const deg = r => r * 180 / Math.PI;
+  if (el.type === "line") return { type: "line", start: el.a.slice(), end: el.b.slice() };
+  if (el.type === "arc") { const ccw = el.a1 > el.a0; return { type: "arc", centre: el.c.slice(), radius: el.r, start: deg(ccw ? el.a0 : el.a0), end: deg(el.a1), ccw }; }
+  if (el.type === "circle") return { type: "circle", centre: el.c.slice(), radius: el.r };
+  if (el.type === "ellipse") return { type: "ellipse", centre: el.c.slice(), rx: el.rx, ry: el.ry, rotation: deg(el.rot || 0) };
+  if (el.type === "spline") { const pts = el.pts.map(p => p.slice()); if (el.closed) pts.push(pts[0].slice()); return { type: "spline", points: pts }; }
+  if (el.type === "bspline") { const pts = cadSketchOutline(el, 64).filter((_, i, A) => i % 4 === 0 || i === A.length - 1); return { type: "spline", points: pts.map(p => p.slice()) }; }
+  return null;
+}

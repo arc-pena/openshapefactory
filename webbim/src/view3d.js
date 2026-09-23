@@ -406,7 +406,11 @@ export class View3D {
       if (g.button === 2) return this.app.contextMenu(e, "3d");
       this.click(e);
     });
-    el.addEventListener("dblclick", () => { if (this.app.tool === "wall" && this.tool.pts.length >= 2) this.finishWall(false); });
+    el.addEventListener("dblclick", e => {
+      if (this.app.tool === "wall" && this.tool.pts.length >= 2) return this.finishWall(false);
+      if (this.app.tool !== "select") return;
+      const hit = this.pickElement(e); if (hit) this.app.stepInto(hit.id, null);       // step into, as in plan
+    });
     el.addEventListener("contextmenu", e => e.preventDefault());
     el.addEventListener("auxclick", e => { if (e.button === 1) e.preventDefault(); });
     el.addEventListener("wheel", e => {

@@ -218,6 +218,7 @@ const COMMANDS = {
   fliphand: { label: "Flip Hand", icon: "mirror", run: () => flipDoors("flipHand") },
   flipfacing: { label: "Flip Facing", icon: "mirror", run: () => flipDoors("flipFacing") },
   closehidden: { label: "Close Inactive", icon: "close", run: () => { app.tabs = app.tabs.filter(t => t === app.activeView); app.refresh(); } },
+  region: { label: "Filled Region", icon: "skrect", key: "FR", hint: "Sketch a hatched region in this view: closed loops, holes inside; Finish ✓ makes it", run: () => startRegionSketch() },
   edittype: { label: "Edit Type", icon: "edittype", run: () => { const t = selectedType(); if (t) typeEditor(app, t); else app.say("select an element with a type", "note"); } },
   props: { label: "Properties", icon: "props", key: "PP", active: () => !document.body.classList.contains("hide-props"), run: () => document.body.classList.toggle("hide-props") },
   pens: { label: "Object Styles & Pens", icon: "pens", run: () => { const v = app.activeView && app.doc.element(app.activeView); vvDialog(app, v && ["PlanView", "ElevationView", "SectionView", "View3D"].includes(app.doc.typeOf(v)) ? app.activeView : firstOf("PlanView")); } },
@@ -239,6 +240,8 @@ app.setTool = k => {
   app.tool = k; app.pickMode = null; app.lastCommand = k !== "select" ? k : app.lastCommand;
   const v = app.views.get(app.activeView); if (v && v.tool) { v.tool.pts = []; v.tool.refs = []; v.tool.preview = null; v.tool.ghost = null; v.tool.centre = null; }
   if (k !== "select" && app.ribbonTab === "__context" && !MODIFY_TOOLS.has(k)) { app.ribbonTab = app.ribbonAuto || "Architecture"; }
+  // the wall tool brings up its own tab (Modify | Place Wall), with the sketcher's draw shapes
+  if (k === "wall") { app.ribbonAuto = app.ribbonTab === "__context" ? app.ribbonAuto : app.ribbonTab; app.ribbonTab = "__context"; }
   app.refresh({ keepMain: true });
   app.say((COMMANDS[k] && COMMANDS[k].hint) || "", "note");
 };
@@ -264,6 +267,7 @@ const RIBBON = [
   { tab: "Annotate", panels: [
     { title: "Dimension", items: [big("dim")] },
     { title: "Text", items: [big("text")] },
+    { title: "Detail", items: [big("region")] },
     { title: "Symbol", items: [big("placesymbol")] },
   ] },
   { tab: "View", panels: [
@@ -283,7 +287,16 @@ const RIBBON = [
     { title: "View", items: [small("zoomfit"), small("thin")] },
   ] },
 ];
+/** The wall tool's draw shapes: the sketcher's, without its Finish - each shape is walls at once. */
+const WALL_SHAPES = [["line", "Line", "skline"], ["rect", "Rectangle", "skrect"], ["polygon", "Polygon", "skpoly"], ["arc", "Arc", "skarc"], ["circle", "Circle", "skcircle"],
+  ["ellipse", "Ellipse", "skellipse"], ["bspline", "Spline (control points)", "skbspline"], ["spline", "Spline (through points)", "skspline"], ["pick", "Pick Lines", "pick"]];
+for (const [k, label, ic] of WALL_SHAPES) COMMANDS["wallshape_" + k] = { label, icon: ic, hint: k === "pick" ? "Click a grid, detail line, room separator, floor edge or wall face: a wall along it" : `Draw walls as a ${label.toLowerCase()}`, active: () => app.tool === "wall" && (app.toolOpts.wallShape || "line") === k,
+  run: () => { app.toolOpts.wallShape = k; const v = app.views.get(app.activeView); if (v && v.tool) { v.tool.pts = []; v.tool.cursor = null; } app.refresh({ keepMain: true }); } };
 function contextTab() {
+  if (app.tool === "wall") return { tab: "__context", label: "Modify | Place Wall", panels: [
+    { title: "Draw", items: WALL_SHAPES.map(([k], i) => (i < 5 || k === "pick" ? big : small)("wallshape_" + k)) },
+    { title: "Modify", items: [small("move"), small("copy"), small("rotate")] },
+  ] };
   const els = [...app.selection].map(id => app.doc.element(id)).filter(Boolean);
   if (!els.length) return null;
   const cats = [...new Set(els.map(f => (app.doc.lib.categories[categoryOf(app.doc, f)] || {}).name || app.doc.typeOf(f)))];
@@ -369,6 +382,36 @@ function startFloorSketch() {
   const v = planViewForSketch(null); if (!v) return app.say("open a floor plan to sketch a floor in", "error");
   app.startSketch(v, { kind: "floor", id: null }, null);
 }
+function startRegionSketch() {
+  const v = app.views.get(app.activeView);
+  if (!v || v.kind !== "PlanView") return app.say("open a plan to sketch a filled region in", "error");
+  app.startSketch(v, { kind: "region", id: null }, null);
+}
+/** Double-click is "step into": whatever the element is, go where it is edited - its view, its
+ *  sketch, its text, its value, its type - rather than select-then-find-the-button. */
+app.stepInto = (id, view) => {
+  const doc = app.doc, f = doc.element(id); if (!f) return;
+  const t = doc.typeOf(f);
+  if (["ElevationView", "SectionView", "PlanView", "View3D", "Schedule", "Sheet"].includes(t)) return app.openView(id);
+  if (t === "Floor") return app.editBoundary(id);
+  if (t === "FilledRegion") {
+    const vv = view && view.kind === "PlanView" ? view : app.views.get(app.activeView); if (!vv || vv.kind !== "PlanView") return;
+    const sk = doc.argValue(f, "sketch");
+    return app.startSketch(vv, { kind: "region", id, pattern: F.text(f, "pattern") }, sk && sk.elements && sk.elements.length ? sk : fromPolygon(F.json(f, "boundary") || []));
+  }
+  app.select([id]);
+  const ask = (title, label, value, apply) => {
+    const inp = h(label === "Text" ? "textarea" : "input", { type: "text", value, rows: 4, style: { width: "320px" }, "aria-label": label }); if (label === "Text") inp.value = value;
+    dialog(title, h("label", { style: { display: "grid", gap: "6px" } }, label, inp), [{ label: "Cancel", run: () => true }, { label: "OK", primary: true, run: () => { apply(inp.value); return true; } }]);
+    setTimeout(() => { inp.focus(); inp.select && inp.select(); }, 30);
+  };
+  if (t === "Text") return ask(`Edit text ${id}`, "Text", F.text(f, "content"), v => app.apply({ op: "set", id, key: "content", value: v }));
+  if (t === "Grid") return ask(`Grid ${F.text(f, "name")}`, "Name", F.text(f, "name"), v => app.apply([{ op: "set", id, key: "name", value: v }, { op: "rename", id, name: "Grid " + v }]));
+  if (t === "Level") return ask(`Level ${F.text(f, "name")}`, "Name", F.text(f, "name"), v => app.apply([{ op: "set", id, key: "name", value: v }, { op: "rename", id, name: v }]));
+  if (t === "Space") return ask(`Room ${id}`, "Name", f.get("Name") || "", v => app.apply({ op: "rename", id, name: v }));
+  if (t === "Dimension") { setTimeout(() => { const b = document.querySelector("#main .overlay .tdim button:not(.lock)"); if (b) b.click(); }, 60); return; }
+  if (["Door", "Window", "Wall", "Column", "Beam"].includes(t)) return app.run("edittype");
+};
 /** A floor's boundary, back in its sketch. A floor drawn before sketches (or imported) opens as its polygon. */
 app.editBoundary = id => {
   const f = app.doc.element(id); if (!f || app.doc.typeOf(f) !== "Floor") return;
@@ -406,7 +449,13 @@ function renderOptionsBar() {
   else if (t === "select") { title = els.length ? `Modify | ${els.length} selected` : "Modify"; kids = els.length ? [h("span", { class: "muted" }, "Drag to move · MV CO RO MM · DE deletes · Esc clears")] : [h("span", { class: "muted" }, "Pick elements, or window-select by dragging on empty space")]; }
   else {
     title = `Modify | Place ${COMMANDS[t] ? COMMANDS[t].label : t}`;
-    if (t === "wall") kids = [sel("wallType", typesOf("IfcWall").map(([id, x]) => [id, x.name]), "Type:"), sel("mounting", ["Centred", "Core centre", "Core exterior", "Core interior", "Finish exterior", "Finish interior"].map(x => [x, x]), "Location Line:"), num("height", "Height:"), levelPicker()];
+    if (t === "wall") {
+      // Revit's wall options: location line, offset from what is drawn, rounded chain corners
+      const radiusOn = h("label", {}, h("input", { type: "checkbox", checked: !!o.wallRadiusOn, onchange: e => { o.wallRadiusOn = e.target.checked; } }), " Radius");
+      kids = [sel("wallType", typesOf("IfcWall").map(([id, x]) => [id, x.name]), "Type:"), sel("mounting", ["Centred", "Core centre", "Core exterior", "Core interior", "Finish exterior", "Finish interior"].map(x => [x, x]), "Location Line:"), num("height", "Height:"), levelPicker(),
+        num("wallOffset", "Offset:"), radiusOn, num("wallRadius", ""), ...((o.wallShape || "line") === "polygon" ? [h("label", {}, "Sides ", h("input", { type: "text", value: o.wallSides || 6, style: { width: "40px" }, onchange: e => { o.wallSides = Math.max(3, Math.round(Number(e.target.value)) || 6); } }))] : [])];
+    }
+    if (t === "grid") kids = [h("label", { title: "Ticked: new grids run horizontal or vertical" }, h("input", { type: "checkbox", checked: o.gridOrtho !== false, onchange: e => { o.gridOrtho = e.target.checked; } }), " Orthogonal")];
     if (t === "door") kids = [sel("doorType", typesOf("IfcDoor").map(([id, x]) => [id, x.name]), "Type:")];
     if (t === "window") kids = [sel("windowType", typesOf("IfcWindow").map(([id, x]) => [id, x.name]), "Type:"), num("sill", "Sill Height:")];
     if (t === "opening") kids = [num("width", "Width:"), num("height_", "Height:"), num("openSill", "Sill:")];
@@ -1057,6 +1106,9 @@ window.addEventListener("keydown", e => {
   }
   if (mod && e.key.toLowerCase() === "z") { e.preventDefault(); app.run(e.shiftKey ? "redo" : "undo"); return; }
   if (mod && e.key.toLowerCase() === "y") { e.preventDefault(); app.run("redo"); return; }
+  // a drawing tool keeps its keys (Enter ends a chain, digits type a length) wherever focus is -
+  // clicking a ribbon button to change shape must not leave Enter with nothing to do
+  if (!mod && app.tool !== "select") { const av = app.views.get(app.activeView); if (av && av.key && !(av.canvas && document.activeElement === av.canvas) && av.key(e)) { e.preventDefault(); return; } }
   if (mod && e.key.toLowerCase() === "s") { e.preventDefault(); app.run("save"); return; }
   if (e.key === "Escape") {
     keyBuf = ""; if (openMenu) { closeMenus(); return; }
