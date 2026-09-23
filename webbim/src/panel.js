@@ -111,6 +111,18 @@ function rowEditor(app, ids, f, r) {
     val.append(h("div", { class: "ro locked" }, "🔒 ", shownL), h("div", { class: "under" }, `set by the view style ${lk} · `, h("a", { href: "#", onclick: e => { e.preventDefault(); viewStyleEditor(app, F.refId(f, "style"), ids[0]); } }, "edit style")));
     return h("div", { class: "prow locked" }, label, val);
   }
+  // a wall's inclination: the angle it leans, what it turns about, and its raking top
+  if (r.key === "slope" && r.source === "arg" && doc.typeOf(f) === "Wall") {
+    const cur = Object.assign({ top: 0, lean: 0 }, r.value || {});
+    const num = (k, label) => { const i = h("input", { type: "text", value: String(cur[k] || 0), style: { width: "60px" }, "aria-label": label }); i.addEventListener("change", () => { const v = Number(i.value); if (!Number.isFinite(v) || Math.abs(v) >= 89) { under.textContent = "an angle between -89° and 89°"; under.classList.add("err"); return; } const next = Object.assign({}, cur, { [k]: v }); if (k === "lean" && next.pivot === undefined) next.pivot = "centre"; commit({ value: next }); }); return i; };
+    const piv = h("select", { "aria-label": "Inclination pivot", onchange: e => commit({ value: Object.assign({}, cur, { pivot: e.target.value }) }) },
+      [["centre", "Centreline at floor finish"], ["base", "Location line at base"]].map(([v, l]) => h("option", { value: v, selected: (cur.pivot || "base") === v }, l)));
+    const grid = h("div", { style: { display: "grid", gridTemplateColumns: "auto 1fr", gap: "2px 6px", alignItems: "center" } },
+      h("span", { class: "muted" }, "Inclination °"), num("lean", "Inclination"), h("span", { class: "muted" }, "Turns about"), piv, h("span", { class: "muted" }, "Top slope °"), num("top", "Top slope"));
+    under.textContent = "positive leans toward the wall's left; about its centreline where it meets the floor finish, the base line moves so the wall pivots there";
+    val.append(grid, under);
+    return h("div", { class: "prow" }, h("label", {}, "Inclination"), val);
+  }
   // a plan's View Range, as Revit's dialog has it: four planes measured from the level, any unit
   if (r.key === "viewRange" && r.source === "arg") {
     const cur = Object.assign({ top: 2300, cut: 1200, bottom: 0 }, r.value || {}); if (cur.depth === undefined) cur.depth = cur.bottom;

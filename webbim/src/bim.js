@@ -110,7 +110,7 @@ declare({ type: "Wall", guid: "wb-0101", category: "IfcWall", kind: "wall", idPr
     real("baseOffset", "Base offset", 0, -10000, 10000, 1),
     real("height", "Height", 3000, 1, 100000, 1, "mm", { group: "Dimensions" }),
     bool("flipped", "Flipped", false),
-    json("slope", "Top slope & lean", { top: 0, lean: 0 }, { group: "Constraints" }),
+    json("slope", "Inclination & top slope", { top: 0, lean: 0 }, { group: "Constraints" }),
   ],
   handles: (f, doc) => {
     const c = F.json(f, "centreline"), w = doc.plan(f);
@@ -135,7 +135,7 @@ BUILDERS.Wall = {
     const height = F.real(f, "height");
     if (!(height > 0)) throw new Error(`a wall ${height}mm high has nothing to draw`);
     const w = wallRecord({ id: doc.idOf(f), centreline: F.json(f, "centreline"), type: t, mounting: F.choice(f, "mounting"),
-      mountOffset: F.real(f, "mountOffset"), flipped: F.bool(f, "flipped"), z0, height, slope: F.json(f, "slope"), stats: doc.stats });
+      mountOffset: F.real(f, "mountOffset"), flipped: F.bool(f, "flipped"), z0, height, slope: F.json(f, "slope"), stats: doc.stats, zFloor: levelElev(doc, f) + ((F.json(f, "slope") || {}).pivotZ || 0) });
     if (w.L < TOL) throw new Error("the centreline has no length");
     const len = w.L, thick = w.stack.T;
     const lv = F.reference(f, "baseLevel");

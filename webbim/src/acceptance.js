@@ -1559,3 +1559,18 @@ testCase("M49", "Levels through a massing: storeys at the floor-to-floor whereve
   const ok = r.ok && lv.length === 8 && plans === 8 && sg.ok && a2 < a1;
   return R(ok, "8 storeys of 3.5 m in a 30 m tapering block, each a level with a plan; level 1 moved up to 4.5 m: the ground storey is taller, so its plate (taken at its ceiling) is smaller", `${lv.length} levels, ${plans} plans; ground plate ${Math.round(a1 / 1e6)} m², with level 1 at 4.5 m ${Math.round(a2 / 1e6)} m²`);
 });
+
+testCase("M50", "Wall inclination about its centreline at the floor finish: the centre plane still passes through that line; the faces are the tilted planes, their thickness unchanged", () => {
+  const { doc, ed } = fixture();
+  wall(doc, "A", [0, 0], [6000, 0], "T-300", { baseOffset: -300, height: 3300, mounting: "Core exterior", slope: { top: 0, lean: 10, pivot: "centre" } }); doc.regenerate();
+  const w = doc.plan(doc.element("A")), th = 10 * Math.PI / 180;
+  const sc = (w.stack.s[0] + w.stack.s[w.stack.s.length - 1]) / 2, zFloor = 0;
+  const S = wallSurfaces(w, w.stack.s[0], w.stack.s[w.stack.s.length - 1]);
+  // the centre plane: halfway between the outer and inner faces; its point on y at z = floor finish
+  const at = (pl, z) => (pl.c - pl.n[2] * z - pl.n[0] * 3000) / pl.n[1];
+  const yO = at(S.outer, zFloor), yI = at(S.inner, zFloor), yMid = (yO + yI) / 2;
+  const straightMid = sc;                                   // where the centre plane meets the floor on an upright wall
+  const thick = Math.abs(yO - yI) * Math.cos(th), T = Math.abs(w.stack.s[w.stack.s.length - 1] - w.stack.s[0]);
+  const ok = Math.abs(yMid - straightMid) < 0.5 && Math.abs(thick - T) < 0.5;
+  return R(ok, `centre plane meets the floor finish at y = ${straightMid.toFixed(1)} (unmoved); thickness ${T} mm perpendicular to the faces`, `centre at floor ${yMid.toFixed(2)}; thickness ${thick.toFixed(2)}`);
+});

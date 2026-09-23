@@ -113,10 +113,19 @@ function interiorProbe(S) {
 /** Everything a wall's drawing and solid are derived from, built in phase 2.
  *  Offsets themselves are NOT built here: they are computed per detail level
  *  on demand and counted (test 13), so coarse never builds the intermediate ones. */
-export function wallRecord({ id, centreline, type, mounting, mountOffset, flipped, z0, height, slope, stats }) {
-  const curve = curveOf(centreline);
+export function wallRecord({ id, centreline, type, mounting, mountOffset, flipped, z0, height, slope, stats, zFloor = z0 }) {
+  let curve = curveOf(centreline);
   const stack = layerStack(type, mounting, mountOffset, flipped);
   const lean = ((slope && slope.lean) || 0) * Math.PI / 180;
+  // Inclination about the wall's centreline where it meets the top of the floor finish (the level), not
+  // about its location line at its base. Rotating about a parallel axis is the same rotation followed by
+  // a shift; for infinite face planes only the shift across them matters, and it is the same for every
+  // face: δ = s_c (cos θ − 1) − (z_p − z_0) sin θ. At the base that is the location line moved by δ / cos θ.
+  if (lean && slope && slope.pivot === "centre" && curve.type === "line") {
+    const sc = (stack.s[0] + stack.s[stack.s.length - 1]) / 2, delta = sc * (Math.cos(lean) - 1) - (zFloor - z0) * Math.sin(lean);
+    const d = curve.tangentAt(0), n2 = [-d[1], d[0]], k = delta / Math.cos(lean);
+    curve = curveOf({ type: "line", start: [centreline.start[0] + n2[0] * k, centreline.start[1] + n2[1] * k], end: [centreline.end[0] + n2[0] * k, centreline.end[1] + n2[1] * k] });
+  }
   const topSlope = ((slope && slope.top) || 0) * Math.PI / 180;
   if (curve.type === "arc" || curve.type === "circle") {
     // Toward the centre is the left of an anticlockwise arc. The largest offset
