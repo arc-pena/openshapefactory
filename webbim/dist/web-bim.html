@@ -78,10 +78,10 @@ button { cursor: pointer; }
 .options label { display: inline-flex; align-items: center; gap: 4px; color: var(--ink-2); }
 .options select, .options input[type=text] { height: 22px; border: 1px solid var(--rule); border-radius: 2px; background: var(--panel); padding: 0 4px; }
 /* palettes */
-.left { grid-area: left; display: grid; grid-template-rows: var(--split, 55%) 5px 1fr; background: var(--chrome); border-right: 1px solid var(--rule); min-height: 0; min-width: 0; }
+.left { grid-area: left; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: var(--split, 55%) 5px 1fr; background: var(--chrome); border-right: 1px solid var(--rule); min-height: 0; min-width: 0; }
 body.hide-props .left { grid-template-rows: 0 0 1fr; }
 body.hide-props .palette.props, body.hide-props .psplit { display: none; }
-.palette { display: flex; flex-direction: column; min-height: 0; background: var(--panel); border: 1px solid var(--rule); margin: 3px 3px 0; }
+.palette { display: flex; flex-direction: column; min-height: 0; min-width: 0; background: var(--panel); border: 1px solid var(--rule); margin: 3px 3px 0; }
 .palette.browser { margin-bottom: 3px; }
 .palette > header { display: flex; align-items: center; gap: 6px; height: 24px; padding: 0 4px 0 8px; background: var(--chrome-2); border-bottom: 1px solid var(--rule); font-weight: 600; font-size: 12px; flex: none; white-space: nowrap; overflow: hidden; }
 .palette > header > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
@@ -90,7 +90,9 @@ body.hide-props .palette.props, body.hide-props .psplit { display: none; }
 .ptabs { display: flex; gap: 1px; }
 .ptabs button { border: 1px solid var(--rule); background: var(--panel); height: 18px; padding: 0 6px; font-size: 11px; font-weight: 400; border-radius: 2px; }
 .ptabs button[aria-pressed="true"] { background: var(--accent-2); border-color: var(--accent); color: var(--accent); }
-.pbody { flex: 1; overflow: auto; min-height: 0; }
+.pbody { flex: 1; overflow-y: auto; overflow-x: hidden; min-height: 0; min-width: 0; }
+.pp { min-width: 0; max-width: 100%; }
+.pp-head, .pp-head .title { min-width: 0; }
 .psplit { cursor: row-resize; background: transparent; touch-action: none; }
 .psplit:hover { background: var(--accent-2); }
 /* main: document tabs, view, view control bar */
@@ -191,23 +193,32 @@ body.cad-switching .app { transform: scale(.985); filter: saturate(.6); }
 .banner.error { background: var(--error-bg); color: var(--error); } .banner.note { background: var(--note-bg); color: var(--note); } .banner.ok { background: var(--ok-bg); color: var(--ok); }
 .typebar { display: flex; gap: 6px; align-items: center; }
 .typebar select { flex: 1; min-width: 0; }
-.grp { border-bottom: 1px solid var(--rule-2); }
-.grp > summary { list-style: none; cursor: pointer; padding: 9px 14px 7px; font-family: var(--cond); font-weight: 600; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-2); display: flex; justify-content: space-between; }
+.pgrid-head { display: grid; grid-template-columns: 45% 1fr; position: sticky; top: 0; z-index: 2; background: var(--chrome-2); border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); font-size: 12px; color: var(--ink-2); }
+.pgrid-head span { padding: 3px 6px; text-align: center; }
+.pgrid-head span:first-child { border-right: 1px solid var(--rule); }
+/* Revit's property grid: category bands that fold, rows ruled like a table */
+.grp { border-bottom: 0; }
+.grp > summary { list-style: none; cursor: pointer; padding: 3px 6px; font-weight: 700; font-size: 12px; color: var(--ink); background: #d7dfea; border-bottom: 1px solid #b9c5d6; display: flex; justify-content: space-between; align-items: center; user-select: none; }
 .grp > summary::-webkit-details-marker { display: none; }
-.grp > summary::after { content: "–"; color: var(--ink-3); }
-.grp:not([open]) > summary::after { content: "+"; }
-.prow { display: grid; grid-template-columns: 38% 1fr; gap: 8px; padding: 4px 14px; align-items: start; }
-.prow > label { padding-top: 5px; color: var(--ink-2); overflow-wrap: anywhere; }
-.prow .val { display: grid; gap: 2px; min-width: 0; }
-.prow input[type=text], .prow select, .prow textarea { width: 100%; height: 28px; border: 1px solid var(--rule); border-radius: 4px; padding: 0 7px; background: var(--panel); min-width: 0; }
-.prow textarea { height: 64px; padding: 5px 7px; font: 11.5px var(--mono); resize: vertical; }
-.prow input.bound { font-family: var(--mono); font-size: 12px; color: var(--accent); background: var(--accent-2); border-color: transparent; }
-.prow .under { font: 11px var(--mono); color: var(--ink-3); overflow-wrap: anywhere; }
+.grp > summary::after { content: "⌃"; color: var(--ink-2); font-size: 13px; line-height: 1; transform: translateY(3px); }
+.grp:not([open]) > summary::after { content: "⌄"; transform: translateY(-3px); }
+.prow { display: grid; grid-template-columns: 45% 1fr; gap: 0; padding: 0; align-items: stretch; border-bottom: 1px solid var(--rule-2); min-height: 24px; }
+.prow > label { padding: 3px 6px; color: var(--ink); overflow-wrap: anywhere; border-right: 1px solid var(--rule-2); font-size: 12px; display: flex; align-items: center; }
+.prow .val { display: grid; gap: 0; min-width: 0; align-content: center; }
+.prow input[type=text], .prow select, .prow textarea { width: 100%; height: 23px; border: 1px solid transparent; border-radius: 0; padding: 0 6px; background: transparent; min-width: 0; font-size: 12px; }
+.prow input[type=text]:hover, .prow select:hover { border-color: var(--rule); }
+.prow input[type=text]:focus, .prow select:focus, .prow textarea:focus { background: var(--panel); border-color: var(--accent); outline: none; }
+.prow textarea { height: 56px; padding: 3px 6px; font: 11px var(--mono); resize: vertical; }
+.prow input.bound { font-family: var(--mono); font-size: 11.5px; color: var(--accent); background: var(--accent-2); }
+.prow .under { display: none; font: 10.5px var(--mono); color: var(--ink-3); overflow-wrap: anywhere; padding: 0 6px 2px; }
+.prow .under.err, .prow .val:has(input.bound) .under { display: block; }
 .prow .under.err { color: var(--error); }
-.prow .ro { padding-top: 5px; overflow-wrap: anywhere; }
-.prow .origin { font-size: 11px; color: var(--ink-3); }
-.prow .line { display: flex; gap: 4px; align-items: center; min-width: 0; }
+.prow .ro { padding: 3px 6px; overflow-wrap: anywhere; color: var(--ink-3); font-size: 12px; }
+.prow .origin { font-size: 11px; color: var(--ink-3); padding: 0 6px; }
+.prow .line { display: flex; gap: 2px; align-items: center; min-width: 0; }
 .prow .line > :first-child { flex: 1; min-width: 0; }
+.prow .line .iconbtn { width: 22px; height: 22px; border-radius: 2px; }
+.prow .line .btn.small { width: 100%; justify-content: center; border-radius: 2px; height: 22px; }
 .iconbtn { border: 1px solid var(--rule); background: var(--panel); width: 26px; height: 26px; border-radius: 4px; display: grid; place-items: center; font-size: 12px; flex: none; color: var(--ink-2); padding: 0; }
 .iconbtn:hover { background: var(--panel-2); color: var(--accent); }
 .iconbtn[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
@@ -7549,8 +7560,11 @@ function renderPanel(app, root) {
   // ---- grouped rows
   const groups = new Map();
   for (const r of m.rows) { if (r.key === m.typeKey) continue; if (!groups.has(r.group)) groups.set(r.group, []); groups.get(r.group).push(r); }
+  // Revit's property grid: a Parameter | Value table, one collapsible band per group (the band remembers being folded)
+  pp.append(h("div", { class: "pgrid-head" }, h("span", {}, "Parameter"), h("span", {}, "Value")));
+  const folded = app.foldedGroups || (app.foldedGroups = new Set());
   for (const [g, rows] of groups) {
-    const det = h("details", { class: "grp", open: g !== "Computed" || ids.length === 1 }, h("summary", {}, g));
+    const det = h("details", { class: "grp", open: folded.has(g) ? false : (g !== "Computed" || ids.length === 1), ontoggle: e => { if (e.target.open) folded.delete(g); else folded.add(g); } }, h("summary", {}, g));
     for (const r of rows) det.append(rowEditor(app, ids, f0, r));
     pp.append(det);
   }

@@ -63,8 +63,11 @@ export function renderPanel(app, root) {
   // ---- grouped rows
   const groups = new Map();
   for (const r of m.rows) { if (r.key === m.typeKey) continue; if (!groups.has(r.group)) groups.set(r.group, []); groups.get(r.group).push(r); }
+  // Revit's property grid: a Parameter | Value table, one collapsible band per group (the band remembers being folded)
+  pp.append(h("div", { class: "pgrid-head" }, h("span", {}, "Parameter"), h("span", {}, "Value")));
+  const folded = app.foldedGroups || (app.foldedGroups = new Set());
   for (const [g, rows] of groups) {
-    const det = h("details", { class: "grp", open: g !== "Computed" || ids.length === 1 }, h("summary", {}, g));
+    const det = h("details", { class: "grp", open: folded.has(g) ? false : (g !== "Computed" || ids.length === 1), ontoggle: e => { if (e.target.open) folded.delete(g); else folded.add(g); } }, h("summary", {}, g));
     for (const r of rows) det.append(rowEditor(app, ids, f0, r));
     pp.append(det);
   }
