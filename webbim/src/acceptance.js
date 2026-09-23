@@ -1249,8 +1249,10 @@ testCase("M30", "Fillet a line to a spline: the spline is trimmed to a new contr
   const [a, b] = bsplineDomain(s2);
   let worst = 0; for (let i = 0; i <= 200; i++) { const u = a + (b - a) * i / 200, p = bsplineAt(s2, u), q = bsplineAt(spl, u); worst = Math.max(worst, Math.hypot(p[0] - q[0], p[1] - q[1])); }
   // tangency: the arc's centre is r from the line, and r from the spline at the arc's end, along the spline's normal
-  const lineOff = Math.abs(arc.c[1]), endS = s2.ctrl[0], toS = Math.hypot(arc.c[0] - endS[0], arc.c[1] - endS[1]);
-  const h = (b - a) * 1e-5, t0 = bsplineAt(s2, a), t1 = bsplineAt(s2, a + h), tg = [t1[0] - t0[0], t1[1] - t0[1]], rad = [endS[0] - arc.c[0], endS[1] - arc.c[1]];
+  // the spline end the arc touches (whichever way the kept piece runs)
+  const first = s2.ctrl[0], last = s2.ctrl[s2.ctrl.length - 1], dC = q => Math.abs(Math.hypot(arc.c[0] - q[0], arc.c[1] - q[1]) - 400), atStart = dC(first) <= dC(last);
+  const lineOff = Math.abs(arc.c[1]), endS = atStart ? first : last, toS = Math.hypot(arc.c[0] - endS[0], arc.c[1] - endS[1]);
+  const h = (b - a) * 1e-5, t0 = bsplineAt(s2, atStart ? a : b - h), t1 = bsplineAt(s2, atStart ? a + h : b), tg = [t1[0] - t0[0], t1[1] - t0[1]], rad = [endS[0] - arc.c[0], endS[1] - arc.c[1]];
   const perpErr = Math.abs(tg[0] * rad[0] + tg[1] * rad[1]) / (Math.hypot(...tg) * Math.hypot(...rad));
   const ok = s2.type === "bspline" && worst < 1e-4 && Math.abs(lineOff - 400) < 1e-3 && Math.abs(toS - 400) < 0.5 && perpErr < 1e-3 && Math.abs(l2.b[1]) < 1e-9 && d.constraints.filter(c => c.type === "coincident").length === 2;
   return R(ok, "trimmed spline = original at every parameter (< 1e-4 mm); arc 400 from the line and 400 from the spline, radius ⟂ spline tangent; all welded",
@@ -1268,4 +1270,17 @@ testCase("M31", "View range: a plan sees below its bottom only down to its View 
   const shallow = hits().has("FL1");
   const ok = !before && withDepth && prims.length > 0 && !shallow;
   return R(ok, "FL1 not in the first-floor plan; in it with View Depth -3500 (as beyond); gone again at -100", `before ${before}; depth -3500 ${withDepth} (${prims.length} strokes); depth -100 ${shallow}`);
+});
+
+testCase("M32", "Fillet keeps the side of the crossing that was clicked - beyond the radius or inside it - on the line and on the spline", () => {
+  const spl = { id: "s", type: "bspline", ctrl: [[1000, -4000], [2000, -1000], [2500, 1500], [4000, 4000], [6000, 5000]], degree: 3, closed: false };
+  const line = { id: "l", type: "line", a: [-2000, 0], b: [6000, 0] };
+  const [lo, hi] = bsplineDomain(spl); let tx = lo; for (let i = 0; i <= 20000; i++) { const u = lo + (hi - lo) * i / 20000; if (bsplineAt(spl, u)[1] >= 0) { tx = u; break; } }
+  const X = bsplineAt(spl, tx), on = u => bsplineAt(spl, u);
+  const run = (pickL, pickS) => { const d = fillet({ elements: [line, spl], constraints: [], dims: [] }, "l", pickL, "s", pickS, 1000); const s2 = d.elements.find(e => e.id === "s"), [a, b] = bsplineDomain(s2);
+    return { l: d.elements.find(e => e.id === "l"), sMid: bsplineAt(s2, (a + b) / 2), arc: d.elements.find(e => e.type === "arc") }; };
+  const far = run([-1500, 0], on(tx + (hi - tx) * 0.8)), inside = run([-1500, 0], on(tx + (hi - tx) * 0.05)), lineInside = run([X[0] - 300, 0], on(tx + (hi - tx) * 0.8));
+  const same = (p, q) => Math.hypot(p.l.b[0] - q.l.b[0], p.l.b[1] - q.l.b[1]) < 1e-6 && Math.hypot(p.sMid[0] - q.sMid[0], p.sMid[1] - q.sMid[1]) < 1e-6;
+  const ok = far.sMid[1] > 0 && far.l.b[0] < X[0] && Math.abs(Math.abs(far.arc.c[1]) - 1000) < 1e-3 && same(far, inside) && same(far, lineInside);
+  return R(ok, "all three clicks keep the spline above the crossing and the line left of it, with the same R1000 arc", `crossing ${X.map(Math.round)}; far: line end ${far.l.b.map(Math.round)}, spline mid ${far.sMid.map(Math.round)}; inside-R click same ${same(far, inside)}; line-inside-R click same ${same(far, lineInside)}`);
 });

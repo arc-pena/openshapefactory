@@ -6015,48 +6015,63 @@ function curveView(el) {
 }
 const polyX = (P, Q) => { const out = []; for (let i = 0; i + 1 < P.length; i++) for (let j = 0; j + 1 < Q.length; j++) { const x = segX(P[i], P[i + 1], Q[j], Q[j + 1]); if (x) out.push(x); } return out; };
 function segX(a, b, c, d) { const r = skSub(b, a), s = skSub(d, c), den = r[0] * s[1] - r[1] * s[0]; if (Math.abs(den) < 1e-12) return null; const t = ((c[0] - a[0]) * s[1] - (c[1] - a[1]) * s[0]) / den, u = ((c[0] - a[0]) * r[1] - (c[1] - a[1]) * r[0]) / den; return t >= 0 && t <= 1 && u >= 0 && u <= 1 ? skAdd(a, skMul(r, t)) : null; }
-/** Trim an element so it ends at parameter t, keeping the part the pick was on. Lines move an end; arcs
- *  an angle; B-splines are cut exactly and the picked piece kept. */
-function trimAt(el, cv, t, pick) {
+/** Parameter difference on a curve (angles wrap for arcs and circles). */
+const pdiff = (el, t1, t0) => { const d = t1 - t0; return el.type === "arc" || el.type === "circle" ? Math.atan2(Math.sin(d), Math.cos(d)) : d; };
+/** Trim an element at parameter t, keeping the side `side` (+1: increasing parameter) - lines move an end,
+ *  arcs an angle, B-splines are cut exactly and the piece on that side kept. */
+function trimSide(el, cv, t, side) {
   const q = cv.at(t);
-  if (el.type === "line" || el.type === "arc") { trimToward(el, q, pick); return el; }
-  const [l, r] = bsSplitAt(el, t), d = x => Math.min(...cadSketchOutline(x, 64).map(z => skDist(z, pick)));
-  return Object.assign(d(l) <= d(r) ? l : r, { id: el.id });
+  if (el.type === "line" || el.type === "arc") { trimToward(el, q, cv.at(t + side * (el.type === "line" ? 1 : 1e-3))); return el; }
+  const [l, r] = bsSplitAt(el, t);
+  return Object.assign(side > 0 ? r : l, { id: el.id });
 }
 /** Fillet or trim between any two of line, arc and spline (a through-points spline becomes the exact
- *  B-spline it is first). Radius 0 cuts both to the corner where they cross; above 0 an arc tangent to
- *  both is solved against the true curves and each is trimmed to its tangent point, exactly. */
+ *  B-spline it is first). AutoCAD's rule decides what stays: the click on each curve says which side
+ *  of the point where the two cross is kept - wherever along that side it lands, beyond the radius or
+ *  inside it. Radius 0 cuts both there; a radius puts an arc tangent to the true curves in the corner
+ *  the two kept sides make, and each curve is trimmed to its tangent point, the spline exactly. */
 function filletGeneral(w, idA, pickA, idB, pickB, radius) {
   const get = id => { const i = w.elements.findIndex(e => e.id === id); let el = w.elements[i]; if (el.type === "spline") { el = Object.assign(splineAsBspline(el), { id: el.id, layer: el.layer }); w.elements[i] = el; } return el; };
   const A = get(idA), B = get(idB);
   for (const el of [A, B]) if (el.closed || el.type === "ellipse") throw new Error(`${el.id} is a closed ${el.type}: it has no end to trim`);
   const cA = curveView(A), cB = curveView(B), mid = skMul(skAdd(pickA, pickB), 0.5);
   const polyA = cA.samples().map(cA.at), polyB = cB.samples().map(cB.at);
-  const cross = polyX(polyA, polyB).sort((x, y) => skDist(x, mid) - skDist(y, mid))[0];
+  let X = polyX(polyA, polyB).sort((x, y) => skDist(x, mid) - skDist(y, mid))[0] || null;
+  if (X) for (let k = 0; k < 80; k++) { const pa = cA.at(cA.closest(X)); X = skMul(skAdd(pa, cB.at(cB.closest(pa))), 0.5); }
+  // which side of the crossing each click is on (without a crossing: which side of the nearest approach)
+  const ref = X || skMul(skAdd(cA.at(cA.closest(pickB)), cB.at(cB.closest(pickA))), 0.5);
+  const tXA = cA.closest(ref), tXB = cB.closest(ref);
+  const sideA = Math.sign(pdiff(A, cA.closest(pickA), tXA)) || 1, sideB = Math.sign(pdiff(B, cB.closest(pickB), tXB)) || 1;
   if (radius <= 0) {
-    if (!cross) throw new Error("these two do not cross (a spline is not extended) - move one, or use a radius");
-    let X = cross; for (let k = 0; k < 60; k++) { const pa = cA.at(cA.closest(X)); X = skMul(skAdd(pa, cB.at(cB.closest(pa))), 0.5); }
-    const nA = trimAt(A, cA, cA.closest(X), pickA), nB = trimAt(B, cB, cB.closest(X), pickB);
+    if (!X) throw new Error("these two do not cross (a spline is not extended) - move one, or use a radius");
+    const nA = trimSide(A, cA, tXA, sideA), nB = trimSide(B, cB, tXB, sideB);
     w.elements = w.elements.map(e => (e.id === idA ? nA : e.id === idB ? nB : e));
     return weld(w);
   }
-  // the centre: on the side of A the other pick is on, and on the side of B the first pick is on
-  const side = (cv, t, q) => { const p = cv.at(t), tg = cv.tan(t); return Math.sign(tg[0] * (q[1] - p[1]) - tg[1] * (q[0] - p[0])) || 1; };
-  const sA = side(cA, cA.closest(pickB), pickB), sB = side(cB, cB.closest(pickA), pickA);
-  const off = (cv, poly, ts, s) => ts.map((t, i) => { const tg = cv.tan(t); return skAdd(poly[i], skMul([-tg[1], tg[0]], s * radius)); });
-  const oA = off(cA, polyA, cA.samples(), sA), oB = off(cB, polyB, cB.samples(), sB);
-  let C = polyX(oA, oB).sort((x, y) => skDist(x, cross || mid) - skDist(y, cross || mid))[0];
-  if (!C) throw new Error(`no arc of ${radius} fits between ${idA} and ${idB} - try a smaller radius`);
-  for (let k = 0; k < 80; k++) {
-    const tA = cA.closest(C), tB = cB.closest(C), pa = cA.at(tA), pb = cB.at(tB), ga = cA.tan(tA), gb = cB.tan(tB);
-    const la = skAdd(pa, skMul([-ga[1], ga[0]], sA * radius)), lb = skAdd(pb, skMul([-gb[1], gb[0]], sB * radius));
-    const X2 = lineX(la, skAdd(la, ga), lb, skAdd(lb, gb)); if (!X2 || skDist(X2, C) < 1e-9) { if (X2) C = X2; break; } C = X2;
+  // every centre an arc of this radius can have against the two curves (four offset pairs), nearest the
+  // corner first; the right one puts both tangent points on the chosen sides
+  const offs = (cv, poly, ts, s) => ts.map((t, i) => { const tg = cv.tan(t); return skAdd(poly[i], skMul([-tg[1], tg[0]], s * radius)); });
+  const tsA = cA.samples(), tsB = cB.samples(), cands = [];
+  for (const sA of [1, -1]) for (const sB of [1, -1]) for (const c0 of polyX(offs(cA, polyA, tsA, sA), offs(cB, polyB, tsB, sB))) cands.push({ c0, sA, sB });
+  cands.sort((x, y) => skDist(x.c0, ref) - skDist(y.c0, ref));
+  let found = null;
+  for (const { c0, sA, sB } of cands) {
+    let C = c0;
+    for (let k = 0; k < 80; k++) {
+      const tA = cA.closest(C), tB = cB.closest(C), pa = cA.at(tA), pb = cB.at(tB), ga = cA.tan(tA), gb = cB.tan(tB);
+      const la = skAdd(pa, skMul([-ga[1], ga[0]], sA * radius)), lb = skAdd(pb, skMul([-gb[1], gb[0]], sB * radius));
+      const X2 = lineX(la, skAdd(la, ga), lb, skAdd(lb, gb)); if (!X2) break; const moved = skDist(X2, C); C = X2; if (moved < 1e-9) break;
+    }
+    const tA = cA.closest(C), tB = cB.closest(C);
+    if (Math.abs(skDist(cA.at(tA), C) - radius) > 0.5 || Math.abs(skDist(cB.at(tB), C) - radius) > 0.5) continue;
+    if (pdiff(A, tA, tXA) * sideA <= 0 || pdiff(B, tB, tXB) * sideB <= 0) continue;            // not in the corner the clicks chose
+    found = { C, tA, tB }; break;
   }
-  const tA = cA.closest(C), tB = cB.closest(C), TA = cA.at(tA), TB = cB.at(tB);
-  if (Math.abs(skDist(TA, C) - radius) > 0.5 || Math.abs(skDist(TB, C) - radius) > 0.5) throw new Error(`no arc of ${radius} fits there - the curve bends too tightly, or the radius is too big`);
+  if (!found) throw new Error(`no arc of ${radius} fits in that corner of ${idA} and ${idB} - try a smaller radius, or click the other sides`);
+  const { C, tA, tB } = found, TA = cA.at(tA), TB = cB.at(tB);
   const M = skAdd(C, skMul(skUnit(skAdd(skSub(TA, C), skSub(TB, C))), radius)), arc = arcThrough3(TA, TB, M);
   if (!arc) throw new Error("those two already meet smoothly - there is no corner to round");
-  const nA = trimAt(A, cA, tA, pickA), nB = trimAt(B, cB, tB, pickB);
+  const nA = trimSide(A, cA, tA, sideA), nB = trimSide(B, cB, tB, sideB);
   w.elements = w.elements.map(e => (e.id === idA ? nA : e.id === idB ? nB : e));
   w.elements.push(Object.assign({ id: newId(w, "f") }, arc));
   return weld(w);
@@ -13553,8 +13568,10 @@ testCase("M30", "Fillet a line to a spline: the spline is trimmed to a new contr
   const [a, b] = bsplineDomain(s2);
   let worst = 0; for (let i = 0; i <= 200; i++) { const u = a + (b - a) * i / 200, p = bsplineAt(s2, u), q = bsplineAt(spl, u); worst = Math.max(worst, Math.hypot(p[0] - q[0], p[1] - q[1])); }
   // tangency: the arc's centre is r from the line, and r from the spline at the arc's end, along the spline's normal
-  const lineOff = Math.abs(arc.c[1]), endS = s2.ctrl[0], toS = Math.hypot(arc.c[0] - endS[0], arc.c[1] - endS[1]);
-  const h = (b - a) * 1e-5, t0 = bsplineAt(s2, a), t1 = bsplineAt(s2, a + h), tg = [t1[0] - t0[0], t1[1] - t0[1]], rad = [endS[0] - arc.c[0], endS[1] - arc.c[1]];
+  // the spline end the arc touches (whichever way the kept piece runs)
+  const first = s2.ctrl[0], last = s2.ctrl[s2.ctrl.length - 1], dC = q => Math.abs(Math.hypot(arc.c[0] - q[0], arc.c[1] - q[1]) - 400), atStart = dC(first) <= dC(last);
+  const lineOff = Math.abs(arc.c[1]), endS = atStart ? first : last, toS = Math.hypot(arc.c[0] - endS[0], arc.c[1] - endS[1]);
+  const h = (b - a) * 1e-5, t0 = bsplineAt(s2, atStart ? a : b - h), t1 = bsplineAt(s2, atStart ? a + h : b), tg = [t1[0] - t0[0], t1[1] - t0[1]], rad = [endS[0] - arc.c[0], endS[1] - arc.c[1]];
   const perpErr = Math.abs(tg[0] * rad[0] + tg[1] * rad[1]) / (Math.hypot(...tg) * Math.hypot(...rad));
   const ok = s2.type === "bspline" && worst < 1e-4 && Math.abs(lineOff - 400) < 1e-3 && Math.abs(toS - 400) < 0.5 && perpErr < 1e-3 && Math.abs(l2.b[1]) < 1e-9 && d.constraints.filter(c => c.type === "coincident").length === 2;
   return R(ok, "trimmed spline = original at every parameter (< 1e-4 mm); arc 400 from the line and 400 from the spline, radius ⟂ spline tangent; all welded",
@@ -13572,6 +13589,19 @@ testCase("M31", "View range: a plan sees below its bottom only down to its View 
   const shallow = hits().has("FL1");
   const ok = !before && withDepth && prims.length > 0 && !shallow;
   return R(ok, "FL1 not in the first-floor plan; in it with View Depth -3500 (as beyond); gone again at -100", `before ${before}; depth -3500 ${withDepth} (${prims.length} strokes); depth -100 ${shallow}`);
+});
+
+testCase("M32", "Fillet keeps the side of the crossing that was clicked - beyond the radius or inside it - on the line and on the spline", () => {
+  const spl = { id: "s", type: "bspline", ctrl: [[1000, -4000], [2000, -1000], [2500, 1500], [4000, 4000], [6000, 5000]], degree: 3, closed: false };
+  const line = { id: "l", type: "line", a: [-2000, 0], b: [6000, 0] };
+  const [lo, hi] = bsplineDomain(spl); let tx = lo; for (let i = 0; i <= 20000; i++) { const u = lo + (hi - lo) * i / 20000; if (bsplineAt(spl, u)[1] >= 0) { tx = u; break; } }
+  const X = bsplineAt(spl, tx), on = u => bsplineAt(spl, u);
+  const run = (pickL, pickS) => { const d = fillet({ elements: [line, spl], constraints: [], dims: [] }, "l", pickL, "s", pickS, 1000); const s2 = d.elements.find(e => e.id === "s"), [a, b] = bsplineDomain(s2);
+    return { l: d.elements.find(e => e.id === "l"), sMid: bsplineAt(s2, (a + b) / 2), arc: d.elements.find(e => e.type === "arc") }; };
+  const far = run([-1500, 0], on(tx + (hi - tx) * 0.8)), inside = run([-1500, 0], on(tx + (hi - tx) * 0.05)), lineInside = run([X[0] - 300, 0], on(tx + (hi - tx) * 0.8));
+  const same = (p, q) => Math.hypot(p.l.b[0] - q.l.b[0], p.l.b[1] - q.l.b[1]) < 1e-6 && Math.hypot(p.sMid[0] - q.sMid[0], p.sMid[1] - q.sMid[1]) < 1e-6;
+  const ok = far.sMid[1] > 0 && far.l.b[0] < X[0] && Math.abs(Math.abs(far.arc.c[1]) - 1000) < 1e-3 && same(far, inside) && same(far, lineInside);
+  return R(ok, "all three clicks keep the spline above the crossing and the line left of it, with the same R1000 arc", `crossing ${X.map(Math.round)}; far: line end ${far.l.b.map(Math.round)}, spline mid ${far.sMid.map(Math.round)}; inside-R click same ${same(far, inside)}; line-inside-R click same ${same(far, lineInside)}`);
 });
 
 // ===== ui_util.js =====
