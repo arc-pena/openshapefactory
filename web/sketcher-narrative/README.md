@@ -10,10 +10,10 @@ the fillet, then real rebuilds of `NU1` (plate thickness).
 | File | What it is |
 | --- | --- |
 | `index.html` | The page: copy, scroll → camera and render-style mapping, three.js r128 |
-| `kernel.js` | Headless client for the modeller's worker kernel |
-| `kernel/replicad_single.wasm.gz` | The Feature Modeller's `kernel-payload`, unchanged |
-| `kernel/kernel-worker.js.gz` | The Feature Modeller's `worker-payload` (OCAF document + drivers), unchanged |
+| `../kernel/kernel.js` | Headless client for the modeller's worker kernel (shared with TowerC) |
+| `../kernel/replicad_single.wasm.gz` | The Feature Modeller's `kernel-payload`, unchanged |
+| `../kernel/kernel-worker.js.gz` | The Feature Modeller's `worker-payload` (OCAF document + drivers), unchanged |
 | `sketcher.json` | The model (`ocaf-parametric-model` v1, 13 features) |
 
-Serve the folder over HTTP (for example `python3 -m http.server`) and open
+Serve `web/` over HTTP (for example `python3 -m http.server`) and open
 `index.html`. Opened from `file://`, the page can't fetch the kernel.
