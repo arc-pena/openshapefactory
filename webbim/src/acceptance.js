@@ -1134,3 +1134,18 @@ testCase("M24", "Show in 3D / Selection Box: an element's 3D extent; a section b
   return R(ok, "W1's box spans its height; clipped edges all lie in the box and are fewer; the view's box key changes when the box is set",
     `box z ${b && b.min[2]}→${b && b.max[2]} (wall ${p.z0}→${p.z1}); edges ${all.edges.length}→${cut.edges.length}, all inside ${cut.edges.every(inside)}; key "${k0}"→"${k1.slice(0, 30)}…"`);
 });
+
+testCase("M25", "A sheet draws a viewport the same whether or not its view was drawn on its own first (A-101 VP1 used to vanish on zoom)", () => {
+  const count = (drawPlanFirst, win) => {
+    const doc = buildSample(); let n = 0;
+    const noop = () => {}, g = new Proxy({}, { get: (t, k) => (k === "stroke" || k === "fill") ? () => { n++; } : k in t ? t[k] : noop, set: (t, k, v) => { t[k] = v; return true; } });
+    if (drawPlanFirst) drawScene(g, deriveView(doc, doc.element("V-P00")), { x: -50, y: -100, z: 3, W: 1200, H: 800, dpr: 1 });
+    n = 0;
+    drawScene(g, deriveView(doc, doc.element("SH-A101")), win);
+    return n;
+  };
+  // zoomed in on VP1 (placed at 250, 360 on the sheet) - far from where the plan sits in its own tab
+  const win = { x: 180, y: 300, z: 6, W: 900, H: 700, dpr: 1 };
+  const fresh = count(false, win), afterPlan = count(true, win);
+  return R(fresh > 50 && fresh === afterPlan, "same number of strokes and fills either way", `fresh ${fresh}, after drawing the plan first ${afterPlan}`);
+});

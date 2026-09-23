@@ -904,7 +904,7 @@ function viewportScales(doc, sh) {
 export function translatePrim(p, o) {
   const T = q => [q[0] + o[0], q[1] + o[1]];
   const tp = path => path.map(s => s.k === "L" ? { k: "L", a: T(s.a), b: T(s.b) } : s.k === "A" ? Object.assign({}, s, { c: T(s.c) }) : { k: "C", a: T(s.a), c1: T(s.c1), c2: T(s.c2), b: T(s.b) });
-  const q = Object.assign({}, p);
+  const q = Object.assign({}, p); delete q._bb;           // anything cached on the original is in its coordinates, not these
   if (p.path) q.path = tp(p.path);
   if (p.at) q.at = T(p.at);
   if (p.rect) q.rect = [p.rect[0] + o[0], p.rect[1] + o[1], p.rect[2], p.rect[3]];

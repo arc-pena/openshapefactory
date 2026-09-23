@@ -39,8 +39,12 @@ export function drawScene(g, scene, view, opts = {}) {
       if (p.stale) { const bb = p.clip || primsBBox(p.prims); g.save(); g.fillStyle = "rgba(179,38,30,.9)"; g.font = `600 ${11}px system-ui, sans-serif`; g.fillText("updating hidden-line…", X(bb[0]) + 4, Y(bb[3]) + 14); g.restore(); }
       return;
     }
-    if (!p._bb) p._bb = primBBox(p);
-    const b = p._bb; if (b[2] < vis[0] || b[0] > vis[2] || b[3] < vis[1] || b[1] > vis[3]) return;
+    // Off-screen culling. The bbox is cached beside the prim, never on it: a view's prims are shared
+    // with the sheets it is placed on (moved by translatePrim), and a box cached on the prim in the
+    // view's own coordinates travelled with the copy - so a viewport vanished whenever that stale box
+    // was off-screen, depending on zoom (A-101's VP1, the one view also open in its own tab).
+    let b = BBOX.get(p); if (!b) { b = primBBox(p); BBOX.set(p, b); }
+    if (b[2] < vis[0] || b[0] > vis[2] || b[3] < vis[1] || b[1] > vis[3]) return;
     if (p.t === "fill") { trace(p.path); g.fillStyle = selected.has(p.id) ? blend(p.colour) : p.colour; g.fill("evenodd"); }
     else if (p.t === "stroke") {
       trace(p.path);
@@ -80,6 +84,7 @@ export function drawScene(g, scene, view, opts = {}) {
   scene.prims.forEach(draw);
   g.restore();
 }
+const BBOX = new WeakMap();
 function blend(c) { return c; }
 function hatchLines(g, p, bb, X, Y, z) {
   const s = p.scale, o = p.origin || [0, 0];

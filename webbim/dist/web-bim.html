@@ -8251,7 +8251,7 @@ function viewportScales(doc, sh) {
 function translatePrim(p, o) {
   const T = q => [q[0] + o[0], q[1] + o[1]];
   const tp = path => path.map(s => s.k === "L" ? { k: "L", a: T(s.a), b: T(s.b) } : s.k === "A" ? Object.assign({}, s, { c: T(s.c) }) : { k: "C", a: T(s.a), c1: T(s.c1), c2: T(s.c2), b: T(s.b) });
-  const q = Object.assign({}, p);
+  const q = Object.assign({}, p); delete q._bb;           // anything cached on the original is in its coordinates, not these
   if (p.path) q.path = tp(p.path);
   if (p.at) q.at = T(p.at);
   if (p.rect) q.rect = [p.rect[0] + o[0], p.rect[1] + o[1], p.rect[2], p.rect[3]];
@@ -9019,8 +9019,12 @@ function drawScene(g, scene, view, opts = {}) {
       if (p.stale) { const bb = p.clip || primsBBox(p.prims); g.save(); g.fillStyle = "rgba(179,38,30,.9)"; g.font = `600 ${11}px system-ui, sans-serif`; g.fillText("updating hidden-line…", X(bb[0]) + 4, Y(bb[3]) + 14); g.restore(); }
       return;
     }
-    if (!p._bb) p._bb = primBBox(p);
-    const b = p._bb; if (b[2] < vis[0] || b[0] > vis[2] || b[3] < vis[1] || b[1] > vis[3]) return;
+    // Off-screen culling. The bbox is cached beside the prim, never on it: a view's prims are shared
+    // with the sheets it is placed on (moved by translatePrim), and a box cached on the prim in the
+    // view's own coordinates travelled with the copy - so a viewport vanished whenever that stale box
+    // was off-screen, depending on zoom (A-101's VP1, the one view also open in its own tab).
+    let b = BBOX.get(p); if (!b) { b = primBBox(p); BBOX.set(p, b); }
+    if (b[2] < vis[0] || b[0] > vis[2] || b[3] < vis[1] || b[1] > vis[3]) return;
     if (p.t === "fill") { trace(p.path); g.fillStyle = selected.has(p.id) ? blend(p.colour) : p.colour; g.fill("evenodd"); }
     else if (p.t === "stroke") {
       trace(p.path);
@@ -9060,6 +9064,7 @@ function drawScene(g, scene, view, opts = {}) {
   scene.prims.forEach(draw);
   g.restore();
 }
+const BBOX = new WeakMap();
 function blend(c) { return c; }
 function hatchLines(g, p, bb, X, Y, z) {
   const s = p.scale, o = p.origin || [0, 0];
@@ -12937,6 +12942,21 @@ testCase("M24", "Show in 3D / Selection Box: an element's 3D extent; a section b
   const ok = b && Math.abs(b.max[2] - p.z1) < 1 && Math.abs(b.min[2] - p.z0) < 1 && cut.edges.length > 0 && cut.edges.length < all.edges.length && cut.edges.every(inside) && k0 === "" && k1 !== "";
   return R(ok, "W1's box spans its height; clipped edges all lie in the box and are fewer; the view's box key changes when the box is set",
     `box z ${b && b.min[2]}→${b && b.max[2]} (wall ${p.z0}→${p.z1}); edges ${all.edges.length}→${cut.edges.length}, all inside ${cut.edges.every(inside)}; key "${k0}"→"${k1.slice(0, 30)}…"`);
+});
+
+testCase("M25", "A sheet draws a viewport the same whether or not its view was drawn on its own first (A-101 VP1 used to vanish on zoom)", () => {
+  const count = (drawPlanFirst, win) => {
+    const doc = buildSample(); let n = 0;
+    const noop = () => {}, g = new Proxy({}, { get: (t, k) => (k === "stroke" || k === "fill") ? () => { n++; } : k in t ? t[k] : noop, set: (t, k, v) => { t[k] = v; return true; } });
+    if (drawPlanFirst) drawScene(g, deriveView(doc, doc.element("V-P00")), { x: -50, y: -100, z: 3, W: 1200, H: 800, dpr: 1 });
+    n = 0;
+    drawScene(g, deriveView(doc, doc.element("SH-A101")), win);
+    return n;
+  };
+  // zoomed in on VP1 (placed at 250, 360 on the sheet) - far from where the plan sits in its own tab
+  const win = { x: 180, y: 300, z: 6, W: 900, H: 700, dpr: 1 };
+  const fresh = count(false, win), afterPlan = count(true, win);
+  return R(fresh > 50 && fresh === afterPlan, "same number of strokes and fills either way", `fresh ${fresh}, after drawing the plan first ${afterPlan}`);
 });
 
 // ===== ui_util.js =====
