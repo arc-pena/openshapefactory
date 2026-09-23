@@ -17,7 +17,7 @@ import { runAll, CASES } from "./acceptance.js";
 import { renderPanel, renderSchedule, typeEditor, vvDialog } from "./panel.js";
 import { renderGraph } from "./graph.js";
 import { View2D, SNAP_KINDS, MODIFY_TOOLS } from "./canvas2d.js";
-import { View3D, VISUAL_STYLES } from "./view3d.js";
+import { View3D, VISUAL_STYLES, hiddenLineFor } from "./view3d.js";
 import { categoryOf } from "./styles.js";
 
 const VIEW_TYPES = ["PlanView", "ElevationView", "View3D", "Schedule", "Sheet"];
@@ -57,6 +57,7 @@ app.refresh = (opts = {}) => {
   const v = app.views.get(app.activeView);
   if (!opts.keepMain || !v) renderMain();
   else { if (v.draw) v.draw(); if (v.refresh && v.T) v.refresh(); renderViewControl(); }
+  scheduleHiddenLine();
   if (opts.keepMain && (app.activeView === "__graph" || app.activeView === "__tree" || (app.activeView && app.doc.element(app.activeView) && app.doc.typeOf(app.doc.element(app.activeView)) === "Schedule"))) renderMain();
 };
 app.openView = id => {
@@ -453,6 +454,8 @@ function renderViewportPanel(body, key) {
 
 // ---------------------------------------------------------------- the view area: document tabs, view, view control bar
 function renderMain() {
+  const cams3d = new Map();
+  for (const [k, v] of app.views) if (v && v.dispose) { cams3d.set(k, v.cam); v.dispose(); app.views.delete(k); }
   const area = clear(document.getElementById("main"));
   const doc = app.doc;
   const tabs = h("div", { class: "dtabs", role: "tablist" }, app.tabs.map(t => {
@@ -472,14 +475,13 @@ function renderMain() {
   const v = doc.element(id); if (!v) { app.closeTab(id); return; }
   const t = doc.typeOf(v);
   if (t === "Schedule") { renderSchedule(app, main, v); app.views.set(id, {}); renderViewControl(); return; }
-  if (t === "View3D" && (app.visualStyle3d[id] || "Shaded") !== "Sheet Line-work") { const view = new View3D(app, main, id); app.views.set(id, view); renderViewControl(); return; }
+  if (t === "View3D" && (app.visualStyle3d[id] || "Shaded") !== "Sheet Line-work") { const view = new View3D(app, main, id); if (cams3d.has(id)) { view.cam = cams3d.get(id); view.render(); } app.views.set(id, view); renderViewControl(); return; }
   const prev = app.views.get(id);
   const view = new View2D(app, main, id);
   if (prev && prev.cam) view.cam = prev.cam;
   app.views.set(id, view);
   view.canvas.addEventListener("keydown", e => { if (view.key(e)) { e.preventDefault(); e.stopPropagation(); } });
   view.draw();
-  if (t === "View3D") { const sc = deriveView(doc, v); if (sc.stale) main.append(h("div", { class: "stale" }, `Sheet line-work ${sc.stale} — use "Generate hidden-line" below. Export refuses stale viewports.`)); }
   renderViewControl();
 }
 /** The view control bar: scale, detail level, visual style, thin lines, crop, VV — at the foot of the view. */
@@ -505,15 +507,6 @@ function renderViewControl() {
     const cur = app.visualStyle3d[id] || "Shaded";
     bar.append(h("select", { class: "vsel", title: "Visual style", "aria-label": "Visual style", onchange: e => { app.visualStyle3d[id] = e.target.value; renderMain(); } }, [...VISUAL_STYLES, "Sheet Line-work"].map(s => h("option", { selected: s === cur }, s))));
     const view = app.views.get(id);
-    const prog = h("div", { class: "progress", hidden: true }, h("i"));
-    const cache = doc._hlrCache && doc._hlrCache[id];
-    const stale = !cache || cache.revision !== doc.modelRevision;
-    bar.append(h("button", { class: "btn small", title: "Exact hidden-line removal for sheets (cached)", onclick: async () => {
-      let gen = view && view.generate ? view : null;
-      if (!gen) { app.visualStyle3d[id] = "Shaded"; renderMain(); gen = app.views.get(id); }
-      prog.hidden = false; const r = await gen.generate(f => { prog.firstChild.style.width = (f * 100) + "%"; }); prog.hidden = true;
-      app.say(`Hidden-line: ${r.out.edges} edges against ${r.out.faces} faces in ${Math.round(r.ms)} ms`, "ok"); app.refresh({ keepMain: true });
-    } }, stale ? "Generate hidden-line" : "Hidden-line current ✓"), prog);
     if (view && view.saveCamera) bar.append(h("button", { class: "btn small", title: "Store this camera in the view (and its sheets)", onclick: () => view.saveCamera() }, "Save camera"));
   }
   bar.append(ib("thin", "Thin lines (screen only)", app.thinLines, () => app.run("thin")));
@@ -623,6 +616,41 @@ function importDXF() {
   inp.click();
 }
 
+// ---------------------------------------------------------------- hidden-line line-work, kept current automatically
+/** 3D views placed on these sheets whose line-work is missing or out of date. */
+function staleHiddenLine(sheets) {
+  const doc = app.doc, ids = new Set();
+  for (const sh of sheets) for (const vp of doc.argValue(sh, "viewports") || []) { const v = doc.element(vp.view.ref); if (v && doc.typeOf(v) === "View3D" && deriveView(doc, v).stale) ids.add(vp.view.ref); }
+  return [...ids];
+}
+let hiddenLineBusy = null;
+async function ensureHiddenLine(ids) {
+  while (hiddenLineBusy) await hiddenLineBusy;
+  if (!ids.length || !window.THREE) return;
+  hiddenLineBusy = (async () => {
+    for (const id of ids) {
+      const f = app.doc.element(id); if (!f) continue;
+      app.say(`Computing hidden-line drawing: ${f.get("Name")}…`, "note");
+      try { await hiddenLineFor(app, id); } catch (e) { app.say(`Hidden-line for ${f.get("Name")} failed: ${e.message}`, "error"); }
+    }
+  })();
+  try { await hiddenLineBusy; } finally { hiddenLineBusy = null; }
+}
+let hiddenLineTimer = null;
+/** An open sheet (or a 3D view shown as sheet line-work) updates itself shortly after the model changes. */
+function scheduleHiddenLine() {
+  clearTimeout(hiddenLineTimer);
+  hiddenLineTimer = setTimeout(async () => {
+    const f = app.activeView && app.doc.element(app.activeView); if (!f) return;
+    const t = app.doc.typeOf(f);
+    const ids = t === "Sheet" ? staleHiddenLine([f]) : t === "View3D" && app.visualStyle3d[app.activeView] === "Sheet Line-work" && deriveView(app.doc, f).stale ? [app.activeView] : [];
+    if (!ids.length) return;
+    await ensureHiddenLine(ids);
+    app.say("Hidden-line drawing updated", "ok");
+    const v = app.views.get(app.activeView); if (v && v.draw) v.draw();
+  }, 350);
+}
+
 // ---------------------------------------------------------------- export (§12)
 function exportDialog() {
   const doc = app.doc;
@@ -633,7 +661,7 @@ function exportDialog() {
     h("h3", {}, "Sheet set → one multi-page PDF"),
     h("table", {}, h("tbody", {}, checks.map(c => h("tr", {}, h("td", {}, c.cb), h("td", { class: "mono" }, doc.argValue(c.sh, "number")), h("td", {}, doc.argValue(c.sh, "sheetName")), h("td", { class: "muted" }, `${doc.argValue(c.sh, "size")} ${c.size.map(fmtLen).join("×")} mm`))))),
     h("div", {}, issuedBy),
-    h("div", { class: "muted" }, "Page size per sheet; line weights are physical mm; hatches as tiling patterns; the font embedded; bookmarks, category layers and marker links included. Sheets are re-derived for export, and a stale hidden-line viewport stops the export."),
+    h("div", { class: "muted" }, "Page size per sheet; line weights are physical mm; hatches as tiling patterns; the font embedded; bookmarks, category layers and marker links included. Sheets are re-derived for export, and 3D viewports get their hidden-line drawing computed automatically."),
     h("h3", {}, "Current view → DXF (zipped)"),
     h("div", { class: "muted" }, "Plans and elevations export to model space at full size ($INSUNITS 4, mm); sheets export paper space 1:1. Lineweights go in group 370, snapped to the DXF ladder with every substitution reported."));
   dialog("Export", body, [
@@ -644,10 +672,11 @@ function exportDialog() {
 async function exportPDF(sheets, issuedBy) {
   const doc = app.doc;
   if (!sheets.length) return app.say("choose at least one sheet", "error");
-  // HLR viewports must be current: a staleness badge is fine on screen, not in an issued set (§12.1)
-  const stale = [];
-  for (const sh of sheets) for (const vp of doc.argValue(sh, "viewports") || []) { const v = doc.element(vp.view.ref); if (v && doc.typeOf(v) === "View3D") { const sc = deriveView(doc, v); if (sc.stale) stale.push(`${doc.argValue(sh, "number")} ${vp.id} (${v.get("Name")}: ${sc.stale})`); } }
-  if (stale.length) return app.say(`Export refused — regenerate these hidden-line viewports first: ${stale.join("; ")}`, "error");
+  // an issued set never carries stale 3D line-work (§12.1): bring it up to date here, then export
+  await ensureHiddenLine(staleHiddenLine(sheets));
+  const still = staleHiddenLine(sheets);
+  if (still.length) return app.say(`Could not compute hidden-line for ${still.map(id => doc.element(id).get("Name")).join(", ")} (3D engine unavailable); nothing exported`, "error");
+  app.say(`Writing ${sheets.length} sheet(s)…`, "note");
   const pages = [];
   for (const sh of sheets) {
     const sc = sheetScene(doc, sh);          // re-derived, never the screen cache of the sheet

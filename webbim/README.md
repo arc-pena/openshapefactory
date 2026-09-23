@@ -62,6 +62,7 @@ The build refuses:
   - Levels drag up and down in elevations.
   - A wall-top grip on a wall whose height is `Top.elevation - Base.elevation` moves the level, so every wall bound to it follows.
   - The sample's dimensions start unlocked; the padlock locks them.
+- **Hidden-line drawings are automatic:** a 3D view on a sheet recomputes its line-work shortly after the model changes while the sheet is open. Export computes any out-of-date viewport before writing the PDF, so there is no manual step and no refusal.
 - **Two-letter shortcuts:** WA DR WN OP CL GR RM RS DI TX EL MV CO RO MM DE LL VV TL ZF 3D SA PP MD. Ctrl+Z / Ctrl+Y undo and redo; Esc cancels, then clears the selection.
 
 ## Known gaps (said, not hidden)

@@ -16,6 +16,16 @@ import { ViewCube } from "./viewcube.js";
 export const VISUAL_STYLES = ["Wireframe", "Hidden Line", "Shaded", "Consistent Colors"];
 const GRIP_PX = 9;
 
+/** Sheet line-work for a 3D view, computed off screen from its saved camera:
+ *  the hidden-line pass export and sheets need, with nobody asking for it. */
+export async function hiddenLineFor(app, viewId, onProgress) {
+  const root = h("div", { style: { position: "fixed", left: "-10000px", top: "0", width: "800px", height: "600px" }, "aria-hidden": "true" });
+  document.body.append(root);
+  const zoom = Object.assign({}, app.zoom3d); // the off-screen view must not reset the on-screen one's zoom
+  const v = new View3D(app, root, viewId);
+  try { return await v.generate(onProgress, { keepCamera: true }); }
+  finally { v.dispose(); root.remove(); app.zoom3d = zoom; }
+}
 /** A height bound to "A.elevation - B.elevation" between two levels is driven by level A. */
 function levelDriver(doc, exprId) {
   const ex = doc.element(exprId); if (!ex || doc.typeOf(ex) !== "Expression") return null;
@@ -57,7 +67,7 @@ export class View3D {
       h("button", { title: "Zoom out", "aria-label": "Zoom out", onclick: () => { this.zoom /= 1.25; this.render(); } }, "−")));
     this.ray = new T.Raycaster();
     this.bind();
-    new ResizeObserver(() => this.resize()).observe(root);
+    this.ro = new ResizeObserver(() => this.resize()); this.ro.observe(root);
     this.resize(); this.refresh();
     if (!app.zoom3d || !app.zoom3d[viewId]) this.fit();
   }
@@ -392,9 +402,9 @@ export class View3D {
 
   // ---------------------------------------------------------------- sheet line-work
   /** Exact HLR in slices — minutes with a progress bar is a feature (§6.4). */
-  async generate(onProgress) {
+  async generate(onProgress, { keepCamera = false } = {}) {
     const doc = this.doc, v = doc.element(this.viewId);
-    if (this.T) this.app.apply({ op: "set", id: this.viewId, key: "camera", value: roundCam(this.cam) }, { quiet: true });
+    if (this.T && !keepCamera) this.app.apply({ op: "set", id: this.viewId, key: "camera", value: roundCam(this.cam) }, { quiet: true });
     const cam = F.json(v, "camera");
     const model = buildHLRModel(doc);
     const it = hlrSteps(model, cam); let r; const t0 = performance.now(); let last = t0;
@@ -410,6 +420,12 @@ export class View3D {
     doc._hlrCache = Object.assign({}, doc._hlrCache, { [this.viewId]: entry });
     doc.bumpView();
     return { out, ms: performance.now() - t0 };
+  }
+  /** Free the GPU contexts: browsers allow only a handful at a time. */
+  dispose() {
+    if (this.ro) this.ro.disconnect();
+    for (const r of [this.renderer, this.cube && this.cube.r]) if (r) { r.dispose(); if (r.forceContextLoss) r.forceContextLoss(); }
+    this.renderer = null;
   }
   saveCamera() { this.app.apply({ op: "set", id: this.viewId, key: "camera", value: roundCam(this.cam) }); }
   snapshot(pxW, pxH, cam, bbox) {

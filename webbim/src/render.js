@@ -34,7 +34,7 @@ export function drawScene(g, scene, view, opts = {}) {
       g.save();
       if (p.clip) { g.beginPath(); g.rect(X(p.clip[0]), Y(p.clip[3]), (p.clip[2] - p.clip[0]) * view.z, (p.clip[3] - p.clip[1]) * view.z); g.clip(); }
       p.prims.forEach(draw); g.restore();
-      if (p.stale) { const bb = p.clip || primsBBox(p.prims); g.save(); g.fillStyle = "rgba(179,38,30,.9)"; g.font = `600 ${11}px system-ui, sans-serif`; g.fillText("STALE", X(bb[0]) + 4, Y(bb[3]) + 14); g.restore(); }
+      if (p.stale) { const bb = p.clip || primsBBox(p.prims); g.save(); g.fillStyle = "rgba(179,38,30,.9)"; g.font = `600 ${11}px system-ui, sans-serif`; g.fillText("updating hidden-line…", X(bb[0]) + 4, Y(bb[3]) + 14); g.restore(); }
       return;
     }
     if (!p._bb) p._bb = primBBox(p);
