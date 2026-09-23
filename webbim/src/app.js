@@ -12,6 +12,7 @@ import { formatValue } from "./expr.js";
 import { fromPolygon } from "./bimsketch.js";
 import { Editor } from "./ops.js";
 import { buildSample } from "./sample.js";
+import { buildPavilionSample } from "./sample_pavilion.js";
 import { buildRmuhSample } from "./sample_rmuh.js";
 import { openDocument, newDocument, sheetSize } from "./bim.js";
 import { F, CATALOGUE } from "./ocaf.js";
@@ -548,6 +549,7 @@ function fileMenu(anchor) {
     "-", { label: "Export…", icon: "exportI", run: () => exportDialog() }, { label: "Import IFC…", icon: "importI", run: () => importIfcFile() }, { label: "Import DXF Symbol…", icon: "importI", run: () => importDXF() },
     "-", { label: "Project Information…", icon: "info", run: () => projectInfo() }, { label: "Reset to Sample Project (D1 RMUH)", icon: "house", run: () => { forget("draft-v6"); forget("tabs"); setDocument(buildRmuhSample(), { msg: "D1 RMUH sample loaded: the brief analysed, the client's plot as the site boundary", kind: "ok" }); app.openView("__spacegraph"); } },
     { label: "Studio House Sample", icon: "house", run: () => { forget("draft-v6"); forget("tabs"); setDocument(buildSample(), { msg: "Studio House sample loaded", kind: "ok" }); } },
+    { label: "Pavilion House Sample (drawing set)", icon: "house", run: () => { forget("draft-v6"); forget("tabs"); setDocument(buildPavilionSample(), { msg: "Pavilion House: a house after the Barcelona Pavilion - podium plan, roof plan, elevations, sections, axonometric and five A1 sheets", kind: "ok" }); app.openView("SH-A100"); } },
   ]);
 }
 

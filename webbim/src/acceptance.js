@@ -26,6 +26,7 @@ import { fromPolygon, addElements, fillet, toggleLock, measureDim, dragHandle, r
 import { cadSketchOutline } from "./cadsketch.js";
 import { programFromBrief, planSpaceGraph, relaxBubbles, gfaOf, activeLegend, legendColour, groupKey } from "./spacegraph.js";
 import { buildRmuhSample, RMUH_BRIEF } from "./sample_rmuh.js";
+import { buildPavilionSample } from "./sample_pavilion.js";
 import { parseOBJ, storeysFor } from "./massing.js";
 
 export const CASES = [];
@@ -1614,4 +1615,15 @@ testCase("M53", "Blocks move like any element: Move (or a drag, in plan or 3D) s
   const ok = r.ok && held && gone && still;
   return R(ok, "ULO moved 45 m west, 30 m north: rebuilt exactly there, same width; Retail Parking unticked: no block, still in the brief",
     `transform ${r.ok}; ${b0} → ${b1}; held ${held}; parking block gone ${gone}, in brief ${still}`);
+});
+
+testCase("M54", "The Pavilion House sample: a house after the Barcelona Pavilion builds without an error - eight cruciform columns, a podium with two pools, a roof plate, three enclosed rooms - and its drawing set: five A1 sheets whose every viewport finds its view, sections that cut the podium", () => {
+  const doc = buildPavilionSample(), errs = doc.elements().filter(f => doc.error(f)).map(f => doc.idOf(f));
+  const cols = doc.elements().filter(f => doc.typeOf(f) === "Column"), cross = cols.every(f => doc.plan(f).foot.length === 12);
+  const areas = ["SP1", "SP2", "SP3"].map(id => { const d = doc.data(doc.element(id)); return d && d.props && d.props.Area ? d.props.Area.v / 1e6 : 0; });
+  const sheets = doc.elements().filter(f => doc.typeOf(f) === "Sheet"), vps = sheets.flatMap(sh => doc.argValue(sh, "viewports") || []), found = vps.every(v => doc.element(v.view.ref));
+  const sec = sectionCut(doc, doc.element("V-S-A")), cutsPodium = sec && JSON.stringify(sec).includes("FL-POD");
+  const ok = !errs.length && cols.length === 8 && cross && areas.every(a => a > 4) && sheets.length === 5 && vps.length === 16 && found && cutsPodium;
+  return R(ok, "no errors; 8 cruciform columns (12-point footprint); bedroom, kitchen and bath all enclosed; 5 sheets, 16 viewports all resolving; Section A-A cuts the podium",
+    `errors ${errs.join(",") || "none"}; columns ${cols.length}, cross ${cross}; areas ${areas.map(a => a.toFixed(1)).join("/")}; sheets ${sheets.length}, viewports ${vps.length}, found ${found}; section cuts podium ${cutsPodium}`);
 });

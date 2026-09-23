@@ -357,7 +357,9 @@ BUILDERS.Column = {
     const t = F.type(f, "columnType"), c = F.point(f, "position"), rot = F.real(f, "rotation") * Math.PI / 180;
     const z0 = levelElev(doc, f) + (F.real(f, "baseOffset") || 0), h = F.real(f, "height");
     let path, foot;
-    if (t.round) { path = [{ k: "A", c, r: t.width / 2, a0: 0, a1: TAU }]; foot = []; for (let i = 0; i < 16; i++) foot.push(add(c, [Math.cos(i / 16 * TAU) * t.width / 2, Math.sin(i / 16 * TAU) * t.width / 2])); }
+    // a cruciform (Mies' chrome cross): two flat bars crossing, arm thickness `arm`
+    if (t.shape === "cross") { const a = (t.arm || 40) / 2, w = t.width / 2, d = t.depth / 2; foot = [[a, -d], [a, -a], [w, -a], [w, a], [a, a], [a, d], [-a, d], [-a, a], [-w, a], [-w, -a], [-a, -a], [-a, -d]].map(p => add(c, [p[0] * Math.cos(rot) - p[1] * Math.sin(rot), p[0] * Math.sin(rot) + p[1] * Math.cos(rot)])); path = polyPath(foot); }
+    else if (t.round) { path = [{ k: "A", c, r: t.width / 2, a0: 0, a1: TAU }]; foot = []; for (let i = 0; i < 16; i++) foot.push(add(c, [Math.cos(i / 16 * TAU) * t.width / 2, Math.sin(i / 16 * TAU) * t.width / 2])); }
     else { foot = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([x, y]) => { const p = [x * t.width / 2, y * t.depth / 2]; return add(c, [p[0] * Math.cos(rot) - p[1] * Math.sin(rot), p[0] * Math.sin(rot) + p[1] * Math.cos(rot)]); }); path = polyPath(foot); }
     return { plan: { path, foot, material: t.material, z0, z1: z0 + h }, data: { value: h, kind: "Length",
       refs: [{ key: "centre", kind: "point", geom: c }], props: { Height: L(h), Width: L(t.width), Depth: L(t.round ? t.width : t.depth), "Base elevation": L(z0), "Top elevation": L(z0 + h), Volume: { kind: "Volume", v: Math.abs(polyArea(foot)) * h }, TypeMark: T(t.mark || t.id) } } };
