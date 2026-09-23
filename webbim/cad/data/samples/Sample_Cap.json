@@ -1,0 +1,1218 @@
+{
+  "format": "ocaf-parametric-model",
+  "version": 1,
+  "name": "Part1",
+  "units": "mm",
+  "features": [
+    {
+      "id": "ORIGIN",
+      "type": "GeometricalSet",
+      "name": "Origin",
+      "args": {
+        "inputs": "",
+        "shell": "Open"
+      }
+    },
+    {
+      "id": "PT1",
+      "type": "Point",
+      "name": "Origin",
+      "args": {
+        "kind": "Coordinates",
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "at": 0.5,
+        "end": "Furthest along",
+        "way": "Nearest point"
+      },
+      "parent": "ORIGIN"
+    },
+    {
+      "id": "VX",
+      "type": "Vector",
+      "name": "X Direction",
+      "args": {
+        "kind": "Components",
+        "dx": 1,
+        "dy": 0,
+        "dz": 0
+      },
+      "parent": "ORIGIN"
+    },
+    {
+      "id": "VY",
+      "type": "Vector",
+      "name": "Y Direction",
+      "args": {
+        "kind": "Components",
+        "dx": 0,
+        "dy": 1,
+        "dz": 0
+      },
+      "parent": "ORIGIN"
+    },
+    {
+      "id": "VZ",
+      "type": "Vector",
+      "name": "Z Direction",
+      "args": {
+        "kind": "Components",
+        "dx": 0,
+        "dy": 0,
+        "dz": 1
+      },
+      "parent": "ORIGIN"
+    },
+    {
+      "id": "AX1",
+      "type": "AxisSystem",
+      "name": "Origin Axis System",
+      "args": {
+        "kind": "Origin and directions",
+        "origin": {
+          "ref": "PT1"
+        },
+        "xdir": {
+          "ref": "VX"
+        },
+        "ydir": {
+          "ref": "VY"
+        },
+        "size": 200
+      },
+      "parent": "ORIGIN"
+    },
+    {
+      "id": "PL1",
+      "type": "Plane",
+      "name": "XY Plane",
+      "args": {
+        "kind": "Origin and normal",
+        "origin": {
+          "ref": "PT1"
+        },
+        "normal": {
+          "ref": "VZ"
+        },
+        "at": 0.5,
+        "offset": 100,
+        "angle": 45,
+        "size": 200
+      },
+      "parent": "ORIGIN"
+    },
+    {
+      "id": "PL2",
+      "type": "Plane",
+      "name": "YZ Plane",
+      "args": {
+        "kind": "Origin and normal",
+        "origin": {
+          "ref": "PT1"
+        },
+        "normal": {
+          "ref": "VX"
+        },
+        "at": 0.5,
+        "offset": 100,
+        "angle": 45,
+        "size": 200
+      },
+      "parent": "ORIGIN"
+    },
+    {
+      "id": "PL3",
+      "type": "Plane",
+      "name": "ZX Plane",
+      "args": {
+        "kind": "Origin and normal",
+        "origin": {
+          "ref": "PT1"
+        },
+        "normal": {
+          "ref": "VY"
+        },
+        "at": 0.5,
+        "offset": 100,
+        "angle": 45,
+        "size": 200
+      },
+      "parent": "GE3"
+    },
+    {
+      "id": "PARAMS",
+      "type": "GeometricalSet",
+      "name": "Parameters",
+      "args": {
+        "inputs": "",
+        "shell": "Open"
+      }
+    },
+    {
+      "id": "RELS",
+      "type": "GeometricalSet",
+      "name": "Relations",
+      "args": {
+        "inputs": "",
+        "shell": "Open"
+      }
+    },
+    {
+      "id": "PART",
+      "type": "Body",
+      "name": "Part",
+      "args": {
+        "inputs": "",
+        "shell": "Open"
+      }
+    },
+    {
+      "id": "PO1",
+      "type": "Point",
+      "name": "Point.1",
+      "args": {
+        "kind": "Coordinates",
+        "x": 686.5,
+        "y": 19.5,
+        "z": -159.5,
+        "at": 0.5,
+        "end": "Furthest along",
+        "way": "Nearest point"
+      }
+    },
+    {
+      "id": "CI1",
+      "type": "Circle",
+      "name": "Circle.1",
+      "args": {
+        "plane": {
+          "ref": "PL4"
+        },
+        "radius": {
+          "value": 68.928,
+          "from": "NU1"
+        },
+        "onPlane": "Only says which way it faces",
+        "kind": "A radius"
+      },
+      "parent": "GE3",
+      "shownAnyway": true
+    },
+    {
+      "id": "PL4",
+      "type": "Plane",
+      "name": "Plane.1",
+      "args": {
+        "kind": "Origin and normal",
+        "origin": {
+          "ref": "PO1"
+        },
+        "normal": {
+          "ref": "VZ"
+        },
+        "at": 0.5,
+        "offset": 100,
+        "angle": 45,
+        "size": 160
+      },
+      "parent": "GE3"
+    },
+    {
+      "id": "GE1",
+      "type": "GeometricalSet",
+      "name": "Cylinder",
+      "args": {
+        "inputs": "",
+        "shell": "Open"
+      },
+      "parent": "GE3"
+    },
+    {
+      "id": "NU1",
+      "type": "Number",
+      "name": "Radius",
+      "args": {
+        "value": {
+          "value": 600,
+          "from": "MA1"
+        }
+      },
+      "parent": "GE3"
+    },
+    {
+      "id": "NU1_2",
+      "type": "Number",
+      "name": "Height",
+      "args": {
+        "value": {
+          "value": 400,
+          "from": "MA1_2"
+        }
+      },
+      "parent": "GE3"
+    },
+    {
+      "id": "EX1",
+      "type": "Extrude",
+      "name": "Extrude.1",
+      "args": {
+        "profile": {
+          "ref": "CI1"
+        },
+        "direction": {
+          "ref": "VZ"
+        },
+        "limit": "Distance",
+        "distance": {
+          "value": 264.377,
+          "from": "NU1_2"
+        },
+        "cap": "Solid"
+      },
+      "parent": "GE3",
+      "shownAnyway": true
+    },
+    {
+      "id": "FI1",
+      "type": "Fillet",
+      "name": "Fillet.1",
+      "args": {
+        "body": {
+          "ref": "EX1"
+        },
+        "radius": 35.199,
+        "edges": [
+          {
+            "of": "EX1",
+            "kind": "edge",
+            "at": 2,
+            "near": [
+              156.4086,
+              -1,
+              225,
+              0,
+              -1,
+              0,
+              485.995
+            ]
+          }
+        ]
+      },
+      "parent": "GE3",
+      "appearance": {
+        "finish": "default",
+        "color": [
+          0.58,
+          0.63,
+          0.67
+        ],
+        "opacity": 0.62
+      },
+      "shownAnyway": true
+    },
+    {
+      "id": "GE1_2",
+      "type": "GeometricalSet",
+      "name": "Small",
+      "args": {
+        "inputs": "",
+        "shell": "Open"
+      },
+      "parent": "GE2"
+    },
+    {
+      "id": "CI1_2",
+      "type": "Circle",
+      "name": "Circle.1.2",
+      "args": {
+        "plane": {
+          "ref": "PL4_2"
+        },
+        "radius": {
+          "value": 68.928,
+          "from": "NU1_3"
+        },
+        "onPlane": "Only says which way it faces",
+        "kind": "A radius"
+      },
+      "parent": "GE1_2",
+      "shownAnyway": true
+    },
+    {
+      "id": "PL4_2",
+      "type": "Plane",
+      "name": "Plane.1.2",
+      "args": {
+        "kind": "Origin and normal",
+        "origin": {
+          "ref": "PO1"
+        },
+        "normal": {
+          "ref": "VZ"
+        },
+        "at": 0.5,
+        "offset": 100,
+        "angle": 45,
+        "size": 160
+      },
+      "parent": "GE1_2"
+    },
+    {
+      "id": "NU1_3",
+      "type": "Number",
+      "name": "Radius.2",
+      "args": {
+        "value": {
+          "value": 500,
+          "from": "NU2_2"
+        }
+      },
+      "parent": "GE1_2"
+    },
+    {
+      "id": "NU1_2_2",
+      "type": "Number",
+      "name": "Height.2",
+      "args": {
+        "value": 300
+      },
+      "parent": "GE1_2"
+    },
+    {
+      "id": "EX1_2",
+      "type": "Extrude",
+      "name": "Extrude.1.2",
+      "args": {
+        "profile": {
+          "ref": "CI1_2"
+        },
+        "direction": {
+          "ref": "VZ"
+        },
+        "limit": "Distance",
+        "distance": {
+          "value": 264.377,
+          "from": "NU1_2_2"
+        },
+        "cap": "Solid"
+      },
+      "parent": "GE1_2",
+      "shownAnyway": true
+    },
+    {
+      "id": "FI1_2",
+      "type": "Fillet",
+      "name": "Fillet.1.2",
+      "args": {
+        "body": {
+          "ref": "EX1_2"
+        },
+        "radius": 35.199,
+        "edges": [
+          {
+            "of": "EX1",
+            "kind": "edge",
+            "at": 2,
+            "near": [
+              156.4086,
+              -1,
+              225,
+              0,
+              -1,
+              0,
+              485.995
+            ]
+          }
+        ]
+      },
+      "parent": "GE1_2",
+      "appearance": {
+        "finish": "default",
+        "color": [
+          0.58,
+          0.63,
+          0.67
+        ],
+        "opacity": 0.7
+      },
+      "shownAnyway": true
+    },
+    {
+      "id": "GE2",
+      "type": "GeometricalSet",
+      "name": "cap",
+      "args": {
+        "inputs": "",
+        "shell": "Open"
+      }
+    },
+    {
+      "id": "GE3",
+      "type": "GeometricalSet",
+      "name": "Big",
+      "args": {
+        "inputs": "",
+        "shell": "Open"
+      },
+      "parent": "GE2"
+    },
+    {
+      "id": "NU2",
+      "type": "Number",
+      "name": "offset",
+      "args": {
+        "value": -119.7
+      },
+      "parent": "GE2"
+    },
+    {
+      "id": "PO2",
+      "type": "Point",
+      "name": "Point.2",
+      "args": {
+        "kind": "Coordinates",
+        "x": 874.5,
+        "y": -316.538,
+        "z": 555,
+        "at": 0.5,
+        "end": "Furthest along",
+        "way": "Nearest point"
+      }
+    },
+    {
+      "id": "MA1",
+      "type": "Math",
+      "name": "Math.1",
+      "args": {
+        "a": {
+          "value": 1,
+          "from": "NU1_3"
+        },
+        "b": {
+          "value": 1,
+          "from": "NU2"
+        },
+        "op": "A + B"
+      },
+      "parent": "GE2"
+    },
+    {
+      "id": "MA1_2",
+      "type": "Math",
+      "name": "Math.1.2",
+      "args": {
+        "a": {
+          "value": 1,
+          "from": "NU1_2_2"
+        },
+        "b": {
+          "value": 1,
+          "from": "NU2"
+        },
+        "op": "A + B"
+      },
+      "parent": "GE2"
+    },
+    {
+      "id": "BO1",
+      "type": "Boolean",
+      "name": "Boolean.1",
+      "args": {
+        "a": {
+          "ref": "FI1_2"
+        },
+        "b": {
+          "ref": "FI1"
+        },
+        "op": "Difference"
+      },
+      "parent": "GE2",
+      "appearance": {
+        "finish": "paint",
+        "color": [
+          0.16,
+          0.42,
+          0.66
+        ]
+      }
+    },
+    {
+      "id": "NU2_2",
+      "type": "Number",
+      "name": "Radius",
+      "args": {
+        "value": {
+          "value": 557.8,
+          "from": "NU3"
+        }
+      },
+      "parent": "GE2"
+    },
+    {
+      "id": "GE2_2",
+      "type": "GeometricalSet",
+      "name": "cap.2",
+      "args": {
+        "inputs": "",
+        "shell": "Open"
+      }
+    },
+    {
+      "id": "GE1_2_2",
+      "type": "GeometricalSet",
+      "name": "Small.2",
+      "args": {
+        "inputs": "",
+        "shell": "Open"
+      },
+      "parent": "GE2_2"
+    },
+    {
+      "id": "CI1_2_2",
+      "type": "Circle",
+      "name": "Circle.1.2.2",
+      "args": {
+        "plane": {
+          "ref": "PL4_2_2"
+        },
+        "radius": {
+          "value": 68.928,
+          "from": "NU1_3_2"
+        },
+        "onPlane": "Only says which way it faces",
+        "kind": "A radius"
+      },
+      "parent": "GE1_2_2",
+      "shownAnyway": true
+    },
+    {
+      "id": "PL4_2_2",
+      "type": "Plane",
+      "name": "Plane.1.2.2",
+      "args": {
+        "kind": "Origin and normal",
+        "origin": {
+          "ref": "PO2"
+        },
+        "normal": {
+          "ref": "VZ"
+        },
+        "at": 0.5,
+        "offset": 100,
+        "angle": 45,
+        "size": 160
+      },
+      "parent": "GE1_2_2"
+    },
+    {
+      "id": "NU1_3_2",
+      "type": "Number",
+      "name": "Radius.2.2",
+      "args": {
+        "value": {
+          "value": 500,
+          "from": "NU2_2_2"
+        }
+      },
+      "parent": "GE1_2_2"
+    },
+    {
+      "id": "NU1_2_2_2",
+      "type": "Number",
+      "name": "Height.2.2",
+      "args": {
+        "value": 300
+      },
+      "parent": "GE1_2_2"
+    },
+    {
+      "id": "EX1_2_2",
+      "type": "Extrude",
+      "name": "Extrude.1.2.2",
+      "args": {
+        "profile": {
+          "ref": "CI1_2_2"
+        },
+        "direction": {
+          "ref": "VZ"
+        },
+        "limit": "Distance",
+        "distance": {
+          "value": 264.377,
+          "from": "NU1_2_2_2"
+        },
+        "cap": "Solid"
+      },
+      "parent": "GE1_2_2",
+      "shownAnyway": true
+    },
+    {
+      "id": "FI1_2_2",
+      "type": "Fillet",
+      "name": "Fillet.1.2.2",
+      "args": {
+        "body": {
+          "ref": "EX1_2_2"
+        },
+        "radius": 35.199,
+        "edges": [
+          {
+            "of": "EX1",
+            "kind": "edge",
+            "at": 2,
+            "near": [
+              156.4086,
+              -1,
+              225,
+              0,
+              -1,
+              0,
+              485.995
+            ]
+          }
+        ]
+      },
+      "parent": "GE1_2_2",
+      "appearance": {
+        "finish": "default",
+        "color": [
+          0.58,
+          0.63,
+          0.67
+        ],
+        "opacity": 0.7
+      },
+      "shownAnyway": true
+    },
+    {
+      "id": "GE3_2",
+      "type": "GeometricalSet",
+      "name": "Big.2",
+      "args": {
+        "inputs": "",
+        "shell": "Open"
+      },
+      "parent": "GE2_2"
+    },
+    {
+      "id": "PL3_2",
+      "type": "Plane",
+      "name": "ZX Plane.2",
+      "args": {
+        "kind": "Origin and normal",
+        "origin": {
+          "ref": "PT1"
+        },
+        "normal": {
+          "ref": "VY"
+        },
+        "at": 0.5,
+        "offset": 100,
+        "angle": 45,
+        "size": 200
+      },
+      "parent": "GE3_2"
+    },
+    {
+      "id": "CI1_3",
+      "type": "Circle",
+      "name": "Circle.1.3",
+      "args": {
+        "plane": {
+          "ref": "PL4_3"
+        },
+        "radius": {
+          "value": 68.928,
+          "from": "NU1_4"
+        },
+        "onPlane": "Only says which way it faces",
+        "kind": "A radius"
+      },
+      "parent": "GE3_2",
+      "shownAnyway": true
+    },
+    {
+      "id": "PL4_3",
+      "type": "Plane",
+      "name": "Plane.1.3",
+      "args": {
+        "kind": "Origin and normal",
+        "origin": {
+          "ref": "PO2"
+        },
+        "normal": {
+          "ref": "VZ"
+        },
+        "at": 0.5,
+        "offset": 100,
+        "angle": 45,
+        "size": 160
+      },
+      "parent": "GE3_2"
+    },
+    {
+      "id": "GE1_3",
+      "type": "GeometricalSet",
+      "name": "Cylinder.2",
+      "args": {
+        "inputs": "",
+        "shell": "Open"
+      },
+      "parent": "GE3_2"
+    },
+    {
+      "id": "NU1_4",
+      "type": "Number",
+      "name": "Radius.3",
+      "args": {
+        "value": {
+          "value": 600,
+          "from": "MA1_3"
+        }
+      },
+      "parent": "GE3_2"
+    },
+    {
+      "id": "NU1_2_3",
+      "type": "Number",
+      "name": "Height.3",
+      "args": {
+        "value": {
+          "value": 400,
+          "from": "MA1_2_2"
+        }
+      },
+      "parent": "GE3_2"
+    },
+    {
+      "id": "EX1_3",
+      "type": "Extrude",
+      "name": "Extrude.1.3",
+      "args": {
+        "profile": {
+          "ref": "CI1_3"
+        },
+        "direction": {
+          "ref": "VZ"
+        },
+        "limit": "Distance",
+        "distance": {
+          "value": 264.377,
+          "from": "NU1_2_3"
+        },
+        "cap": "Solid"
+      },
+      "parent": "GE3_2",
+      "shownAnyway": true
+    },
+    {
+      "id": "FI1_3",
+      "type": "Fillet",
+      "name": "Fillet.1.3",
+      "args": {
+        "body": {
+          "ref": "EX1_3"
+        },
+        "radius": 35.199,
+        "edges": [
+          {
+            "of": "EX1",
+            "kind": "edge",
+            "at": 2,
+            "near": [
+              156.4086,
+              -1,
+              225,
+              0,
+              -1,
+              0,
+              485.995
+            ]
+          }
+        ]
+      },
+      "parent": "GE3_2",
+      "appearance": {
+        "finish": "default",
+        "color": [
+          0.58,
+          0.63,
+          0.67
+        ],
+        "opacity": 0.62
+      },
+      "shownAnyway": true
+    },
+    {
+      "id": "NU2_3",
+      "type": "Number",
+      "name": "offset.2",
+      "args": {
+        "value": -119.7
+      },
+      "parent": "GE2_2"
+    },
+    {
+      "id": "MA1_3",
+      "type": "Math",
+      "name": "Math.1.3",
+      "args": {
+        "a": {
+          "value": 1,
+          "from": "NU1_3_2"
+        },
+        "b": {
+          "value": 1,
+          "from": "NU2_3"
+        },
+        "op": "A + B"
+      },
+      "parent": "GE2_2"
+    },
+    {
+      "id": "MA1_2_2",
+      "type": "Math",
+      "name": "Math.1.2.2",
+      "args": {
+        "a": {
+          "value": 1,
+          "from": "NU1_2_2_2"
+        },
+        "b": {
+          "value": 1,
+          "from": "NU2_3"
+        },
+        "op": "A + B"
+      },
+      "parent": "GE2_2"
+    },
+    {
+      "id": "BO1_2",
+      "type": "Boolean",
+      "name": "Boolean.1.2",
+      "args": {
+        "a": {
+          "ref": "FI1_2_2"
+        },
+        "b": {
+          "ref": "FI1_3"
+        },
+        "op": "Difference"
+      },
+      "parent": "GE2_2",
+      "appearance": {
+        "finish": "brass",
+        "color": [
+          0.83,
+          0.66,
+          0.31
+        ]
+      }
+    },
+    {
+      "id": "NU2_2_2",
+      "type": "Number",
+      "name": "Radius.4",
+      "args": {
+        "value": {
+          "value": 557.8,
+          "from": "NU3_2"
+        }
+      },
+      "parent": "GE2_2"
+    },
+    {
+      "id": "NU3",
+      "type": "Number",
+      "name": "Radius 1",
+      "args": {
+        "value": 422.1
+      },
+      "parent": "PARAMS"
+    },
+    {
+      "id": "NU3_2",
+      "type": "Number",
+      "name": "Radius 2",
+      "args": {
+        "value": 626.2
+      },
+      "parent": "PARAMS"
+    }
+  ],
+  "layout": {
+    "ORIGIN": [
+      165,
+      743
+    ],
+    "PARAMS": [
+      239,
+      509
+    ],
+    "RELS": [
+      -121,
+      659
+    ],
+    "PART": [
+      -115,
+      793
+    ],
+    "PO1": [
+      -27,
+      965
+    ],
+    "GE2": [
+      746,
+      562
+    ],
+    "PO2": [
+      180,
+      1277
+    ],
+    "PT1": [
+      30,
+      187
+    ],
+    "VX": [
+      30,
+      305
+    ],
+    "VY": [
+      30,
+      423
+    ],
+    "VZ": [
+      30,
+      541
+    ],
+    "GE1": [
+      30,
+      1235
+    ],
+    "GE1_2": [
+      30,
+      1353
+    ],
+    "NU1_2_2": [
+      30,
+      1471
+    ],
+    "GE3": [
+      30,
+      1815
+    ],
+    "NU2": [
+      30,
+      1933
+    ],
+    "NU2_2": [
+      30,
+      2309
+    ],
+    "AX1": [
+      338,
+      30
+    ],
+    "PL1": [
+      338,
+      148
+    ],
+    "PL2": [
+      338,
+      266
+    ],
+    "PL3": [
+      338,
+      384
+    ],
+    "PL4": [
+      338,
+      502
+    ],
+    "PL4_2": [
+      338,
+      620
+    ],
+    "NU1_3": [
+      338,
+      738
+    ],
+    "MA1_2": [
+      338,
+      856
+    ],
+    "CI1": [
+      1262,
+      30
+    ],
+    "FI1_2": [
+      1262,
+      148
+    ],
+    "NU1": [
+      954,
+      30
+    ],
+    "EX1_2": [
+      954,
+      148
+    ],
+    "NU1_2": [
+      646,
+      30
+    ],
+    "CI1_2": [
+      646,
+      148
+    ],
+    "MA1": [
+      646,
+      266
+    ],
+    "EX1": [
+      1570,
+      30
+    ],
+    "FI1": [
+      1878,
+      30
+    ],
+    "BO1": [
+      2186,
+      30
+    ],
+    "GE2_2": [
+      731,
+      944
+    ],
+    "GE1_2_2": [
+      30,
+      2419
+    ],
+    "CI1_2_2": [
+      30,
+      2529
+    ],
+    "PL4_2_2": [
+      30,
+      2739
+    ],
+    "NU1_3_2": [
+      30,
+      2914
+    ],
+    "NU1_2_2_2": [
+      30,
+      3048
+    ],
+    "EX1_2_2": [
+      30,
+      3182
+    ],
+    "FI1_2_2": [
+      30,
+      3395
+    ],
+    "GE3_2": [
+      30,
+      3549
+    ],
+    "PL3_2": [
+      30,
+      3659
+    ],
+    "CI1_3": [
+      30,
+      3834
+    ],
+    "PL4_3": [
+      30,
+      4044
+    ],
+    "GE1_3": [
+      30,
+      4219
+    ],
+    "NU1_4": [
+      30,
+      4329
+    ],
+    "NU1_2_3": [
+      30,
+      4463
+    ],
+    "EX1_3": [
+      30,
+      4597
+    ],
+    "FI1_3": [
+      30,
+      4810
+    ],
+    "NU2_3": [
+      30,
+      4964
+    ],
+    "MA1_3": [
+      30,
+      5098
+    ],
+    "MA1_2_2": [
+      30,
+      5306
+    ],
+    "BO1_2": [
+      30,
+      5514
+    ],
+    "NU2_2_2": [
+      30,
+      5655
+    ],
+    "NU3": [
+      30,
+      1535
+    ],
+    "NU3_2": [
+      30,
+      1535
+    ]
+  },
+  "hidden": [
+    "GE1_2",
+    "CI1_2",
+    "PL4_2",
+    "NU1_3",
+    "NU1_2_2",
+    "EX1_2",
+    "FI1_2",
+    "GE3",
+    "PL3",
+    "CI1",
+    "PL4",
+    "GE1",
+    "NU1",
+    "NU1_2",
+    "EX1",
+    "FI1",
+    "GE1_2_2",
+    "CI1_2_2",
+    "PL4_2_2",
+    "NU1_3_2",
+    "NU1_2_2_2",
+    "EX1_2_2",
+    "FI1_2_2",
+    "GE3_2",
+    "PL3_2",
+    "CI1_3",
+    "PL4_3",
+    "GE1_3",
+    "NU1_4",
+    "NU1_2_3",
+    "EX1_3",
+    "FI1_3",
+    "PO1",
+    "PO2"
+  ]
+}

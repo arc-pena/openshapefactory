@@ -113,6 +113,19 @@ body.hide-props .palette.props, body.hide-props .psplit { display: none; }
 .status .msg { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .status .msg.error { color: var(--error); } .status .msg.note { color: var(--ink-2); } .status .msg.ok { color: var(--ok); }
 .status #stats[data-keys]:not([data-keys=""])::before { content: attr(data-keys); font-weight: 700; color: var(--accent); margin-right: 8px; }
+/* switching interface: the Revit-style page and the parametric CAD page trade places */
+.qswitch { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 12px; margin-left: 6px; border: 1px solid rgba(255,255,255,.35); border-radius: 999px; background: rgba(255,255,255,.1); color: inherit; font-size: 12px; font-weight: 600; white-space: nowrap; flex: none; }
+.qswitch:hover { background: rgba(255,255,255,.22); }
+.app { transform-origin: 30% 50%; transition: transform .75s cubic-bezier(.2,.75,.15,1), opacity .55s ease, filter .55s ease; }
+body.cad-mode .app { transform: perspective(1800px) rotateY(16deg) translateX(-14%) scale(.82); opacity: 0; filter: blur(4px); pointer-events: none; }
+#cadframe { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; z-index: 45; background: #fff; opacity: 0; pointer-events: none; transform-origin: 70% 50%;
+  transform: perspective(1800px) rotateY(-16deg) translateX(14%) scale(.82); transition: transform .75s cubic-bezier(.2,.75,.15,1), opacity .55s ease; }
+body.cad-mode #cadframe { opacity: 1; transform: none; pointer-events: auto; }
+body.cad-switching .app { transform: scale(.985); filter: saturate(.6); }
+#cadboot { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 60; display: flex; align-items: center; gap: 12px; padding: 14px 20px; border-radius: 10px; background: var(--title); color: var(--title-ink); box-shadow: var(--shadow); font-weight: 600; }
+#cadboot .spin { width: 18px; height: 18px; border-radius: 50%; border: 2px solid rgba(255,255,255,.3); border-top-color: #fff; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .app, #cadframe { transition: opacity .2s linear !important; transform: none !important; filter: none !important; } }
 /* context / file menu */
 .cmenu { position: fixed; z-index: 60; min-width: 220px; background: var(--panel); border: 1px solid var(--rule); box-shadow: var(--shadow); padding: 3px; border-radius: 3px; }
 .cmenu button { display: grid; grid-template-columns: 20px 1fr auto; align-items: center; gap: 6px; width: 100%; text-align: left; border: 0; background: none; padding: 4px 8px 4px 4px; border-radius: 2px; white-space: nowrap; }
@@ -314,4 +327,5 @@ table.sched td.id { font: 11.5px var(--mono); color: var(--ink-3); }
   <footer class="status" id="status"></footer>
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<!--CAD-->
 <!--APP-->

@@ -1,0 +1,734 @@
+{
+  "format": "ocaf-parametric-model",
+  "version": 1,
+  "name": "Part1",
+  "units": "mm",
+  "features": [
+    {
+      "id": "PT1",
+      "type": "Point",
+      "name": "Origin",
+      "args": {
+        "kind": "Coordinates",
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "at": 0.5,
+        "end": "Furthest along",
+        "way": "Nearest point"
+      }
+    },
+    {
+      "id": "VZ",
+      "type": "Vector",
+      "name": "Z Direction",
+      "args": {
+        "kind": "Components",
+        "dx": 0,
+        "dy": 0,
+        "dz": 1
+      }
+    },
+    {
+      "id": "PL1",
+      "type": "Plane",
+      "name": "XY Plane",
+      "args": {
+        "kind": "Origin and normal",
+        "origin": {
+          "ref": "PT1"
+        },
+        "normal": {
+          "ref": "VZ"
+        },
+        "at": 0.5,
+        "offset": 100,
+        "angle": 45,
+        "size": 200
+      }
+    },
+    {
+      "id": "PO1",
+      "type": "Point",
+      "name": "Point.1",
+      "args": {
+        "kind": "On a curve",
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "curve": {
+          "ref": "SK1"
+        },
+        "at": 0.16,
+        "end": "Furthest along",
+        "way": "Nearest point"
+      }
+    },
+    {
+      "id": "SK1",
+      "type": "Sketch",
+      "name": "Sketch.1",
+      "args": {
+        "plane": {
+          "ref": "PL1"
+        },
+        "origin": {
+          "ref": "PT1"
+        },
+        "drawing": {
+          "elements": [
+            {
+              "id": "e1",
+              "type": "bspline",
+              "ctrl": [
+                [
+                  258.689,
+                  -1050.617
+                ],
+                [
+                  -677.454,
+                  -1033.783
+                ],
+                [
+                  18.906,
+                  -33.048
+                ],
+                [
+                  343.539,
+                  886.139
+                ],
+                [
+                  -760.237,
+                  1566.027
+                ],
+                [
+                  417.943,
+                  2588.528
+                ],
+                [
+                  1029.283,
+                  1342.223
+                ]
+              ],
+              "degree": 3,
+              "closed": false
+            }
+          ],
+          "constraints": []
+        },
+        "faces": "Make faces",
+        "solve": "Solve",
+        "passes": 24
+      }
+    },
+    {
+      "id": "GS1",
+      "type": "GeometricalSet",
+      "name": "Curve points",
+      "args": {
+        "inputs": ""
+      }
+    },
+    {
+      "id": "RNG",
+      "type": "Range",
+      "name": "10 stations (0 to 1)",
+      "args": {
+        "from": 0,
+        "to": 1,
+        "steps": 149
+      },
+      "parent": "GS1"
+    },
+    {
+      "id": "EVP",
+      "type": "EvaluateCurve",
+      "name": "Points on Sketch.1",
+      "args": {
+        "curve": {
+          "ref": "SK1"
+        },
+        "t": {
+          "value": 0.5,
+          "from": "RNG"
+        },
+        "tangent": 40
+      },
+      "parent": "GS1"
+    },
+    {
+      "id": "PNL",
+      "type": "Panel",
+      "name": "Point list",
+      "args": {
+        "input": {
+          "ref": "EVP"
+        }
+      },
+      "parent": "GS1"
+    },
+    {
+      "id": "GSCOL",
+      "type": "GeometricalSet",
+      "name": "Column one",
+      "args": {
+        "inputs": "{\"version\":1,\"inputs\":[{\"name\":\"Point.2\",\"was\":\"PO2\",\"drives\":false,\"holders\":[{\"id\":\"PL_BASE\",\"key\":\"origin\"},{\"id\":\"SK_COL\",\"key\":\"origin\"}]}]}"
+      }
+    },
+    {
+      "id": "N_X",
+      "type": "Number",
+      "name": "Column X",
+      "args": {
+        "value": 0
+      },
+      "parent": "GSCOL"
+    },
+    {
+      "id": "N_Y",
+      "type": "Number",
+      "name": "Column Y",
+      "args": {
+        "value": 0
+      },
+      "parent": "GSCOL"
+    },
+    {
+      "id": "N_Z",
+      "type": "Number",
+      "name": "Column Z",
+      "args": {
+        "value": 0
+      },
+      "parent": "GSCOL"
+    },
+    {
+      "id": "PT_COL",
+      "type": "Point",
+      "name": "Column base point",
+      "args": {
+        "kind": "Coordinates",
+        "x": {
+          "value": 0,
+          "from": "N_X"
+        },
+        "y": {
+          "value": 0,
+          "from": "N_Y"
+        },
+        "z": {
+          "value": 0,
+          "from": "N_Z"
+        },
+        "at": 0.5,
+        "end": "Furthest along",
+        "way": "Nearest point"
+      },
+      "parent": "GSCOL"
+    },
+    {
+      "id": "V_UP",
+      "type": "Vector",
+      "name": "Extrusion direction",
+      "args": {
+        "kind": "Components",
+        "dx": 0,
+        "dy": 0,
+        "dz": 1
+      },
+      "parent": "GSCOL"
+    },
+    {
+      "id": "PL_BASE",
+      "type": "Plane",
+      "name": "Column datum plane",
+      "args": {
+        "kind": "Origin and normal",
+        "origin": {
+          "ref": "PT_COL"
+        },
+        "normal": {
+          "ref": "V_UP"
+        },
+        "at": 0.5,
+        "offset": 100,
+        "angle": 45,
+        "size": 120
+      },
+      "parent": "GSCOL"
+    },
+    {
+      "id": "N_BOT",
+      "type": "Number",
+      "name": "Bottom offset",
+      "args": {
+        "value": 0
+      },
+      "parent": "GSCOL"
+    },
+    {
+      "id": "N_H",
+      "type": "Number",
+      "name": "Column height",
+      "args": {
+        "value": 233.7
+      },
+      "parent": "GSCOL"
+    },
+    {
+      "id": "N_TOP",
+      "type": "Expression",
+      "name": "Top offset",
+      "args": {
+        "a": {
+          "value": 1,
+          "from": "N_BOT"
+        },
+        "b": {
+          "value": 1,
+          "from": "N_H"
+        },
+        "c": 0,
+        "formula": "a + b"
+      },
+      "parent": "GSCOL"
+    },
+    {
+      "id": "PL_BOT",
+      "type": "Plane",
+      "name": "Column bottom plane",
+      "args": {
+        "kind": "Offset from a plane",
+        "at": 0.5,
+        "from": {
+          "ref": "PL_BASE"
+        },
+        "offset": {
+          "value": 100,
+          "from": "N_BOT"
+        },
+        "angle": 45,
+        "size": 120
+      },
+      "parent": "GSCOL"
+    },
+    {
+      "id": "PL_TOP",
+      "type": "Plane",
+      "name": "Column top plane",
+      "args": {
+        "kind": "Offset from a plane",
+        "at": 0.5,
+        "from": {
+          "ref": "PL_BASE"
+        },
+        "offset": {
+          "value": 100,
+          "from": "N_TOP"
+        },
+        "angle": 45,
+        "size": 120
+      },
+      "parent": "GSCOL"
+    },
+    {
+      "id": "SK_COL",
+      "type": "Sketch",
+      "name": "Column section 14.52mm x 14.02mm",
+      "args": {
+        "plane": {
+          "ref": "PL_BOT"
+        },
+        "origin": {
+          "ref": "PT_COL"
+        },
+        "drawing": {
+          "elements": [
+            {
+              "id": "e1",
+              "type": "line",
+              "a": [
+                -7.26,
+                7.01
+              ],
+              "b": [
+                7.26,
+                7.01
+              ]
+            },
+            {
+              "id": "e2",
+              "type": "line",
+              "a": [
+                7.26,
+                7.01
+              ],
+              "b": [
+                7.26,
+                6.3
+              ]
+            },
+            {
+              "id": "e3",
+              "type": "line",
+              "a": [
+                7.26,
+                6.3
+              ],
+              "b": [
+                0.22,
+                6.3
+              ]
+            },
+            {
+              "id": "e4",
+              "type": "line",
+              "a": [
+                0.22,
+                6.3
+              ],
+              "b": [
+                0.22,
+                -6.3
+              ]
+            },
+            {
+              "id": "e5",
+              "type": "line",
+              "a": [
+                0.22,
+                -6.3
+              ],
+              "b": [
+                7.26,
+                -6.3
+              ]
+            },
+            {
+              "id": "e6",
+              "type": "line",
+              "a": [
+                7.26,
+                -6.3
+              ],
+              "b": [
+                7.26,
+                -7.01
+              ]
+            },
+            {
+              "id": "e7",
+              "type": "line",
+              "a": [
+                7.26,
+                -7.01
+              ],
+              "b": [
+                -7.26,
+                -7.01
+              ]
+            },
+            {
+              "id": "e8",
+              "type": "line",
+              "a": [
+                -7.26,
+                -7.01
+              ],
+              "b": [
+                -7.26,
+                -6.3
+              ]
+            },
+            {
+              "id": "e9",
+              "type": "line",
+              "a": [
+                -7.26,
+                -6.3
+              ],
+              "b": [
+                -0.22,
+                -6.3
+              ]
+            },
+            {
+              "id": "e10",
+              "type": "line",
+              "a": [
+                -0.22,
+                -6.3
+              ],
+              "b": [
+                -0.22,
+                6.3
+              ]
+            },
+            {
+              "id": "e11",
+              "type": "line",
+              "a": [
+                -0.22,
+                6.3
+              ],
+              "b": [
+                -7.26,
+                6.3
+              ]
+            },
+            {
+              "id": "e12",
+              "type": "line",
+              "a": [
+                -7.26,
+                6.3
+              ],
+              "b": [
+                -7.26,
+                7.01
+              ]
+            }
+          ],
+          "constraints": [
+            {
+              "type": "coincident",
+              "of": [
+                "e1.a",
+                "e12.b"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e1.b",
+                "e2.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e2.b",
+                "e3.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e3.b",
+                "e4.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e4.b",
+                "e5.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e5.b",
+                "e6.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e6.b",
+                "e7.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e7.b",
+                "e8.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e8.b",
+                "e9.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e9.b",
+                "e10.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e10.b",
+                "e11.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e11.b",
+                "e12.a"
+              ]
+            }
+          ]
+        },
+        "faces": "Make faces",
+        "solve": "Solve",
+        "passes": 24
+      },
+      "parent": "GSCOL"
+    },
+    {
+      "id": "EXT_COL",
+      "type": "Extrude",
+      "name": "Column extrude",
+      "args": {
+        "profile": {
+          "ref": "SK_COL"
+        },
+        "direction": {
+          "ref": "V_UP"
+        },
+        "limit": "Up to plane",
+        "distance": 120,
+        "until": {
+          "ref": "PL_TOP"
+        },
+        "cap": "Solid"
+      },
+      "parent": "GSCOL"
+    },
+    {
+      "id": "BD_COLS",
+      "type": "Body",
+      "name": "Columns on curve",
+      "args": {
+        "inputs": ""
+      }
+    },
+    {
+      "id": "PLC",
+      "type": "PlaceAt",
+      "name": "Column at every point",
+      "args": {
+        "shape": {
+          "ref": "EXT_COL"
+        },
+        "points": [
+          {
+            "ref": "EVP"
+          }
+        ],
+        "turn": 0,
+        "lift": 0
+      },
+      "parent": "BD_COLS"
+    }
+  ],
+  "layout": {
+    "RNG": [
+      128,
+      347
+    ],
+    "EVP": [
+      415,
+      288
+    ],
+    "PNL": [
+      952,
+      540
+    ],
+    "PT1": [
+      -179,
+      -81
+    ],
+    "VZ": [
+      -163,
+      367
+    ],
+    "PO1": [
+      30,
+      594
+    ],
+    "GS1": [
+      30,
+      880
+    ],
+    "PL1": [
+      338,
+      30
+    ],
+    "SK1": [
+      690,
+      -87
+    ],
+    "GSCOL": [
+      30,
+      1047
+    ],
+    "N_X": [
+      30,
+      1214
+    ],
+    "N_Y": [
+      30,
+      1348
+    ],
+    "N_Z": [
+      30,
+      1482
+    ],
+    "PT_COL": [
+      30,
+      1616
+    ],
+    "V_UP": [
+      30,
+      1859
+    ],
+    "PL_BASE": [
+      30,
+      2100
+    ],
+    "N_BOT": [
+      30,
+      2275
+    ],
+    "N_H": [
+      30,
+      2409
+    ],
+    "N_TOP": [
+      30,
+      2543
+    ],
+    "PL_BOT": [
+      30,
+      2768
+    ],
+    "PL_TOP": [
+      30,
+      2943
+    ],
+    "SK_COL": [
+      30,
+      3118
+    ],
+    "EXT_COL": [
+      30,
+      3389
+    ],
+    "BD_COLS": [
+      691,
+      2507
+    ],
+    "PLC": [
+      840,
+      236
+    ]
+  }
+}

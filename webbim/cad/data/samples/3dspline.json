@@ -1,0 +1,395 @@
+{
+  "format": "ocaf-parametric-model",
+  "version": 1,
+  "name": "Part1",
+  "units": "mm",
+  "features": [
+    {
+      "id": "PT1",
+      "type": "Point",
+      "name": "Origin",
+      "args": {
+        "kind": "Coordinates",
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "at": 0.5,
+        "end": "Furthest along",
+        "way": "Nearest point"
+      }
+    },
+    {
+      "id": "VZ",
+      "type": "Vector",
+      "name": "Z Direction",
+      "args": {
+        "kind": "Components",
+        "dx": 0,
+        "dy": 0,
+        "dz": 1
+      }
+    },
+    {
+      "id": "PL1",
+      "type": "Plane",
+      "name": "XY Plane",
+      "args": {
+        "kind": "Origin and normal",
+        "origin": {
+          "ref": "PT1"
+        },
+        "normal": {
+          "ref": "VZ"
+        },
+        "at": 0.5,
+        "offset": 100,
+        "angle": 45,
+        "size": 200
+      }
+    },
+    {
+      "id": "SK1",
+      "type": "Sketch",
+      "name": "Sketch.1",
+      "args": {
+        "plane": {
+          "ref": "PL1"
+        },
+        "origin": {
+          "ref": "PT1"
+        },
+        "drawing": {
+          "elements": [
+            {
+              "id": "e1",
+              "type": "bspline",
+              "ctrl": [
+                [
+                  -77.679,
+                  -2712.794
+                ],
+                [
+                  -613.834,
+                  -1931.657
+                ],
+                [
+                  443.477,
+                  -2041.44
+                ],
+                [
+                  -588.08,
+                  -1000.137
+                ],
+                [
+                  1548.356,
+                  -1354.899
+                ],
+                [
+                  679.541,
+                  -302.895
+                ]
+              ],
+              "degree": 3,
+              "closed": false
+            },
+            {
+              "id": "e2",
+              "type": "line",
+              "a": [
+                -77.679,
+                -2712.794
+              ],
+              "b": [
+                -1731.451,
+                -2965.02
+              ]
+            },
+            {
+              "id": "e3",
+              "type": "line",
+              "a": [
+                -1731.451,
+                -2965.02
+              ],
+              "b": [
+                -2014.694,
+                -2346.296
+              ]
+            }
+          ],
+          "constraints": [
+            {
+              "type": "coincident",
+              "of": [
+                "e2.a",
+                "e1.p0"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e3.a",
+                "e2.b"
+              ]
+            }
+          ]
+        },
+        "faces": "Make faces",
+        "solve": "Solve",
+        "passes": 24
+      }
+    },
+    {
+      "id": "SK2",
+      "type": "Sketch",
+      "name": "Sketch.2",
+      "args": {
+        "plane": {
+          "ref": "PL2"
+        },
+        "origin": {
+          "ref": "PT1"
+        },
+        "drawing": {
+          "elements": [
+            {
+              "id": "e1",
+              "type": "bspline",
+              "ctrl": [
+                [
+                  -437.034,
+                  87.719
+                ],
+                [
+                  -1300.553,
+                  233.524
+                ],
+                [
+                  111.181,
+                  531.823
+                ],
+                [
+                  -759.369,
+                  763.99
+                ],
+                [
+                  -387.008,
+                  1293.567
+                ]
+              ],
+              "degree": 3,
+              "closed": false
+            },
+            {
+              "id": "e2",
+              "type": "line",
+              "a": [
+                -387.008,
+                1293.567
+              ],
+              "b": [
+                -2209.308,
+                1309.968
+              ]
+            },
+            {
+              "id": "e3",
+              "type": "line",
+              "a": [
+                -2209.308,
+                1309.968
+              ],
+              "b": [
+                -2204.148,
+                -93.381
+              ]
+            }
+          ],
+          "constraints": [
+            {
+              "type": "coincident",
+              "of": [
+                "e2.a",
+                "e1.p4"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e3.a",
+                "e2.b"
+              ]
+            }
+          ]
+        },
+        "faces": "Make faces",
+        "solve": "Solve",
+        "passes": 24
+      }
+    },
+    {
+      "id": "PO1",
+      "type": "Point",
+      "name": "Point.1",
+      "args": {
+        "kind": "On a curve",
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "curve": {
+          "ref": "SK1"
+        },
+        "at": 1,
+        "end": "Furthest along",
+        "way": "Nearest point"
+      },
+      "parent": "GE1"
+    },
+    {
+      "id": "PO2",
+      "type": "Point",
+      "name": "Point.2",
+      "args": {
+        "kind": "On a curve",
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "curve": {
+          "ref": "SK2"
+        },
+        "at": 0,
+        "end": "Furthest along",
+        "way": "Nearest point"
+      },
+      "parent": "GE1"
+    },
+    {
+      "id": "BL1",
+      "type": "BlendCurve",
+      "name": "BlendCurve.1",
+      "args": {
+        "points": [
+          {
+            "ref": "PO1"
+          },
+          {
+            "ref": "PO2"
+          }
+        ],
+        "tangents": [
+          {
+            "ref": "VE1"
+          },
+          {
+            "ref": "VE2"
+          }
+        ],
+        "tension": 4.25,
+        "tensions": "",
+        "ends": "Open",
+        "honour": "Honoured exactly",
+        "steps": 24
+      },
+      "parent": "GE1"
+    },
+    {
+      "id": "VE1",
+      "type": "Vector",
+      "name": "Vector.1",
+      "args": {
+        "kind": "Tangent at a point",
+        "dx": 0,
+        "dy": 0,
+        "dz": 1,
+        "curve": {
+          "ref": "SK1"
+        },
+        "at": {
+          "ref": "PO1"
+        }
+      },
+      "parent": "GE1"
+    },
+    {
+      "id": "VE2",
+      "type": "Vector",
+      "name": "Vector.2",
+      "args": {
+        "kind": "Tangent at a point",
+        "dx": 0,
+        "dy": 0,
+        "dz": 1,
+        "curve": {
+          "ref": "SK2"
+        },
+        "at": {
+          "ref": "PO2"
+        }
+      },
+      "parent": "GE1"
+    },
+    {
+      "id": "PL2",
+      "type": "Plane",
+      "name": "Plane.1",
+      "args": {
+        "kind": "Offset from a plane",
+        "origin": {
+          "ref": "PT1"
+        },
+        "normal": {
+          "ref": "VZ"
+        },
+        "at": 0.5,
+        "from": {
+          "ref": "PL1"
+        },
+        "offset": 427,
+        "angle": 45,
+        "size": 160
+      }
+    },
+    {
+      "id": "CA1",
+      "type": "Camera",
+      "name": "Camera.1",
+      "args": {
+        "x": 211.16,
+        "y": -630.03,
+        "z": 106.46,
+        "tx": -83.28,
+        "ty": 67.38,
+        "tz": 85.8,
+        "lens": 22,
+        "roll": 0,
+        "frame": "16:9",
+        "safe": "Thirds",
+        "size": 181
+      }
+    },
+    {
+      "id": "CA2",
+      "type": "Camera",
+      "name": "Camera.2",
+      "args": {
+        "x": 164.48,
+        "y": 525.34,
+        "z": 699.05,
+        "tx": -195.3,
+        "ty": 38.67,
+        "tz": 139.64,
+        "lens": 20,
+        "roll": 0,
+        "frame": "16:9",
+        "safe": "Both",
+        "size": 181
+      }
+    },
+    {
+      "id": "GE1",
+      "type": "GeometricalSet",
+      "name": "blend1",
+      "args": {}
+    }
+  ]
+}

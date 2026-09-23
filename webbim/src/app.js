@@ -19,6 +19,7 @@ import { renderGraph } from "./graph.js";
 import { View2D, SNAP_KINDS, MODIFY_TOOLS } from "./canvas2d.js";
 import { View3D, VISUAL_STYLES, hiddenLineFor } from "./view3d.js";
 import { categoryOf } from "./styles.js";
+import { bimToCad, cadEditsToOps, cadDiff, mergeModel } from "./cadbridge.js";
 
 const VIEW_TYPES = ["PlanView", "ElevationView", "View3D", "Schedule", "Sheet"];
 const PLACE_TOOLS = new Set(["wall", "opening", "door", "window", "column", "grid", "text", "dim", "space", "elev", "sep"]);
@@ -165,6 +166,11 @@ const COMMANDS = {
   graph: { label: "Node Graph", icon: "graph", run: () => app.openView("__graph") },
   tree: { label: "Feature Tree", icon: "tree", run: () => app.openView("__tree") },
   tests: { label: "Acceptance Tests", icon: "tests", run: () => app.openView("__diag") },
+  cadmode: { label: "Parametric CAD", icon: "view3d", key: "PC", hint: "Switch the whole interface to the OpenCascade parametric modeller - the same building, as nodes", run: () => switchToCad() },
+  dooranim: { label: "Open / Close", icon: "door", run: () => animateSelectedDoors() },
+  swingnext: { label: "Swing Scenario", icon: "rotate", run: () => nextSwingScenario() },
+  fliphand: { label: "Flip Hand", icon: "mirror", run: () => flipDoors("flipHand") },
+  flipfacing: { label: "Flip Facing", icon: "mirror", run: () => flipDoors("flipFacing") },
   closehidden: { label: "Close Inactive", icon: "close", run: () => { app.tabs = app.tabs.filter(t => t === app.activeView); app.refresh(); } },
   edittype: { label: "Edit Type", icon: "edittype", run: () => { const t = selectedType(); if (t) typeEditor(app, t); else app.say("select an element with a type", "note"); } },
   props: { label: "Properties", icon: "props", key: "PP", active: () => !document.body.classList.contains("hide-props"), run: () => document.body.classList.toggle("hide-props") },
@@ -216,6 +222,7 @@ const RIBBON = [
     { title: "Graphics", items: [big("vv"), small("thin"), small("zoomfit")] },
     { title: "Create", items: [big("default3d"), small("planview"), small("elev"), small("schedule"), big("sheet")] },
     { title: "Windows", items: [small("graph"), small("tree"), small("closehidden")] },
+    { title: "Interface", items: [big("cadmode")] },
   ] },
   { tab: "Manage", panels: [
     { title: "Settings", items: [big("pens"), big("projectinfo")] },
@@ -237,6 +244,7 @@ function contextTab() {
     { title: "Properties", items: [big("props"), big("edittype")] },
     { title: "Modify", items: [big("move"), big("copy"), big("rotate"), big("mirror"), big("del")] },
     ...(hasWall ? [{ title: "Mode", items: [big("flip")] }] : []),
+    ...(els.some(f => app.doc.typeOf(f) === "Door") ? [{ title: "Door", items: [big("dooranim"), big("swingnext"), small("fliphand"), small("flipfacing")] }] : []),
     { title: "Select", items: [small("selectall"), small("select")] },
   ] };
 }
@@ -280,7 +288,8 @@ function renderQAT() {
     b("open"), b("save"), h("span", { class: "qsep" }), b("undo"), b("redo"), h("span", { class: "qsep" }),
     b("dim"), b("text"), h("span", { class: "qsep" }), b("default3d"), b("elev"), b("thin"), b("closehidden"),
     h("div", { class: "qtitle" }, h("b", {}, app.doc.meta.name), viewName ? " — " + viewName : ""),
-    h("button", { class: "qbtn", title: "Export (PDF set, DXF)", "aria-label": "Export", onclick: () => exportDialog() }, icon("exportI", 16)));
+    h("button", { class: "qbtn", title: "Export (PDF set, DXF)", "aria-label": "Export", onclick: () => exportDialog() }, icon("exportI", 16)),
+    h("button", { class: "qswitch", title: "Switch to the parametric CAD interface (PC) - the same model", onclick: () => switchToCad() }, icon("view3d", 15), h("span", {}, "Parametric CAD")));
 }
 function renderOptionsBar() {
   const bar = clear(document.getElementById("options"));
@@ -748,6 +757,106 @@ function renderDiagnostics(main) {
   setTimeout(run, 30);
 }
 
+
+// ---------------------------------------------------------------- doors: swing scenarios and the open/close animation
+function selectedDoors() { return [...app.selection].filter(id => { const f = app.doc.element(id); return f && app.doc.typeOf(f) === "Door"; }); }
+function flipDoors(key) { const ids = selectedDoors(); if (!ids.length) return app.say("select a door", "note"); app.apply(ids.map(id => ({ op: "set", id, key, value: !F.bool(app.doc.element(id), key) }))); }
+/** Left in → right in → left out → right out: the four ways a single door can hang. */
+function nextSwingScenario() {
+  const ids = selectedDoors(); if (!ids.length) return app.say("select a door", "note");
+  const ops = [];
+  for (const id of ids) { const f = app.doc.element(id), i = (F.bool(f, "flipHand") ? 1 : 0) + (F.bool(f, "flipFacing") ? 2 : 0), n = (i + 1) % 4; ops.push({ op: "set", id, key: "flipHand", value: !!(n & 1) }, { op: "set", id, key: "flipFacing", value: !!(n & 2) }); }
+  const r = app.apply(ops); if (r.ok) { const d = app.doc.data(app.doc.element(ids[0])); app.say(`Swing: ${d && d.props && d.props.Swing ? d.props.Swing.v : ""}`, "ok"); }
+}
+function animateSelectedDoors() {
+  const ids = selectedDoors(); if (!ids.length) return app.say("select a door", "note");
+  const v = app.views.get(app.activeView);
+  if (v && v.animateDoor) { let any = false; for (const id of ids) any = v.animateDoor(id) || any; if (any) return app.say("Opening and closing through the swing angle", "ok"); }
+  const v3 = default3D(); app.say("Opening it in the {3D} view", "note"); app.openView(v3);
+  setTimeout(() => { const w = app.views.get(app.activeView); if (w && w.animateDoor) for (const id of ids) w.animateDoor(id); }, 400);
+}
+
+// ---------------------------------------------------------------- the other interface: parametric CAD
+//! One building, two interfaces. The Revit-style one is this page; the other is
+//! the OpenCascade/OCAF modeller, carried inside this page and started in a frame
+//! the first time it is asked for. The building stays the one document: switching
+//! writes it into the modeller as nodes (cadbridge.js), edits there come back as
+//! ordinary ops, and switching back shows whatever either side did.
+const cad = { frame: null, bridge: null, params: null, syncing: false, timer: null, on: false, booting: null };
+function cadSource() {
+  const el = document.getElementById("cad-page");
+  return el ? { srcdoc: el.textContent.replace(/<\\\/(script)/gi, "</$1").replace(/<\\!--/g, "<" + "!--") } : { src: "cad/parametric-cad.html" };
+}
+function bootCad() {
+  if (cad.booting) return cad.booting;
+  cad.booting = new Promise((resolve, reject) => {
+    const src = cadSource();
+    const fr = h("iframe", { id: "cadframe", title: "Parametric CAD interface" });
+    if (src.srcdoc) fr.srcdoc = src.srcdoc; else fr.src = src.src;
+    document.body.append(fr); cad.frame = fr;
+    const t0 = performance.now();
+    const poll = () => {
+      let b = null; try { b = fr.contentWindow && fr.contentWindow.__webbimCad; } catch (e) { return reject(new Error("the CAD frame is not reachable from this page")); }
+      if (b && b.ready) { cad.bridge = b; b.onChange = () => { if (!cad.syncing && cad.on) { clearTimeout(cad.timer); cad.timer = setTimeout(pullFromCad, 250); } }; return resolve(b); }
+      if (performance.now() - t0 > 120000) return reject(new Error("the CAD interface did not start within two minutes"));
+      setTimeout(poll, 150);
+    };
+    poll();
+  });
+  return cad.booting;
+}
+/** The modeller's copy brought up to date with the building: small edits when it can, the building's part rewritten when the tree changed shape. */
+async function pushToCad(cur) {
+  const b = cad.bridge; if (!b) return;
+  const { model, params } = bimToCad(app.doc);
+  cad.syncing = true;
+  try {
+    cur = cur || await b.model();
+    const cmds = cadDiff(cur, model);
+    if (cmds === null) await b.load(mergeModel(cur, model));
+    else for (const c of cmds) await b.run(c);
+    cad.params = params;
+  } finally { cad.syncing = false; }
+}
+/** Edits made in the modeller to the building's parameters, applied to the building - then the modeller shown what the building made of them. */
+async function pullFromCad() {
+  const b = cad.bridge; if (!b || cad.syncing || !cad.params) return;
+  const cur = await b.model();
+  const ops = cadEditsToOps(app.doc, cur, cad.params);
+  if (!ops.length) return;
+  const r = app.apply(ops, { quiet: true });
+  b.say(r.ok ? `Web BIM: ${ops.length} change${ops.length > 1 ? "s" : ""} applied to the building` : `Web BIM refused: ${r.error}`);
+  await pushToCad(r.ok ? null : cur);
+}
+async function switchToCad() {
+  if (cad.on) return;
+  closeMenus();
+  const boot = document.getElementById("cadboot") || h("div", { id: "cadboot", role: "status" }, h("span", { class: "spin" }), h("span", {}, "Starting OpenCascade…"));
+  document.body.append(boot);
+  document.body.classList.add("cad-switching");
+  let b;
+  try { b = await bootCad(); }
+  catch (e) { boot.remove(); document.body.classList.remove("cad-switching"); return app.say(`Parametric CAD could not start: ${e.message}`, "error"); }
+  boot.querySelector("span:last-child").textContent = "Writing the building as nodes…";
+  const first = !cad.params;
+  try { await pushToCad(first ? { features: [] } : null); } catch (e) { app.say(`the building could not be written into the CAD interface: ${e.message}`, "error"); }
+  if (first) b.fit();
+  boot.remove();
+  cad.on = true;
+  document.body.classList.remove("cad-switching");
+  document.body.classList.add("cad-mode");
+  try { cad.frame.contentWindow.focus(); } catch (e) { /* focus is a nicety */ }
+}
+async function switchToRevit() {
+  if (!cad.on) return;
+  clearTimeout(cad.timer);
+  try { await pullFromCad(); } catch (e) { app.say(`edits in the CAD interface could not be read back: ${e.message}`, "error"); }
+  cad.on = false;
+  document.body.classList.remove("cad-mode");
+  app.refresh();
+  app.say("Revit-style interface — the same model", "ok");
+}
+window.addEventListener("message", e => { if (e.data && e.data.webbim === "revit") switchToRevit(); });
 
 // ---------------------------------------------------------------- keys (Revit two-letter shortcuts)
 const SHORTCUTS = Object.fromEntries(Object.entries(COMMANDS).filter(([, c]) => c.key).map(([id, c]) => [c.key.toUpperCase(), id]));

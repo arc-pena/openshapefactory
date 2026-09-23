@@ -1,0 +1,213 @@
+{
+  "format": "ocaf-parametric-model",
+  "version": 1,
+  "name": "Part1",
+  "units": "mm",
+  "features": [
+    {
+      "id": "PT1",
+      "type": "Point",
+      "name": "Origin",
+      "args": {
+        "kind": "Coordinates",
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "at": 0.5,
+        "end": "Furthest along",
+        "way": "Nearest point"
+      }
+    },
+    {
+      "id": "VZ",
+      "type": "Vector",
+      "name": "Z Direction",
+      "args": {
+        "kind": "Components",
+        "dx": 0,
+        "dy": 0,
+        "dz": 1
+      }
+    },
+    {
+      "id": "PL1",
+      "type": "Plane",
+      "name": "XY Plane",
+      "args": {
+        "kind": "Origin and normal",
+        "origin": {
+          "ref": "PT1"
+        },
+        "normal": {
+          "ref": "VZ"
+        },
+        "at": 0.5,
+        "offset": 100,
+        "angle": 45,
+        "size": 200
+      }
+    },
+    {
+      "id": "PO1",
+      "type": "Point",
+      "name": "Point.1",
+      "args": {
+        "kind": "Coordinates",
+        "x": 69,
+        "y": -433,
+        "z": 0,
+        "at": 0.5,
+        "end": "Furthest along",
+        "way": "Nearest point"
+      }
+    },
+    {
+      "id": "PO2",
+      "type": "Point",
+      "name": "Point.2",
+      "args": {
+        "kind": "Coordinates",
+        "x": -551.5,
+        "y": -497,
+        "z": 0,
+        "at": 0.5,
+        "end": "Furthest along",
+        "way": "Nearest point"
+      }
+    },
+    {
+      "id": "PO3",
+      "type": "Point",
+      "name": "Point.3",
+      "args": {
+        "kind": "Coordinates",
+        "x": -733,
+        "y": 564.5,
+        "z": 0,
+        "at": 0.5,
+        "end": "Furthest along",
+        "way": "Nearest point"
+      }
+    },
+    {
+      "id": "PO4",
+      "type": "Point",
+      "name": "Point.4",
+      "args": {
+        "kind": "Coordinates",
+        "x": 261.5,
+        "y": 712.5,
+        "z": 0,
+        "at": 0.5,
+        "end": "Furthest along",
+        "way": "Nearest point"
+      }
+    },
+    {
+      "id": "PO5",
+      "type": "Point",
+      "name": "Point.5",
+      "args": {
+        "kind": "Coordinates",
+        "x": 711.5,
+        "y": -84,
+        "z": 0,
+        "at": 0.5,
+        "end": "Furthest along",
+        "way": "Nearest point"
+      }
+    },
+    {
+      "id": "PO6",
+      "type": "Point",
+      "name": "Point.6",
+      "args": {
+        "kind": "Coordinates",
+        "x": 76.562,
+        "y": -805.419,
+        "z": 0,
+        "at": 0.5,
+        "end": "Furthest along",
+        "way": "Nearest point"
+      }
+    },
+    {
+      "id": "PO7",
+      "type": "Point",
+      "name": "Point.7",
+      "args": {
+        "kind": "Coordinates",
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "at": 0.5,
+        "end": "Furthest along",
+        "way": "Nearest point"
+      }
+    },
+    {
+      "id": "PO8",
+      "type": "Polyline",
+      "name": "Polyline.1",
+      "args": {
+        "points": [
+          {
+            "ref": "PT1"
+          },
+          {
+            "ref": "PO1"
+          },
+          {
+            "ref": "PO2"
+          },
+          {
+            "ref": "PO3"
+          },
+          {
+            "ref": "PO4"
+          }
+        ],
+        "closed": "Open"
+      }
+    },
+    {
+      "id": "SER1",
+      "type": "Series",
+      "name": "Offset series",
+      "args": {
+        "start": -97,
+        "step": 15.5,
+        "count": 28
+      },
+      "parent": "GS1"
+    },
+    {
+      "id": "PA2",
+      "type": "ParallelCurve",
+      "name": "Offset family",
+      "args": {
+        "curve": {
+          "ref": "PO8"
+        },
+        "distance": {
+          "value": 100,
+          "from": "SER1"
+        },
+        "support": {
+          "ref": "PL1"
+        },
+        "join": "Rounded"
+      },
+      "parent": "GS1"
+    },
+    {
+      "id": "GS1",
+      "type": "GeometricalSet",
+      "name": "Offset family",
+      "args": {
+        "inputs": "",
+        "shell": "Open"
+      }
+    }
+  ]
+}

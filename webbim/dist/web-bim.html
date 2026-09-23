@@ -113,6 +113,19 @@ body.hide-props .palette.props, body.hide-props .psplit { display: none; }
 .status .msg { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .status .msg.error { color: var(--error); } .status .msg.note { color: var(--ink-2); } .status .msg.ok { color: var(--ok); }
 .status #stats[data-keys]:not([data-keys=""])::before { content: attr(data-keys); font-weight: 700; color: var(--accent); margin-right: 8px; }
+/* switching interface: the Revit-style page and the parametric CAD page trade places */
+.qswitch { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 12px; margin-left: 6px; border: 1px solid rgba(255,255,255,.35); border-radius: 999px; background: rgba(255,255,255,.1); color: inherit; font-size: 12px; font-weight: 600; white-space: nowrap; flex: none; }
+.qswitch:hover { background: rgba(255,255,255,.22); }
+.app { transform-origin: 30% 50%; transition: transform .75s cubic-bezier(.2,.75,.15,1), opacity .55s ease, filter .55s ease; }
+body.cad-mode .app { transform: perspective(1800px) rotateY(16deg) translateX(-14%) scale(.82); opacity: 0; filter: blur(4px); pointer-events: none; }
+#cadframe { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; z-index: 45; background: #fff; opacity: 0; pointer-events: none; transform-origin: 70% 50%;
+  transform: perspective(1800px) rotateY(-16deg) translateX(14%) scale(.82); transition: transform .75s cubic-bezier(.2,.75,.15,1), opacity .55s ease; }
+body.cad-mode #cadframe { opacity: 1; transform: none; pointer-events: auto; }
+body.cad-switching .app { transform: scale(.985); filter: saturate(.6); }
+#cadboot { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 60; display: flex; align-items: center; gap: 12px; padding: 14px 20px; border-radius: 10px; background: var(--title); color: var(--title-ink); box-shadow: var(--shadow); font-weight: 600; }
+#cadboot .spin { width: 18px; height: 18px; border-radius: 50%; border: 2px solid rgba(255,255,255,.3); border-top-color: #fff; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .app, #cadframe { transition: opacity .2s linear !important; transform: none !important; filter: none !important; } }
 /* context / file menu */
 .cmenu { position: fixed; z-index: 60; min-width: 220px; background: var(--panel); border: 1px solid var(--rule); box-shadow: var(--shadow); padding: 3px; border-radius: 3px; }
 .cmenu button { display: grid; grid-template-columns: 20px 1fr auto; align-items: center; gap: 6px; width: 100%; text-align: left; border: 0; background: none; padding: 4px 8px 4px 4px; border-radius: 2px; white-space: nowrap; }
@@ -314,6 +327,7 @@ table.sched td.id { font: 11.5px var(--mono); color: var(--ink-3); }
   <footer class="status" id="status"></footer>
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<!--CAD-->
 <script>
 (() => {
 "use strict";
@@ -3561,7 +3575,9 @@ function fillerDecl(type, guid, typeKind, extraArgs, summary, idPrefix, category
   declare({ type, guid, category, kind: type.toLowerCase(), idPrefix, summary,
     args: [ ref("fills", "Fills", ["opening"]), ref(typeKind, "Type", [typeKind]), ...extraArgs ] });
 }
-fillerDecl("Door", "wb-0202", "doorType", [bool("flipHand", "Flip hand", false), bool("flipFacing", "Flip facing", false)],
+fillerDecl("Door", "wb-0202", "doorType", [bool("flipHand", "Flip hand", false), bool("flipFacing", "Flip facing", false),
+    choice("operation", "Operation", ["Single", "Double"], 0), real("swingAngle", "Swing angle", 90, 0, 180, 1, "°"),
+    real("openAngle", "Open angle (3D)", 0, 0, 180, 1, "°"), choice("clearance", "ADA clearance", ["Front approach", "Hinge approach", "Latch approach", "None"], 0)],
   "A filler with a symbol: panel, frame and swing, drawn in its opening's host frame.", "D", "IfcDoor");
 fillerDecl("Window", "wb-0203", "windowType", [bool("flipFacing", "Flip facing", false)],
   "A filler with glazing and frame, drawn in its opening's host frame.", "WN", "IfcWindow");
@@ -3581,6 +3597,18 @@ const fillerPre = (typeKey) => (f, doc) => {
 /** Everything a filler draws is in host (u, s) coordinates, mapped once. */
 const hostPt = (w, u, s) => pointAt(w, s, u);
 
+/** A box in the host's (u, s, z) frame, as a plan footprint and a height range: what the 3D view and the CAD bridge build from. */
+const hostBox = (w, u0, u1, s0, s1, z0, z1, sub, extra = {}) =>
+  Object.assign({ foot: [pointAt(w, s0, u0), pointAt(w, s0, u1), pointAt(w, s1, u1), pointAt(w, s1, u0)], z0: w.z0 + z0, z1: w.z0 + z1, sub }, extra);
+/** ADA 2010 §404.2.4 maneuvering clearances at a manual swinging door, mm: depth
+ *  in front of the door, and how far the clear floor runs past the latch or the hinge. */
+const ADA_CLEARANCE = {
+  "Front approach": { pull: { depth: 1525, latch: 455, hinge: 0 }, push: { depth: 1220, latch: 305, hinge: 0 } },
+  "Hinge approach": { pull: { depth: 1525, latch: 915, hinge: 0 }, push: { depth: 1065, latch: 0, hinge: 560 } },
+  "Latch approach": { pull: { depth: 1220, latch: 610, hinge: 0 }, push: { depth: 1065, latch: 610, hinge: 0 } },
+};
+const SWING_SCENARIOS = ["Left hand, swing in", "Right hand, swing in", "Left hand, swing out", "Right hand, swing out"];
+
 BUILDERS.Door = {
   precondition: fillerPre("doorType"),
   build: (f, doc) => {
@@ -3588,31 +3616,63 @@ BUILDERS.Door = {
     const n = w.stack.s.length - 1, sExt = w.stack.s[0], sInt = w.stack.s[n];
     const facing = F.bool(f, "flipFacing") ? -1 : 1;                 // swing toward the interior face unless flipped
     const sFace = facing > 0 ? sInt : sExt, sFar = facing > 0 ? sExt : sInt;
-    const dir = Math.sign(sFace - sFar) || 1;
-    const fw = t.frame || 40;
+    const dir = Math.sign(sFace - sFar) || 1;                          // +s toward the swing side
+    const fw = t.frame || 40, lt = t.leafThickness || 44;
+    const pair = F.choice(f, "operation") === "Double";
+    const swingDeg = Math.max(0, Math.min(180, F.real(f, "swingAngle") ?? 90));
+    const openDeg = Math.max(0, Math.min(swingDeg, F.real(f, "openAngle") ?? 0));
     const hingeAtU0 = !F.bool(f, "flipHand");
-    const uh = hingeAtU0 ? fr.u0 + fw : fr.u1 - fw, uo = hingeAtU0 ? fr.u1 - fw : fr.u0 + fw;
-    const leaf = Math.abs(uo - uh);
-    const lt = t.leafThickness || 44;
-    // In host coordinates: the leaf stands open at 90°, the swing sweeps from the closed position.
-    const hinge = hostPt(w, uh, sFace);
-    const openTip = add(hinge, mul(normalise(sub(hostPt(w, uh, sFace + dir * 10), hinge)), leaf));
-    const closedTip = hostPt(w, uo, sFace);
-    const along = normalise(sub(closedTip, hinge)), out = normalise(sub(openTip, hinge));
-    const leafPoly = [hinge, openTip, add(openTip, mul(along, hingeAtU0 ? lt : lt)), add(hinge, mul(along, lt))];
-    const a0 = Math.atan2(along[1], along[0]), a1 = Math.atan2(out[1], out[0]);
-    let sw = a1 - a0; while (sw > Math.PI) sw -= TAU; while (sw < -Math.PI) sw += TAU;
-    const frames = [[fr.u0, fr.u0 + fw], [fr.u1 - fw, fr.u1]].map(([ua, ub]) => [hostPt(w, ua, sExt), hostPt(w, ub, sExt), hostPt(w, ub, sInt), hostPt(w, ua, sInt)]);
-    const plan = [
-      { sub: "Panel", role: "cut", path: polyPath(leafPoly) },
-      { sub: "Swing", role: "swing", path: [{ k: "A", c: hinge, r: leaf, a0, a1: a0 + sw }] },
-      ...frames.map(p => ({ sub: "Frame", role: "cut", path: polyPath(p) })),
-    ];
-    // Elevation rep: near profile + leaf outline, in host (u, z) — mapped per view.
+    const ua = fr.u0 + fw, ub = fr.u1 - fw;                            // clear opening between the jambs
+    const leaves = pair ? [{ uh: ua, uo: (ua + ub) / 2 }, { uh: ub, uo: (ua + ub) / 2 }]
+      : [hingeAtU0 ? { uh: ua, uo: ub } : { uh: ub, uo: ua }];
+    const sMin = Math.min(sExt, sInt), sMax = Math.max(sExt, sInt);
+    const plan = [], parts = [], swing = [];
+    const hz = 1000;                                                    // handle height above the floor
+    for (const L of leaves) {
+      const H = hostPt(w, L.uh, sFace), len = Math.abs(L.uo - L.uh) - (pair ? 2 : 0);
+      const c = normalise(sub(hostPt(w, L.uo, sFace), H)), o = normalise(sub(hostPt(w, L.uh, sFace + dir * 10), H));
+      const at = deg => { const r = deg * Math.PI / 180; return { d: add(mul(c, Math.cos(r)), mul(o, Math.sin(r))), t: add(mul(o, -Math.cos(r)), mul(c, Math.sin(r))) }; };
+      const leafPoly = deg => { const { d, t: th } = at(deg); return [H, add(H, mul(d, len)), add(add(H, mul(d, len)), mul(th, lt)), add(H, mul(th, lt))]; };
+      // plan: the leaf drawn open at the swing angle, and the arc it sweeps
+      const a0 = Math.atan2(c[1], c[0]), turn = Math.sign(c[0] * o[1] - c[1] * o[0]) || 1;
+      plan.push({ sub: "Panel", role: "cut", path: polyPath(leafPoly(swingDeg)) });
+      if (swingDeg > 0) plan.push({ sub: "Swing", role: "swing", path: [{ k: "A", c: H, r: len, a0, a1: a0 + turn * swingDeg * Math.PI / 180 }] });
+      // 3D: the leaf at its open angle, with a lever handle on each face; all of it turns about the hinge
+      const local = (x, y) => { const { d, t: th } = at(openDeg); return add(add(H, mul(d, x)), mul(th, y)); };
+      const box3 = (x0, x1, y0, y1, z0, z1, sub_) => ({ foot: [local(x0, y0), local(x1, y0), local(x1, y1), local(x0, y1)], z0: w.z0 + fr.sill + z0, z1: w.z0 + fr.sill + z1, sub: sub_, leaf: true, pivot: H, turn, openDeg, swingDeg });
+      parts.push(box3(0, len, 0, lt, 5, fr.h - fw - 3, t.glazed ? "Glass" : "Panel"));
+      for (const side of [-1, 1]) {                                     // push face and pull face
+        const y0 = side < 0 ? -14 : lt, y1 = side < 0 ? 0 : lt + 14;       // rose on the face
+        const yb0 = side < 0 ? -62 : lt + 48, yb1 = side < 0 ? -48 : lt + 62; // lever bar, standing off the face
+        const yn0 = side < 0 ? -48 : lt + 14, yn1 = side < 0 ? -14 : lt + 48; // neck from rose to bar
+        parts.push(box3(len - 95, len - 45, y0, y1, hz - 35, hz + 35, "Handle"));
+        parts.push(box3(len - 80, len - 60, yn0, yn1, hz - 9, hz + 9, "Handle"));
+        parts.push(box3(len - 200, len - 60, yb0, yb1, hz - 9, hz + 9, "Handle"));
+      }
+      swing.push({ hinge: H, closed: c, open: o, len, lt, turn, swingDeg, openDeg, z0: w.z0 + fr.sill, z1: w.z0 + fr.sill + fr.h });
+    }
+    // frame: two jambs lining the reveal, and the head
+    const frames = [[fr.u0, fr.u0 + fw], [fr.u1 - fw, fr.u1]].map(([u0, u1]) => [hostPt(w, u0, sExt), hostPt(w, u1, sExt), hostPt(w, u1, sInt), hostPt(w, u0, sInt)]);
+    for (const p of frames) plan.push({ sub: "Frame", role: "cut", path: polyPath(p) });
+    parts.push(hostBox(w, fr.u0, fr.u0 + fw, sMin, sMax, fr.sill, fr.sill + fr.h, "Frame"), hostBox(w, fr.u1 - fw, fr.u1, sMin, sMax, fr.sill, fr.sill + fr.h, "Frame"),
+      hostBox(w, fr.u0, fr.u1, sMin, sMax, fr.sill + fr.h - fw, fr.sill + fr.h, "Frame"));
+    // ADA maneuvering clearances: red dashed, on the pull (swing) side and the push side
+    const scenario = F.choice(f, "clearance") || "Front approach";
+    const C = ADA_CLEARANCE[scenario];
+    if (C) {
+      const uHinge = pair ? fr.u0 : (hingeAtU0 ? fr.u0 : fr.u1), uLatch = pair ? fr.u1 : (hingeAtU0 ? fr.u1 : fr.u0), sg = Math.sign(uLatch - uHinge) || 1;
+      for (const [side, spec, sLine, sd] of [["pull", C.pull, sFace, dir], ["push", C.push, sFar, -dir]]) {
+        const u0 = uHinge - sg * spec.hinge, u1 = uLatch + sg * (pair ? spec.hinge : spec.latch);
+        const rect = [hostPt(w, u0, sLine), hostPt(w, u1, sLine), hostPt(w, u1, sLine + sd * spec.depth), hostPt(w, u0, sLine + sd * spec.depth)];
+        plan.push({ sub: "Clearance", role: "clearance", side, path: polyPath(rect) });
+      }
+    }
     const elev = { rects: [{ u0: fr.u0, u1: fr.u1, z0: fr.sill, z1: fr.sill + fr.h, sub: "Frame" }, { u0: fr.u0 + fw, u1: fr.u1 - fw, z0: fr.sill, z1: fr.sill + fr.h - fw, sub: "Panel" }],
-      handle: { u: uo - (hingeAtU0 ? 80 : -80), z: fr.sill + 1000 }, glazed: !!t.glazed };
-    return { plan, elev, data: { value: t.width, kind: "Length", host: fr.host, frame: fr, props: {
-      Width: L(t.width), Height: L(t.height), TypeMark: T(t.mark || t.id), "Leaf width": L(leaf) } },
+      handle: { u: leaves[0].uo - Math.sign(leaves[0].uo - leaves[0].uh) * 80, z: fr.sill + hz }, glazed: !!t.glazed };
+    const leafW = Math.abs(leaves[0].uo - leaves[0].uh);
+    const scen = SWING_SCENARIOS[(hingeAtU0 ? 0 : 1) + (facing > 0 ? 0 : 2)];
+    return { plan, elev, data: { value: t.width, kind: "Length", host: fr.host, frame: fr, parts, swing, props: {
+      Width: L(t.width), Height: L(t.height), TypeMark: T(t.mark || t.id), "Leaf width": L(leafW), "Clear width": L(leafW - lt), Swing: T(pair ? "Double" : scen), "ADA clearance": T(scenario) } },
       note: Math.abs(fr.w - t.width) > 1 ? `type is ${t.width}mm wide; its opening is ${fr.w}mm` : null };
   },
 };
@@ -3623,18 +3683,30 @@ BUILDERS.Window = {
     const n = w.stack.s.length - 1;
     const sMid = (w.stack.s[w.stack.cs] + w.stack.s[w.stack.ce]) / 2, g = 12;
     const fwid = t.frame || 60;
+    const out = Math.sign(w.stack.s[0] - w.stack.s[n]) || -1;           // toward the exterior face
     const plan = [
       { sub: "Glass", role: "cut", path: [{ k: "L", a: hostPt(w, fr.u0, sMid - g), b: hostPt(w, fr.u1, sMid - g) }] },
       { sub: "Glass", role: "cut", path: [{ k: "L", a: hostPt(w, fr.u0, sMid + g), b: hostPt(w, fr.u1, sMid + g) }] },
       { sub: "Frame", role: "cut", path: polyPath([hostPt(w, fr.u0, sMid - 35), hostPt(w, fr.u0 + fwid, sMid - 35), hostPt(w, fr.u0 + fwid, sMid + 35), hostPt(w, fr.u0, sMid + 35)]) },
       { sub: "Frame", role: "cut", path: polyPath([hostPt(w, fr.u1 - fwid, sMid - 35), hostPt(w, fr.u1, sMid - 35), hostPt(w, fr.u1, sMid + 35), hostPt(w, fr.u1 - fwid, sMid + 35)]) },
-      { sub: "Sill", role: "projection", path: [{ k: "L", a: hostPt(w, fr.u0 - 40, w.stack.s[0] - 30 * Math.sign(w.stack.s[n] - w.stack.s[0])), b: hostPt(w, fr.u1 + 40, w.stack.s[0] - 30 * Math.sign(w.stack.s[n] - w.stack.s[0])) }] },
+      { sub: "Sill", role: "projection", path: [{ k: "L", a: hostPt(w, fr.u0 - 40, w.stack.s[0] + 30 * out), b: hostPt(w, fr.u1 + 40, w.stack.s[0] + 30 * out) }] },
     ];
     const mull = Math.max(0, t.mullions || 0);
     const rects = [{ u0: fr.u0, u1: fr.u1, z0: fr.sill, z1: fr.sill + fr.h, sub: "Frame" }, { u0: fr.u0 + fwid, u1: fr.u1 - fwid, z0: fr.sill + fwid, z1: fr.sill + fr.h - fwid, sub: "Glass" }];
     const lines = [];
-    for (let i = 1; i <= mull; i++) { const u = fr.u0 + (fr.u1 - fr.u0) * i / (mull + 1); lines.push({ u0: u, z0: fr.sill + fwid, u1: u, z1: fr.sill + fr.h - fwid, sub: "Frame" }); }
-    return { plan, elev: { rects, lines }, data: { value: t.width, kind: "Length", host: fr.host, frame: fr, props: { Width: L(t.width), Height: L(t.height), TypeMark: T(t.mark || t.id), "Sill height": L(fr.sill) } } };
+    const top = fr.sill + fr.h, s0 = sMid - 35, s1 = sMid + 35;
+    const parts = [
+      hostBox(w, fr.u0, fr.u0 + fwid, s0, s1, fr.sill, top, "Frame"), hostBox(w, fr.u1 - fwid, fr.u1, s0, s1, fr.sill, top, "Frame"),
+      hostBox(w, fr.u0, fr.u1, s0, s1, fr.sill, fr.sill + fwid, "Frame"), hostBox(w, fr.u0, fr.u1, s0, s1, top - fwid, top, "Frame"),
+      hostBox(w, fr.u0 + fwid, fr.u1 - fwid, sMid - 6, sMid + 6, fr.sill + fwid, top - fwid, "Glass"),
+      hostBox(w, fr.u0 - 40, fr.u1 + 40, w.stack.s[0], w.stack.s[0] + 50 * out, fr.sill - 30, fr.sill, "Sill"),
+    ];
+    for (let i = 1; i <= mull; i++) {
+      const u = fr.u0 + (fr.u1 - fr.u0) * i / (mull + 1);
+      lines.push({ u0: u, z0: fr.sill + fwid, u1: u, z1: top - fwid, sub: "Frame" });
+      parts.push(hostBox(w, u - fwid / 2, u + fwid / 2, s0, s1, fr.sill + fwid, top - fwid, "Frame"));
+    }
+    return { plan, elev: { rects, lines }, data: { value: t.width, kind: "Length", host: fr.host, frame: fr, parts, props: { Width: L(t.width), Height: L(t.height), TypeMark: T(t.mark || t.id), "Sill height": L(fr.sill) } } };
   },
 };
 
@@ -4843,6 +4915,8 @@ function planScene(doc, v, opts = {}) {
       const cutsHere = fr.sill + w.z0 < cutZ && fr.sill + fr.h + w.z0 > cutZ && band(w.z0, w.z1) === "cut";
       if (!cutsHere) continue;       // below or above the cut: the wall reads solid (§5.1)
       for (const piece of doc.plan(f)) {
+        // ADA maneuvering clearance: red dashed, whatever the style says about the door itself
+        if (piece.role === "clearance") { B.stroke(piece.path, { weight: penWeight(doc, "thin", S), colour: "#d0021b", dash: LINE_TYPES.dashed1 }, categoryOf(doc, f) + "-Clearance", doc.idOf(f)); continue; }
         const role = piece.role === "swing" ? "swing" : piece.role === "projection" ? "projection" : "cut";
         const g = resolveGraphics(doc, ctx, f, role, piece.sub);
         B.stroke(piece.path, g, categoryOf(doc, f) + "-" + piece.sub, doc.idOf(f));
@@ -8542,6 +8616,26 @@ class ViewCube {
   draw() { if (this.r) this.r.render(this.scene, this.cam); }
 }
 
+// ===== solids.js =====
+//! Every element's 3D body as prisms: a plan footprint pulled between two heights.
+//!
+//! One list, three readers: the 3D view builds its meshes from it, hidden-line
+//! removal builds its faces from it, and the CAD bridge writes each prism as a
+//! sketch and an extrusion. Families decide what their parts are (bim.js); this
+//! only gathers them, so a door that gains a handle gains it everywhere at once.
+
+
+
+/** [{foot, z0, z1, sub, leaf?, pivot?, topAt?}] for one element; [] when it has no body. */
+function elementParts(doc, f) {
+  const t = doc.typeOf(f), p = doc.plan(f);
+  if (!p) return [];
+  if (t === "Wall") return (p.pieces || []).map(pc => Object.assign({ sub: "Wall" }, pc));
+  if (t === "Column") return [{ foot: p.foot.length ? p.foot : samplePath(p.path).slice(0, -1), z0: p.z0, z1: p.z1, sub: "Column", smooth: p.foot.length === 16 }];
+  if (t === "Door" || t === "Window" || t === "Floor" || t === "Beam") { const d = doc.data(f); return (d && d.parts) || (p.parts || []); }
+  return [];
+}
+
 // ===== view3d.js =====
 //! The 3D view. You can work in it, not just look: click selects (the same
 //! selection the plan and the Properties palette use); grips on a selected
@@ -8549,6 +8643,7 @@ class ViewCube {
 //! opening and column tools place things on the level plane or on the wall
 //! you click. Every gesture computes a value and sends an ordinary edit (§10.1).
 //! The ViewCube sits top-right; "Generate for sheet" runs hidden-line in slices.
+
 
 
 
@@ -8633,6 +8728,7 @@ class View3D {
     for (const f of doc.elements()) {
       if (f.get("Integer") === 0 || doc.error(f)) continue;
       const t = doc.typeOf(f), p = doc.plan(f);
+      if (p && PART_TYPES.has(t)) { this.addParts(f, t, style); continue; }
       if (!p || (t !== "Wall" && t !== "Column")) continue;
       const id = doc.idOf(f);
       const m = one(f, p, t);
@@ -8653,6 +8749,46 @@ class View3D {
     }
     this.render();
   }
+  /** Doors, windows, floors, beams: prisms from their family's parts. A door's
+   *  leaf and handles sit in their own group pivoting on the hinge, so the leaf
+   *  can be swung without rebuilding anything. */
+  addParts(f, t, style) {
+    const T = this.T, doc = this.doc, id = doc.idOf(f), parts = elementParts(doc, f); if (!parts.length) return;
+    const g = new T.Group(); g.userData.id = id; g.userData.leaves = [];
+    const pivots = new Map();
+    for (const pt of parts) {
+      let parent = g, off = [0, 0];
+      if (pt.leaf && pt.pivot) {
+        const k = pt.pivot.map(v => v.toFixed(1)).join(",");
+        if (!pivots.has(k)) { const lg = new T.Group(); lg.position.set(pt.pivot[0], pt.pivot[1], 0); lg.userData = { turn: pt.turn || 1, openDeg: pt.openDeg || 0, swingDeg: pt.swingDeg ?? 90 }; g.add(lg); g.userData.leaves.push(lg); pivots.set(k, lg); }
+        parent = pivots.get(k); off = pt.pivot;
+      }
+      const foot = pt.foot.map(q => [q[0] - off[0], q[1] - off[1]]);
+      const pos = prismTriangles(foot, pt.z0, pt.z1);
+      const geo = new T.BufferGeometry(); geo.setAttribute("position", new T.Float32BufferAttribute(pos, 3)); geo.computeVertexNormals();
+      const colour = style === "Hidden Line" ? "#ffffff" : (PART_COLOURS[pt.sub] || PART_COLOURS[t] || "#c8c8c8");
+      const glass = pt.sub === "Glass" && style !== "Hidden Line";
+      const mat = style === "Consistent Colors" || style === "Hidden Line" ? new T.MeshBasicMaterial({ color: new T.Color(colour), side: T.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 })
+        : new T.MeshLambertMaterial({ color: new T.Color(colour), side: T.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+      if (glass) { mat.transparent = true; mat.opacity = 0.35; mat.depthWrite = false; }
+      if (style === "Wireframe") { mat.transparent = true; mat.opacity = 0.06; mat.depthWrite = false; }
+      const mesh = new T.Mesh(geo, mat); mesh.userData.id = id; parent.add(mesh); this.meshes.push(mesh);
+      const eg = new T.BufferGeometry(); eg.setAttribute("position", new T.Float32BufferAttribute(prismEdges(foot, pt.z0, pt.z1), 3));
+      const line = new T.LineSegments(eg, new T.LineBasicMaterial({ color: pt.sub === "Glass" ? 0x5a7f99 : 0x1b2230 })); line.userData.edges = true; parent.add(line);
+    }
+    this.groups.set(id, g); this.scene.add(g);
+  }
+  /** Swing a door open to its swing angle and closed again - the leaf only, nothing rebuilds. */
+  animateDoor(id, ms = 2600) {
+    const g = this.groups.get(id); if (!g || !g.userData.leaves.length) return false;
+    const t0 = performance.now();
+    const step = now => {
+      const k = Math.min(1, (now - t0) / ms), phase = k < 0.5 ? k * 2 : (1 - k) * 2, e = phase * phase * (3 - 2 * phase);
+      for (const lg of g.userData.leaves) { const { turn, openDeg, swingDeg } = lg.userData; lg.rotation.z = turn * (openDeg + (swingDeg - openDeg) * e - openDeg) * Math.PI / 180; }
+      this.render(); if (k < 1 && this.renderer) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step); return true;
+  }
   basis() { return cameraBasis(this.cam); }
   span() { return 22000 / this.zoom; }
   render() {
@@ -8667,11 +8803,12 @@ class View3D {
     this.camera.updateProjectionMatrix();
     for (const [id, g] of this.groups) {
       const sel = this.app.selection.has(id), hov = this.hoverId === id;
-      for (const o of g.children) {
-        if (o.userData.edges) o.material.color.set(sel ? 0x1d6fd8 : 0x1b2230);
+      g.traverse(o => {
+        if (!o.material) return;
+        if (o.userData.edges) { if (o.userData.baseEdge === undefined) o.userData.baseEdge = o.material.color.getHex(); o.material.color.set(sel ? 0x1d6fd8 : o.userData.baseEdge); }
         else if (o.material.emissive) o.material.emissive.set(sel ? 0x1d4f9c : hov ? 0x223a5c : 0x000000);
-        else o.material.color.set(sel ? 0x9cc3f5 : hov ? 0xdbe8fa : new T.Color(this.style === "Hidden Line" ? "#ffffff" : flat(this.doc, this.doc.typeOf(this.doc.element(id)), this.doc.plan(this.doc.element(id)))));
-      }
+        else { if (o.userData.base === undefined) o.userData.base = o.material.color.getHex(); o.material.color.set(sel ? 0x9cc3f5 : hov ? 0xdbe8fa : o.userData.base); }
+      });
     }
     this.buildOverlay();
     this.renderer.autoClear = true;
@@ -9008,12 +9145,190 @@ class View3D {
 function clear3(scene) { for (const o of scene.children.slice()) { scene.remove(o); if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); } }
 const vdot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const v3sub3 = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const PART_TYPES = new Set(["Door", "Window", "Floor", "Beam"]);
+const PART_COLOURS = { Frame: "#eeeeec", Panel: "#9c7650", Glass: "#9fd0ee", Handle: "#b8bcc4", Sill: "#d9d6cf", Door: "#9c7650", Window: "#eeeeec", Floor: "#c9c7c1", Beam: "#8f9aa8" };
+/** Triangles of a prism: a plan footprint between two heights, any winding. */
+function prismTriangles(foot, z0, z1) {
+  const n = foot.length, pos = [];
+  let a2 = 0; for (let i = 0; i < n; i++) { const p = foot[i], q = foot[(i + 1) % n]; a2 += p[0] * q[1] - q[0] * p[1]; }
+  const F_ = a2 > 0 ? foot : foot.slice().reverse();
+  const tri = earcut2(F_);
+  for (const [i, j, k] of tri) pos.push(F_[i][0], F_[i][1], z1, F_[j][0], F_[j][1], z1, F_[k][0], F_[k][1], z1, F_[k][0], F_[k][1], z0, F_[j][0], F_[j][1], z0, F_[i][0], F_[i][1], z0);
+  for (let i = 0; i < n; i++) { const a = F_[i], b = F_[(i + 1) % n]; pos.push(a[0], a[1], z0, b[0], b[1], z0, b[0], b[1], z1, a[0], a[1], z0, b[0], b[1], z1, a[0], a[1], z1); }
+  return pos;
+}
+function prismEdges(foot, z0, z1) {
+  const out = [], n = foot.length;
+  for (let i = 0; i < n; i++) { const a = foot[i], b = foot[(i + 1) % n]; out.push(a[0], a[1], z0, b[0], b[1], z0, a[0], a[1], z1, b[0], b[1], z1, a[0], a[1], z0, a[0], a[1], z1); }
+  return out;
+}
+/** Ear clipping for a simple counter-clockwise polygon (footprints here are small). */
+function earcut2(P) {
+  const idx = P.map((_, i) => i), out = [];
+  const cr = (a, b, c) => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+  let guard = 0;
+  while (idx.length > 3 && guard++ < 10000) {
+    let cut = false;
+    for (let i = 0; i < idx.length; i++) {
+      const i0 = idx[(i + idx.length - 1) % idx.length], i1 = idx[i], i2 = idx[(i + 1) % idx.length];
+      if (cr(P[i0], P[i1], P[i2]) <= 1e-9) continue;
+      if (idx.some(j => j !== i0 && j !== i1 && j !== i2 && cr(P[i0], P[i1], P[j]) > 0 && cr(P[i1], P[i2], P[j]) > 0 && cr(P[i2], P[i0], P[j]) > 0)) continue;
+      out.push([i0, i1, i2]); idx.splice(i, 1); cut = true; break;
+    }
+    if (!cut) break;
+  }
+  if (idx.length === 3) out.push([idx[0], idx[1], idx[2]]);
+  return out;
+}
 function shade(doc, t, p) {
   if (t === "Column") return ((doc.lib.materials[p.material] || {}).shading || {}).colour || "#aaaaaa";
   const m = doc.lib.materials[p.stack.layers[0].material] || {}; return (m.shading || {}).colour || "#bbbbbb";
 }
 function flat(doc, t, p) { return t === "Column" ? "#b9bec6" : shade(doc, t, p); }
 const roundCam = c => ({ azimuth: Math.round(((c.azimuth % 360) + 360) % 360 * 10) / 10, elevation: Math.round(c.elevation * 10) / 10, target: c.target.map(v => Math.round(v)) });
+
+// ===== cadbridge.js =====
+//! The building as parametric-CAD nodes, and back.
+//!
+//! Web BIM has a second interface: the OpenCascade/OCAF modeller, carried in
+//! the page and switched to with one button. It is not a second model. The BIM
+//! document stays the truth; this file writes it out as the modeller's own
+//! nodes (a folder per element, holding the element's parameters as Number and
+//! Point nodes and its body as sketches pulled into solids), reads edits to
+//! those parameters back as ordinary BIM ops, and works out the smallest set of
+//! modeller edits that brings its copy up to date after the building changes.
+//!
+//! Everything it writes has an id starting "B_". Anything else in the
+//! modeller's document is the modeller's own, and is carried through untouched.
+
+
+
+
+const PREFIX = "B_";
+const sid = id => String(id).replace(/[^A-Za-z0-9]/g, "_");
+const COLOURS = { Wall: [0.80, 0.62, 0.52], Column: [0.62, 0.63, 0.66], Door: [0.55, 0.40, 0.26], Window: [0.55, 0.75, 0.90],
+  Floor: [0.72, 0.72, 0.70], Beam: [0.50, 0.55, 0.62] };
+const SUB_COLOURS = { Glass: [0.62, 0.82, 0.95], Frame: [0.93, 0.93, 0.92], Handle: [0.75, 0.75, 0.78], Panel: [0.62, 0.45, 0.30] };
+const CAD_TYPES = ["Wall", "Column", "Door", "Window", "Floor", "Beam"];
+const cround = v => Math.round(v * 1000) / 1000;
+
+/** The document written as a modeller file, and the table of which nodes are parameters of what. */
+function bimToCad(doc) {
+  const features = [], params = new Map();
+  const put = (id, type, name, args, parent, extra = {}) => { features.push(Object.assign({ id, type, name, parent: parent || undefined, args }, extra)); return id; };
+  const root = put(PREFIX + "ROOT", "GeometricalSet", doc.meta.name || "Web BIM", { inputs: "", shell: "Open" }, null);
+  const datums = put(PREFIX + "DATUMS", "GeometricalSet", "Datums (from Web BIM)", { inputs: "", shell: "Open" }, root);
+  put(PREFIX + "VZ", "Vector", "Up", { dx: 0, dy: 0, dz: 1 }, datums);
+  const planes = new Map();
+  //! One plane per height, shared: two hundred wall pieces standing on one floor are one plane.
+  const planeAt = z => {
+    const k = cround(z); if (planes.has(k)) return planes.get(k);
+    const tag = String(k).replace(/[^0-9]/g, m => m === "-" ? "m" : "_");
+    const pt = put(PREFIX + "PZ" + tag, "Point", `z ${k}`, { x: 0, y: 0, z: k }, datums);
+    const pl = put(PREFIX + "PL" + tag, "Plane", `Plane z ${k}`, { origin: { ref: pt }, normal: { ref: PREFIX + "VZ" }, size: 1000 }, datums);
+    planes.set(k, pl); return pl;
+  };
+  const levelSets = new Map();
+  const levelSet = f => {
+    const lv = F.reference(f, "baseLevel") || F.reference(f, "level") || null;
+    const key = lv ? doc.idOf(lv) : "none";
+    if (!levelSets.has(key)) levelSets.set(key, put(PREFIX + "LV_" + sid(key), "GeometricalSet", lv ? `Level: ${F.text(lv, "name")}` : "Not on a level", { inputs: "", shell: "Open" }, root));
+    return levelSets.get(key);
+  };
+  for (const f of doc.elements()) {
+    const t = doc.typeOf(f); if (!CAD_TYPES.includes(t) || f.get("Integer") === 0 || doc.error(f)) continue;
+    const id = doc.idOf(f), s = sid(id);
+    const typeName = (() => { const k = ["wallType", "columnType", "doorType", "windowType", "floorType", "beamType"].find(k => F.refId(f, k)); const ty = k && doc.lib.types[F.refId(f, k)]; return ty ? ty.name : t; })();
+    const set = put(PREFIX + s, "GeometricalSet", `${id} · ${typeName}`, { inputs: "", shell: "Open" }, levelSet(f));
+    // the element's parameters, as the modeller's own parameter nodes
+    const decl = CATALOGUE.get(t);
+    for (const a of decl ? decl.args : []) {
+      if (a.kind !== "Real" && a.kind !== "Integer") continue;
+      const v = F.real(f, a.key); if (!Number.isFinite(v)) continue;
+      const nid = put(`${PREFIX}${s}__${a.key}`, "Number", `${id} ${a.label}`, { value: cround(v) }, set);
+      params.set(nid, { el: id, key: a.key, kind: "number", value: cround(v) });
+    }
+    if (t === "Wall" || t === "Beam") {
+      const c = doc.argValue(f, t === "Wall" ? "centreline" : "axis");
+      if (c && c.type === "line") for (const end of ["start", "end"]) {
+        const z = t === "Wall" ? (doc.plan(f) || { z0: 0 }).z0 : (c.z || 0);
+        const nid = put(`${PREFIX}${s}__${end}`, "Point", `${id} ${end}`, { x: cround(c[end][0]), y: cround(c[end][1]), z: cround(z) }, set);
+        params.set(nid, { el: id, key: end, kind: t === "Wall" ? "wallEnd" : "beamEnd", value: [cround(c[end][0]), cround(c[end][1])] });
+      }
+    }
+    if (t === "Column") {
+      const p = F.point(f, "position"), z = (doc.plan(f) || { z0: 0 }).z0;
+      const nid = put(`${PREFIX}${s}__position`, "Point", `${id} position`, { x: cround(p[0]), y: cround(p[1]), z: cround(z) }, set);
+      params.set(nid, { el: id, key: "position", kind: "point", value: [cround(p[0]), cround(p[1])] });
+    }
+    // the body: each part a sketch pulled up into a solid, the parts joined
+    const parts = elementParts(doc, f).filter(p => p.foot && p.foot.length >= 3 && p.z1 - p.z0 > 1e-6);
+    const bodies = parts.map((p, i) => {
+      const els = p.foot.map((q, k) => ({ id: "e" + (k + 1), type: "line", a: [cround(q[0]), cround(q[1])], b: [cround(p.foot[(k + 1) % p.foot.length][0]), cround(p.foot[(k + 1) % p.foot.length][1])] }));
+      const sk = put(`${PREFIX}${s}_s${i}`, "Sketch", `${id} ${p.sub || "part"} ${i + 1} outline`, { plane: { ref: planeAt(p.z0) }, faces: "Make faces", solve: "Ignore", passes: 0, drawing: { elements: els, constraints: [] } }, set,
+        { appearance: { finish: "matte", color: [0.16, 0.42, 0.78] } });
+      return put(`${PREFIX}${s}_x${i}`, "Extrude", `${id} ${p.sub || "part"} ${i + 1}`, { profile: { ref: sk }, limit: "Distance", distance: cround(p.z1 - p.z0), cap: "Solid", way: "Normal to the profile" }, set,
+        { appearance: { finish: "matte", color: SUB_COLOURS[p.sub] || COLOURS[t] } });
+    });
+    if (bodies.length > 1) put(`${PREFIX}${s}_body`, "Join", `${id} ${typeName}`, { parts: bodies.map(ref => ({ ref })) }, set, { appearance: { finish: "matte", color: COLOURS[t] } });
+  }
+  for (const f of features) if (f.parent === undefined) delete f.parent;
+  return { model: { format: "ocaf-parametric-model", version: 1, name: doc.meta.name || "Web BIM", units: "mm", features }, params };
+}
+
+const numB = v => (v && typeof v === "object" ? Number(v.value) : Number(v));
+
+/** Edits made in the modeller to the building's parameter nodes, as BIM ops. */
+function cadEditsToOps(doc, cadModel, params) {
+  const byId = new Map((cadModel.features || []).map(f => [f.id, f]));
+  const ops = [], ends = [];
+  for (const [nid, p] of params) {
+    const f = byId.get(nid); if (!f || !doc.element(p.el)) continue;
+    if (p.kind === "number") {
+      const v = numB(f.args.value); if (!Number.isFinite(v) || Math.abs(v - p.value) < 1e-6) continue;
+      ops.push({ op: "set", id: p.el, key: p.key, value: v });
+    } else {
+      const x = numB(f.args.x), y = numB(f.args.y); if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+      if (Math.abs(x - p.value[0]) < 1e-6 && Math.abs(y - p.value[1]) < 1e-6) continue;
+      if (p.kind === "wallEnd") { ops.push({ op: "drag", id: p.el, key: "centreline." + p.key, value: [x, y] }); ends.push({ id: p.el, end: p.key }); }
+      else if (p.kind === "beamEnd") ops.push({ op: "drag", id: p.el, key: "axis." + p.key, value: [x, y] });
+      else ops.push({ op: "set", id: p.el, key: p.key, value: [x, y] });
+    }
+  }
+  if (ends.length) ops.push({ op: "autojoin", ends });
+  return ops;
+}
+
+/** The modeller edits that turn its copy (`cur`) into `next`, or null when the
+ *  shape of the tree changed and the building's part must be written afresh. */
+function cadDiff(cur, next) {
+  const mine = m => (m.features || []).filter(f => String(f.id).startsWith(PREFIX));
+  const a = new Map(mine(cur).map(f => [f.id, f])), b = mine(next);
+  if (a.size !== b.length || b.some(f => !a.has(f.id) || a.get(f.id).type !== f.type || (a.get(f.id).parent || null) !== (f.parent || null))) return null;
+  const cmds = [];
+  for (const f of b) {
+    const g = a.get(f.id);
+    if (g.name !== f.name) cmds.push({ op: "rename", id: f.id, name: f.name });
+    for (const [k, v] of Object.entries(f.args)) {
+      const was = g.args ? g.args[k] : undefined;
+      if (k === "drawing") { if (!sameDrawing(was, v)) cmds.push({ op: "sketch", id: f.id, drawing: v }); continue; }
+      if (v && typeof v === "object" && v.ref !== undefined) { if (!was || was.ref !== v.ref) return null; continue; }
+      if (Array.isArray(v)) { if (JSON.stringify(was) !== JSON.stringify(v)) return null; continue; }
+      if (typeof v === "number") { if (!(Math.abs(numB(was) - v) < 1e-6)) cmds.push({ op: "set", id: f.id, key: k, value: v }); continue; }
+    }
+    if (f.appearance && JSON.stringify(f.appearance.color) !== JSON.stringify(g.appearance && g.appearance.color)) cmds.push({ op: "appearance", id: f.id, appearance: f.appearance });
+  }
+  return cmds;
+}
+function sameDrawing(a, b) {
+  if (!a || !b || !a.elements || a.elements.length !== b.elements.length) return false;
+  return a.elements.every((e, i) => { const o = b.elements[i]; return e.type === o.type && Math.abs(e.a[0] - o.a[0]) < 1e-6 && Math.abs(e.a[1] - o.a[1]) < 1e-6 && Math.abs(e.b[0] - o.b[0]) < 1e-6 && Math.abs(e.b[1] - o.b[1]) < 1e-6; });
+}
+/** The building's part written afresh, with the modeller's own features carried after it. */
+function mergeModel(cur, next) {
+  const theirs = (cur && cur.features || []).filter(f => !String(f.id).startsWith(PREFIX));
+  return Object.assign({}, next, { features: next.features.concat(theirs), layout: cur && cur.layout, hidden: cur && cur.hidden });
+}
 
 // ===== app.js =====
 //! The application shell, laid out the way a BIM author expects (Revit's
@@ -9022,6 +9337,7 @@ const roundCam = c => ({ azimuth: Math.round(((c.azimuth % 360) + 360) % 360 * 1
 //! left, document tabs over the view, a view control bar under it, and the
 //! status bar. The shell owns no model state: every command goes through one
 //! registry, and every edit through app.apply → the op pipeline → regenerate.
+
 
 
 
@@ -9183,6 +9499,11 @@ const COMMANDS = {
   graph: { label: "Node Graph", icon: "graph", run: () => app.openView("__graph") },
   tree: { label: "Feature Tree", icon: "tree", run: () => app.openView("__tree") },
   tests: { label: "Acceptance Tests", icon: "tests", run: () => app.openView("__diag") },
+  cadmode: { label: "Parametric CAD", icon: "view3d", key: "PC", hint: "Switch the whole interface to the OpenCascade parametric modeller - the same building, as nodes", run: () => switchToCad() },
+  dooranim: { label: "Open / Close", icon: "door", run: () => animateSelectedDoors() },
+  swingnext: { label: "Swing Scenario", icon: "rotate", run: () => nextSwingScenario() },
+  fliphand: { label: "Flip Hand", icon: "mirror", run: () => flipDoors("flipHand") },
+  flipfacing: { label: "Flip Facing", icon: "mirror", run: () => flipDoors("flipFacing") },
   closehidden: { label: "Close Inactive", icon: "close", run: () => { app.tabs = app.tabs.filter(t => t === app.activeView); app.refresh(); } },
   edittype: { label: "Edit Type", icon: "edittype", run: () => { const t = selectedType(); if (t) typeEditor(app, t); else app.say("select an element with a type", "note"); } },
   props: { label: "Properties", icon: "props", key: "PP", active: () => !document.body.classList.contains("hide-props"), run: () => document.body.classList.toggle("hide-props") },
@@ -9234,6 +9555,7 @@ const RIBBON = [
     { title: "Graphics", items: [big("vv"), small("thin"), small("zoomfit")] },
     { title: "Create", items: [big("default3d"), small("planview"), small("elev"), small("schedule"), big("sheet")] },
     { title: "Windows", items: [small("graph"), small("tree"), small("closehidden")] },
+    { title: "Interface", items: [big("cadmode")] },
   ] },
   { tab: "Manage", panels: [
     { title: "Settings", items: [big("pens"), big("projectinfo")] },
@@ -9255,6 +9577,7 @@ function contextTab() {
     { title: "Properties", items: [big("props"), big("edittype")] },
     { title: "Modify", items: [big("move"), big("copy"), big("rotate"), big("mirror"), big("del")] },
     ...(hasWall ? [{ title: "Mode", items: [big("flip")] }] : []),
+    ...(els.some(f => app.doc.typeOf(f) === "Door") ? [{ title: "Door", items: [big("dooranim"), big("swingnext"), small("fliphand"), small("flipfacing")] }] : []),
     { title: "Select", items: [small("selectall"), small("select")] },
   ] };
 }
@@ -9298,7 +9621,8 @@ function renderQAT() {
     b("open"), b("save"), h("span", { class: "qsep" }), b("undo"), b("redo"), h("span", { class: "qsep" }),
     b("dim"), b("text"), h("span", { class: "qsep" }), b("default3d"), b("elev"), b("thin"), b("closehidden"),
     h("div", { class: "qtitle" }, h("b", {}, app.doc.meta.name), viewName ? " — " + viewName : ""),
-    h("button", { class: "qbtn", title: "Export (PDF set, DXF)", "aria-label": "Export", onclick: () => exportDialog() }, icon("exportI", 16)));
+    h("button", { class: "qbtn", title: "Export (PDF set, DXF)", "aria-label": "Export", onclick: () => exportDialog() }, icon("exportI", 16)),
+    h("button", { class: "qswitch", title: "Switch to the parametric CAD interface (PC) - the same model", onclick: () => switchToCad() }, icon("view3d", 15), h("span", {}, "Parametric CAD")));
 }
 function renderOptionsBar() {
   const bar = clear(document.getElementById("options"));
@@ -9766,6 +10090,106 @@ function renderDiagnostics(main) {
   setTimeout(run, 30);
 }
 
+
+// ---------------------------------------------------------------- doors: swing scenarios and the open/close animation
+function selectedDoors() { return [...app.selection].filter(id => { const f = app.doc.element(id); return f && app.doc.typeOf(f) === "Door"; }); }
+function flipDoors(key) { const ids = selectedDoors(); if (!ids.length) return app.say("select a door", "note"); app.apply(ids.map(id => ({ op: "set", id, key, value: !F.bool(app.doc.element(id), key) }))); }
+/** Left in → right in → left out → right out: the four ways a single door can hang. */
+function nextSwingScenario() {
+  const ids = selectedDoors(); if (!ids.length) return app.say("select a door", "note");
+  const ops = [];
+  for (const id of ids) { const f = app.doc.element(id), i = (F.bool(f, "flipHand") ? 1 : 0) + (F.bool(f, "flipFacing") ? 2 : 0), n = (i + 1) % 4; ops.push({ op: "set", id, key: "flipHand", value: !!(n & 1) }, { op: "set", id, key: "flipFacing", value: !!(n & 2) }); }
+  const r = app.apply(ops); if (r.ok) { const d = app.doc.data(app.doc.element(ids[0])); app.say(`Swing: ${d && d.props && d.props.Swing ? d.props.Swing.v : ""}`, "ok"); }
+}
+function animateSelectedDoors() {
+  const ids = selectedDoors(); if (!ids.length) return app.say("select a door", "note");
+  const v = app.views.get(app.activeView);
+  if (v && v.animateDoor) { let any = false; for (const id of ids) any = v.animateDoor(id) || any; if (any) return app.say("Opening and closing through the swing angle", "ok"); }
+  const v3 = default3D(); app.say("Opening it in the {3D} view", "note"); app.openView(v3);
+  setTimeout(() => { const w = app.views.get(app.activeView); if (w && w.animateDoor) for (const id of ids) w.animateDoor(id); }, 400);
+}
+
+// ---------------------------------------------------------------- the other interface: parametric CAD
+//! One building, two interfaces. The Revit-style one is this page; the other is
+//! the OpenCascade/OCAF modeller, carried inside this page and started in a frame
+//! the first time it is asked for. The building stays the one document: switching
+//! writes it into the modeller as nodes (cadbridge.js), edits there come back as
+//! ordinary ops, and switching back shows whatever either side did.
+const cad = { frame: null, bridge: null, params: null, syncing: false, timer: null, on: false, booting: null };
+function cadSource() {
+  const el = document.getElementById("cad-page");
+  return el ? { srcdoc: el.textContent.replace(/<\\\/(script)/gi, "</$1").replace(/<\\!--/g, "<" + "!--") } : { src: "cad/parametric-cad.html" };
+}
+function bootCad() {
+  if (cad.booting) return cad.booting;
+  cad.booting = new Promise((resolve, reject) => {
+    const src = cadSource();
+    const fr = h("iframe", { id: "cadframe", title: "Parametric CAD interface" });
+    if (src.srcdoc) fr.srcdoc = src.srcdoc; else fr.src = src.src;
+    document.body.append(fr); cad.frame = fr;
+    const t0 = performance.now();
+    const poll = () => {
+      let b = null; try { b = fr.contentWindow && fr.contentWindow.__webbimCad; } catch (e) { return reject(new Error("the CAD frame is not reachable from this page")); }
+      if (b && b.ready) { cad.bridge = b; b.onChange = () => { if (!cad.syncing && cad.on) { clearTimeout(cad.timer); cad.timer = setTimeout(pullFromCad, 250); } }; return resolve(b); }
+      if (performance.now() - t0 > 120000) return reject(new Error("the CAD interface did not start within two minutes"));
+      setTimeout(poll, 150);
+    };
+    poll();
+  });
+  return cad.booting;
+}
+/** The modeller's copy brought up to date with the building: small edits when it can, the building's part rewritten when the tree changed shape. */
+async function pushToCad(cur) {
+  const b = cad.bridge; if (!b) return;
+  const { model, params } = bimToCad(app.doc);
+  cad.syncing = true;
+  try {
+    cur = cur || await b.model();
+    const cmds = cadDiff(cur, model);
+    if (cmds === null) await b.load(mergeModel(cur, model));
+    else for (const c of cmds) await b.run(c);
+    cad.params = params;
+  } finally { cad.syncing = false; }
+}
+/** Edits made in the modeller to the building's parameters, applied to the building - then the modeller shown what the building made of them. */
+async function pullFromCad() {
+  const b = cad.bridge; if (!b || cad.syncing || !cad.params) return;
+  const cur = await b.model();
+  const ops = cadEditsToOps(app.doc, cur, cad.params);
+  if (!ops.length) return;
+  const r = app.apply(ops, { quiet: true });
+  b.say(r.ok ? `Web BIM: ${ops.length} change${ops.length > 1 ? "s" : ""} applied to the building` : `Web BIM refused: ${r.error}`);
+  await pushToCad(r.ok ? null : cur);
+}
+async function switchToCad() {
+  if (cad.on) return;
+  closeMenus();
+  const boot = document.getElementById("cadboot") || h("div", { id: "cadboot", role: "status" }, h("span", { class: "spin" }), h("span", {}, "Starting OpenCascade…"));
+  document.body.append(boot);
+  document.body.classList.add("cad-switching");
+  let b;
+  try { b = await bootCad(); }
+  catch (e) { boot.remove(); document.body.classList.remove("cad-switching"); return app.say(`Parametric CAD could not start: ${e.message}`, "error"); }
+  boot.querySelector("span:last-child").textContent = "Writing the building as nodes…";
+  const first = !cad.params;
+  try { await pushToCad(first ? { features: [] } : null); } catch (e) { app.say(`the building could not be written into the CAD interface: ${e.message}`, "error"); }
+  if (first) b.fit();
+  boot.remove();
+  cad.on = true;
+  document.body.classList.remove("cad-switching");
+  document.body.classList.add("cad-mode");
+  try { cad.frame.contentWindow.focus(); } catch (e) { /* focus is a nicety */ }
+}
+async function switchToRevit() {
+  if (!cad.on) return;
+  clearTimeout(cad.timer);
+  try { await pullFromCad(); } catch (e) { app.say(`edits in the CAD interface could not be read back: ${e.message}`, "error"); }
+  cad.on = false;
+  document.body.classList.remove("cad-mode");
+  app.refresh();
+  app.say("Revit-style interface — the same model", "ok");
+}
+window.addEventListener("message", e => { if (e.data && e.data.webbim === "revit") switchToRevit(); });
 
 // ---------------------------------------------------------------- keys (Revit two-letter shortcuts)
 const SHORTCUTS = Object.fromEntries(Object.entries(COMMANDS).filter(([, c]) => c.key).map(([id, c]) => [c.key.toUpperCase(), id]));

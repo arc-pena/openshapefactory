@@ -1,0 +1,372 @@
+{
+  "format": "ocaf-parametric-model",
+  "version": 1,
+  "name": "Part1",
+  "units": "mm",
+  "features": [
+    {
+      "id": "ORIGIN",
+      "type": "GeometricalSet",
+      "name": "Origin",
+      "args": {
+        "inputs": "",
+        "shell": "Open"
+      }
+    },
+    {
+      "id": "PT1",
+      "type": "Point",
+      "name": "Origin",
+      "args": {
+        "kind": "Coordinates",
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "at": 0.5,
+        "end": "Furthest along",
+        "way": "Nearest point",
+        "h": 0,
+        "v": 0
+      },
+      "parent": "ORIGIN"
+    },
+    {
+      "id": "VX",
+      "type": "Vector",
+      "name": "X Direction",
+      "args": {
+        "kind": "Components",
+        "dx": 1,
+        "dy": 0,
+        "dz": 0
+      },
+      "parent": "ORIGIN"
+    },
+    {
+      "id": "VY",
+      "type": "Vector",
+      "name": "Y Direction",
+      "args": {
+        "kind": "Components",
+        "dx": 0,
+        "dy": 1,
+        "dz": 0
+      },
+      "parent": "ORIGIN"
+    },
+    {
+      "id": "VZ",
+      "type": "Vector",
+      "name": "Z Direction",
+      "args": {
+        "kind": "Components",
+        "dx": 0,
+        "dy": 0,
+        "dz": 1
+      },
+      "parent": "ORIGIN"
+    },
+    {
+      "id": "AX1",
+      "type": "AxisSystem",
+      "name": "Origin Axis System",
+      "args": {
+        "kind": "Origin and directions",
+        "origin": {
+          "ref": "PT1"
+        },
+        "xdir": {
+          "ref": "VX"
+        },
+        "ydir": {
+          "ref": "VY"
+        },
+        "size": 200
+      },
+      "parent": "ORIGIN"
+    },
+    {
+      "id": "PL1",
+      "type": "Plane",
+      "name": "XY Plane",
+      "args": {
+        "kind": "Origin and normal",
+        "origin": {
+          "ref": "PT1"
+        },
+        "normal": {
+          "ref": "VZ"
+        },
+        "at": 0.5,
+        "offset": 100,
+        "angle": 45,
+        "size": 200
+      },
+      "parent": "ORIGIN"
+    },
+    {
+      "id": "PL2",
+      "type": "Plane",
+      "name": "YZ Plane",
+      "args": {
+        "kind": "Origin and normal",
+        "origin": {
+          "ref": "PT1"
+        },
+        "normal": {
+          "ref": "VX"
+        },
+        "at": 0.5,
+        "offset": 100,
+        "angle": 45,
+        "size": 200
+      },
+      "parent": "ORIGIN"
+    },
+    {
+      "id": "PL3",
+      "type": "Plane",
+      "name": "ZX Plane",
+      "args": {
+        "kind": "Origin and normal",
+        "origin": {
+          "ref": "PT1"
+        },
+        "normal": {
+          "ref": "VY"
+        },
+        "at": 0.5,
+        "offset": 100,
+        "angle": 45,
+        "size": 200
+      },
+      "parent": "ORIGIN"
+    },
+    {
+      "id": "PARAMS",
+      "type": "GeometricalSet",
+      "name": "Parameters",
+      "args": {
+        "inputs": "",
+        "shell": "Open"
+      }
+    },
+    {
+      "id": "RELS",
+      "type": "GeometricalSet",
+      "name": "Relations",
+      "args": {
+        "inputs": "",
+        "shell": "Open"
+      }
+    },
+    {
+      "id": "PART",
+      "type": "GeometricalSet",
+      "name": "Part",
+      "args": {
+        "inputs": "",
+        "shell": "Open"
+      }
+    },
+    {
+      "id": "SK1",
+      "type": "Sketch",
+      "name": "Sketch.1",
+      "args": {
+        "plane": {
+          "ref": "PL1"
+        },
+        "origin": {
+          "ref": "PT1"
+        },
+        "drawing": {
+          "elements": [
+            {
+              "id": "e1",
+              "type": "bspline",
+              "ctrl": [
+                [
+                  -19540.997,
+                  -60992.301
+                ],
+                [
+                  -22510.032,
+                  -20235.393
+                ],
+                [
+                  -56607.119,
+                  8392.199
+                ],
+                [
+                  -42545.698,
+                  17017.463
+                ],
+                [
+                  -5120.682,
+                  45470.931
+                ],
+                [
+                  -12110.96,
+                  84445.781
+                ],
+                [
+                  21664.975,
+                  65911.949
+                ],
+                [
+                  66066.214,
+                  60983.773
+                ],
+                [
+                  54893.13,
+                  25017.534
+                ],
+                [
+                  73304.955,
+                  11778.546
+                ],
+                [
+                  54610.49,
+                  -101151.581
+                ],
+                [
+                  42716.968,
+                  -50859.614
+                ],
+                [
+                  16557.579,
+                  -18649.307
+                ],
+                [
+                  9175.964,
+                  -36097.165
+                ],
+                [
+                  -905.488,
+                  -100535.375
+                ],
+                [
+                  -9258.739,
+                  -98075.627
+                ],
+                [
+                  -15901.793,
+                  -85482.277
+                ]
+              ],
+              "degree": 3,
+              "closed": false
+            },
+            {
+              "id": "e2",
+              "type": "line",
+              "a": [
+                -15901.793,
+                -85482.277
+              ],
+              "b": [
+                -19540.997,
+                -60992.301
+              ]
+            },
+            {
+              "id": "e3",
+              "type": "rect",
+              "a": [
+                3210.909,
+                2233.524
+              ],
+              "b": [
+                27027.778,
+                26672.092
+              ]
+            },
+            {
+              "id": "e4",
+              "type": "rect",
+              "a": [
+                43874.65,
+                -30914.112
+              ],
+              "b": [
+                54758.907,
+                -11077.943
+              ]
+            },
+            {
+              "id": "e5",
+              "type": "rect",
+              "a": [
+                -11019.398,
+                -27776.751
+              ],
+              "b": [
+                -2459.47,
+                -13207.378
+              ]
+            },
+            {
+              "id": "e6",
+              "type": "rect",
+              "a": [
+                34749.708,
+                38429.032
+              ],
+              "b": [
+                48404.822,
+                45485.234
+              ]
+            },
+            {
+              "id": "e7",
+              "type": "rect",
+              "a": [
+                6332.345,
+                43203.726
+              ],
+              "b": [
+                14280.156,
+                53431.231
+              ]
+            }
+          ],
+          "constraints": [
+            {
+              "type": "coincident",
+              "of": [
+                "e2.a",
+                "e1.p16"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e2.b",
+                "e1.p0"
+              ]
+            }
+          ]
+        },
+        "faces": "Make faces",
+        "solve": "Solve",
+        "passes": 24
+      },
+      "parent": "PARAMS"
+    },
+    {
+      "id": "EX1",
+      "type": "Extrude",
+      "name": "Extrude.1",
+      "args": {
+        "profile": {
+          "ref": "SK1"
+        },
+        "limit": "Distance",
+        "distance": 4000,
+        "cap": "Solid",
+        "way": "Normal to the profile"
+      }
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+cad/.kernel/
+cad/.stage/
+cad/parametric-cad.html
+cad/__pycache__/
+dist/web-bim-studio.html

@@ -11,7 +11,7 @@ node build.mjs            # writes BOTH targets, and refuses on any of the check
 node --test test/*.test.mjs   # 130 tests: the §15 acceptance suite, spaces, DXF, PDF raster measurement
 ```
 
-1. **The Artifact**: republish `dist/web-bim.html` to the URL above so the link stays the same. Declare `capabilities: {downloads: true}`: file saves (PDF, zipped DXF, JSON) go through it. Publishing without the URL creates a second artifact.
+1. **The Artifact**: republish `dist/web-bim-studio.html` (both interfaces) to the URL above so the link stays the same. Declare `capabilities: {downloads: true}`: file saves (PDF, zipped DXF, JSON) go through it. Publishing without the URL creates a second artifact.
 2. **Served**: `index.html` loads `src/*.js` as native ES modules. Open it over http, for example with `npx serve webbim`.
 
 Never publish one target without rebuilding the other.
@@ -24,6 +24,30 @@ The build refuses:
 - a source file that is not listed in `MODULES`, or a listed module that is missing
 
 `MODULES` in `build.mjs` is in dependency order, and that order is the concatenation order.
+
+## Two interfaces, one building
+
+The **Parametric CAD** button (top right, or `PC`) swaps the whole interface for the OpenCascade/OCAF parametric modeller, with an animated flip. Its **Revit style** button swaps back. It is not a second model. The BIM document stays the truth:
+
+- **Into CAD:** `src/cadbridge.js` writes the building into the modeller as its own nodes. Each element becomes a folder named after it, holding:
+  - its numeric parameters as Number nodes, and wall ends and column positions as Point nodes;
+  - its body, from `src/solids.js`, as sketches extruded into solids and then joined.
+- **Edits in CAD:** changing a building's parameter node in the modeller becomes an ordinary BIM op (set, drag, autojoin). The modeller is then shown what the building made of it, as the smallest set of `set`/`sketch` edits.
+- **Your own CAD work:** anything you add in the modeller that is not the building's (ids not starting `B_`) is kept.
+- **IFC:** the modeller's IFC package loads automatically.
+
+`cad/` is a copy of the modeller from `arc-pena/OCAF_V1`, branch `claude/opencascade-ocaf-parametric-cad-fp589v`. That repository was only read. The copy adds three things, marked "Web BIM" in `cad/src/app.js`:
+
+- a bridge object (`__webbimCad`) and a change hook;
+- IFC loaded at start;
+- the Revit-style button and no tour when embedded.
+
+```
+python3 cad/build.py --only artifact   # cad/parametric-cad.html (fetches the 22 MB OCCT kernel from npm, cached in cad/.kernel)
+node build.mjs                         # dist/web-bim.html, index.html, and dist/web-bim-studio.html (≈14 MB, both interfaces)
+```
+
+The Artifact publishes `dist/web-bim-studio.html`. The CAD page rides in it as inert text and becomes the switch's iframe the first time it is used. The served `index.html` loads `cad/parametric-cad.html` instead. Built pages and the kernel cache are git-ignored.
 
 ## Architecture (spec section → module)
 

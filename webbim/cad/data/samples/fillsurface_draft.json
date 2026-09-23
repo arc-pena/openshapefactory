@@ -1,0 +1,141 @@
+{
+  "format": "ocaf-parametric-model",
+  "version": 1,
+  "name": "Part1",
+  "units": "mm",
+  "features": [
+    {
+      "id": "PT1",
+      "type": "Point",
+      "name": "Origin",
+      "args": {
+        "kind": "Coordinates",
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "at": 0.5,
+        "end": "Furthest along",
+        "way": "Nearest point"
+      }
+    },
+    {
+      "id": "VZ",
+      "type": "Vector",
+      "name": "Z Direction",
+      "args": {
+        "kind": "Components",
+        "dx": 0,
+        "dy": 0,
+        "dz": 1
+      }
+    },
+    {
+      "id": "PL1",
+      "type": "Plane",
+      "name": "XY Plane",
+      "args": {
+        "kind": "Origin and normal",
+        "origin": {
+          "ref": "PT1"
+        },
+        "normal": {
+          "ref": "VZ"
+        },
+        "at": 0.5,
+        "offset": 100,
+        "angle": 45,
+        "size": 200
+      }
+    },
+    {
+      "id": "RE1",
+      "type": "Rectangle",
+      "name": "Rectangle.1",
+      "args": {
+        "plane": {
+          "ref": "PL1"
+        },
+        "onPlane": "Only says which way it faces",
+        "width": 19435.5,
+        "height": 18986.5,
+        "radius": 5144,
+        "anchor": "Its middle",
+        "angle": 12.5
+      }
+    },
+    {
+      "id": "EX1",
+      "type": "Extrude",
+      "name": "Extrude.1",
+      "args": {
+        "profile": {
+          "ref": "RE1"
+        },
+        "direction": {
+          "ref": "VZ"
+        },
+        "limit": "Distance",
+        "distance": -3285,
+        "cap": "Surface"
+      }
+    },
+    {
+      "id": "PO1",
+      "type": "Point",
+      "name": "Point.1",
+      "args": {
+        "kind": "Coordinates",
+        "x": -8.5,
+        "y": 0,
+        "z": 3075,
+        "at": 0.5,
+        "end": "Furthest along",
+        "way": "Nearest point"
+      }
+    },
+    {
+      "id": "FI1",
+      "type": "FillSurface",
+      "name": "FillSurface.1",
+      "args": {
+        "boundary": [
+          {
+            "ref": "RE1"
+          }
+        ],
+        "supports": [
+          {
+            "ref": "DR1"
+          }
+        ],
+        "continuity": "Tangent · G1",
+        "each": "",
+        "through": [
+          {
+            "ref": "PO1"
+          }
+        ],
+        "degree": 3,
+        "tolerance": 100
+      }
+    },
+    {
+      "id": "DR1",
+      "type": "Draft",
+      "name": "Draft.1",
+      "args": {
+        "body": {
+          "ref": "EX1"
+        },
+        "neutral": {
+          "ref": "PL1"
+        },
+        "direction": {
+          "ref": "VZ"
+        },
+        "angle": 60,
+        "faces": "Sides"
+      }
+    }
+  ]
+}

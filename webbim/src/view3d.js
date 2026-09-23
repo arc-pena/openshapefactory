@@ -12,6 +12,7 @@ import { add, sub, mul, dot, dist, normalise, lerp } from "./geom2d.js";
 import { rasterPixels } from "./acceptance.js";
 import { uOf, pointAt } from "./walls.js";
 import { ViewCube } from "./viewcube.js";
+import { elementParts } from "./solids.js";
 
 export const VISUAL_STYLES = ["Wireframe", "Hidden Line", "Shaded", "Consistent Colors"];
 const GRIP_PX = 9;
@@ -88,6 +89,7 @@ export class View3D {
     for (const f of doc.elements()) {
       if (f.get("Integer") === 0 || doc.error(f)) continue;
       const t = doc.typeOf(f), p = doc.plan(f);
+      if (p && PART_TYPES.has(t)) { this.addParts(f, t, style); continue; }
       if (!p || (t !== "Wall" && t !== "Column")) continue;
       const id = doc.idOf(f);
       const m = one(f, p, t);
@@ -108,6 +110,46 @@ export class View3D {
     }
     this.render();
   }
+  /** Doors, windows, floors, beams: prisms from their family's parts. A door's
+   *  leaf and handles sit in their own group pivoting on the hinge, so the leaf
+   *  can be swung without rebuilding anything. */
+  addParts(f, t, style) {
+    const T = this.T, doc = this.doc, id = doc.idOf(f), parts = elementParts(doc, f); if (!parts.length) return;
+    const g = new T.Group(); g.userData.id = id; g.userData.leaves = [];
+    const pivots = new Map();
+    for (const pt of parts) {
+      let parent = g, off = [0, 0];
+      if (pt.leaf && pt.pivot) {
+        const k = pt.pivot.map(v => v.toFixed(1)).join(",");
+        if (!pivots.has(k)) { const lg = new T.Group(); lg.position.set(pt.pivot[0], pt.pivot[1], 0); lg.userData = { turn: pt.turn || 1, openDeg: pt.openDeg || 0, swingDeg: pt.swingDeg ?? 90 }; g.add(lg); g.userData.leaves.push(lg); pivots.set(k, lg); }
+        parent = pivots.get(k); off = pt.pivot;
+      }
+      const foot = pt.foot.map(q => [q[0] - off[0], q[1] - off[1]]);
+      const pos = prismTriangles(foot, pt.z0, pt.z1);
+      const geo = new T.BufferGeometry(); geo.setAttribute("position", new T.Float32BufferAttribute(pos, 3)); geo.computeVertexNormals();
+      const colour = style === "Hidden Line" ? "#ffffff" : (PART_COLOURS[pt.sub] || PART_COLOURS[t] || "#c8c8c8");
+      const glass = pt.sub === "Glass" && style !== "Hidden Line";
+      const mat = style === "Consistent Colors" || style === "Hidden Line" ? new T.MeshBasicMaterial({ color: new T.Color(colour), side: T.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 })
+        : new T.MeshLambertMaterial({ color: new T.Color(colour), side: T.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+      if (glass) { mat.transparent = true; mat.opacity = 0.35; mat.depthWrite = false; }
+      if (style === "Wireframe") { mat.transparent = true; mat.opacity = 0.06; mat.depthWrite = false; }
+      const mesh = new T.Mesh(geo, mat); mesh.userData.id = id; parent.add(mesh); this.meshes.push(mesh);
+      const eg = new T.BufferGeometry(); eg.setAttribute("position", new T.Float32BufferAttribute(prismEdges(foot, pt.z0, pt.z1), 3));
+      const line = new T.LineSegments(eg, new T.LineBasicMaterial({ color: pt.sub === "Glass" ? 0x5a7f99 : 0x1b2230 })); line.userData.edges = true; parent.add(line);
+    }
+    this.groups.set(id, g); this.scene.add(g);
+  }
+  /** Swing a door open to its swing angle and closed again - the leaf only, nothing rebuilds. */
+  animateDoor(id, ms = 2600) {
+    const g = this.groups.get(id); if (!g || !g.userData.leaves.length) return false;
+    const t0 = performance.now();
+    const step = now => {
+      const k = Math.min(1, (now - t0) / ms), phase = k < 0.5 ? k * 2 : (1 - k) * 2, e = phase * phase * (3 - 2 * phase);
+      for (const lg of g.userData.leaves) { const { turn, openDeg, swingDeg } = lg.userData; lg.rotation.z = turn * (openDeg + (swingDeg - openDeg) * e - openDeg) * Math.PI / 180; }
+      this.render(); if (k < 1 && this.renderer) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step); return true;
+  }
   basis() { return cameraBasis(this.cam); }
   span() { return 22000 / this.zoom; }
   render() {
@@ -122,11 +164,12 @@ export class View3D {
     this.camera.updateProjectionMatrix();
     for (const [id, g] of this.groups) {
       const sel = this.app.selection.has(id), hov = this.hoverId === id;
-      for (const o of g.children) {
-        if (o.userData.edges) o.material.color.set(sel ? 0x1d6fd8 : 0x1b2230);
+      g.traverse(o => {
+        if (!o.material) return;
+        if (o.userData.edges) { if (o.userData.baseEdge === undefined) o.userData.baseEdge = o.material.color.getHex(); o.material.color.set(sel ? 0x1d6fd8 : o.userData.baseEdge); }
         else if (o.material.emissive) o.material.emissive.set(sel ? 0x1d4f9c : hov ? 0x223a5c : 0x000000);
-        else o.material.color.set(sel ? 0x9cc3f5 : hov ? 0xdbe8fa : new T.Color(this.style === "Hidden Line" ? "#ffffff" : flat(this.doc, this.doc.typeOf(this.doc.element(id)), this.doc.plan(this.doc.element(id)))));
-      }
+        else { if (o.userData.base === undefined) o.userData.base = o.material.color.getHex(); o.material.color.set(sel ? 0x9cc3f5 : hov ? 0xdbe8fa : o.userData.base); }
+      });
     }
     this.buildOverlay();
     this.renderer.autoClear = true;
@@ -463,6 +506,41 @@ export class View3D {
 function clear3(scene) { for (const o of scene.children.slice()) { scene.remove(o); if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); } }
 const vdot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const v3sub3 = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const PART_TYPES = new Set(["Door", "Window", "Floor", "Beam"]);
+const PART_COLOURS = { Frame: "#eeeeec", Panel: "#9c7650", Glass: "#9fd0ee", Handle: "#b8bcc4", Sill: "#d9d6cf", Door: "#9c7650", Window: "#eeeeec", Floor: "#c9c7c1", Beam: "#8f9aa8" };
+/** Triangles of a prism: a plan footprint between two heights, any winding. */
+function prismTriangles(foot, z0, z1) {
+  const n = foot.length, pos = [];
+  let a2 = 0; for (let i = 0; i < n; i++) { const p = foot[i], q = foot[(i + 1) % n]; a2 += p[0] * q[1] - q[0] * p[1]; }
+  const F_ = a2 > 0 ? foot : foot.slice().reverse();
+  const tri = earcut2(F_);
+  for (const [i, j, k] of tri) pos.push(F_[i][0], F_[i][1], z1, F_[j][0], F_[j][1], z1, F_[k][0], F_[k][1], z1, F_[k][0], F_[k][1], z0, F_[j][0], F_[j][1], z0, F_[i][0], F_[i][1], z0);
+  for (let i = 0; i < n; i++) { const a = F_[i], b = F_[(i + 1) % n]; pos.push(a[0], a[1], z0, b[0], b[1], z0, b[0], b[1], z1, a[0], a[1], z0, b[0], b[1], z1, a[0], a[1], z1); }
+  return pos;
+}
+function prismEdges(foot, z0, z1) {
+  const out = [], n = foot.length;
+  for (let i = 0; i < n; i++) { const a = foot[i], b = foot[(i + 1) % n]; out.push(a[0], a[1], z0, b[0], b[1], z0, a[0], a[1], z1, b[0], b[1], z1, a[0], a[1], z0, a[0], a[1], z1); }
+  return out;
+}
+/** Ear clipping for a simple counter-clockwise polygon (footprints here are small). */
+function earcut2(P) {
+  const idx = P.map((_, i) => i), out = [];
+  const cr = (a, b, c) => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+  let guard = 0;
+  while (idx.length > 3 && guard++ < 10000) {
+    let cut = false;
+    for (let i = 0; i < idx.length; i++) {
+      const i0 = idx[(i + idx.length - 1) % idx.length], i1 = idx[i], i2 = idx[(i + 1) % idx.length];
+      if (cr(P[i0], P[i1], P[i2]) <= 1e-9) continue;
+      if (idx.some(j => j !== i0 && j !== i1 && j !== i2 && cr(P[i0], P[i1], P[j]) > 0 && cr(P[i1], P[i2], P[j]) > 0 && cr(P[i2], P[i0], P[j]) > 0)) continue;
+      out.push([i0, i1, i2]); idx.splice(i, 1); cut = true; break;
+    }
+    if (!cut) break;
+  }
+  if (idx.length === 3) out.push([idx[0], idx[1], idx[2]]);
+  return out;
+}
 function shade(doc, t, p) {
   if (t === "Column") return ((doc.lib.materials[p.material] || {}).shading || {}).colour || "#aaaaaa";
   const m = doc.lib.materials[p.stack.layers[0].material] || {}; return (m.shading || {}).colour || "#bbbbbb";

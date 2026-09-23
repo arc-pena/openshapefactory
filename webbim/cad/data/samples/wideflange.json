@@ -1,0 +1,2992 @@
+{
+  "format": "ocaf-parametric-model",
+  "version": 1,
+  "name": "Part1",
+  "units": "mm",
+  "features": [
+    {
+      "id": "PT1",
+      "type": "Point",
+      "name": "Origin",
+      "args": {
+        "kind": "Coordinates",
+        "x": 342,
+        "y": 0,
+        "z": 0,
+        "at": 0.5,
+        "end": "Furthest along",
+        "way": "Nearest point"
+      }
+    },
+    {
+      "id": "VZ",
+      "type": "Vector",
+      "name": "Z Direction",
+      "args": {
+        "kind": "Components",
+        "dx": 0,
+        "dy": 0,
+        "dz": 1
+      }
+    },
+    {
+      "id": "PL1",
+      "type": "Plane",
+      "name": "XY Plane",
+      "args": {
+        "kind": "Origin and normal",
+        "origin": {
+          "ref": "PT1"
+        },
+        "normal": {
+          "ref": "VZ"
+        },
+        "at": 0.5,
+        "offset": 100,
+        "angle": 45,
+        "size": 200
+      }
+    },
+    {
+      "id": "CA1",
+      "type": "Camera",
+      "name": "Camera.1",
+      "args": {
+        "x": 288.26,
+        "y": -155.45,
+        "z": 126.88,
+        "tx": 345.5,
+        "ty": 0.85,
+        "tz": 59.72,
+        "lens": 18,
+        "roll": 0,
+        "frame": "16:9",
+        "safe": "Both",
+        "size": 1949
+      }
+    },
+    {
+      "id": "PO1",
+      "type": "Point",
+      "name": "Point.1",
+      "args": {
+        "kind": "Coordinates",
+        "x": -29.064,
+        "y": -338.93,
+        "z": -107.154,
+        "at": 0.5,
+        "end": "Furthest along",
+        "way": "Nearest point"
+      }
+    },
+    {
+      "id": "PO2",
+      "type": "Point",
+      "name": "Point.2",
+      "args": {
+        "kind": "Coordinates",
+        "x": -288,
+        "y": 48.5,
+        "z": 156.5,
+        "at": 0.5,
+        "end": "Furthest along",
+        "way": "Nearest point"
+      }
+    },
+    {
+      "id": "CA2",
+      "type": "Camera",
+      "name": "Camera.2",
+      "args": {
+        "x": 168.97,
+        "y": 90.65,
+        "z": 58.23,
+        "tx": 323.52,
+        "ty": 15.61,
+        "tz": 50.42,
+        "lens": 22,
+        "roll": 0,
+        "frame": "16:9",
+        "safe": "Both",
+        "size": 60
+      }
+    },
+    {
+      "id": "GS1",
+      "type": "GeometricalSet",
+      "name": "wideFlangeBeams",
+      "args": {}
+    },
+    {
+      "id": "PORG",
+      "type": "Point",
+      "name": "Scene origin",
+      "args": {
+        "kind": "Coordinates",
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "at": 0.5,
+        "end": "Furthest along",
+        "way": "Nearest point"
+      },
+      "parent": "GS1"
+    },
+    {
+      "id": "PLO",
+      "type": "Plane",
+      "name": "Section plane",
+      "args": {
+        "kind": "Origin and normal",
+        "origin": {
+          "ref": "PORG"
+        },
+        "normal": {
+          "ref": "VZ"
+        },
+        "at": 0.5,
+        "offset": 100,
+        "angle": 45,
+        "size": 160
+      },
+      "parent": "GS1"
+    },
+    {
+      "id": "SK_A",
+      "type": "Sketch",
+      "name": "4.06mm x 4.16mm",
+      "args": {
+        "plane": {
+          "ref": "PLO"
+        },
+        "origin": {
+          "ref": "PORG"
+        },
+        "drawing": {
+          "elements": [
+            {
+              "id": "e1",
+              "type": "line",
+              "a": [
+                -2.03,
+                2.08
+              ],
+              "b": [
+                2.03,
+                2.08
+              ]
+            },
+            {
+              "id": "e2",
+              "type": "line",
+              "a": [
+                2.03,
+                2.08
+              ],
+              "b": [
+                2.03,
+                1.735
+              ]
+            },
+            {
+              "id": "e3",
+              "type": "line",
+              "a": [
+                2.03,
+                1.735
+              ],
+              "b": [
+                0.14,
+                1.735
+              ]
+            },
+            {
+              "id": "e4",
+              "type": "line",
+              "a": [
+                0.14,
+                1.735
+              ],
+              "b": [
+                0.14,
+                -1.735
+              ]
+            },
+            {
+              "id": "e5",
+              "type": "line",
+              "a": [
+                0.14,
+                -1.735
+              ],
+              "b": [
+                2.03,
+                -1.735
+              ]
+            },
+            {
+              "id": "e6",
+              "type": "line",
+              "a": [
+                2.03,
+                -1.735
+              ],
+              "b": [
+                2.03,
+                -2.08
+              ]
+            },
+            {
+              "id": "e7",
+              "type": "line",
+              "a": [
+                2.03,
+                -2.08
+              ],
+              "b": [
+                -2.03,
+                -2.08
+              ]
+            },
+            {
+              "id": "e8",
+              "type": "line",
+              "a": [
+                -2.03,
+                -2.08
+              ],
+              "b": [
+                -2.03,
+                -1.735
+              ]
+            },
+            {
+              "id": "e9",
+              "type": "line",
+              "a": [
+                -2.03,
+                -1.735
+              ],
+              "b": [
+                -0.14,
+                -1.735
+              ]
+            },
+            {
+              "id": "e10",
+              "type": "line",
+              "a": [
+                -0.14,
+                -1.735
+              ],
+              "b": [
+                -0.14,
+                1.735
+              ]
+            },
+            {
+              "id": "e11",
+              "type": "line",
+              "a": [
+                -0.14,
+                1.735
+              ],
+              "b": [
+                -2.03,
+                1.735
+              ]
+            },
+            {
+              "id": "e12",
+              "type": "line",
+              "a": [
+                -2.03,
+                1.735
+              ],
+              "b": [
+                -2.03,
+                2.08
+              ]
+            }
+          ],
+          "constraints": [
+            {
+              "type": "coincident",
+              "of": [
+                "e1.a",
+                "e12.b"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e1.b",
+                "e2.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e2.b",
+                "e3.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e3.b",
+                "e4.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e4.b",
+                "e5.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e5.b",
+                "e6.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e6.b",
+                "e7.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e7.b",
+                "e8.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e8.b",
+                "e9.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e9.b",
+                "e10.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e10.b",
+                "e11.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e11.b",
+                "e12.a"
+              ]
+            }
+          ]
+        },
+        "faces": "Make faces",
+        "solve": "Solve",
+        "passes": 24
+      },
+      "parent": "GS1"
+    },
+    {
+      "id": "SK_B",
+      "type": "Sketch",
+      "name": "5.99mm x 5.99mm",
+      "args": {
+        "plane": {
+          "ref": "PLO"
+        },
+        "origin": {
+          "ref": "PORG"
+        },
+        "drawing": {
+          "elements": [
+            {
+              "id": "e1",
+              "type": "line",
+              "a": [
+                -2.995,
+                2.995
+              ],
+              "b": [
+                2.995,
+                2.995
+              ]
+            },
+            {
+              "id": "e2",
+              "type": "line",
+              "a": [
+                2.995,
+                2.995
+              ],
+              "b": [
+                2.995,
+                2.735
+              ]
+            },
+            {
+              "id": "e3",
+              "type": "line",
+              "a": [
+                2.995,
+                2.735
+              ],
+              "b": [
+                0.115,
+                2.735
+              ]
+            },
+            {
+              "id": "e4",
+              "type": "line",
+              "a": [
+                0.115,
+                2.735
+              ],
+              "b": [
+                0.115,
+                -2.735
+              ]
+            },
+            {
+              "id": "e5",
+              "type": "line",
+              "a": [
+                0.115,
+                -2.735
+              ],
+              "b": [
+                2.995,
+                -2.735
+              ]
+            },
+            {
+              "id": "e6",
+              "type": "line",
+              "a": [
+                2.995,
+                -2.735
+              ],
+              "b": [
+                2.995,
+                -2.995
+              ]
+            },
+            {
+              "id": "e7",
+              "type": "line",
+              "a": [
+                2.995,
+                -2.995
+              ],
+              "b": [
+                -2.995,
+                -2.995
+              ]
+            },
+            {
+              "id": "e8",
+              "type": "line",
+              "a": [
+                -2.995,
+                -2.995
+              ],
+              "b": [
+                -2.995,
+                -2.735
+              ]
+            },
+            {
+              "id": "e9",
+              "type": "line",
+              "a": [
+                -2.995,
+                -2.735
+              ],
+              "b": [
+                -0.115,
+                -2.735
+              ]
+            },
+            {
+              "id": "e10",
+              "type": "line",
+              "a": [
+                -0.115,
+                -2.735
+              ],
+              "b": [
+                -0.115,
+                2.735
+              ]
+            },
+            {
+              "id": "e11",
+              "type": "line",
+              "a": [
+                -0.115,
+                2.735
+              ],
+              "b": [
+                -2.995,
+                2.735
+              ]
+            },
+            {
+              "id": "e12",
+              "type": "line",
+              "a": [
+                -2.995,
+                2.735
+              ],
+              "b": [
+                -2.995,
+                2.995
+              ]
+            }
+          ],
+          "constraints": [
+            {
+              "type": "coincident",
+              "of": [
+                "e1.a",
+                "e12.b"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e1.b",
+                "e2.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e2.b",
+                "e3.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e3.b",
+                "e4.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e4.b",
+                "e5.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e5.b",
+                "e6.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e6.b",
+                "e7.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e7.b",
+                "e8.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e8.b",
+                "e9.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e9.b",
+                "e10.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e10.b",
+                "e11.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e11.b",
+                "e12.a"
+              ]
+            }
+          ]
+        },
+        "faces": "Make faces",
+        "solve": "Solve",
+        "passes": 24
+      },
+      "parent": "GS1"
+    },
+    {
+      "id": "SK_C",
+      "type": "Sketch",
+      "name": "6.495mm x 7.93mm",
+      "args": {
+        "plane": {
+          "ref": "PLO"
+        },
+        "origin": {
+          "ref": "PORG"
+        },
+        "drawing": {
+          "elements": [
+            {
+              "id": "e1",
+              "type": "line",
+              "a": [
+                -3.2475,
+                3.965
+              ],
+              "b": [
+                3.2475,
+                3.965
+              ]
+            },
+            {
+              "id": "e2",
+              "type": "line",
+              "a": [
+                3.2475,
+                3.965
+              ],
+              "b": [
+                3.2475,
+                3.565
+              ]
+            },
+            {
+              "id": "e3",
+              "type": "line",
+              "a": [
+                3.2475,
+                3.565
+              ],
+              "b": [
+                0.1225,
+                3.565
+              ]
+            },
+            {
+              "id": "e4",
+              "type": "line",
+              "a": [
+                0.1225,
+                3.565
+              ],
+              "b": [
+                0.1225,
+                -3.565
+              ]
+            },
+            {
+              "id": "e5",
+              "type": "line",
+              "a": [
+                0.1225,
+                -3.565
+              ],
+              "b": [
+                3.2475,
+                -3.565
+              ]
+            },
+            {
+              "id": "e6",
+              "type": "line",
+              "a": [
+                3.2475,
+                -3.565
+              ],
+              "b": [
+                3.2475,
+                -3.965
+              ]
+            },
+            {
+              "id": "e7",
+              "type": "line",
+              "a": [
+                3.2475,
+                -3.965
+              ],
+              "b": [
+                -3.2475,
+                -3.965
+              ]
+            },
+            {
+              "id": "e8",
+              "type": "line",
+              "a": [
+                -3.2475,
+                -3.965
+              ],
+              "b": [
+                -3.2475,
+                -3.565
+              ]
+            },
+            {
+              "id": "e9",
+              "type": "line",
+              "a": [
+                -3.2475,
+                -3.565
+              ],
+              "b": [
+                -0.1225,
+                -3.565
+              ]
+            },
+            {
+              "id": "e10",
+              "type": "line",
+              "a": [
+                -0.1225,
+                -3.565
+              ],
+              "b": [
+                -0.1225,
+                3.565
+              ]
+            },
+            {
+              "id": "e11",
+              "type": "line",
+              "a": [
+                -0.1225,
+                3.565
+              ],
+              "b": [
+                -3.2475,
+                3.565
+              ]
+            },
+            {
+              "id": "e12",
+              "type": "line",
+              "a": [
+                -3.2475,
+                3.565
+              ],
+              "b": [
+                -3.2475,
+                3.965
+              ]
+            }
+          ],
+          "constraints": [
+            {
+              "type": "coincident",
+              "of": [
+                "e1.a",
+                "e12.b"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e1.b",
+                "e2.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e2.b",
+                "e3.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e3.b",
+                "e4.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e4.b",
+                "e5.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e5.b",
+                "e6.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e6.b",
+                "e7.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e7.b",
+                "e8.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e8.b",
+                "e9.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e9.b",
+                "e10.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e10.b",
+                "e11.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e11.b",
+                "e12.a"
+              ]
+            }
+          ]
+        },
+        "faces": "Make faces",
+        "solve": "Solve",
+        "passes": 24
+      },
+      "parent": "GS1"
+    },
+    {
+      "id": "SK_D",
+      "type": "Sketch",
+      "name": "5.81mm x 10.47mm",
+      "args": {
+        "plane": {
+          "ref": "PLO"
+        },
+        "origin": {
+          "ref": "PORG"
+        },
+        "drawing": {
+          "elements": [
+            {
+              "id": "e1",
+              "type": "line",
+              "a": [
+                -2.905,
+                5.235
+              ],
+              "b": [
+                2.905,
+                5.235
+              ]
+            },
+            {
+              "id": "e2",
+              "type": "line",
+              "a": [
+                2.905,
+                5.235
+              ],
+              "b": [
+                2.905,
+                4.725
+              ]
+            },
+            {
+              "id": "e3",
+              "type": "line",
+              "a": [
+                2.905,
+                4.725
+              ],
+              "b": [
+                0.15,
+                4.725
+              ]
+            },
+            {
+              "id": "e4",
+              "type": "line",
+              "a": [
+                0.15,
+                4.725
+              ],
+              "b": [
+                0.15,
+                -4.725
+              ]
+            },
+            {
+              "id": "e5",
+              "type": "line",
+              "a": [
+                0.15,
+                -4.725
+              ],
+              "b": [
+                2.905,
+                -4.725
+              ]
+            },
+            {
+              "id": "e6",
+              "type": "line",
+              "a": [
+                2.905,
+                -4.725
+              ],
+              "b": [
+                2.905,
+                -5.235
+              ]
+            },
+            {
+              "id": "e7",
+              "type": "line",
+              "a": [
+                2.905,
+                -5.235
+              ],
+              "b": [
+                -2.905,
+                -5.235
+              ]
+            },
+            {
+              "id": "e8",
+              "type": "line",
+              "a": [
+                -2.905,
+                -5.235
+              ],
+              "b": [
+                -2.905,
+                -4.725
+              ]
+            },
+            {
+              "id": "e9",
+              "type": "line",
+              "a": [
+                -2.905,
+                -4.725
+              ],
+              "b": [
+                -0.15,
+                -4.725
+              ]
+            },
+            {
+              "id": "e10",
+              "type": "line",
+              "a": [
+                -0.15,
+                -4.725
+              ],
+              "b": [
+                -0.15,
+                4.725
+              ]
+            },
+            {
+              "id": "e11",
+              "type": "line",
+              "a": [
+                -0.15,
+                4.725
+              ],
+              "b": [
+                -2.905,
+                4.725
+              ]
+            },
+            {
+              "id": "e12",
+              "type": "line",
+              "a": [
+                -2.905,
+                4.725
+              ],
+              "b": [
+                -2.905,
+                5.235
+              ]
+            }
+          ],
+          "constraints": [
+            {
+              "type": "coincident",
+              "of": [
+                "e1.a",
+                "e12.b"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e1.b",
+                "e2.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e2.b",
+                "e3.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e3.b",
+                "e4.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e4.b",
+                "e5.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e5.b",
+                "e6.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e6.b",
+                "e7.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e7.b",
+                "e8.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e8.b",
+                "e9.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e9.b",
+                "e10.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e10.b",
+                "e11.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e11.b",
+                "e12.a"
+              ]
+            }
+          ]
+        },
+        "faces": "Make faces",
+        "solve": "Solve",
+        "passes": 24
+      },
+      "parent": "GS1"
+    },
+    {
+      "id": "SK_E",
+      "type": "Sketch",
+      "name": "8.08mm x 12.19mm",
+      "args": {
+        "plane": {
+          "ref": "PLO"
+        },
+        "origin": {
+          "ref": "PORG"
+        },
+        "drawing": {
+          "elements": [
+            {
+              "id": "e1",
+              "type": "line",
+              "a": [
+                -4.04,
+                6.095
+              ],
+              "b": [
+                4.04,
+                6.095
+              ]
+            },
+            {
+              "id": "e2",
+              "type": "line",
+              "a": [
+                4.04,
+                6.095
+              ],
+              "b": [
+                4.04,
+                5.455
+              ]
+            },
+            {
+              "id": "e3",
+              "type": "line",
+              "a": [
+                4.04,
+                5.455
+              ],
+              "b": [
+                0.185,
+                5.455
+              ]
+            },
+            {
+              "id": "e4",
+              "type": "line",
+              "a": [
+                0.185,
+                5.455
+              ],
+              "b": [
+                0.185,
+                -5.455
+              ]
+            },
+            {
+              "id": "e5",
+              "type": "line",
+              "a": [
+                0.185,
+                -5.455
+              ],
+              "b": [
+                4.04,
+                -5.455
+              ]
+            },
+            {
+              "id": "e6",
+              "type": "line",
+              "a": [
+                4.04,
+                -5.455
+              ],
+              "b": [
+                4.04,
+                -6.095
+              ]
+            },
+            {
+              "id": "e7",
+              "type": "line",
+              "a": [
+                4.04,
+                -6.095
+              ],
+              "b": [
+                -4.04,
+                -6.095
+              ]
+            },
+            {
+              "id": "e8",
+              "type": "line",
+              "a": [
+                -4.04,
+                -6.095
+              ],
+              "b": [
+                -4.04,
+                -5.455
+              ]
+            },
+            {
+              "id": "e9",
+              "type": "line",
+              "a": [
+                -4.04,
+                -5.455
+              ],
+              "b": [
+                -0.185,
+                -5.455
+              ]
+            },
+            {
+              "id": "e10",
+              "type": "line",
+              "a": [
+                -0.185,
+                -5.455
+              ],
+              "b": [
+                -0.185,
+                5.455
+              ]
+            },
+            {
+              "id": "e11",
+              "type": "line",
+              "a": [
+                -0.185,
+                5.455
+              ],
+              "b": [
+                -4.04,
+                5.455
+              ]
+            },
+            {
+              "id": "e12",
+              "type": "line",
+              "a": [
+                -4.04,
+                5.455
+              ],
+              "b": [
+                -4.04,
+                6.095
+              ]
+            }
+          ],
+          "constraints": [
+            {
+              "type": "coincident",
+              "of": [
+                "e1.a",
+                "e12.b"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e1.b",
+                "e2.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e2.b",
+                "e3.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e3.b",
+                "e4.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e4.b",
+                "e5.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e5.b",
+                "e6.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e6.b",
+                "e7.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e7.b",
+                "e8.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e8.b",
+                "e9.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e9.b",
+                "e10.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e10.b",
+                "e11.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e11.b",
+                "e12.a"
+              ]
+            }
+          ]
+        },
+        "faces": "Make faces",
+        "solve": "Solve",
+        "passes": 24
+      },
+      "parent": "GS1"
+    },
+    {
+      "id": "SK_F",
+      "type": "Sketch",
+      "name": "14.52mm x 14.02mm",
+      "args": {
+        "plane": {
+          "ref": "PLO"
+        },
+        "origin": {
+          "ref": "PORG"
+        },
+        "drawing": {
+          "elements": [
+            {
+              "id": "e1",
+              "type": "line",
+              "a": [
+                -7.26,
+                7.01
+              ],
+              "b": [
+                7.26,
+                7.01
+              ]
+            },
+            {
+              "id": "e2",
+              "type": "line",
+              "a": [
+                7.26,
+                7.01
+              ],
+              "b": [
+                7.26,
+                6.3
+              ]
+            },
+            {
+              "id": "e3",
+              "type": "line",
+              "a": [
+                7.26,
+                6.3
+              ],
+              "b": [
+                0.22,
+                6.3
+              ]
+            },
+            {
+              "id": "e4",
+              "type": "line",
+              "a": [
+                0.22,
+                6.3
+              ],
+              "b": [
+                0.22,
+                -6.3
+              ]
+            },
+            {
+              "id": "e5",
+              "type": "line",
+              "a": [
+                0.22,
+                -6.3
+              ],
+              "b": [
+                7.26,
+                -6.3
+              ]
+            },
+            {
+              "id": "e6",
+              "type": "line",
+              "a": [
+                7.26,
+                -6.3
+              ],
+              "b": [
+                7.26,
+                -7.01
+              ]
+            },
+            {
+              "id": "e7",
+              "type": "line",
+              "a": [
+                7.26,
+                -7.01
+              ],
+              "b": [
+                -7.26,
+                -7.01
+              ]
+            },
+            {
+              "id": "e8",
+              "type": "line",
+              "a": [
+                -7.26,
+                -7.01
+              ],
+              "b": [
+                -7.26,
+                -6.3
+              ]
+            },
+            {
+              "id": "e9",
+              "type": "line",
+              "a": [
+                -7.26,
+                -6.3
+              ],
+              "b": [
+                -0.22,
+                -6.3
+              ]
+            },
+            {
+              "id": "e10",
+              "type": "line",
+              "a": [
+                -0.22,
+                -6.3
+              ],
+              "b": [
+                -0.22,
+                6.3
+              ]
+            },
+            {
+              "id": "e11",
+              "type": "line",
+              "a": [
+                -0.22,
+                6.3
+              ],
+              "b": [
+                -7.26,
+                6.3
+              ]
+            },
+            {
+              "id": "e12",
+              "type": "line",
+              "a": [
+                -7.26,
+                6.3
+              ],
+              "b": [
+                -7.26,
+                7.01
+              ]
+            }
+          ],
+          "constraints": [
+            {
+              "type": "coincident",
+              "of": [
+                "e1.a",
+                "e12.b"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e1.b",
+                "e2.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e2.b",
+                "e3.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e3.b",
+                "e4.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e4.b",
+                "e5.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e5.b",
+                "e6.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e6.b",
+                "e7.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e7.b",
+                "e8.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e8.b",
+                "e9.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e9.b",
+                "e10.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e10.b",
+                "e11.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e11.b",
+                "e12.a"
+              ]
+            }
+          ]
+        },
+        "faces": "Make faces",
+        "solve": "Solve",
+        "passes": 24
+      },
+      "parent": "GS1"
+    },
+    {
+      "id": "SK_G",
+      "type": "Sketch",
+      "name": "7.07mm x 16.26mm",
+      "args": {
+        "plane": {
+          "ref": "PLO"
+        },
+        "origin": {
+          "ref": "PORG"
+        },
+        "drawing": {
+          "elements": [
+            {
+              "id": "e1",
+              "type": "line",
+              "a": [
+                -3.535,
+                8.13
+              ],
+              "b": [
+                3.535,
+                8.13
+              ]
+            },
+            {
+              "id": "e2",
+              "type": "line",
+              "a": [
+                3.535,
+                8.13
+              ],
+              "b": [
+                3.535,
+                7.5
+              ]
+            },
+            {
+              "id": "e3",
+              "type": "line",
+              "a": [
+                3.535,
+                7.5
+              ],
+              "b": [
+                0.19,
+                7.5
+              ]
+            },
+            {
+              "id": "e4",
+              "type": "line",
+              "a": [
+                0.19,
+                7.5
+              ],
+              "b": [
+                0.19,
+                -7.5
+              ]
+            },
+            {
+              "id": "e5",
+              "type": "line",
+              "a": [
+                0.19,
+                -7.5
+              ],
+              "b": [
+                3.535,
+                -7.5
+              ]
+            },
+            {
+              "id": "e6",
+              "type": "line",
+              "a": [
+                3.535,
+                -7.5
+              ],
+              "b": [
+                3.535,
+                -8.13
+              ]
+            },
+            {
+              "id": "e7",
+              "type": "line",
+              "a": [
+                3.535,
+                -8.13
+              ],
+              "b": [
+                -3.535,
+                -8.13
+              ]
+            },
+            {
+              "id": "e8",
+              "type": "line",
+              "a": [
+                -3.535,
+                -8.13
+              ],
+              "b": [
+                -3.535,
+                -7.5
+              ]
+            },
+            {
+              "id": "e9",
+              "type": "line",
+              "a": [
+                -3.535,
+                -7.5
+              ],
+              "b": [
+                -0.19,
+                -7.5
+              ]
+            },
+            {
+              "id": "e10",
+              "type": "line",
+              "a": [
+                -0.19,
+                -7.5
+              ],
+              "b": [
+                -0.19,
+                7.5
+              ]
+            },
+            {
+              "id": "e11",
+              "type": "line",
+              "a": [
+                -0.19,
+                7.5
+              ],
+              "b": [
+                -3.535,
+                7.5
+              ]
+            },
+            {
+              "id": "e12",
+              "type": "line",
+              "a": [
+                -3.535,
+                7.5
+              ],
+              "b": [
+                -3.535,
+                8.13
+              ]
+            }
+          ],
+          "constraints": [
+            {
+              "type": "coincident",
+              "of": [
+                "e1.a",
+                "e12.b"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e1.b",
+                "e2.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e2.b",
+                "e3.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e3.b",
+                "e4.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e4.b",
+                "e5.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e5.b",
+                "e6.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e6.b",
+                "e7.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e7.b",
+                "e8.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e8.b",
+                "e9.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e9.b",
+                "e10.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e10.b",
+                "e11.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e11.b",
+                "e12.a"
+              ]
+            }
+          ]
+        },
+        "faces": "Make faces",
+        "solve": "Solve",
+        "passes": 24
+      },
+      "parent": "GS1"
+    },
+    {
+      "id": "SK_H",
+      "type": "Sketch",
+      "name": "7.495mm x 17.99mm",
+      "args": {
+        "plane": {
+          "ref": "PLO"
+        },
+        "origin": {
+          "ref": "PORG"
+        },
+        "drawing": {
+          "elements": [
+            {
+              "id": "e1",
+              "type": "line",
+              "a": [
+                -3.7475,
+                8.995
+              ],
+              "b": [
+                3.7475,
+                8.995
+              ]
+            },
+            {
+              "id": "e2",
+              "type": "line",
+              "a": [
+                3.7475,
+                8.995
+              ],
+              "b": [
+                3.7475,
+                8.425
+              ]
+            },
+            {
+              "id": "e3",
+              "type": "line",
+              "a": [
+                3.7475,
+                8.425
+              ],
+              "b": [
+                0.1775,
+                8.425
+              ]
+            },
+            {
+              "id": "e4",
+              "type": "line",
+              "a": [
+                0.1775,
+                8.425
+              ],
+              "b": [
+                0.1775,
+                -8.425
+              ]
+            },
+            {
+              "id": "e5",
+              "type": "line",
+              "a": [
+                0.1775,
+                -8.425
+              ],
+              "b": [
+                3.7475,
+                -8.425
+              ]
+            },
+            {
+              "id": "e6",
+              "type": "line",
+              "a": [
+                3.7475,
+                -8.425
+              ],
+              "b": [
+                3.7475,
+                -8.995
+              ]
+            },
+            {
+              "id": "e7",
+              "type": "line",
+              "a": [
+                3.7475,
+                -8.995
+              ],
+              "b": [
+                -3.7475,
+                -8.995
+              ]
+            },
+            {
+              "id": "e8",
+              "type": "line",
+              "a": [
+                -3.7475,
+                -8.995
+              ],
+              "b": [
+                -3.7475,
+                -8.425
+              ]
+            },
+            {
+              "id": "e9",
+              "type": "line",
+              "a": [
+                -3.7475,
+                -8.425
+              ],
+              "b": [
+                -0.1775,
+                -8.425
+              ]
+            },
+            {
+              "id": "e10",
+              "type": "line",
+              "a": [
+                -0.1775,
+                -8.425
+              ],
+              "b": [
+                -0.1775,
+                8.425
+              ]
+            },
+            {
+              "id": "e11",
+              "type": "line",
+              "a": [
+                -0.1775,
+                8.425
+              ],
+              "b": [
+                -3.7475,
+                8.425
+              ]
+            },
+            {
+              "id": "e12",
+              "type": "line",
+              "a": [
+                -3.7475,
+                8.425
+              ],
+              "b": [
+                -3.7475,
+                8.995
+              ]
+            }
+          ],
+          "constraints": [
+            {
+              "type": "coincident",
+              "of": [
+                "e1.a",
+                "e12.b"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e1.b",
+                "e2.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e2.b",
+                "e3.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e3.b",
+                "e4.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e4.b",
+                "e5.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e5.b",
+                "e6.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e6.b",
+                "e7.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e7.b",
+                "e8.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e8.b",
+                "e9.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e9.b",
+                "e10.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e10.b",
+                "e11.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e11.b",
+                "e12.a"
+              ]
+            }
+          ]
+        },
+        "faces": "Make faces",
+        "solve": "Solve",
+        "passes": 24
+      },
+      "parent": "GS1"
+    },
+    {
+      "id": "SK_I",
+      "type": "Sketch",
+      "name": "8.99mm x 23.92mm",
+      "args": {
+        "plane": {
+          "ref": "PLO"
+        },
+        "origin": {
+          "ref": "PORG"
+        },
+        "drawing": {
+          "elements": [
+            {
+              "id": "e1",
+              "type": "line",
+              "a": [
+                -4.495,
+                11.96
+              ],
+              "b": [
+                4.495,
+                11.96
+              ]
+            },
+            {
+              "id": "e2",
+              "type": "line",
+              "a": [
+                4.495,
+                11.96
+              ],
+              "b": [
+                4.495,
+                11.28
+              ]
+            },
+            {
+              "id": "e3",
+              "type": "line",
+              "a": [
+                4.495,
+                11.28
+              ],
+              "b": [
+                0.22,
+                11.28
+              ]
+            },
+            {
+              "id": "e4",
+              "type": "line",
+              "a": [
+                0.22,
+                11.28
+              ],
+              "b": [
+                0.22,
+                -11.28
+              ]
+            },
+            {
+              "id": "e5",
+              "type": "line",
+              "a": [
+                0.22,
+                -11.28
+              ],
+              "b": [
+                4.495,
+                -11.28
+              ]
+            },
+            {
+              "id": "e6",
+              "type": "line",
+              "a": [
+                4.495,
+                -11.28
+              ],
+              "b": [
+                4.495,
+                -11.96
+              ]
+            },
+            {
+              "id": "e7",
+              "type": "line",
+              "a": [
+                4.495,
+                -11.96
+              ],
+              "b": [
+                -4.495,
+                -11.96
+              ]
+            },
+            {
+              "id": "e8",
+              "type": "line",
+              "a": [
+                -4.495,
+                -11.96
+              ],
+              "b": [
+                -4.495,
+                -11.28
+              ]
+            },
+            {
+              "id": "e9",
+              "type": "line",
+              "a": [
+                -4.495,
+                -11.28
+              ],
+              "b": [
+                -0.22,
+                -11.28
+              ]
+            },
+            {
+              "id": "e10",
+              "type": "line",
+              "a": [
+                -0.22,
+                -11.28
+              ],
+              "b": [
+                -0.22,
+                11.28
+              ]
+            },
+            {
+              "id": "e11",
+              "type": "line",
+              "a": [
+                -0.22,
+                11.28
+              ],
+              "b": [
+                -4.495,
+                11.28
+              ]
+            },
+            {
+              "id": "e12",
+              "type": "line",
+              "a": [
+                -4.495,
+                11.28
+              ],
+              "b": [
+                -4.495,
+                11.96
+              ]
+            }
+          ],
+          "constraints": [
+            {
+              "type": "coincident",
+              "of": [
+                "e1.a",
+                "e12.b"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e1.b",
+                "e2.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e2.b",
+                "e3.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e3.b",
+                "e4.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e4.b",
+                "e5.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e5.b",
+                "e6.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e6.b",
+                "e7.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e7.b",
+                "e8.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e8.b",
+                "e9.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e9.b",
+                "e10.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e10.b",
+                "e11.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e11.b",
+                "e12.a"
+              ]
+            }
+          ]
+        },
+        "faces": "Make faces",
+        "solve": "Solve",
+        "passes": 24
+      },
+      "parent": "GS1"
+    },
+    {
+      "id": "GSCOL",
+      "type": "GeometricalSet",
+      "name": "Column one",
+      "args": {},
+      "parent": "GE1"
+    },
+    {
+      "id": "N_X",
+      "type": "Number",
+      "name": "Column X",
+      "args": {
+        "value": 0
+      },
+      "parent": "GSCOL"
+    },
+    {
+      "id": "N_Y",
+      "type": "Number",
+      "name": "Column Y",
+      "args": {
+        "value": 0
+      },
+      "parent": "GSCOL"
+    },
+    {
+      "id": "N_Z",
+      "type": "Number",
+      "name": "Column Z",
+      "args": {
+        "value": 0
+      },
+      "parent": "GSCOL"
+    },
+    {
+      "id": "PT_COL",
+      "type": "Point",
+      "name": "Column base point",
+      "args": {
+        "kind": "Coordinates",
+        "x": {
+          "value": 0,
+          "from": "N_X"
+        },
+        "y": {
+          "value": 0,
+          "from": "N_Y"
+        },
+        "z": {
+          "value": 0,
+          "from": "N_Z"
+        },
+        "at": 0.5,
+        "end": "Furthest along",
+        "way": "Nearest point"
+      },
+      "parent": "GSCOL"
+    },
+    {
+      "id": "V_UP",
+      "type": "Vector",
+      "name": "Extrusion direction",
+      "args": {
+        "kind": "Components",
+        "dx": 0,
+        "dy": 0,
+        "dz": 1
+      },
+      "parent": "GSCOL"
+    },
+    {
+      "id": "PL_BASE",
+      "type": "Plane",
+      "name": "Column datum plane",
+      "args": {
+        "kind": "Origin and normal",
+        "origin": {
+          "ref": "PO2"
+        },
+        "normal": {
+          "ref": "V_UP"
+        },
+        "at": 0.5,
+        "offset": 100,
+        "angle": 45,
+        "size": 120
+      },
+      "parent": "GSCOL"
+    },
+    {
+      "id": "N_BOT",
+      "type": "Number",
+      "name": "Bottom offset",
+      "args": {
+        "value": 0
+      },
+      "parent": "GSCOL"
+    },
+    {
+      "id": "N_H",
+      "type": "Number",
+      "name": "Column height",
+      "args": {
+        "value": 300
+      },
+      "parent": "GSCOL"
+    },
+    {
+      "id": "N_TOP",
+      "type": "Expression",
+      "name": "Top offset",
+      "args": {
+        "a": {
+          "value": 1,
+          "from": "N_BOT"
+        },
+        "b": {
+          "value": 1,
+          "from": "N_H"
+        },
+        "c": 0,
+        "formula": "a + b"
+      },
+      "parent": "GSCOL"
+    },
+    {
+      "id": "PL_BOT",
+      "type": "Plane",
+      "name": "Column bottom plane",
+      "args": {
+        "kind": "Offset from a plane",
+        "at": 0.5,
+        "from": {
+          "ref": "PL_BASE"
+        },
+        "offset": {
+          "value": 100,
+          "from": "N_BOT"
+        },
+        "angle": 45,
+        "size": 120
+      },
+      "parent": "GSCOL"
+    },
+    {
+      "id": "PL_TOP",
+      "type": "Plane",
+      "name": "Column top plane",
+      "args": {
+        "kind": "Offset from a plane",
+        "at": 0.5,
+        "from": {
+          "ref": "PL_BASE"
+        },
+        "offset": {
+          "value": 100,
+          "from": "N_TOP"
+        },
+        "angle": 45,
+        "size": 120
+      },
+      "parent": "GSCOL"
+    },
+    {
+      "id": "SK_COL",
+      "type": "Sketch",
+      "name": "Column section 14.52mm x 14.02mm",
+      "args": {
+        "plane": {
+          "ref": "PL_BOT"
+        },
+        "origin": {
+          "ref": "PO2"
+        },
+        "drawing": {
+          "elements": [
+            {
+              "id": "e1",
+              "type": "line",
+              "a": [
+                -7.26,
+                7.01
+              ],
+              "b": [
+                7.26,
+                7.01
+              ]
+            },
+            {
+              "id": "e2",
+              "type": "line",
+              "a": [
+                7.26,
+                7.01
+              ],
+              "b": [
+                7.26,
+                6.3
+              ]
+            },
+            {
+              "id": "e3",
+              "type": "line",
+              "a": [
+                7.26,
+                6.3
+              ],
+              "b": [
+                0.22,
+                6.3
+              ]
+            },
+            {
+              "id": "e4",
+              "type": "line",
+              "a": [
+                0.22,
+                6.3
+              ],
+              "b": [
+                0.22,
+                -6.3
+              ]
+            },
+            {
+              "id": "e5",
+              "type": "line",
+              "a": [
+                0.22,
+                -6.3
+              ],
+              "b": [
+                7.26,
+                -6.3
+              ]
+            },
+            {
+              "id": "e6",
+              "type": "line",
+              "a": [
+                7.26,
+                -6.3
+              ],
+              "b": [
+                7.26,
+                -7.01
+              ]
+            },
+            {
+              "id": "e7",
+              "type": "line",
+              "a": [
+                7.26,
+                -7.01
+              ],
+              "b": [
+                -7.26,
+                -7.01
+              ]
+            },
+            {
+              "id": "e8",
+              "type": "line",
+              "a": [
+                -7.26,
+                -7.01
+              ],
+              "b": [
+                -7.26,
+                -6.3
+              ]
+            },
+            {
+              "id": "e9",
+              "type": "line",
+              "a": [
+                -7.26,
+                -6.3
+              ],
+              "b": [
+                -0.22,
+                -6.3
+              ]
+            },
+            {
+              "id": "e10",
+              "type": "line",
+              "a": [
+                -0.22,
+                -6.3
+              ],
+              "b": [
+                -0.22,
+                6.3
+              ]
+            },
+            {
+              "id": "e11",
+              "type": "line",
+              "a": [
+                -0.22,
+                6.3
+              ],
+              "b": [
+                -7.26,
+                6.3
+              ]
+            },
+            {
+              "id": "e12",
+              "type": "line",
+              "a": [
+                -7.26,
+                6.3
+              ],
+              "b": [
+                -7.26,
+                7.01
+              ]
+            }
+          ],
+          "constraints": [
+            {
+              "type": "coincident",
+              "of": [
+                "e1.a",
+                "e12.b"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e1.b",
+                "e2.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e2.b",
+                "e3.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e3.b",
+                "e4.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e4.b",
+                "e5.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e5.b",
+                "e6.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e6.b",
+                "e7.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e7.b",
+                "e8.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e8.b",
+                "e9.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e9.b",
+                "e10.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e10.b",
+                "e11.a"
+              ]
+            },
+            {
+              "type": "coincident",
+              "of": [
+                "e11.b",
+                "e12.a"
+              ]
+            }
+          ]
+        },
+        "faces": "Make faces",
+        "solve": "Solve",
+        "passes": 24
+      },
+      "parent": "GSCOL"
+    },
+    {
+      "id": "EXT_COL",
+      "type": "Extrude",
+      "name": "Column extrude",
+      "args": {
+        "profile": {
+          "ref": "SK_COL"
+        },
+        "direction": {
+          "ref": "V_UP"
+        },
+        "limit": "Up to plane",
+        "distance": 120,
+        "until": {
+          "ref": "PL_TOP"
+        },
+        "cap": "Solid"
+      },
+      "parent": "GSCOL"
+    },
+    {
+      "id": "GE1",
+      "type": "GeometricalSet",
+      "name": "Columns",
+      "args": {}
+    }
+  ],
+  "layout": {
+    "PT1": [
+      30,
+      30
+    ],
+    "VZ": [
+      30,
+      273
+    ],
+    "CA1": [
+      30,
+      514
+    ],
+    "PO1": [
+      30,
+      1079
+    ],
+    "PO2": [
+      30,
+      1337
+    ],
+    "CA2": [
+      30,
+      1580
+    ],
+    "GS1": [
+      30,
+      2145
+    ],
+    "PORG": [
+      30,
+      2276
+    ],
+    "GSCOL": [
+      30,
+      2519
+    ],
+    "N_X": [
+      30,
+      2650
+    ],
+    "N_Y": [
+      30,
+      2784
+    ],
+    "N_Z": [
+      30,
+      2918
+    ],
+    "V_UP": [
+      30,
+      3052
+    ],
+    "N_BOT": [
+      30,
+      3293
+    ],
+    "N_H": [
+      30,
+      3427
+    ],
+    "PL1": [
+      338,
+      30
+    ],
+    "PLO": [
+      338,
+      205
+    ],
+    "PT_COL": [
+      338,
+      380
+    ],
+    "N_TOP": [
+      338,
+      623
+    ],
+    "SK_A": [
+      646,
+      30
+    ],
+    "SK_B": [
+      646,
+      301
+    ],
+    "SK_C": [
+      646,
+      572
+    ],
+    "SK_D": [
+      646,
+      843
+    ],
+    "SK_E": [
+      646,
+      1114
+    ],
+    "SK_F": [
+      646,
+      1385
+    ],
+    "SK_G": [
+      646,
+      1656
+    ],
+    "SK_H": [
+      646,
+      1927
+    ],
+    "SK_I": [
+      646,
+      2198
+    ],
+    "PL_BASE": [
+      646,
+      2469
+    ],
+    "PL_BOT": [
+      954,
+      30
+    ],
+    "PL_TOP": [
+      954,
+      220
+    ],
+    "SK_COL": [
+      1262,
+      30
+    ],
+    "EXT_COL": [
+      1570,
+      30
+    ],
+    "GE1": [
+      30,
+      3561
+    ]
+  }
+}

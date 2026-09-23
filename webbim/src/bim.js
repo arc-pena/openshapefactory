@@ -185,7 +185,9 @@ function fillerDecl(type, guid, typeKind, extraArgs, summary, idPrefix, category
   declare({ type, guid, category, kind: type.toLowerCase(), idPrefix, summary,
     args: [ ref("fills", "Fills", ["opening"]), ref(typeKind, "Type", [typeKind]), ...extraArgs ] });
 }
-fillerDecl("Door", "wb-0202", "doorType", [bool("flipHand", "Flip hand", false), bool("flipFacing", "Flip facing", false)],
+fillerDecl("Door", "wb-0202", "doorType", [bool("flipHand", "Flip hand", false), bool("flipFacing", "Flip facing", false),
+    choice("operation", "Operation", ["Single", "Double"], 0), real("swingAngle", "Swing angle", 90, 0, 180, 1, "°"),
+    real("openAngle", "Open angle (3D)", 0, 0, 180, 1, "°"), choice("clearance", "ADA clearance", ["Front approach", "Hinge approach", "Latch approach", "None"], 0)],
   "A filler with a symbol: panel, frame and swing, drawn in its opening's host frame.", "D", "IfcDoor");
 fillerDecl("Window", "wb-0203", "windowType", [bool("flipFacing", "Flip facing", false)],
   "A filler with glazing and frame, drawn in its opening's host frame.", "WN", "IfcWindow");
@@ -205,6 +207,18 @@ const fillerPre = (typeKey) => (f, doc) => {
 /** Everything a filler draws is in host (u, s) coordinates, mapped once. */
 const hostPt = (w, u, s) => pointAt(w, s, u);
 
+/** A box in the host's (u, s, z) frame, as a plan footprint and a height range: what the 3D view and the CAD bridge build from. */
+const hostBox = (w, u0, u1, s0, s1, z0, z1, sub, extra = {}) =>
+  Object.assign({ foot: [pointAt(w, s0, u0), pointAt(w, s0, u1), pointAt(w, s1, u1), pointAt(w, s1, u0)], z0: w.z0 + z0, z1: w.z0 + z1, sub }, extra);
+/** ADA 2010 §404.2.4 maneuvering clearances at a manual swinging door, mm: depth
+ *  in front of the door, and how far the clear floor runs past the latch or the hinge. */
+export const ADA_CLEARANCE = {
+  "Front approach": { pull: { depth: 1525, latch: 455, hinge: 0 }, push: { depth: 1220, latch: 305, hinge: 0 } },
+  "Hinge approach": { pull: { depth: 1525, latch: 915, hinge: 0 }, push: { depth: 1065, latch: 0, hinge: 560 } },
+  "Latch approach": { pull: { depth: 1220, latch: 610, hinge: 0 }, push: { depth: 1065, latch: 610, hinge: 0 } },
+};
+export const SWING_SCENARIOS = ["Left hand, swing in", "Right hand, swing in", "Left hand, swing out", "Right hand, swing out"];
+
 BUILDERS.Door = {
   precondition: fillerPre("doorType"),
   build: (f, doc) => {
@@ -212,31 +226,63 @@ BUILDERS.Door = {
     const n = w.stack.s.length - 1, sExt = w.stack.s[0], sInt = w.stack.s[n];
     const facing = F.bool(f, "flipFacing") ? -1 : 1;                 // swing toward the interior face unless flipped
     const sFace = facing > 0 ? sInt : sExt, sFar = facing > 0 ? sExt : sInt;
-    const dir = Math.sign(sFace - sFar) || 1;
-    const fw = t.frame || 40;
+    const dir = Math.sign(sFace - sFar) || 1;                          // +s toward the swing side
+    const fw = t.frame || 40, lt = t.leafThickness || 44;
+    const pair = F.choice(f, "operation") === "Double";
+    const swingDeg = Math.max(0, Math.min(180, F.real(f, "swingAngle") ?? 90));
+    const openDeg = Math.max(0, Math.min(swingDeg, F.real(f, "openAngle") ?? 0));
     const hingeAtU0 = !F.bool(f, "flipHand");
-    const uh = hingeAtU0 ? fr.u0 + fw : fr.u1 - fw, uo = hingeAtU0 ? fr.u1 - fw : fr.u0 + fw;
-    const leaf = Math.abs(uo - uh);
-    const lt = t.leafThickness || 44;
-    // In host coordinates: the leaf stands open at 90°, the swing sweeps from the closed position.
-    const hinge = hostPt(w, uh, sFace);
-    const openTip = add(hinge, mul(normalise(sub(hostPt(w, uh, sFace + dir * 10), hinge)), leaf));
-    const closedTip = hostPt(w, uo, sFace);
-    const along = normalise(sub(closedTip, hinge)), out = normalise(sub(openTip, hinge));
-    const leafPoly = [hinge, openTip, add(openTip, mul(along, hingeAtU0 ? lt : lt)), add(hinge, mul(along, lt))];
-    const a0 = Math.atan2(along[1], along[0]), a1 = Math.atan2(out[1], out[0]);
-    let sw = a1 - a0; while (sw > Math.PI) sw -= TAU; while (sw < -Math.PI) sw += TAU;
-    const frames = [[fr.u0, fr.u0 + fw], [fr.u1 - fw, fr.u1]].map(([ua, ub]) => [hostPt(w, ua, sExt), hostPt(w, ub, sExt), hostPt(w, ub, sInt), hostPt(w, ua, sInt)]);
-    const plan = [
-      { sub: "Panel", role: "cut", path: polyPath(leafPoly) },
-      { sub: "Swing", role: "swing", path: [{ k: "A", c: hinge, r: leaf, a0, a1: a0 + sw }] },
-      ...frames.map(p => ({ sub: "Frame", role: "cut", path: polyPath(p) })),
-    ];
-    // Elevation rep: near profile + leaf outline, in host (u, z) — mapped per view.
+    const ua = fr.u0 + fw, ub = fr.u1 - fw;                            // clear opening between the jambs
+    const leaves = pair ? [{ uh: ua, uo: (ua + ub) / 2 }, { uh: ub, uo: (ua + ub) / 2 }]
+      : [hingeAtU0 ? { uh: ua, uo: ub } : { uh: ub, uo: ua }];
+    const sMin = Math.min(sExt, sInt), sMax = Math.max(sExt, sInt);
+    const plan = [], parts = [], swing = [];
+    const hz = 1000;                                                    // handle height above the floor
+    for (const L of leaves) {
+      const H = hostPt(w, L.uh, sFace), len = Math.abs(L.uo - L.uh) - (pair ? 2 : 0);
+      const c = normalise(sub(hostPt(w, L.uo, sFace), H)), o = normalise(sub(hostPt(w, L.uh, sFace + dir * 10), H));
+      const at = deg => { const r = deg * Math.PI / 180; return { d: add(mul(c, Math.cos(r)), mul(o, Math.sin(r))), t: add(mul(o, -Math.cos(r)), mul(c, Math.sin(r))) }; };
+      const leafPoly = deg => { const { d, t: th } = at(deg); return [H, add(H, mul(d, len)), add(add(H, mul(d, len)), mul(th, lt)), add(H, mul(th, lt))]; };
+      // plan: the leaf drawn open at the swing angle, and the arc it sweeps
+      const a0 = Math.atan2(c[1], c[0]), turn = Math.sign(c[0] * o[1] - c[1] * o[0]) || 1;
+      plan.push({ sub: "Panel", role: "cut", path: polyPath(leafPoly(swingDeg)) });
+      if (swingDeg > 0) plan.push({ sub: "Swing", role: "swing", path: [{ k: "A", c: H, r: len, a0, a1: a0 + turn * swingDeg * Math.PI / 180 }] });
+      // 3D: the leaf at its open angle, with a lever handle on each face; all of it turns about the hinge
+      const local = (x, y) => { const { d, t: th } = at(openDeg); return add(add(H, mul(d, x)), mul(th, y)); };
+      const box3 = (x0, x1, y0, y1, z0, z1, sub_) => ({ foot: [local(x0, y0), local(x1, y0), local(x1, y1), local(x0, y1)], z0: w.z0 + fr.sill + z0, z1: w.z0 + fr.sill + z1, sub: sub_, leaf: true, pivot: H, turn, openDeg, swingDeg });
+      parts.push(box3(0, len, 0, lt, 5, fr.h - fw - 3, t.glazed ? "Glass" : "Panel"));
+      for (const side of [-1, 1]) {                                     // push face and pull face
+        const y0 = side < 0 ? -14 : lt, y1 = side < 0 ? 0 : lt + 14;       // rose on the face
+        const yb0 = side < 0 ? -62 : lt + 48, yb1 = side < 0 ? -48 : lt + 62; // lever bar, standing off the face
+        const yn0 = side < 0 ? -48 : lt + 14, yn1 = side < 0 ? -14 : lt + 48; // neck from rose to bar
+        parts.push(box3(len - 95, len - 45, y0, y1, hz - 35, hz + 35, "Handle"));
+        parts.push(box3(len - 80, len - 60, yn0, yn1, hz - 9, hz + 9, "Handle"));
+        parts.push(box3(len - 200, len - 60, yb0, yb1, hz - 9, hz + 9, "Handle"));
+      }
+      swing.push({ hinge: H, closed: c, open: o, len, lt, turn, swingDeg, openDeg, z0: w.z0 + fr.sill, z1: w.z0 + fr.sill + fr.h });
+    }
+    // frame: two jambs lining the reveal, and the head
+    const frames = [[fr.u0, fr.u0 + fw], [fr.u1 - fw, fr.u1]].map(([u0, u1]) => [hostPt(w, u0, sExt), hostPt(w, u1, sExt), hostPt(w, u1, sInt), hostPt(w, u0, sInt)]);
+    for (const p of frames) plan.push({ sub: "Frame", role: "cut", path: polyPath(p) });
+    parts.push(hostBox(w, fr.u0, fr.u0 + fw, sMin, sMax, fr.sill, fr.sill + fr.h, "Frame"), hostBox(w, fr.u1 - fw, fr.u1, sMin, sMax, fr.sill, fr.sill + fr.h, "Frame"),
+      hostBox(w, fr.u0, fr.u1, sMin, sMax, fr.sill + fr.h - fw, fr.sill + fr.h, "Frame"));
+    // ADA maneuvering clearances: red dashed, on the pull (swing) side and the push side
+    const scenario = F.choice(f, "clearance") || "Front approach";
+    const C = ADA_CLEARANCE[scenario];
+    if (C) {
+      const uHinge = pair ? fr.u0 : (hingeAtU0 ? fr.u0 : fr.u1), uLatch = pair ? fr.u1 : (hingeAtU0 ? fr.u1 : fr.u0), sg = Math.sign(uLatch - uHinge) || 1;
+      for (const [side, spec, sLine, sd] of [["pull", C.pull, sFace, dir], ["push", C.push, sFar, -dir]]) {
+        const u0 = uHinge - sg * spec.hinge, u1 = uLatch + sg * (pair ? spec.hinge : spec.latch);
+        const rect = [hostPt(w, u0, sLine), hostPt(w, u1, sLine), hostPt(w, u1, sLine + sd * spec.depth), hostPt(w, u0, sLine + sd * spec.depth)];
+        plan.push({ sub: "Clearance", role: "clearance", side, path: polyPath(rect) });
+      }
+    }
     const elev = { rects: [{ u0: fr.u0, u1: fr.u1, z0: fr.sill, z1: fr.sill + fr.h, sub: "Frame" }, { u0: fr.u0 + fw, u1: fr.u1 - fw, z0: fr.sill, z1: fr.sill + fr.h - fw, sub: "Panel" }],
-      handle: { u: uo - (hingeAtU0 ? 80 : -80), z: fr.sill + 1000 }, glazed: !!t.glazed };
-    return { plan, elev, data: { value: t.width, kind: "Length", host: fr.host, frame: fr, props: {
-      Width: L(t.width), Height: L(t.height), TypeMark: T(t.mark || t.id), "Leaf width": L(leaf) } },
+      handle: { u: leaves[0].uo - Math.sign(leaves[0].uo - leaves[0].uh) * 80, z: fr.sill + hz }, glazed: !!t.glazed };
+    const leafW = Math.abs(leaves[0].uo - leaves[0].uh);
+    const scen = SWING_SCENARIOS[(hingeAtU0 ? 0 : 1) + (facing > 0 ? 0 : 2)];
+    return { plan, elev, data: { value: t.width, kind: "Length", host: fr.host, frame: fr, parts, swing, props: {
+      Width: L(t.width), Height: L(t.height), TypeMark: T(t.mark || t.id), "Leaf width": L(leafW), "Clear width": L(leafW - lt), Swing: T(pair ? "Double" : scen), "ADA clearance": T(scenario) } },
       note: Math.abs(fr.w - t.width) > 1 ? `type is ${t.width}mm wide; its opening is ${fr.w}mm` : null };
   },
 };
@@ -247,18 +293,30 @@ BUILDERS.Window = {
     const n = w.stack.s.length - 1;
     const sMid = (w.stack.s[w.stack.cs] + w.stack.s[w.stack.ce]) / 2, g = 12;
     const fwid = t.frame || 60;
+    const out = Math.sign(w.stack.s[0] - w.stack.s[n]) || -1;           // toward the exterior face
     const plan = [
       { sub: "Glass", role: "cut", path: [{ k: "L", a: hostPt(w, fr.u0, sMid - g), b: hostPt(w, fr.u1, sMid - g) }] },
       { sub: "Glass", role: "cut", path: [{ k: "L", a: hostPt(w, fr.u0, sMid + g), b: hostPt(w, fr.u1, sMid + g) }] },
       { sub: "Frame", role: "cut", path: polyPath([hostPt(w, fr.u0, sMid - 35), hostPt(w, fr.u0 + fwid, sMid - 35), hostPt(w, fr.u0 + fwid, sMid + 35), hostPt(w, fr.u0, sMid + 35)]) },
       { sub: "Frame", role: "cut", path: polyPath([hostPt(w, fr.u1 - fwid, sMid - 35), hostPt(w, fr.u1, sMid - 35), hostPt(w, fr.u1, sMid + 35), hostPt(w, fr.u1 - fwid, sMid + 35)]) },
-      { sub: "Sill", role: "projection", path: [{ k: "L", a: hostPt(w, fr.u0 - 40, w.stack.s[0] - 30 * Math.sign(w.stack.s[n] - w.stack.s[0])), b: hostPt(w, fr.u1 + 40, w.stack.s[0] - 30 * Math.sign(w.stack.s[n] - w.stack.s[0])) }] },
+      { sub: "Sill", role: "projection", path: [{ k: "L", a: hostPt(w, fr.u0 - 40, w.stack.s[0] + 30 * out), b: hostPt(w, fr.u1 + 40, w.stack.s[0] + 30 * out) }] },
     ];
     const mull = Math.max(0, t.mullions || 0);
     const rects = [{ u0: fr.u0, u1: fr.u1, z0: fr.sill, z1: fr.sill + fr.h, sub: "Frame" }, { u0: fr.u0 + fwid, u1: fr.u1 - fwid, z0: fr.sill + fwid, z1: fr.sill + fr.h - fwid, sub: "Glass" }];
     const lines = [];
-    for (let i = 1; i <= mull; i++) { const u = fr.u0 + (fr.u1 - fr.u0) * i / (mull + 1); lines.push({ u0: u, z0: fr.sill + fwid, u1: u, z1: fr.sill + fr.h - fwid, sub: "Frame" }); }
-    return { plan, elev: { rects, lines }, data: { value: t.width, kind: "Length", host: fr.host, frame: fr, props: { Width: L(t.width), Height: L(t.height), TypeMark: T(t.mark || t.id), "Sill height": L(fr.sill) } } };
+    const top = fr.sill + fr.h, s0 = sMid - 35, s1 = sMid + 35;
+    const parts = [
+      hostBox(w, fr.u0, fr.u0 + fwid, s0, s1, fr.sill, top, "Frame"), hostBox(w, fr.u1 - fwid, fr.u1, s0, s1, fr.sill, top, "Frame"),
+      hostBox(w, fr.u0, fr.u1, s0, s1, fr.sill, fr.sill + fwid, "Frame"), hostBox(w, fr.u0, fr.u1, s0, s1, top - fwid, top, "Frame"),
+      hostBox(w, fr.u0 + fwid, fr.u1 - fwid, sMid - 6, sMid + 6, fr.sill + fwid, top - fwid, "Glass"),
+      hostBox(w, fr.u0 - 40, fr.u1 + 40, w.stack.s[0], w.stack.s[0] + 50 * out, fr.sill - 30, fr.sill, "Sill"),
+    ];
+    for (let i = 1; i <= mull; i++) {
+      const u = fr.u0 + (fr.u1 - fr.u0) * i / (mull + 1);
+      lines.push({ u0: u, z0: fr.sill + fwid, u1: u, z1: top - fwid, sub: "Frame" });
+      parts.push(hostBox(w, u - fwid / 2, u + fwid / 2, s0, s1, fr.sill + fwid, top - fwid, "Frame"));
+    }
+    return { plan, elev: { rects, lines }, data: { value: t.width, kind: "Length", host: fr.host, frame: fr, parts, props: { Width: L(t.width), Height: L(t.height), TypeMark: T(t.mark || t.id), "Sill height": L(fr.sill) } } };
   },
 };
 

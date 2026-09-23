@@ -16,7 +16,7 @@ const SRC = path.join(ROOT, "src");
 const MODULES = [
   "fontdata.js", "geom2d.js", "expr.js", "ocaf.js", "library.js", "walls.js", "spaces.js", "joins.js", "dxf.js",
   "bim.js", "styles.js", "ops.js", "scene.js", "props.js", "hlr.js", "pdf.js", "render.js", "sample.js", "acceptance.js",
-  "ui_util.js", "panel.js", "graph.js", "canvas2d.js", "viewcube.js", "view3d.js", "app.js",
+  "ui_util.js", "panel.js", "graph.js", "canvas2d.js", "viewcube.js", "solids.js", "view3d.js", "cadbridge.js", "app.js",
 ];
 const fail = msg => { console.error("build refused: " + msg); process.exit(1); };
 
@@ -76,3 +76,19 @@ fs.writeFileSync(path.join(ROOT, "dist", "web-bim.html"), single);
 const served = shell.replace("<!--APP-->", `<script type="module" src="src/app.js"></script>`);
 fs.writeFileSync(path.join(ROOT, "index.html"), served);
 console.log(`dist/web-bim.html ${(single.length / 1024).toFixed(0)} KB · index.html (served, ${MODULES.length} modules) · ${declared.size} top-level names, no collisions`);
+
+// The studio page: the same page with the parametric CAD interface carried inside it,
+// for the Artifact (which may not fetch). The CAD page is built by `python3 cad/build.py
+// --only artifact`; it rides as inert text and becomes the switch's iframe on first use.
+// Only "</script" and "<!--" need escaping for HTML script data; both are restored exactly.
+const CAD = path.join(ROOT, "cad", "parametric-cad.html");
+if (fs.existsSync(CAD)) {
+  const page = fs.readFileSync(CAD, "utf8");
+  if (/<\\\/script|<\\!--/i.test(page)) { console.error("build refused: the CAD page already contains an escape sequence the studio build uses"); process.exit(1); }
+  const inert = page.replace(/<\/script/gi, m => "<\\/" + m.slice(2)).replace(/<!--/g, "<\\!--");
+  const studio = single.replace("<!--CAD-->", `<script type="text/x-webbim-cad" id="cad-page">${inert}</script>`);
+  fs.writeFileSync(path.join(ROOT, "dist", "web-bim-studio.html"), studio);
+  const mb = (studio.length / 1048576).toFixed(1);
+  if (studio.length > 16 * 1048576) { console.error(`build refused: dist/web-bim-studio.html is ${mb} MB, over the 16 MB page limit`); process.exit(1); }
+  console.log(`dist/web-bim-studio.html ${mb} MB (Web BIM + parametric CAD)`);
+} else console.log("cad/parametric-cad.html not built — run python3 cad/build.py --only artifact for the studio page");
