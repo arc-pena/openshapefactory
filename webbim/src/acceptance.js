@@ -10,7 +10,7 @@ import { wallRegions, solidSpans } from "./joins.js";
 import { pointAt, uOf, boundary, wallPieces } from "./walls.js";
 import { newDocument, openDocument, measureRefs, resolveReference, importPlacer } from "./bim.js";
 import { Editor, propagate } from "./ops.js";
-import { sectionBoxKey, dimText, deriveView, planScene, elevationScene, placements, textWidth, sheetScene, visibilityKey, sectionCut, cutOutline } from "./scene.js";
+import { viewContext, sectionBoxKey, dimText, deriveView, planScene, elevationScene, placements, textWidth, sheetScene, visibilityKey, sectionCut, cutOutline } from "./scene.js";
 import { chainLoop } from "./crop.js";
 import { importIfc } from "./ifcimport.js";
 import { writePDF, pathOps, PT_PER_MM } from "./pdf.js";
@@ -1303,22 +1303,24 @@ testCase("M33", "View style as a view template: included settings are pushed to 
     `${users.length} plans pushed ${pushed}; locked set ok=${locked.ok} (${locked.error}); detail ok=${free.ok}; after untick ok=${again.ok}`);
 });
 
-testCase("M34", "Per-view V/G: a view's own category override and filter apply over its style unless the style includes them; halftone mixes toward the paper", () => {
+testCase("M34", "Per-view V/G: a view's own category override (when the category puts the view before materials) and filter apply over its style unless the style includes them; halftone mixes toward the paper", () => {
   const doc = buildSample(), ed = new Editor(doc);
   const v = doc.elements().find(f => doc.typeOf(f) === "PlanView" && F.refId(f, "style") === "VS-CONSTRUCTION"), id = doc.idOf(v);
   const wallStroke = () => deriveView(doc, doc.element(id)).prims.find(p => p.id === "W1" && p.t === "stroke");
   { const s0 = clone(doc.lib.viewStyles["VS-CONSTRUCTION"]); s0.rules = []; ed.apply({ op: "style", id: "VS-CONSTRUCTION", value: s0 }); }   // filters outrank categories: start without the style's
   const c0 = wallStroke().colour;
   ed.apply({ op: "set", id, key: "vg", value: { byCategory: { IfcWall: { cut: { colour: "#ff0000" }, projection: { colour: "#ff0000" }, beyond: { colour: "#ff0000" } } } } });
+  const matWins = wallStroke().colour;                     // default priority: the material's line colour beats the view
+  ed.apply({ op: "set", id, key: "vg", value: { byCategory: { IfcWall: { materialPriority: "view", cut: { colour: "#ff0000" }, projection: { colour: "#ff0000" }, beyond: { colour: "#ff0000" } } } } });
   const red = wallStroke().colour;
   ed.apply({ op: "set", id, key: "vg", value: { filters: [{ id: "FL-X", name: "walls halftone", when: { all: [{ param: "Category", is: "IfcWall" }] }, then: { halftone: true } }] } });
   const ht = wallStroke().colour;
   const st = clone(doc.lib.viewStyles["VS-CONSTRUCTION"]); st.include = { filters: true };
   ed.apply({ op: "style", id: "VS-CONSTRUCTION", value: st });
   const lockedBack = wallStroke().colour;
-  const ok = red === "#ff0000" && ht !== c0 && parseInt(ht.slice(1, 3), 16) > 0x60 && lockedBack === c0;
-  return R(ok, "cut colour red by the view override; grey by the view's halftone filter; back to the style's once it includes filters",
-    `style ${c0}; override ${red}; halftone ${ht}; filters included ${lockedBack}`);
+  const ok = matWins === c0 && red === "#ff0000" && ht !== c0 && parseInt(ht.slice(1, 3), 16) > 0x60 && lockedBack === c0;
+  return R(ok, "material beats the view override by default; red once the category puts the view first; grey by the view's halftone filter; back to the style's once it includes filters",
+    `style ${c0}; override (material first) ${matWins}; override (view first) ${red}; halftone ${ht}; filters included ${lockedBack}`);
 });
 
 testCase("M35", "Graphic scheme: Blueprint gives the view its paper, turns black ink to its ink, and survives onto a sheet and into the PDF", () => {
@@ -1351,4 +1353,70 @@ testCase("M36", "Filters by measured attribute: walls shorter than 2 m pick up t
   const sk = deriveView(doc, doc.element(id)).prims.filter(p => p.t === "stroke" && p.path.some(s => s.k === "C")).length;
   const ok = short.length > 0 && short.every(w => col(w) === "#2f6fd6") && long.every(w => col(w) !== "#2f6fd6") && sk > 0;
   return R(ok, "short walls blue, long walls not; sketchy strokes present", `${short.length} short (${short.map(col).join(",")}), ${long.length} long; ${sk} sketchy strokes`);
+});
+
+testCase("M37", "Grid heads: the chosen shape at its paper size - the same on the sheet at 1:50 and 1:200 - with its text size; heads at one end only when asked", () => {
+  const doc = buildSample(), ed = new Editor(doc);
+  const g = doc.elements().find(f => doc.typeOf(f) === "Grid"), gid = doc.idOf(g);
+  const v = doc.elements().find(f => doc.typeOf(f) === "PlanView" && F.refId(f, "style") === "VS-CONSTRUCTION"), vid = doc.idOf(v);
+  ed.apply([{ op: "set", id: gid, key: "head", value: "Hexagon" }, { op: "set", id: gid, key: "headSize", value: 12 }, { op: "set", id: gid, key: "textSize", value: 4 }]);
+  const measure = () => { const sc = deriveView(doc, doc.element(vid)); const heads = sc.prims.filter(p => p.id === gid && p.t === "stroke" && p.path.length === 6);
+    const bb = heads.length ? heads[0].path.map(s => s.a) : []; const w = bb.length ? Math.max(...bb.map(p => p[0])) - Math.min(...bb.map(p => p[0])) : 0;
+    const txt = sc.prims.find(p => p.id === gid && p.t === "text"); return { n: heads.length, w, th: txt && txt.height }; };
+  ed.apply({ op: "set", id: vid, key: "scale", value: 50 }); const a = measure();
+  ed.apply({ op: "set", id: vid, key: "scale", value: 200 }); const b = measure();
+  ed.apply({ op: "set", id: gid, key: "ends", value: "End" }); const c = measure();
+  const ok = a.n === 2 && Math.abs(a.w - 12) < 0.01 && Math.abs(b.w - 12) < 0.01 && a.th === 4 && b.th === 4 && c.n === 1;
+  return R(ok, "two hexagons 12 mm across on paper at 1:50 and 1:200, text 4 mm; one head with Heads at End", `1:50 ${a.n} heads ${a.w.toFixed(2)} mm text ${a.th}; 1:200 ${b.w.toFixed(2)} mm; End only: ${c.n}`);
+});
+
+testCase("M38", "Material tag: its point on a wall layer in plan shows that layer's Mark; on a floor layer in a section, that layer's; moved, it re-reads", () => {
+  const doc = buildSample(), ed = new Editor(doc);
+  const v = doc.elements().find(f => doc.typeOf(f) === "PlanView" && F.refId(f, "style") === "VS-CONSTRUCTION"), vid = doc.idOf(v);
+  const sc = deriveView(doc, v);
+  const reg = sc.mat.filter(m => !m.floor && doc.typeOf(doc.element(m.id)) === "Wall");
+  const pick = mat => { const r = reg.find(m => m.material === mat); if (!r) return null; const xs = r.poly.map(p => p[0]), ys = r.poly.map(p => p[1]); const c = [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2]; return c; };
+  const mats = [...new Set(reg.map(r => r.material))];
+  const m1 = mats[0], m2 = mats.find(m => m !== m1), p1 = pick(m1), p2 = pick(m2);
+  const r = ed.apply({ op: "add", element: { type: "MaterialTag", args: { target: p1, position: [p1[0] + 800, p1[1] + 800], show: "Mark", frame: "Keynote box", textSize: 2.5, view: { ref: vid } } } });
+  const text = () => (deriveView(doc, doc.element(vid)).prims.find(p => p.id === r.id && p.t === "text") || {}).text;
+  const t1 = text(); ed.apply({ op: "set", id: r.id, key: "target", value: p2 }); const t2 = text();
+  // the section: a floor's structural layer
+  const sv = doc.elements().find(f => doc.typeOf(f) === "SectionView"), svid = doc.idOf(sv);
+  const cut = sectionCut(doc, sv).rects.find(x => x.kind === "floor" && x.material === "M-CONC");
+  let t3 = null;
+  if (cut) { const r2 = ed.apply({ op: "add", element: { type: "MaterialTag", args: { target: [(cut.s0 + cut.s1) / 2, (cut.z0 + cut.z1) / 2], position: [(cut.s0 + cut.s1) / 2 + 1000, cut.z1 + 1000], show: "Mark · Name", frame: "None", textSize: 2.5, view: { ref: svid } } } });
+    t3 = (deriveView(doc, doc.element(svid)).prims.find(p => p.id === r2.id && p.t === "text") || {}).text; }
+  const mk = m => doc.lib.materials[m].mark;
+  const ok = t1 === mk(m1) && t2 === mk(m2) && (!cut || t3 === "CN-01 Concrete, cast in situ");
+  return R(ok, `plan: ${mk(m1)} then ${m2 ? mk(m2) : "?"}; section floor: CN-01 Concrete, cast in situ`, `plan ${t1} → ${t2}; section ${cut ? t3 : "(no floor cut)"}`);
+});
+
+testCase("M39", "Repeating detail: batt insulation follows a spline; Fill available fits whole loops; a symbol repeats at its spacing, turned along the path", () => {
+  const doc = buildSample(), ed = new Editor(doc);
+  const v = doc.elements().find(f => doc.typeOf(f) === "PlanView"), vid = doc.idOf(v);
+  const line = { elements: [{ id: "a", type: "line", a: [0, -5000], b: [3000, -5000] }], constraints: [], dims: [] };
+  const r = ed.apply({ op: "add", element: { type: "RepeatingDetail", args: { path: line, component: "Batt insulation", width: 100, spacing: 0, layout: "Fill available", justify: "Centre", rotation: 0, view: { ref: vid } } } });
+  const strokes = () => deriveView(doc, doc.element(vid)).prims.filter(p => p.id === r.id && p.t === "stroke");
+  const pts = strokes().flatMap(p => p.path.flatMap(s => [s.a, s.b])).map(p => [p[0] * 100, p[1] * 100]);
+  const ys = pts.map(p => p[1]), xs = pts.map(p => p[0]);
+  const within = Math.max(...ys) <= -5000 + 50 + 1e-6 && Math.min(...ys) >= -5000 - 50 - 1e-6 && Math.abs(Math.min(...xs)) < 1e-6 && Math.abs(Math.max(...xs) - 3000) < 1;
+  const spl = { elements: [{ id: "s", type: "spline", pts: [[0, -8000], [1500, -7000], [3000, -8000], [4500, -7000]], closed: false }], constraints: [], dims: [] };
+  ed.apply({ op: "set", id: r.id, key: "path", value: spl });
+  const splStrokes = strokes(), onSpline = splStrokes.length > 0 && splStrokes.every(p => p.path.every(g => g.a[1] * 100 < -6900 && g.a[1] * 100 > -8100));
+  ed.apply([{ op: "set", id: r.id, key: "component", value: "Symbol" }, { op: "set", id: r.id, key: "symbol", value: { ref: "SY-NORTH" } }, { op: "set", id: r.id, key: "path", value: line }, { op: "set", id: r.id, key: "spacing", value: 500 }, { op: "set", id: r.id, key: "layout", value: "Fixed distance" }]);
+  const sc = deriveView(doc, doc.element(vid)), symPrims = sc.prims.filter(p => p.id === r.id);
+  const ok = within && onSpline && symPrims.length > 0;
+  return R(ok, "loops stay inside the 100 mm band over the full 3000 mm; draws along the spline; the symbol repeats", `band ${within} (x ${Math.min(...xs).toFixed(1)}..${Math.max(...xs).toFixed(1)}, y ${Math.min(...ys).toFixed(1)}..${Math.max(...ys).toFixed(1)}); spline strokes ${splStrokes.length} (in the band ${onSpline}); symbol prims ${symPrims.length}`);
+});
+
+testCase("M40", "Material priority: by default a layer's material draws over the view's category graphics; View wins puts the view first; Ignore materials drops them", () => {
+  const doc = buildSample(), ed = new Editor(doc);
+  const v = doc.elements().find(f => doc.typeOf(f) === "PlanView" && F.refId(f, "style") === "VS-CONSTRUCTION"), vid = doc.idOf(v);
+  const ctx = viewContext(doc, v), w = doc.element("W1"), mat = "M-BRICK";
+  const base = resolveGraphics(doc, ctx, w, "cut", "Cut", mat);
+  const withOv = prio => { const c = Object.assign({}, ctx, { style: Object.assign({}, ctx.style, { byCategory: Object.assign({}, ctx.style.byCategory, { IfcWall: { materialPriority: prio, cut: { fill: "#00ff00", pattern: "P-DIAG" } } }) }) }); return resolveGraphics(doc, c, w, "cut", "Cut", mat); };
+  const def = withOv(undefined), view = withOv("view"), none = withOv("none");
+  const ok = def.fill === doc.lib.materials[mat].cut.background && def.pattern === "P-BRICK" && view.fill === "#00ff00" && view.pattern === "P-DIAG" && none.fill === "#00ff00" && none.trace.every(t => !t.startsWith("material"));
+  return R(ok, "default: brick's background and hatch; View wins: the view's green and diagonal; Ignore: green, no material in the trace", `default ${def.fill}/${def.pattern}; view ${view.fill}/${view.pattern}; none ${none.fill} [${none.trace.join(", ")}]`);
 });

@@ -697,7 +697,7 @@ export class View2D {
     if (this.app.pickMode) return this.pick(sx, sy);
     if (this.app.tool === "dim" && (this.kind === "ElevationView" || this.kind === "SectionView")) return this.levelDimClick(sx, sy);
     if (this.app.sketch && this.app.sketch.view === this) return this.app.sketch.click(this.toModel(sx, sy), e);
-    if (this.app.tool !== "select" && this.kind === "PlanView") return this.toolClick(this.toModel(sx, sy), e);
+    if (this.app.tool !== "select" && (this.kind === "PlanView" || (this.app.tool === "mtag" && (this.kind === "SectionView" || this.kind === "ElevationView")))) return this.toolClick(this.toModel(sx, sy), e);
     const hit = this.hitAt(sx, sy);
     if (this.kind === "Sheet") { this.app.select(hit ? [this.viewId + ":" + hit.id] : [], e.shiftKey, true); return; }
     if (pressed) { this.app.select([hit.id]); return; }
@@ -880,6 +880,12 @@ export class View2D {
     }
     if (tool === "column") return addEl({ type: "Column", args: { position: q, columnType: { ref: o.columnType }, baseLevel: level ? { ref: level } : null, height: 3000, rotation: 0 } });
     if (tool === "space") return addEl({ type: "Space", name: o.spaceName || "Room", args: { level: level ? { ref: level } : null, upperLimit: { mode: "offset", offset: 3000 }, anchor: q, boundaryAt: o.boundaryAt || "finishFace" }, params: { Number: "", Department: "" } }, "Space placed: it keeps its name by this anchor");
+    if (tool === "mtag") {
+      // first click: the point that rests on the material; second: where the tag sits
+      T.pts.push(q); if (T.pts.length < 2) { this.app.say("Now click where the tag goes", "note"); this.draw(); return; }
+      const [a, b] = T.pts; T.pts = [];
+      return addEl({ type: "MaterialTag", args: { target: a, position: b, show: o.mtagShow || "Mark", frame: o.mtagFrame || "Keynote box", textSize: 2.5, view: { ref: this.viewId } } }, "Material tag placed: move its point and it reads the material there");
+    }
     if (tool === "text") {
       const sp = this.toScreen(q);
       const inp = h("input", { type: "text", placeholder: "Note text ⏎", style: { position: "absolute", left: sp[0] + "px", top: sp[1] - 14 + "px", zIndex: 9, width: "240px", height: "28px", border: "1px solid #1d6fd8", borderRadius: "4px", padding: "0 6px" } });

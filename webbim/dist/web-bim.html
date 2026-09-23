@@ -341,6 +341,9 @@ input.bad { outline: 2px solid var(--error); }
 .vstable th, .vstable td { padding: 4px 6px; border-top: 1px solid var(--rule); text-align: left; vertical-align: middle; }
 .vstable .c { text-align: center; }
 .vstable tr.incl td:first-child { font-weight: 600; }
+.mswatch { display: inline-block; width: 14px; height: 14px; border: 1px solid; border-radius: 2px; vertical-align: -2px; }
+.matgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px 18px; }
+.matprev { border: 1px solid var(--rule); border-radius: 4px; background: #fff; margin-top: 6px; }
 .btn.danger { color: var(--error); border-color: var(--error); }
 @media (max-width: 860px) { .dialog-back.modeless .dialog { left: 8px; right: 8px; top: auto; bottom: 32px; width: auto; max-height: 55vh; } }
 .dialog header { padding: 14px 18px; border-bottom: 1px solid var(--rule); display: flex; align-items: center; gap: 10px; }
@@ -1692,18 +1695,21 @@ const PATTERNS = {
 };
 
 const MATERIALS = {
-  "M-BRICK":  { name: "Brick, facing", cut: { pattern: "P-BRICK", pen: "heavy", lineColour: "#1b1f24", background: "#f3dcd0" }, projection: { pen: "thin", lineColour: "#1b1f24" }, shading: { colour: "#a4604a" } },
-  "M-BLOCK":  { name: "Blockwork", cut: { pattern: "P-BLOCK", pen: "heavy", lineColour: "#1b1f24", background: "#e3e5e8" }, projection: { pen: "thin", lineColour: "#1b1f24" }, shading: { colour: "#b9bcc0" } },
-  "M-INSUL":  { name: "Insulation, batt", cut: { pattern: "P-INSUL", pen: "thin", lineColour: "#3a3f47", background: "#fbf6dc" }, projection: { pen: "hairline" }, shading: { colour: "#e9d77a" } },
-  "M-RIGID":  { name: "Insulation, rigid", cut: { pattern: "P-RIGID", pen: "thin", lineColour: "#3a3f47", background: "#eef3e6" }, projection: { pen: "hairline" }, shading: { colour: "#d8e6b8" } },
-  "M-PLAS":   { name: "Plaster", cut: { pattern: "P-PLASTER", pen: "thin", lineColour: "#1b1f24", background: "#ffffff" }, projection: { pen: "hairline" }, shading: { colour: "#f1ede6" } },
-  "M-PB":     { name: "Plasterboard", cut: { pattern: "P-PLASTER", pen: "thin", lineColour: "#1b1f24", background: "#ffffff" }, projection: { pen: "hairline" }, shading: { colour: "#f4f2ee" } },
-  "M-STUD":   { name: "Metal stud zone", cut: { pattern: "P-DIAG", pen: "medium", lineColour: "#1b1f24", background: "#ffffff" }, projection: { pen: "thin" }, shading: { colour: "#c9ced6" } },
-  "M-CONC":   { name: "Concrete, cast in situ", cut: { pattern: "P-CONC", pen: "heavy", lineColour: "#1b1f24", background: "#e9eaec" }, projection: { pen: "thin" }, shading: { colour: "#a9adb2" } },
-  "M-TIMBER": { name: "Timber", cut: { pattern: "P-TIMBER", pen: "medium", lineColour: "#3b2a1a", background: "#f6ead8" }, projection: { pen: "thin" }, shading: { colour: "#c7995f" } },
-  "M-GLASS":  { name: "Glass", cut: { pattern: null, pen: "thin", lineColour: "#1b1f24", background: "#dff0f7" }, projection: { pen: "hairline" }, shading: { colour: "#9fd0e6" } },
-  "M-STEEL":  { name: "Steel", cut: { pattern: null, pen: "heavy", lineColour: "#1b1f24", background: "#2d3239" }, projection: { pen: "thin" }, shading: { colour: "#71777f" } },
-  "M-STONE":  { name: "Cast stone", cut: { pattern: "P-STONE", pen: "heavy", lineColour: "#1b1f24", background: "#efe9dd" }, projection: { pen: "thin" }, shading: { colour: "#d6cdbb" } },
+  "M-BRICK":  { name: "Brick, facing", mark: "BR-01", description: "Facing brick, 102.5 mm, stretcher bond", cut: { pattern: "P-BRICK", pen: "heavy", lineColour: "#1b1f24", background: "#f3dcd0" }, projection: { pen: "thin", lineColour: "#1b1f24", pattern: "P-BRICK" }, shading: { colour: "#a4604a" } },
+  "M-BLOCK":  { name: "Blockwork", mark: "BL-01", description: "Dense concrete blockwork", cut: { pattern: "P-BLOCK", pen: "heavy", lineColour: "#1b1f24", background: "#e3e5e8" }, projection: { pen: "thin", lineColour: "#1b1f24" }, shading: { colour: "#b9bcc0" } },
+  "M-INSUL":  { name: "Insulation, batt", mark: "IN-01", description: "Mineral wool batt insulation", cut: { pattern: "P-INSUL", pen: "thin", lineColour: "#3a3f47", background: "#fbf6dc" }, projection: { pen: "hairline" }, shading: { colour: "#e9d77a" } },
+  "M-RIGID":  { name: "Insulation, rigid", mark: "IN-02", description: "Rigid PIR insulation board", cut: { pattern: "P-RIGID", pen: "thin", lineColour: "#3a3f47", background: "#eef3e6" }, projection: { pen: "hairline" }, shading: { colour: "#d8e6b8" } },
+  "M-PLAS":   { name: "Plaster", mark: "PL-01", description: "Gypsum plaster skim", cut: { pattern: "P-PLASTER", pen: "thin", lineColour: "#1b1f24", background: "#ffffff" }, projection: { pen: "hairline" }, shading: { colour: "#f1ede6" } },
+  "M-PB":     { name: "Plasterboard", mark: "PB-01", description: "Gypsum plasterboard 12.5 mm", cut: { pattern: "P-PLASTER", pen: "thin", lineColour: "#1b1f24", background: "#ffffff" }, projection: { pen: "hairline" }, shading: { colour: "#f4f2ee" } },
+  "M-STUD":   { name: "Metal stud zone", mark: "ST-01", description: "Metal stud zone", cut: { pattern: "P-DIAG", pen: "medium", lineColour: "#1b1f24", background: "#ffffff" }, projection: { pen: "thin" }, shading: { colour: "#c9ced6" } },
+  "M-CONC":   { name: "Concrete, cast in situ", mark: "CN-01", description: "In-situ concrete C32/40", cut: { pattern: "P-CONC", pen: "heavy", lineColour: "#1b1f24", background: "#e9eaec" }, projection: { pen: "thin" }, shading: { colour: "#a9adb2" } },
+  "M-TIMBER": { name: "Timber", mark: "TM-01", description: "Softwood timber C24", cut: { pattern: "P-TIMBER", pen: "medium", lineColour: "#3b2a1a", background: "#f6ead8" }, projection: { pen: "thin" }, shading: { colour: "#c7995f" } },
+  "M-GLASS":  { name: "Glass", mark: "GL-01", description: "Clear float glass", cut: { pattern: null, pen: "thin", lineColour: "#1b1f24", background: "#dff0f7" }, projection: { pen: "hairline" }, shading: { colour: "#9fd0e6" } },
+  "M-STEEL":  { name: "Steel", mark: "SS-01", description: "Structural steel S355", cut: { pattern: null, pen: "heavy", lineColour: "#1b1f24", background: "#2d3239" }, projection: { pen: "thin" }, shading: { colour: "#71777f" } },
+  "M-CARPET": { name: "Carpet tile", mark: "FF-01", description: "Carpet tile on raised access floor", cut: { pattern: null, pen: "thin", lineColour: "#1b1f24", background: "#8f8ea3" }, projection: { pen: "hairline" }, shading: { colour: "#8f8ea3" } },
+  "M-TILE":   { name: "Ceramic tile", mark: "FF-02", description: "Porcelain floor tile, 10 mm, adhesive fixed", cut: { pattern: null, pen: "thin", lineColour: "#1b1f24", background: "#f2eee4" }, projection: { pen: "hairline" }, shading: { colour: "#e8e1d2" } },
+  "M-SCREED": { name: "Screed", mark: "SC-01", description: "Sand/cement screed", cut: { pattern: "P-CONC", pen: "thin", lineColour: "#1b1f24", background: "#f0efe9" }, projection: { pen: "hairline" }, shading: { colour: "#cfcac0" } },
+  "M-STONE":  { name: "Cast stone", mark: "SN-01", description: "Cast stone", cut: { pattern: "P-STONE", pen: "heavy", lineColour: "#1b1f24", background: "#efe9dd" }, projection: { pen: "thin" }, shading: { colour: "#d6cdbb" } },
 };
 
 /** Parameter specs: the typed property sets (§4.3). Kinds are the closed set. */
@@ -1780,6 +1786,8 @@ const TYPES = {
   // floors: layers from the top surface down, like a wall's from its exterior face
   "T-FLOOR250":  { family: "F-FLOOR", name: "Concrete 200 + screed 50", mark: "FL1",
     layers: [ { function: "Finish 1", thickness: 50, material: "M-PLAS" }, { function: "Structure", thickness: 200, material: "M-CONC" } ], coreStart: 1, coreEnd: 2 },
+  "T-FLOOR240T":  { family: "F-FLOOR", name: "Tile 10 + screed 30 + concrete 200", mark: "FL3",
+    layers: [ { function: "Finish 1", thickness: 10, material: "M-TILE" }, { function: "Finish 2", thickness: 30, material: "M-SCREED" }, { function: "Structure", thickness: 200, material: "M-CONC" } ], coreStart: 2, coreEnd: 3 },
   "T-FLOOR150T": { family: "F-FLOOR", name: "Timber deck 150", mark: "FL2",
     layers: [ { function: "Finish 1", thickness: 22, material: "M-TIMBER" }, { function: "Structure", thickness: 128, material: "M-TIMBER" } ], coreStart: 1, coreEnd: 2 },
   // beams: a profile swept along the beam's axis
@@ -1815,9 +1823,9 @@ const SYMBOLS = {
 const VS_PRESENTATION = {
   name: "Presentation", paper: { background: "#FFFFFF" }, detailLevel: "Coarse",
   byCategory: {
-    IfcWall: { cut: { fill: "#2C3440", pattern: "solid", pen: "none", detailLevel: "Coarse" },
+    IfcWall: { materialPriority: "view", cut: { fill: "#2C3440", pattern: "solid", pen: "none", detailLevel: "Coarse" },
                projection: { pen: "hairline", colour: "#B4BCC8" }, beyond: { pen: "gossamer", colour: "#CBD2DC", lineType: "dashed2" } },
-    IfcColumn: { cut: { fill: "#2C3440", pattern: "solid", pen: "none" } },
+    IfcColumn: { materialPriority: "view", cut: { fill: "#2C3440", pattern: "solid", pen: "none" } },
     IfcDoor: { cut: { pen: "hairline", colour: "#8A94A6" }, projection: { pen: "hairline", colour: "#8A94A6" }, swing: { pen: "gossamer", colour: "#B4BCC8" } },
     IfcWindow: { cut: { pen: "hairline", colour: "#8A94A6" }, projection: { pen: "gossamer", colour: "#8A94A6" } },
     IfcOpeningElement: { cut: { pen: "hairline", colour: "#8A94A6" } },
@@ -6157,7 +6165,12 @@ declare({ type: "Grid", guid: "wb-0002", category: "IfcGrid", kind: "grid", idPr
   summary: "A datum line with a bubble. Publishes its line as a reference.",
   args: [ text("name", "Label", "A", { group: "Identity Data" }), curve2d("line", "Line", ["line"], { type: "line", start: [0, 0], end: [0, 10000] }),
           // ticked, a grid only runs horizontal or vertical - its ends slide along it; unticked, they go anywhere
-          bool("orthogonal", "Orthogonal", true, { group: "Constraints" }), bool("pinned", "Pinned", false, { group: "Constraints" }) ],
+          bool("orthogonal", "Orthogonal", true, { group: "Constraints" }), bool("pinned", "Pinned", false, { group: "Constraints" }),
+          // the head: a shape or any loaded symbol, sized in paper millimetres so it reads the same at every scale
+          choice("head", "Head symbol", ["Circle", "Double circle", "Hexagon", "Square", "Diamond", "Triangle", "Symbol", "None"], 0, { group: "Graphics" }),
+          when(ref("headSymbol", "Head symbol (loaded)", ["symbol"], { group: "Graphics", view: true }), "head", "Symbol"),
+          real("headSize", "Head size (paper mm)", 8, 1, 60, 0.5, "", { group: "Graphics" }), real("textSize", "Text size (paper mm)", 2.5, 0.5, 30, 0.1, "", { group: "Graphics" }),
+          choice("ends", "Heads at", ["Both ends", "Start", "End", "None"], 0, { group: "Graphics" }) ],
   handles: (f) => {
     const c = F.json(f, "line");
     if (F.bool(f, "orthogonal") !== false) {
@@ -6716,6 +6729,32 @@ BUILDERS.SymbolInstance = { build: () => ({ data: {} }) };
 //! the parametric CAD's format with every element on its DXF layer. Placed by an offset of the file's
 //! origin, a scale and a rotation about that origin - numbers in Properties, so it can be put exactly
 //! - and pinned by default, so a stray drag cannot move it. Explode turns it into detail lines.
+/** Revit's Repeating Detail Component (and its Insulation tool): one component repeated along a path
+ *  sketched with the sketch tools - lines, arcs, splines. Width is across the path, in model mm. */
+const REPEAT_COMPONENTS = ["Batt insulation", "Rigid insulation", "Brick coursing", "Blocking", "Symbol"];
+declare({ type: "RepeatingDetail", guid: "wb-0708", category: "Detail", kind: "detail", idPrefix: "RD",
+  summary: "A component repeated along a path: insulation, coursing, blocking or any loaded symbol, spaced along lines, arcs and splines.",
+  args: [ json("path", "Path", { elements: [], constraints: [], dims: [] }),
+          choice("component", "Component", REPEAT_COMPONENTS, 0),
+          when(ref("symbol", "Symbol", ["symbol"], { view: true }), "component", "Symbol"),
+          real("width", "Width", 100, 1, 1e5, 1, "mm"), real("spacing", "Spacing", 0, 0, 1e5, 1, "mm"),
+          choice("layout", "Layout", ["Fixed distance", "Fill available", "Maximum spacing"], 1),
+          choice("justify", "Justification", ["Centre", "Left", "Right"], 0), real("rotation", "Component rotation", 0, -360, 360, 1, "°"),
+          ref("view", "View", ["view"], { view: true }) ] });
+BUILDERS.RepeatingDetail = { build: () => ({ data: {} }) };
+
+/** Revit's Material Tag / Keynote: a leader whose point rests on something; the tag reads the material
+ *  there - the wall layer, the floor layer, the column - and shows its Mark (or name, or description). */
+declare({ type: "MaterialTag", guid: "wb-0707", category: "Annotation", kind: "detail", idPrefix: "MT",
+  summary: "A material tag: its leader's point finds the element and layer beneath it and shows that material's Mark.",
+  args: [ point2d("target", "Leader point", [0, 0]), point2d("position", "Tag position", [600, 600]),
+          choice("show", "Shows", ["Mark", "Name", "Mark · Name", "Description", "Mark · Description"], 0),
+          choice("frame", "Frame", ["Keynote box", "None", "Circle"], 0, { group: "Graphics" }),
+          real("textSize", "Text size (paper mm)", 2.5, 0.5, 30, 0.1, "", { group: "Graphics" }),
+          ref("view", "View", ["view"], { view: true }) ],
+  handles: (f) => [{ key: "target", at: F.point(f, "target"), constraint: "free2d", writes: "target" }, { key: "move", at: F.point(f, "position"), constraint: "free2d", writes: "position" }] });
+BUILDERS.MaterialTag = { build: () => ({ data: {} }) };
+
 declare({ type: "CADImport", guid: "wb-0706", category: "Detail", kind: "detail", idPrefix: "CAD",
   summary: "An imported DXF: one element, its layers kept. Pinned, it cannot be dragged; X/Y offset, scale and rotation place it.",
   args: [ text("file", "File", "", { group: "Identity Data" }), json("drawing", "Drawing", { elements: [], constraints: [], texts: [], fills: [], layers: [] }),
@@ -7078,14 +7117,19 @@ function resolveGraphics(doc, ctx, f, role, sub = "Common", material = null) {
   const sc = subs[sub] || subs.Common || {};
   const sp = sc[role === "cutPattern" ? "cut" : role] ?? (role === "swing" ? sc.projection : undefined);
   if (sp) apply({ pen: sp }, `subcategory ${sub}`);
-  // 5. material graphics
-  if (material && doc.lib.materials[material]) {
+  // 5. material graphics. Where they sit is the category's choice in V/G (materialPriority):
+  //    "material" (the default) - a component with a material draws as its material, over the view's
+  //    category graphics; "view" - the view's category graphics win over the material; "none" - ignored.
+  const cs = style.byCategory && style.byCategory[cat];
+  const prio = (cs && cs.materialPriority) || "material";
+  const applyMaterial = () => {
+    if (!material || !doc.lib.materials[material] || prio === "none") return;
     const m = doc.lib.materials[material];
     const mg = role === "cut" || role === "cutPattern" ? m.cut : m.projection;
     if (mg) apply({ pen: role === "cutPattern" ? "hairline" : mg.pen, colour: mg.lineColour, pattern: role === "cut" || role === "cutPattern" ? mg.pattern : undefined, fill: mg.background }, `material ${material}`);
-  }
+  };
+  if (prio === "view") applyMaterial();
   // 4. category style
-  const cs = style.byCategory && style.byCategory[cat];
   if (cs) { if (cs.visible === false) g.visible = false; if (cs.halftone) g.halftone = true; if (cs.detailLevel && cs.detailLevel !== "By View") g.detailLevel = cs.detailLevel; apply(cs[role === "cutPattern" ? "cut" : role], `style ${cat}`); if (role === "fill") apply({ fill: cs.fill }, `style ${cat}`); }
   // Revit's Display Model: the whole model halftone (an underlay for a drawing of other things), or not drawn
   if (style.displayModel === "Halftone" && !isAnnotationCategory(cat)) g.halftone = true;
@@ -7093,6 +7137,7 @@ function resolveGraphics(doc, ctx, f, role, sub = "Common", material = null) {
   // 3. family style, root first so the nearest ancestor wins
   const chain = familyChainOf(doc, f).slice().reverse();
   for (const fam of chain) { const fs = style.byFamily && style.byFamily[fam]; if (fs) apply(fs[role === "cutPattern" ? "cut" : role], `family ${fam}`); }
+  if (prio === "material") applyMaterial();
   // 2. filter rules, in order: first match wins with stop, otherwise accumulate
   // The style's own rules, then any filters the view adds by id (from any style's rule list).
   for (const rule of ctx.rules || style.rules || []) {
@@ -8026,7 +8071,7 @@ function wrapText(str, h, width) {
 
 // ---------------------------------------------------------------- scene builder
 class SceneBuilder {
-  constructor(scale) { this.S = scale; this.prims = []; this.hits = []; this.links = []; this.later = []; }
+  constructor(scale) { this.S = scale; this.prims = []; this.hits = []; this.links = []; this.later = []; this.mat = []; }
   P(p) { return [p[0] / this.S, p[1] / this.S]; }
   path(model) {
     const S = this.S;
@@ -8035,9 +8080,9 @@ class SceneBuilder {
       : { k: "C", a: [s.a[0] / S, s.a[1] / S], c1: [s.c1[0] / S, s.c1[1] / S], c2: [s.c2[0] / S, s.c2[1] / S], b: [s.b[0] / S, s.b[1] / S] });
   }
   fill(model, colour, layer, id, paper = false) { if (colour) this.prims.push({ t: "fill", path: paper ? model : this.path(model), colour, layer, id }); }
-  hatch(model, pat, patId, colour, weight, layer, id) {
+  hatch(model, pat, patId, colour, weight, layer, id, paper = false) {
     if (!pat || weight === "none" || weight == null) return;
-    this.prims.push({ t: "hatch", path: this.path(model), pattern: Object.assign({ id: patId }, pat), scale: pat.kind === "model" ? 1 / this.S : 1, colour, weight, layer, id });
+    this.prims.push({ t: "hatch", path: paper ? model : this.path(model), pattern: Object.assign({ id: patId }, pat), scale: pat.kind === "model" ? 1 / this.S : 1, colour, weight, layer, id });
   }
   stroke(model, g, layer, id, paper = false) {
     if (!g || g.weight === "none" || g.weight == null || !g.visible && g.visible !== undefined) return;
@@ -8193,6 +8238,9 @@ function planScene(doc, v, opts = {}) {
       const g = resolveGraphics(doc, ctx, f, bnd === "cut" ? "cut" : bnd === "beyond" ? "beyond" : "projection");
       if (bnd === "cut") B.fill(p.path, g.fill || ((doc.lib.materials[p.material] || {}).cut || {}).background || "#e9eaec", "IfcSlab", doc.idOf(f));
       B.stroke(p.path, g, "IfcSlab", doc.idOf(f)); B.hit(doc.idOf(f), p.foot);
+      // seen from above, a floor is its top layer
+      const top = (p.parts || []).reduce((a, x) => (!a || x.z1 > a.z1 ? x : a), null);
+      B.mat.push({ id: doc.idOf(f), material: (top && top.material) || p.material, poly: p.foot, floor: true });
     }
     if (t === "Generic" && vis(f)) {
       // a generic model reads like a column: poché where the cut crosses it, its outline below
@@ -8215,6 +8263,7 @@ function planScene(doc, v, opts = {}) {
       const g = resolveGraphics(doc, ctx, f, bnd === "cut" ? "cut" : "projection", "Common", p.material);
       if (bnd === "cut") { if (g.pattern === "solid") B.fill(p.path, g.fill || "#000", "IfcColumn", doc.idOf(f)); else { B.fill(p.path, g.fill, "IfcColumn", doc.idOf(f)); if (g.pattern) B.hatch(p.path, doc.lib.patterns[g.pattern], g.pattern, g.colour, penWeight(doc, "hairline", S), "IfcColumn", doc.idOf(f)); } }
       B.stroke(p.path, g, "IfcColumn", doc.idOf(f)); B.hit(doc.idOf(f), p.foot.length ? p.foot : samplePath(p.path));
+      if (p.material) B.mat.push({ id: doc.idOf(f), material: p.material, poly: p.foot.length ? p.foot : samplePath(p.path) });
     }
     if (t === "Door" || t === "Window") {
       const d = doc.data(f), fr = d && d.frame; const host = fr && doc.element(fr.host), w = host && doc.plan(host);
@@ -8250,12 +8299,14 @@ function planScene(doc, v, opts = {}) {
     if (t === "CADImport" && vis(f)) drawImport(doc, ctx, B, f);
     if (t === "Text" && categoryVisible(ctx, "Annotation")) drawText(doc, ctx, B, f);
     if (t === "SymbolInstance" && categoryVisible(ctx, "Annotation")) drawSymbol(doc, B, doc.lib.symbols[F.refId(f, "symbol")], B.P(F.point(f, "position")), F.real(f, "rotation"), "Annotation", doc.idOf(f));
+    if (t === "RepeatingDetail" && vis(f)) drawRepeating(doc, ctx, B, f);
+    if (t === "MaterialTag" && categoryVisible(ctx, "Annotation")) drawMaterialTag(doc, ctx, B, f);
     if (t === "Dimension" && categoryVisible(ctx, "Annotation") && measureRefs(doc, F.json(f, "of") || []).kind !== "levels") drawDimension(doc, ctx, B, f);
   }
   if (categoryVisible(ctx, "Annotation")) drawConstraintGlyphs(doc, ctx, B);
   B.prims.push(...B.later);          // labels sit on top of fills and furniture
   const clip = doc.argValue(v, "clip");
-  const scene = { prims: B.prims, hits: B.hits, links: B.links, scale: S, kind: "plan",
+  const scene = { prims: B.prims, hits: B.hits, links: B.links, scale: S, kind: "plan", mat: B.mat,
     stats: { walls: stat.walls, offsets: doc.stats.offsets - stat.offsetsBefore } };
   applyCrop(doc, v, clip, scene, S);
   return scene;
@@ -8307,6 +8358,7 @@ function drawWall(doc, ctx, B, f, w, bnd, cutZ) {
         else B.hatch(r.path, pat, g.pattern, gp.colour, gp.weight, "IfcWall-Pattern", id);
       }
     }
+    if (r.material) B.mat.push({ id, material: r.material, poly: samplePath(r.path, 16) });
     for (const e of r.edges) {
       if (e.role === "weld" || e.role === "hidden") continue;
       B.stroke([e.seg], e.role === "layer" ? Object.assign({}, g, { weight: gLayer.weight === "none" ? "none" : gLayer.weight }) : g, "IfcWall", id);
@@ -8363,14 +8415,31 @@ function drawGrid(doc, ctx, B, f) {
   const c = F.json(f, "line"), id = doc.idOf(f), S = ctx.scale;
   const g = resolveGraphics(doc, ctx, f, "projection");
   B.stroke([lineSeg(c.start, c.end)], Object.assign({}, g, { dash: LINE_TYPES.centre }), "IfcGrid", id);
-  // Paper-space bubbles: 8mm on the sheet at every scale.
-  const d = normalise(sub(c.end, c.start));
-  for (const [p, sgn] of [[c.start, -1], [c.end, 1]]) {
-    const cp = add(B.P(p), mul(d, sgn * 4));
-    B.stroke(circlePath(cp, 4), { weight: g.weight, colour: g.colour }, "IfcGrid", id, true);
-    B.text([cp[0], cp[1] - 1.25], F.text(f, "name"), 3.5 * 0.72, { align: "centre", layer: "IfcGrid", id });
+  // Paper-space heads: the head size and text size are paper millimetres, the same on the sheet at every scale.
+  const d = normalise(sub(c.end, c.start)), ends = F.choice(f, "ends") || "Both ends";
+  for (const [p, sgn, which] of [[c.start, -1, "Start"], [c.end, 1, "End"]]) {
+    if (ends === "None" || (ends !== "Both ends" && ends !== which)) continue;
+    gridHead(doc, B, f, B.P(p), mul(d, sgn), g, id);
   }
   B.hit(id, [c.start, c.end], "curve");
+}
+/** A grid's head at the end of its line (`at`, paper), pushed out along `out`: its shape or loaded symbol, its label. */
+function gridHead(doc, B, f, at, out, g, id) {
+  const size = F.real(f, "headSize") || 8, r = size / 2, ts = F.real(f, "textSize") || 2.5, shape = F.choice(f, "head") || "Circle";
+  const cp = add(at, mul(out, r)), st = { weight: g.weight, colour: g.colour };
+  const poly = (n, rot) => polyPath(Array.from({ length: n }, (_, i) => { const a = rot + i * 2 * Math.PI / n; return [cp[0] + r * Math.cos(a), cp[1] + r * Math.sin(a)]; }));
+  if (shape === "Circle") B.stroke(circlePath(cp, r), st, "IfcGrid", id, true);
+  else if (shape === "Double circle") { B.stroke(circlePath(cp, r), st, "IfcGrid", id, true); B.stroke(circlePath(cp, r * 0.82), st, "IfcGrid", id, true); }
+  else if (shape === "Hexagon") B.stroke(poly(6, 0), st, "IfcGrid", id, true);
+  else if (shape === "Square") B.stroke(poly(4, Math.PI / 4), st, "IfcGrid", id, true);
+  else if (shape === "Diamond") B.stroke(poly(4, 0), st, "IfcGrid", id, true);
+  else if (shape === "Triangle") B.stroke(poly(3, Math.atan2(out[1], out[0])), st, "IfcGrid", id, true);
+  else if (shape === "Symbol") {
+    const sym = doc.lib.symbols[F.refId(f, "headSymbol")];
+    if (sym && sym.source) drawSymbol(doc, B, Object.assign({}, sym, { nominalSize: { w: size, h: size } }), cp, 0, "IfcGrid", id);
+    else B.stroke(circlePath(cp, r), st, "IfcGrid", id, true);
+  }
+  B.text([cp[0], cp[1] - ts * 0.36], F.text(f, "name"), ts, { align: "centre", layer: "IfcGrid", id });
 }
 /** A section line in plan: a chain line with a head at each end, the arrows pointing the way it looks. */
 function drawSectionMarker(doc, ctx, B, f, place) {
@@ -8452,6 +8521,150 @@ function drawSymbol(doc, B, sym, atPaper, rotDeg = 0, layer = "Annotation", id =
   for (const t of geo.r.texts) B.prims.push({ t: "text", at: T(t.at), text: t.text, height: t.height * k, rot: rotDeg, align: "centre", valign: "baseline", colour: "#000", layer, id });
 }
 
+// ---------------------------------------------------------------- repeating detail
+/** A sketch's elements as continuous runs: each a dense polyline, chained end to end where they meet. */
+function pathRuns(sketch) {
+  const polys = [];
+  for (const el of (sketch && sketch.elements) || []) {
+    const segs = elementSegs(el); if (!segs || !segs.length) continue;
+    const pts = [];
+    for (const g of segs) {
+      const n = g.k === "L" ? 1 : g.k === "A" ? Math.max(8, Math.ceil(Math.abs(g.a1 - g.a0) / TAU * 96)) : 32;
+      for (let i = pts.length ? 1 : 0; i <= n; i++) {
+        const t = i / n;
+        pts.push(g.k === "L" ? lerp(g.a, g.b, t) : g.k === "A" ? [g.c[0] + g.r * Math.cos(g.a0 + (g.a1 - g.a0) * t), g.c[1] + g.r * Math.sin(g.a0 + (g.a1 - g.a0) * t)] : bezPt(g, t));
+      }
+    }
+    polys.push(pts);
+  }
+  // chain: join polylines whose ends meet (within 1 mm), reversing as needed
+  const runs = [], used = new Set(), near = (a, b) => dist(a, b) < 1;
+  for (let i = 0; i < polys.length; i++) {
+    if (used.has(i)) continue; used.add(i); let run = polys[i].slice(), grew = true;
+    while (grew) {
+      grew = false;
+      for (let j = 0; j < polys.length; j++) {
+        if (used.has(j)) continue; const q = polys[j];
+        if (near(run[run.length - 1], q[0])) run = run.concat(q.slice(1));
+        else if (near(run[run.length - 1], q[q.length - 1])) run = run.concat(q.slice(0, -1).reverse());
+        else if (near(run[0], q[q.length - 1])) run = q.slice(0, -1).concat(run);
+        else if (near(run[0], q[0])) run = q.slice(1).reverse().concat(run);
+        else continue;
+        used.add(j); grew = true;
+      }
+    }
+    runs.push(run);
+  }
+  return runs;
+}
+const bezPt = (g, t) => { const u = 1 - t; return [0, 1].map(k => u * u * u * g.a[k] + 3 * u * u * t * g.c1[k] + 3 * u * t * t * g.c2[k] + t * t * t * g.b[k]); };
+/** A run's frame: the point and unit tangent at arc length s, and the run's length. */
+function runFrame(pts) {
+  const cum = [0]; for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + dist(pts[i - 1], pts[i]));
+  const L = cum[cum.length - 1];
+  const at = s => {
+    s = Math.max(0, Math.min(L, s));
+    let lo = 0, hi = cum.length - 1; while (hi - lo > 1) { const m = (lo + hi) >> 1; if (cum[m] <= s) lo = m; else hi = m; }
+    const seg = cum[hi] - cum[lo] || 1, t = (s - cum[lo]) / seg, d = normalise(sub(pts[hi], pts[lo]));
+    return { p: lerp(pts[lo], pts[hi], t), d, n: [-d[1], d[0]] };
+  };
+  return { L, at };
+}
+/** Stations along a run: n equal steps for Fill available / Maximum spacing, a fixed step otherwise. */
+function stations(L, step, layout) {
+  if (!(step > 0) || !(L > 0)) return { step: L || 1, n: 1 };
+  if (layout === "Fixed distance") return { step, n: Math.max(1, Math.floor(L / step + 1e-6)) };
+  const n = layout === "Maximum spacing" ? Math.max(1, Math.ceil(L / step - 1e-6)) : Math.max(1, Math.round(L / step));
+  return { step: L / n, n };
+}
+function drawRepeating(doc, ctx, B, f) {
+  const id = doc.idOf(f), comp = F.choice(f, "component") || "Batt insulation", w = Math.max(1, F.real(f, "width") || 100);
+  const just = F.choice(f, "justify") || "Centre", off = just === "Left" ? w / 2 : just === "Right" ? -w / 2 : 0, h = w / 2;
+  const layout = F.choice(f, "layout") || "Fill available", sp = F.real(f, "spacing") || 0;
+  const g = resolveGraphics(doc, ctx, f, "projection"); const gs = { weight: g.weight === "none" ? penWeight(doc, "thin", ctx.scale) : g.weight, colour: g.colour };
+  for (const run of pathRuns(doc.argValue(f, "path"))) {
+    if (run.length < 2) continue;
+    const { L, at } = runFrame(run);
+    const W = (a, b) => { const fr = at(a); return add(fr.p, mul(fr.n, b + off)); };
+    const poly = (list) => { const out = []; for (let i = 1; i < list.length; i++) out.push(lineSeg(list[i - 1], list[i])); return out; };
+    const edge = b => { const n = Math.max(2, Math.ceil(L / Math.max(w / 4, 20))); return Array.from({ length: n + 1 }, (_, i) => W(L * i / n, b)); };
+    if (comp === "Batt insulation") {
+      // the batt: a meander of loops touching both faces, `step` per full loop
+      const { step, n } = stations(L, sp || w, layout === "Fixed distance" ? "Fill available" : layout), r = step / 4, pts = [];
+      const arc = (ca, cb, a0, a1) => { for (let i = 0; i <= 10; i++) { const t = a0 + (a1 - a0) * i / 10; pts.push(W(ca + r * Math.cos(t), cb + r * Math.sin(t))); } };
+      for (let k = 0; k < n; k++) { const a0 = k * step; arc(a0 + r, h - r, Math.PI, 0); arc(a0 + 3 * r, -h + r, Math.PI, 2 * Math.PI); }
+      B.stroke(poly(pts), gs, "Detail", id);
+    } else if (comp === "Rigid insulation" || comp === "Brick coursing") {
+      B.stroke(poly(edge(-h)), gs, "Detail", id); B.stroke(poly(edge(h)), gs, "Detail", id);
+      const { step, n } = stations(L, sp || (comp === "Rigid insulation" ? w : 225), layout);
+      for (let k = 0; k <= n; k++) { const a = Math.min(L, k * step); B.stroke([lineSeg(W(a, -h), W(a, h))], gs, "Detail", id); if (comp === "Rigid insulation" && k < n) B.stroke([lineSeg(W(a, -h), W(Math.min(L, a + step), h))], gs, "Detail", id); }
+    } else if (comp === "Blocking") {
+      const { step, n } = stations(L, sp || w * 1.5, layout);
+      for (let k = 0; k < n; k++) { const a = k * step + step * 0.08, b = (k + 1) * step - step * 0.08; B.stroke(poly([W(a, -h), W(b, -h), W(b, h), W(a, h), W(a, -h)]), gs, "Detail", id); B.stroke([lineSeg(W(a, -h), W(b, h))], gs, "Detail", id); B.stroke([lineSeg(W(a, h), W(b, -h))], gs, "Detail", id); }
+    } else {
+      const sym = doc.lib.symbols[F.refId(f, "symbol")];
+      const { step, n } = stations(L, sp || w, layout);
+      for (let k = 0; k < n; k++) {
+        const a = (k + 0.5) * step, fr = at(a), c = add(fr.p, mul(fr.n, off));
+        const rot = Math.atan2(fr.d[1], fr.d[0]) * 180 / Math.PI + (F.real(f, "rotation") || 0);
+        if (sym && sym.source) drawSymbol(doc, B, Object.assign({}, sym, { nominalSize: { w: 1e9, h: w / ctx.scale } }), B.P(c), rot, "Detail", id);
+        else B.stroke(circlePath(B.P(c), w / ctx.scale / 3), gs, "Detail", id, true);
+      }
+    }
+    B.hit(id, run, "curve");
+  }
+}
+
+/** The material at a point of a view: the smallest cut or seen region there that has one (a wall's
+ *  layer before the floor it stands on), else the material of whatever element is there. */
+function materialAt(doc, B, q) {
+  let best = null, ba = Infinity;
+  for (const m of B.mat) if (m.material && pointInPoly(q, m.poly)) { const a = Math.abs(polyArea(m.poly)) * (m.floor ? 1e6 : 1); if (a < ba) { ba = a; best = m; } }
+  if (best) return best;
+  for (const hh of B.hits) if (hh.pts && hh.pts.length > 2 && pointInPoly(q, hh.pts)) { const f = doc.element(hh.id), m = f && elementMaterial(doc, f); if (m) return { id: hh.id, material: m }; }
+  return null;
+}
+/** An element's own material: its Material parameter, its type's, or its type's first (exterior / top) layer's. */
+function elementMaterial(doc, f) {
+  const p = paramValue(doc, f, "Material"); if (p && doc.lib.materials[p]) return p;
+  for (const k of ["wallType", "floorType", "columnType", "beamType", "doorType", "windowType"]) {
+    const id = F.refId(f, k); if (!id) continue; const t = doc.resolveType(id); if (!t) continue;
+    if (t.material) return t.material;
+    if (t.layers && t.layers.length) return t.layers[0].material;
+  }
+  const pl = doc.plan(f); return pl && pl.material || null;
+}
+function paramValue(doc, f, k) { try { const v = propertyOf(doc, f, k); return v && !v.error ? v.v : null; } catch (e) { return null; } }
+/** What a material tag says, from the material it rests on. */
+function materialTagText(doc, mat, show) {
+  const m = mat && doc.lib.materials[mat]; if (!m) return "?";
+  const mark = m.mark || mat;
+  return { Mark: mark, Name: m.name || mat, "Mark · Name": `${mark} ${m.name || ""}`.trim(), Description: m.description || m.name || mat, "Mark · Description": `${mark} ${m.description || m.name || ""}`.trim() }[show || "Mark"] || mark;
+}
+function drawMaterialTag(doc, ctx, B, f) {
+  const id = doc.idOf(f), tq = F.point(f, "target"), pq = F.point(f, "position");
+  const found = materialAt(doc, B, tq), text = materialTagText(doc, found && found.material, F.choice(f, "show"));
+  const ts = F.real(f, "textSize") || 2.5, frame = F.choice(f, "frame") || "Keynote box";
+  const T = B.P(tq), P = B.P(pq), w = textWidth(text, ts), pad = ts * 0.45;
+  const col = found ? "#000000" : "#b3261e", g = { weight: penWeight(doc, "hairline", ctx.scale), colour: col };
+  const right = P[0] >= T[0];
+  // the leader: from the point to the near side of the tag, a dot where it rests
+  const box = [P[0] - w / 2 - pad, P[1] - ts / 2 - pad, P[0] + w / 2 + pad, P[1] + ts / 2 + pad];
+  const end = frame === "Circle" ? add(P, mul(normalise(sub(T, P)), Math.max(w / 2, ts / 2) + pad)) : [right ? box[0] : box[2], P[1]];
+  B.stroke([lineSeg(T, end)], g, "Annotation-Tag", id, true);
+  B.fill(circlePath(T, 0.45), col, "Annotation-Tag", id, true);
+  if (frame === "Keynote box") { B.fill(polyPath([[box[0], box[1]], [box[2], box[1]], [box[2], box[3]], [box[0], box[3]]]), "#ffffff", "Annotation-Tag", id, true); B.stroke(polyPath([[box[0], box[1]], [box[2], box[1]], [box[2], box[3]], [box[0], box[3]]]), g, "Annotation-Tag", id, true); }
+  if (frame === "Circle") { const r = Math.max(w / 2, ts / 2) + pad; B.fill(circlePath(P, r), "#ffffff", "Annotation-Tag", id, true); B.stroke(circlePath(P, r), g, "Annotation-Tag", id, true); }
+  B.text([P[0], P[1] - ts * 0.36], text, ts, { align: "centre", layer: "Annotation-Tag", id, colour: col });
+  const S = ctx.scale; B.hit(id, [[box[0] * S, box[1] * S], [box[2] * S, box[1] * S], [box[2] * S, box[3] * S], [box[0] * S, box[3] * S]]);
+  B.hit(id, [tq, pq], "curve");
+}
+/** View-owned annotation for views that are not plans (sections, elevations): material tags. */
+function drawViewAnnotations(doc, ctx, B, v) {
+  if (!categoryVisible(ctx, "Annotation")) return;
+  for (const f of doc.elements()) if (doc.typeOf(f) === "MaterialTag" && F.refId(f, "view") === doc.idOf(v)) drawMaterialTag(doc, ctx, B, f);
+}
+
 /** Where a dimension sits: witness feet a, b; the measured direction; the dimension line A–Bp at its offset. */
 function dimensionGeometry(doc, f, m = measureRefs(doc, F.json(f, "of") || [])) {
   if (!m || m.lost || m.value == null || m.kind === "levels") return null;
@@ -8516,6 +8729,7 @@ function elevationScene(doc, v, opts = {}) {
   const vis = items.filter(inView).sort((a, b) => a.depth - b.depth || (a.id < b.id ? -1 : 1));   // deterministic ties (test 40)
   drawDatums(doc, ctx, B, v, G);
   drawProjection(doc, ctx, B, vis, G, []);
+  drawViewAnnotations(doc, ctx, B, v);
   const scene = { prims: B.prims, hits: B.hits, links: [], scale: S, kind: "elevation", stats: { items: vis.length } };
   scene.bbox = sceneBBox(B.prims);
   return scene;
@@ -8586,12 +8800,10 @@ function drawDatums(doc, ctx, B, v, G) {
     if (t < 0 || t > Lv) continue;
     const top = F.real(v, "top") + 600;
     B.stroke([lineSeg([t, -300], [t, top])], { weight: penWeight(doc, "hairline", S), colour: "#000", dash: LINE_TYPES.centre }, "IfcGrid", doc.idOf(f));
-    const bp = add(B.P([t, top]), [0, 4]);
-    B.stroke(circlePath(bp, 4), { weight: penWeight(doc, "thin", S), colour: "#000" }, "IfcGrid", doc.idOf(f), true);
-    B.text([bp[0], bp[1] - 1.25], F.text(f, "name"), 2.5, { align: "centre", layer: "IfcGrid", id: doc.idOf(f) });
+    if ((F.choice(f, "ends") || "Both ends") !== "None") gridHead(doc, B, f, B.P([t, top]), [0, 1], { weight: penWeight(doc, "thin", S), colour: "#000" }, doc.idOf(f));
     // pickable along its line and by its bubble
     B.hit(doc.idOf(f), [[t, -300], [t, top]], "curve");
-    const R_ = 4 * S, bc = [t, top + 4 * S];
+    const hr = (F.real(f, "headSize") || 8) / 2, R_ = hr * S, bc = [t, top + hr * S];
     B.hit(doc.idOf(f), [[bc[0] - R_, bc[1] - R_], [bc[0] + R_, bc[1] - R_], [bc[0] + R_, bc[1] + R_], [bc[0] - R_, bc[1] + R_]]);
   }
 }
@@ -8699,14 +8911,22 @@ function sectionScene(doc, v, opts = {}) {
   const matOf = m => doc.lib.materials[m] || {};
   for (const r of rects) {
     const path = polyPath([[r.s0, r.z0], [r.s1, r.z0], [r.s1, r.z1], [r.s0, r.z1]].map(q => B.P(q)));
-    const mc = matOf(r.material).cut || {};
     const cat = { wall: "IfcWall", floor: "IfcSlab", beam: "IfcBeam", column: "IfcColumn" }[r.kind];
-    B.fill(path, mc.background || "#e9eaec", cat, r.id, true);
-    if (mc.pattern && doc.lib.patterns[mc.pattern]) B.hatch(path, doc.lib.patterns[mc.pattern], mc.pattern, mc.lineColour || "#000", penWeight(doc, "hairline", S), cat, r.id, true);
+    // each layer draws as its material, through the same resolution as the plan: V/G, filters and the
+    // category's material priority all apply to what a section cuts
+    const el = doc.element(r.id), g = el ? resolveGraphics(doc, ctx, el, "cut", "Layer", r.material) : null;
+    if (g && !g.visible) continue;
+    const mc = matOf(r.material).cut || {};
+    const fill = g ? (g.pattern === "solid" ? g.fill || "#000000" : g.fillNone ? null : g.fill || mc.background || "#e9eaec") : mc.background || "#e9eaec";
+    if (fill) B.fill(path, fill, cat, r.id, true);
+    const pat = g ? (g.pattern === "solid" ? null : g.pattern) : mc.pattern;
+    if (pat && doc.lib.patterns[pat]) { const gp = el ? resolveGraphics(doc, ctx, el, "cutPattern", "Layer", r.material) : { colour: mc.lineColour || "#000" }; B.hatch(path, doc.lib.patterns[pat], pat, gp.colour || "#000", penWeight(doc, "hairline", S), cat, r.id, true); }
+    B.mat.push({ id: r.id, material: r.material, poly: [[r.s0, r.z0], [r.s1, r.z0], [r.s1, r.z1], [r.s0, r.z1]] });
     B.hit(r.id, [[r.s0, r.z0], [r.s1, r.z0], [r.s1, r.z1], [r.s0, r.z1]]);
   }
   for (const e of cutOutline(rects)) B.stroke([lineSeg(e.a, e.b)], { weight: penWeight(doc, e.outer ? "heavy" : "thin", S), colour: "#000" }, "Section-Cut", e.id);
-  const scene = { prims: B.prims, hits: B.hits, links: [], scale: S, kind: "section", stats: { cut: rects.length, beyond: items.length } };
+  drawViewAnnotations(doc, ctx, B, v);
+  const scene = { prims: B.prims, hits: B.hits, links: [], scale: S, kind: "section", mat: B.mat, stats: { cut: rects.length, beyond: items.length } };
   applyCrop(doc, v, doc.argValue(v, "clip"), scene, S);
   return scene;
 }
@@ -13809,22 +14029,24 @@ testCase("M33", "View style as a view template: included settings are pushed to 
     `${users.length} plans pushed ${pushed}; locked set ok=${locked.ok} (${locked.error}); detail ok=${free.ok}; after untick ok=${again.ok}`);
 });
 
-testCase("M34", "Per-view V/G: a view's own category override and filter apply over its style unless the style includes them; halftone mixes toward the paper", () => {
+testCase("M34", "Per-view V/G: a view's own category override (when the category puts the view before materials) and filter apply over its style unless the style includes them; halftone mixes toward the paper", () => {
   const doc = buildSample(), ed = new Editor(doc);
   const v = doc.elements().find(f => doc.typeOf(f) === "PlanView" && F.refId(f, "style") === "VS-CONSTRUCTION"), id = doc.idOf(v);
   const wallStroke = () => deriveView(doc, doc.element(id)).prims.find(p => p.id === "W1" && p.t === "stroke");
   { const s0 = clone(doc.lib.viewStyles["VS-CONSTRUCTION"]); s0.rules = []; ed.apply({ op: "style", id: "VS-CONSTRUCTION", value: s0 }); }   // filters outrank categories: start without the style's
   const c0 = wallStroke().colour;
   ed.apply({ op: "set", id, key: "vg", value: { byCategory: { IfcWall: { cut: { colour: "#ff0000" }, projection: { colour: "#ff0000" }, beyond: { colour: "#ff0000" } } } } });
+  const matWins = wallStroke().colour;                     // default priority: the material's line colour beats the view
+  ed.apply({ op: "set", id, key: "vg", value: { byCategory: { IfcWall: { materialPriority: "view", cut: { colour: "#ff0000" }, projection: { colour: "#ff0000" }, beyond: { colour: "#ff0000" } } } } });
   const red = wallStroke().colour;
   ed.apply({ op: "set", id, key: "vg", value: { filters: [{ id: "FL-X", name: "walls halftone", when: { all: [{ param: "Category", is: "IfcWall" }] }, then: { halftone: true } }] } });
   const ht = wallStroke().colour;
   const st = clone(doc.lib.viewStyles["VS-CONSTRUCTION"]); st.include = { filters: true };
   ed.apply({ op: "style", id: "VS-CONSTRUCTION", value: st });
   const lockedBack = wallStroke().colour;
-  const ok = red === "#ff0000" && ht !== c0 && parseInt(ht.slice(1, 3), 16) > 0x60 && lockedBack === c0;
-  return R(ok, "cut colour red by the view override; grey by the view's halftone filter; back to the style's once it includes filters",
-    `style ${c0}; override ${red}; halftone ${ht}; filters included ${lockedBack}`);
+  const ok = matWins === c0 && red === "#ff0000" && ht !== c0 && parseInt(ht.slice(1, 3), 16) > 0x60 && lockedBack === c0;
+  return R(ok, "material beats the view override by default; red once the category puts the view first; grey by the view's halftone filter; back to the style's once it includes filters",
+    `style ${c0}; override (material first) ${matWins}; override (view first) ${red}; halftone ${ht}; filters included ${lockedBack}`);
 });
 
 testCase("M35", "Graphic scheme: Blueprint gives the view its paper, turns black ink to its ink, and survives onto a sheet and into the PDF", () => {
@@ -13857,6 +14079,72 @@ testCase("M36", "Filters by measured attribute: walls shorter than 2 m pick up t
   const sk = deriveView(doc, doc.element(id)).prims.filter(p => p.t === "stroke" && p.path.some(s => s.k === "C")).length;
   const ok = short.length > 0 && short.every(w => col(w) === "#2f6fd6") && long.every(w => col(w) !== "#2f6fd6") && sk > 0;
   return R(ok, "short walls blue, long walls not; sketchy strokes present", `${short.length} short (${short.map(col).join(",")}), ${long.length} long; ${sk} sketchy strokes`);
+});
+
+testCase("M37", "Grid heads: the chosen shape at its paper size - the same on the sheet at 1:50 and 1:200 - with its text size; heads at one end only when asked", () => {
+  const doc = buildSample(), ed = new Editor(doc);
+  const g = doc.elements().find(f => doc.typeOf(f) === "Grid"), gid = doc.idOf(g);
+  const v = doc.elements().find(f => doc.typeOf(f) === "PlanView" && F.refId(f, "style") === "VS-CONSTRUCTION"), vid = doc.idOf(v);
+  ed.apply([{ op: "set", id: gid, key: "head", value: "Hexagon" }, { op: "set", id: gid, key: "headSize", value: 12 }, { op: "set", id: gid, key: "textSize", value: 4 }]);
+  const measure = () => { const sc = deriveView(doc, doc.element(vid)); const heads = sc.prims.filter(p => p.id === gid && p.t === "stroke" && p.path.length === 6);
+    const bb = heads.length ? heads[0].path.map(s => s.a) : []; const w = bb.length ? Math.max(...bb.map(p => p[0])) - Math.min(...bb.map(p => p[0])) : 0;
+    const txt = sc.prims.find(p => p.id === gid && p.t === "text"); return { n: heads.length, w, th: txt && txt.height }; };
+  ed.apply({ op: "set", id: vid, key: "scale", value: 50 }); const a = measure();
+  ed.apply({ op: "set", id: vid, key: "scale", value: 200 }); const b = measure();
+  ed.apply({ op: "set", id: gid, key: "ends", value: "End" }); const c = measure();
+  const ok = a.n === 2 && Math.abs(a.w - 12) < 0.01 && Math.abs(b.w - 12) < 0.01 && a.th === 4 && b.th === 4 && c.n === 1;
+  return R(ok, "two hexagons 12 mm across on paper at 1:50 and 1:200, text 4 mm; one head with Heads at End", `1:50 ${a.n} heads ${a.w.toFixed(2)} mm text ${a.th}; 1:200 ${b.w.toFixed(2)} mm; End only: ${c.n}`);
+});
+
+testCase("M38", "Material tag: its point on a wall layer in plan shows that layer's Mark; on a floor layer in a section, that layer's; moved, it re-reads", () => {
+  const doc = buildSample(), ed = new Editor(doc);
+  const v = doc.elements().find(f => doc.typeOf(f) === "PlanView" && F.refId(f, "style") === "VS-CONSTRUCTION"), vid = doc.idOf(v);
+  const sc = deriveView(doc, v);
+  const reg = sc.mat.filter(m => !m.floor && doc.typeOf(doc.element(m.id)) === "Wall");
+  const pick = mat => { const r = reg.find(m => m.material === mat); if (!r) return null; const xs = r.poly.map(p => p[0]), ys = r.poly.map(p => p[1]); const c = [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2]; return c; };
+  const mats = [...new Set(reg.map(r => r.material))];
+  const m1 = mats[0], m2 = mats.find(m => m !== m1), p1 = pick(m1), p2 = pick(m2);
+  const r = ed.apply({ op: "add", element: { type: "MaterialTag", args: { target: p1, position: [p1[0] + 800, p1[1] + 800], show: "Mark", frame: "Keynote box", textSize: 2.5, view: { ref: vid } } } });
+  const text = () => (deriveView(doc, doc.element(vid)).prims.find(p => p.id === r.id && p.t === "text") || {}).text;
+  const t1 = text(); ed.apply({ op: "set", id: r.id, key: "target", value: p2 }); const t2 = text();
+  // the section: a floor's structural layer
+  const sv = doc.elements().find(f => doc.typeOf(f) === "SectionView"), svid = doc.idOf(sv);
+  const cut = sectionCut(doc, sv).rects.find(x => x.kind === "floor" && x.material === "M-CONC");
+  let t3 = null;
+  if (cut) { const r2 = ed.apply({ op: "add", element: { type: "MaterialTag", args: { target: [(cut.s0 + cut.s1) / 2, (cut.z0 + cut.z1) / 2], position: [(cut.s0 + cut.s1) / 2 + 1000, cut.z1 + 1000], show: "Mark · Name", frame: "None", textSize: 2.5, view: { ref: svid } } } });
+    t3 = (deriveView(doc, doc.element(svid)).prims.find(p => p.id === r2.id && p.t === "text") || {}).text; }
+  const mk = m => doc.lib.materials[m].mark;
+  const ok = t1 === mk(m1) && t2 === mk(m2) && (!cut || t3 === "CN-01 Concrete, cast in situ");
+  return R(ok, `plan: ${mk(m1)} then ${m2 ? mk(m2) : "?"}; section floor: CN-01 Concrete, cast in situ`, `plan ${t1} → ${t2}; section ${cut ? t3 : "(no floor cut)"}`);
+});
+
+testCase("M39", "Repeating detail: batt insulation follows a spline; Fill available fits whole loops; a symbol repeats at its spacing, turned along the path", () => {
+  const doc = buildSample(), ed = new Editor(doc);
+  const v = doc.elements().find(f => doc.typeOf(f) === "PlanView"), vid = doc.idOf(v);
+  const line = { elements: [{ id: "a", type: "line", a: [0, -5000], b: [3000, -5000] }], constraints: [], dims: [] };
+  const r = ed.apply({ op: "add", element: { type: "RepeatingDetail", args: { path: line, component: "Batt insulation", width: 100, spacing: 0, layout: "Fill available", justify: "Centre", rotation: 0, view: { ref: vid } } } });
+  const strokes = () => deriveView(doc, doc.element(vid)).prims.filter(p => p.id === r.id && p.t === "stroke");
+  const pts = strokes().flatMap(p => p.path.flatMap(s => [s.a, s.b])).map(p => [p[0] * 100, p[1] * 100]);
+  const ys = pts.map(p => p[1]), xs = pts.map(p => p[0]);
+  const within = Math.max(...ys) <= -5000 + 50 + 1e-6 && Math.min(...ys) >= -5000 - 50 - 1e-6 && Math.abs(Math.min(...xs)) < 1e-6 && Math.abs(Math.max(...xs) - 3000) < 1;
+  const spl = { elements: [{ id: "s", type: "spline", pts: [[0, -8000], [1500, -7000], [3000, -8000], [4500, -7000]], closed: false }], constraints: [], dims: [] };
+  ed.apply({ op: "set", id: r.id, key: "path", value: spl });
+  const splStrokes = strokes(), onSpline = splStrokes.length > 0 && splStrokes.every(p => p.path.every(g => g.a[1] * 100 < -6900 && g.a[1] * 100 > -8100));
+  ed.apply([{ op: "set", id: r.id, key: "component", value: "Symbol" }, { op: "set", id: r.id, key: "symbol", value: { ref: "SY-NORTH" } }, { op: "set", id: r.id, key: "path", value: line }, { op: "set", id: r.id, key: "spacing", value: 500 }, { op: "set", id: r.id, key: "layout", value: "Fixed distance" }]);
+  const sc = deriveView(doc, doc.element(vid)), symPrims = sc.prims.filter(p => p.id === r.id);
+  const ok = within && onSpline && symPrims.length > 0;
+  return R(ok, "loops stay inside the 100 mm band over the full 3000 mm; draws along the spline; the symbol repeats", `band ${within} (x ${Math.min(...xs).toFixed(1)}..${Math.max(...xs).toFixed(1)}, y ${Math.min(...ys).toFixed(1)}..${Math.max(...ys).toFixed(1)}); spline strokes ${splStrokes.length} (in the band ${onSpline}); symbol prims ${symPrims.length}`);
+});
+
+testCase("M40", "Material priority: by default a layer's material draws over the view's category graphics; View wins puts the view first; Ignore materials drops them", () => {
+  const doc = buildSample(), ed = new Editor(doc);
+  const v = doc.elements().find(f => doc.typeOf(f) === "PlanView" && F.refId(f, "style") === "VS-CONSTRUCTION"), vid = doc.idOf(v);
+  const ctx = viewContext(doc, v), w = doc.element("W1"), mat = "M-BRICK";
+  const base = resolveGraphics(doc, ctx, w, "cut", "Cut", mat);
+  const withOv = prio => { const c = Object.assign({}, ctx, { style: Object.assign({}, ctx.style, { byCategory: Object.assign({}, ctx.style.byCategory, { IfcWall: { materialPriority: prio, cut: { fill: "#00ff00", pattern: "P-DIAG" } } }) }) }); return resolveGraphics(doc, c, w, "cut", "Cut", mat); };
+  const def = withOv(undefined), view = withOv("view"), none = withOv("none");
+  const ok = def.fill === doc.lib.materials[mat].cut.background && def.pattern === "P-BRICK" && view.fill === "#00ff00" && view.pattern === "P-DIAG" && none.fill === "#00ff00" && none.trace.every(t => !t.startsWith("material"));
+  return R(ok, "default: brick's background and hatch; View wins: the view's green and diagonal; Ignore: green, no material in the trace", `default ${def.fill}/${def.pattern}; view ${view.fill}/${view.pattern}; none ${none.fill} [${none.trace.join(", ")}]`);
 });
 
 // ===== ui_util.js =====
@@ -13900,6 +14188,13 @@ const ICONS = {
   unpin: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3h5l-.8 5 2.8 2.5H6L8.8 8z"/><path d="M10.5 10.5V17"/><path d="M12.5 12.5l5 5M17.5 12.5l-5 5" stroke="#d11f1f" stroke-width="2"/></svg>',
   skline: P('<path d="M3 16L9 5l8 9"/><circle cx="3" cy="16" r="1.3"/><circle cx="9" cy="5" r="1.3"/><circle cx="17" cy="14" r="1.3"/>'),
   skrect: P('<rect x="3" y="5" width="14" height="10"/>'),
+  // a material tag: a leader resting on a hatched layer, the tag box at its end
+  mtag: P('<path d="M2 17h8"/><path d="M3 17l2-3M6 17l2-3"/><path d="M6 14.5L11 8"/><rect x="11" y="4" width="7" height="5" rx=".5"/>'),
+  keynote: P('<path d="M3 16l6-6"/><rect x="9" y="4" width="9" height="7"/><path d="M11.5 7.5h4"/>'),
+  // a repeating detail: one component, repeated along a path
+  repeat: P('<path d="M2 15c2-6 3-6 4 0s2 6 4 0 3-6 4 0 2 6 4 0"/><path d="M2 5h16" stroke-dasharray="2 2"/>'),
+  insul: P('<path d="M2 6h16M2 14h16"/><path d="M3 14c0-8 3-8 3 0M6 6c0 8 3 8 3 0M9 14c0-8 3-8 3 0M12 6c0 8 3 8 3 0M15 14c0-8 3-8 3 0"/>'),
+  material: P('<circle cx="10" cy="10" r="7"/><path d="M4 7l12 0M3.5 12h13M7 3.8l6 12.4"/>'),
   skpoly: P('<path d="M10 3l6 4v6l-6 4-6-4V7z"/>'),
   skarc: P('<path d="M3 15a8 8 0 0 1 14 0"/><circle cx="3" cy="15" r="1.2"/><circle cx="17" cy="15" r="1.2"/>'),
   skcircle: P('<circle cx="10" cy="10" r="7"/><circle cx="10" cy="10" r=".8"/>'),
@@ -14289,7 +14584,7 @@ function typeEditor(app, typeId) {
   const doc = app.doc;
   const t = clone(doc.lib.types[typeId]);
   const r = doc.resolveType(typeId);
-  const isWall = r && r.category === "IfcWall";
+  const isWall = r && (r.category === "IfcWall" || r.category === "IfcSlab") && Array.isArray(t.layers);
   const body = h("div", { style: { display: "grid", gap: "14px" } });
   const nameIn = h("input", { type: "text", value: t.name || typeId, id: "te-name" });
   body.append(h("div", { style: { display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" } }, h("label", { for: "te-name" }, "Name"), nameIn,
@@ -14305,7 +14600,7 @@ function typeEditor(app, typeId) {
         h("td", { class: "mono" }, String(i + 1)),
         h("td", {}, h("select", { "aria-label": `Layer ${i + 1} function`, onchange: e => { L.function = e.target.value; redraw(); } }, funcs.map(fn => h("option", { selected: fn === L.function }, fn)))),
         h("td", {}, h("input", { type: "text", value: fmtLen(L.thickness), style: { width: "88px" }, "aria-label": `Layer ${i + 1} thickness`, onchange: e => { try { L.thickness = Math.max(0, parseLength(e.target.value)); } catch (err) { e.target.value = fmtLen(L.thickness); return; } e.target.value = fmtLen(L.thickness); redraw(); totalEl.textContent = total(); } })),
-        h("td", {}, h("select", { "aria-label": `Layer ${i + 1} material`, onchange: e => { L.material = e.target.value; redraw(); } }, Object.entries(doc.lib.materials).map(([k, m]) => h("option", { value: k, selected: k === L.material }, m.name)))),
+        h("td", {}, h("select", { "aria-label": `Layer ${i + 1} material`, onchange: e => { L.material = e.target.value; redraw(); } }, Object.entries(doc.lib.materials).map(([k, m]) => h("option", { value: k, selected: k === L.material }, (m.mark ? m.mark + " · " : "") + m.name)))),
         h("td", {}, h("span", { class: "chip" }, `p${LAYER_PRIORITY[L.function] ?? 4}`)),
         h("td", { style: { whiteSpace: "nowrap" } },
           h("button", { class: "iconbtn", "aria-label": "Move up", disabled: i === 0, onclick: () => { t.layers.splice(i - 1, 0, t.layers.splice(i, 1)[0]); rowsUI(); redraw(); } }, "↑"), " ",
@@ -14317,7 +14612,7 @@ function typeEditor(app, typeId) {
     const core = h("div", { style: { display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" } }, "Core between boundaries",
       h("input", { type: "number", min: 0, value: t.coreStart ?? 0, style: { width: "56px" }, "aria-label": "Core start boundary", oninput: e => { t.coreStart = Number(e.target.value); redraw(); } }), "and",
       h("input", { type: "number", min: 0, value: t.coreEnd ?? t.layers.length, style: { width: "56px" }, "aria-label": "Core end boundary", oninput: e => { t.coreEnd = Number(e.target.value); redraw(); } }), totalEl);
-    body.append(h("h3", {}, "Layers, exterior first"),
+    body.append(h("h3", {}, r.category === "IfcSlab" ? "Layers, top first (each its own material: a finish, a screed, the slab)" : "Layers, exterior first", " ", h("button", { class: "btn small ghost", onclick: () => materialsEditor(app) }, "Materials…")),
       h("div", { class: "layers-edit" },
         h("div", {}, h("table", {}, h("thead", {}, h("tr", {}, ["#", "Function", "Thickness", "Material", "Priority", ""].map(x => h("th", {}, x)))), tbody),
           h("div", { style: { marginTop: "8px", display: "flex", gap: "8px" } }, h("button", { class: "btn small", onclick: () => { t.layers.push({ function: "Finish 1", thickness: 13, material: "M-PLAS" }); rowsUI(); redraw(); } }, "+ Layer")), core),
@@ -14486,9 +14781,17 @@ function vvDialog(app, viewId, opts = {}) {
         annotation ? null : h("td", {}, h("div", { class: "cellrow" }, colourCell(k, "cut", "fill", "cut fill"), selCell(k, "cut", "pattern", ["solid", "none", ...patNames], "cut pattern"))),
         h("td", {}, h("input", { type: "checkbox", checked: !!val(k, null, "halftone"), disabled: dis, "aria-label": `${c.name} halftone`, onchange: e => put(k, null, "halftone", e.target.checked || (base(k).halftone ? false : undefined)) })),
         annotation ? null : h("td", {}, selCell(k, null, "detailLevel", ["By View", "Coarse", "Medium", "Fine"], "detail level")),
+        annotation ? null : h("td", {}, (() => {
+          // which wins where a component has a material: the material (default), this view's graphics, or neither
+          const cur = val(k, null, "materialPriority"), mine = own(k, null, "materialPriority");
+          const L = { material: "Material wins", view: "View wins", none: "Ignore materials" };
+          return h("select", { disabled: dis, class: mine ? "set" : "inherit", "aria-label": `${c.name} material priority`, title: "Material wins: a component with a material draws as its material (then the view, then the category). View wins: the view's graphics beat the material. Ignore materials: only the view and category.",
+            onchange: e => { put(k, null, "materialPriority", e.target.value); e.target.className = e.target.value ? "set" : "inherit"; } },
+            h("option", { value: "" }, mine ? "—" : `(${L[cur || "material"]})`), Object.entries(L).map(([v2, l]) => h("option", { value: v2, selected: mine && v2 === cur }, l)));
+        })()),
         h("td", {}, h("button", { class: "iconbtn", disabled: dis, title: "Clear this row's overrides", "aria-label": `Clear ${c.name} overrides`, onclick: () => { delete target.byCategory[k]; drawPane(); } }, "✕"))));
     }
-    const heads = annotation ? ["Visible", "Category", "Lines (colour · pen · type)", "Halftone", ""] : ["Visible", "Category", "Projection / surface lines", "Cut lines", "Cut pattern (fill · hatch)", "Halftone", "Detail level", ""];
+    const heads = annotation ? ["Visible", "Category", "Lines (colour · pen · type)", "Halftone", ""] : ["Visible", "Category", "Projection / surface lines", "Cut lines", "Cut pattern (fill · hatch)", "Halftone", "Detail level", "Material priority", ""];
     wrap.append(h("div", { class: "tablewrap" }, h("table", { class: "vvtable" + (dis ? " locked" : "") }, h("thead", {}, h("tr", {}, heads.map(x => h("th", {}, x)))), tb)));
     if (!cats.length) wrap.append(h("div", { class: "muted" }, "No categories of this kind in the file."));
     return wrap;
@@ -14812,6 +15115,74 @@ function importLayers(app, f) {
     h("table", { class: "layers", style: { width: "100%", fontSize: "12px" } }, h("tbody", {}, rows)));
 }
 
+// ---------------------------------------------------------------- Materials (Revit's Material Browser, the drawing side)
+//! A material is what a layer is made of: its Mark (what a material tag or keynote shows), how it draws
+//! where it is cut and where its surface is seen, and the colour it renders. Walls and floors take a
+//! material per layer in Edit Type; columns and beams take one. Changes redraw every view.
+function materialsEditor(app, materialId) {
+  const doc = app.doc;
+  let cur = materialId && doc.lib.materials[materialId] ? materialId : Object.keys(doc.lib.materials)[0];
+  let patch = null;
+  const body = h("div", { class: "vstyle" }), list = h("div", { class: "vslist", role: "listbox", "aria-label": "Materials" }), right = h("div", { class: "vsright" });
+  const usedBy = id => Object.entries(doc.lib.types).filter(([, t]) => t.material === id || (t.layers || []).some(L => L.material === id)).map(([k, t]) => t.name || k);
+  const pens = Object.keys((doc.lib.pens["PEN-ISO"] || {}).pens || {}), pats = Object.entries(doc.lib.patterns || {});
+  const newId = () => { let n = 1; while (doc.lib.materials["M-NEW" + n]) n++; return "M-NEW" + n; };
+  const swatch = m => h("span", { class: "mswatch", style: { background: ((m.cut || {}).background) || "#fff", borderColor: ((m.cut || {}).lineColour) || "#333" } });
+  const drawList = () => {
+    clear(list);
+    for (const [id, m] of Object.entries(doc.lib.materials)) list.append(h("button", { role: "option", "aria-selected": String(id === cur), class: "vsitem" + (id === cur ? " on" : ""), onclick: () => { flush(); cur = id; drawList(); drawRight(); } }, swatch(m), " ", m.name || id, h("span", { class: "muted mono" }, ` ${m.mark || ""}`)));
+    list.append(h("div", { class: "cellrow", style: { marginTop: "8px" } },
+      h("button", { class: "btn small", onclick: () => { flush(); const id = newId(); app.apply({ op: "type", lib: "materials", id, value: { name: "New material", mark: "", description: "", cut: { pen: "thin", lineColour: "#1b1f24", pattern: null, background: "#ffffff" }, projection: { pen: "thin", lineColour: "#1b1f24" }, shading: { colour: "#c8c8c8" } } }); cur = id; drawList(); drawRight(); } }, "New"),
+      h("button", { class: "btn small", onclick: () => { flush(); const id = newId(), m = clone(doc.lib.materials[cur]); m.name = (m.name || cur) + " copy"; app.apply({ op: "type", lib: "materials", id, value: m }); cur = id; drawList(); drawRight(); } }, "Duplicate"),
+      h("button", { class: "btn small", disabled: usedBy(cur).length > 0, title: usedBy(cur).length ? "In use by a type: take it off the layers first" : "Delete this material", onclick: () => { app.apply({ op: "type", lib: "materials", id: cur, remove: true }); cur = Object.keys(doc.lib.materials)[0]; drawList(); drawRight(); } }, "Delete")));
+  };
+  const preview = h("canvas", { class: "matprev", width: 220, height: 110, "aria-label": "Material preview: cut and surface" });
+  const drawPreview = m => {
+    const g = preview.getContext("2d"), W = 220, H = 110; g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, W, H);
+    const box = (x0, y0, x1, y1) => polyPathLocal([[x0, y0], [x1, y0], [x1, y1], [x0, y1]]);
+    const prims = [];
+    for (const [k, x0, label] of [["cut", 2, "Cut"], ["projection", 58, "Surface"]]) {
+      const gg = m[k] || {}, path = box(x0, 6, x0 + 50, 50), pat = gg.pattern && doc.lib.patterns[gg.pattern];
+      if (gg.background) prims.push({ t: "fill", path, colour: gg.background });
+      if (pat) prims.push({ t: "hatch", path, pattern: Object.assign({ id: gg.pattern }, pat), scale: pat.kind === "model" ? 1 / 20 : 1, colour: gg.lineColour || "#333", weight: 0.13 });
+      prims.push({ t: "stroke", path, weight: penWeight(doc, gg.pen || "thin", 20) || 0.2, colour: gg.lineColour || "#000" });
+      prims.push({ t: "text", at: [x0, 1], text: label, height: 3, colour: "#555" });
+    }
+    drawScene(g, { prims }, { x: 0, y: 0, z: 2, W, H, dpr: 1 });
+  };
+  const drawRight = () => {
+    clear(right);
+    const m = clone(doc.lib.materials[cur]); if (!m) return;
+    m.cut = m.cut || {}; m.projection = m.projection || {}; m.shading = m.shading || {};
+    patch = m;
+    const txt = (obj, k, label) => h("label", { class: "cellrow" }, h("span", { class: "lbl" }, label), h("input", { type: "text", value: obj[k] || "", "aria-label": `Material ${label}`, style: { flex: 1 }, oninput: e => { obj[k] = e.target.value; } }));
+    const col = (obj, k, label) => h("label", { class: "cellrow" }, h("span", { class: "lbl" }, label), h("input", { type: "color", value: /^#[0-9a-f]{6}$/i.test(obj[k] || "") ? obj[k] : "#ffffff", "aria-label": `Material ${label}`, oninput: e => { obj[k] = e.target.value; drawPreview(m); } }));
+    const sel = (obj, k, label, opts) => h("label", { class: "cellrow" }, h("span", { class: "lbl" }, label), h("select", { "aria-label": `Material ${label}`, onchange: e => { obj[k] = e.target.value || null; drawPreview(m); } }, opts.map(([v, l]) => h("option", { value: v, selected: (obj[k] || "") === v }, l))));
+    const patOpts = [["", "none"], ...pats.map(([id, p]) => [id, p.name || id])], penOpts = pens.map(p => [p, p]);
+    const u = usedBy(cur);
+    right.append(
+      h("h4", {}, "Identity"), txt(m, "name", "Name"), txt(m, "mark", "Mark"), txt(m, "description", "Description"),
+      h("div", { class: "muted small" }, "The Mark is what a material tag or keynote shows."),
+      h("div", { class: "matgrid" },
+        h("div", {}, h("h4", {}, "Cut (sections and plans)"), sel(m.cut, "pen", "Line pen", penOpts), col(m.cut, "lineColour", "Line colour"), sel(m.cut, "pattern", "Pattern", patOpts), col(m.cut, "background", "Background")),
+        h("div", {}, h("h4", {}, "Surface (projection)"), sel(m.projection, "pen", "Line pen", penOpts), col(m.projection, "lineColour", "Line colour"), sel(m.projection, "pattern", "Pattern", patOpts), col(m.projection, "background", "Background")),
+        h("div", {}, h("h4", {}, "Appearance (3D)"), col(m.shading, "colour", "Render colour"), preview)),
+      h("div", { class: "muted small" }, u.length ? `Used by ${u.length} type${u.length === 1 ? "" : "s"}: ${u.join(", ")}` : "Not used by any type yet: set it on a layer in Edit Type."),
+      h("div", { class: "muted small" }, "In Visibility/Graphics each category chooses whether a component's material wins over the view's graphics (the default), the view wins, or materials are ignored."));
+    drawPreview(m);
+  };
+  const makeOps = () => patch && doc.lib.materials[cur] ? [{ op: "type", lib: "materials", id: cur, value: patch }] : [];
+  const live = liveEdit(app, right, makeOps);
+  const flush = () => { const ops = makeOps(); if (ops.length && JSON.stringify(ops[0].value) !== JSON.stringify(doc.lib.materials[cur])) app.apply(ops, { quiet: true }); };
+  drawList(); drawRight();
+  body.append(live.status, h("div", { class: "vsgrid" }, list, right));
+  const d = dialog("Materials", body, [{ label: "Close", primary: true, run: () => { flush(); return true; } }], { modeless: true });
+  d.el.classList.add("wide");
+  d.onClose = () => { live.done(); drawList(); };
+  return d;
+}
+function polyPathLocal(pts) { return pts.map((p, i) => ({ k: "L", a: p, b: pts[(i + 1) % pts.length] })); }
+
 // ===== graph.js =====
 //! The node editor: the same document as a graph (a second projection, not a
 //! second model). Ports come from the catalogue declarations; a wire is a
@@ -14944,6 +15315,7 @@ const trim = (t, n) => t.length > n ? t.slice(0, n - 1) + "…" : t;
 
 
 
+
 const RED = "#8f0000", BLUE = "#1d6fd8";
 const SKETCH_DRAW = [
   ["line", "Line", "skline", "click points; each click continues the chain; click the start (or an end) to close; type a length + Enter"],
@@ -14979,7 +15351,7 @@ class SketchSession {
     app.sketchOpts = this.opts;
     this.undoStack = []; this.redoStack = []; this.typed = "";
   }
-  get title() { return this.target.kind === "crop" ? "Edit Crop" : this.target.id ? "Edit Boundary" : this.target.kind === "region" ? "Create Filled Region Boundary" : "Create Floor Boundary"; }
+  get title() { return this.target.kind === "repeat" ? (this.target.id ? "Edit Repeating Detail Path" : "Create Repeating Detail Path") : this.target.kind === "crop" ? "Edit Crop" : this.target.id ? "Edit Boundary" : this.target.kind === "region" ? "Create Filled Region Boundary" : "Create Floor Boundary"; }
   say(msg, kind = "note") { this.app.say(msg, kind); }
   commit(next, msg) { this.undoStack.push(this.d); this.redoStack = []; this.d = next; if (msg) this.say(msg, "ok"); this.refresh(); }
   refresh() { this.view.draw(); this.app.renderOptions && this.app.renderOptions(); }
@@ -15268,6 +15640,17 @@ class SketchSession {
 
   // ------------------------------------------------------------ finishing
   finish() {
+    if (this.target.kind === "repeat") {
+      // a repeating detail's path is open or closed, any curves: nothing to close
+      if (!this.d.elements.length) { this.say(`${this.title}: sketch the path first`, "error"); return false; }
+      const path = weld(this.d), o = this.app.toolOpts;
+      const res = this.target.id ? this.app.apply({ op: "set", id: this.target.id, key: "path", value: path })
+        : this.app.apply({ op: "add", element: { type: "RepeatingDetail", args: { path, component: this.target.component || o.repeatComponent || "Batt insulation", width: o.repeatWidth || 100, spacing: 0, layout: "Fill available", justify: "Centre", rotation: 0, symbol: o.repeatSymbol ? { ref: o.repeatSymbol } : null, view: { ref: this.view.viewId } } } });
+      if (!res.ok) { this.say(res.error, "error"); return false; }
+      const rid = this.target.id || res.id; this.app.endSketch(); this.app.select([rid]);
+      this.say(`Repeating detail ${rid}: change its component, width and spacing in Properties`, "ok");
+      return true;
+    }
     const doc = this.app.doc, r = regionsOf(this.d);
     if (r.error) { this.say(`${this.title}: ${r.error}`, "error"); this.flashOpen = true; this.view.draw(); return false; }
     if (!r.regions.length) { this.say(`${this.title}: draw a closed boundary`, "error"); return false; }
@@ -15409,7 +15792,7 @@ class SketchSession {
     const b = ([id, label, ic, hint], size) => ({ label, icon: ic, hint, size, on: this.tool === id, run: () => this.setTool(id) });
     const draw = SKETCH_DRAW.filter(r => r[0] !== "pickwalls" || this.target.kind !== "crop");
     return [
-      { title: "Mode", items: [{ label: "Finish", icon: "skfinish", hint: "Finish Edit Mode: the sketch becomes the " + ({ crop: "crop", region: "filled region" }[this.target.kind] || "floor"), size: "big", run: () => this.finish(), finish: true }, { label: "Cancel", icon: "close", hint: "Cancel Edit Mode: nothing changes", size: "big", run: () => this.cancel() }] },
+      { title: "Mode", items: [{ label: "Finish", icon: "skfinish", hint: "Finish Edit Mode: the sketch becomes the " + ({ crop: "crop", region: "filled region", repeat: "repeating detail's path" }[this.target.kind] || "floor"), size: "big", run: () => this.finish(), finish: true }, { label: "Cancel", icon: "close", hint: "Cancel Edit Mode: nothing changes", size: "big", run: () => this.cancel() }] },
       { title: "Draw", items: draw.map((r, i) => b(r, i < 5 || r[0] === "pickwalls" ? "big" : "small")) },
       { title: "Modify", items: SKETCH_MODIFY.filter(r => r[0] !== "dim").map((r, i) => b(r, i < 1 ? "big" : "small")) },
       { title: "Measure", items: [b(SKETCH_MODIFY.find(r => r[0] === "dim"), "big")] },
@@ -15428,13 +15811,24 @@ class SketchSession {
       const cur = this.target.pattern || this.app.toolOpts.regionPattern || "P-DIAG";
       kids.push(h("label", {}, "Pattern ", h("select", { onchange: e => { this.target.pattern = this.app.toolOpts.regionPattern = e.target.value; if (this.target.id) this.app.apply({ op: "set", id: this.target.id, key: "pattern", value: e.target.value }, { quiet: true }); } }, pats.map(([id, pt]) => h("option", { value: id, selected: id === cur }, pt.name || id)))));
     }
+    if (this.target.kind === "repeat") {
+      const ao = this.app.toolOpts, syms = Object.entries(this.app.doc.lib.symbols || {}).filter(([, sy]) => sy.source);
+      if (!this.target.id) {
+        kids.push(h("label", {}, "Component ", h("select", { "aria-label": "Repeating component", onchange: e => { this.target.component = ao.repeatComponent = e.target.value; this.app.refresh({ keepMain: true }); } }, REPEAT_COMPONENTS.map(c => h("option", { selected: c === (this.target.component || "Batt insulation") }, c)))));
+        if ((this.target.component || "") === "Symbol") kids.push(h("label", {}, "Symbol ", h("select", { "aria-label": "Repeated symbol", onchange: e => { ao.repeatSymbol = e.target.value; } }, h("option", { value: "" }, "—"), syms.map(([id, sy]) => h("option", { value: id, selected: ao.repeatSymbol === id }, sy.name || id)))));
+        kids.push(h("label", {}, "Width ", h("input", { type: "text", value: fmtLen(ao.repeatWidth || 100), "aria-label": "Repeating detail width", style: { width: "72px" }, onchange: e => { const v = this.len(e.target.value); if (v) ao.repeatWidth = v; e.target.value = fmtLen(ao.repeatWidth || 100); }, onkeydown: e => e.stopPropagation() })));
+      }
+    }
     if (this.target.kind === "floor" && !this.target.id) {
       const doc = this.app.doc, ts = Object.entries(doc.lib.types).filter(([id]) => (doc.resolveType(id) || {}).category === "IfcSlab");
       kids.push(h("label", {}, "Type ", h("select", { onchange: e => { this.app.toolOpts.floorType = e.target.value; } }, ts.map(([id, ty]) => h("option", { value: id, selected: this.app.toolOpts.floorType === id }, ty.name)))),
         h("label", {}, "Height offset ", h("input", { type: "text", value: fmtLen(this.app.toolOpts.floorOffset ?? 0), style: { width: "72px" }, onchange: e => { const v = this.len(e.target.value); if (v !== null) this.app.toolOpts.floorOffset = v; e.target.value = fmtLen(this.app.toolOpts.floorOffset ?? 0); }, onkeydown: e => e.stopPropagation() })));
     }
     const r = regionsOf(this.d);
-    kids.push(h("span", { class: "grow" }), h("span", { class: r.error ? "muted warn" : "muted" }, r.error ? (this.d.elements.length ? "open: " + r.error.replace(/^the boundary is /, "") : "draw a closed boundary") : `${r.regions.length} closed area${r.regions.length > 1 ? "s" : ""}${r.regions.some(x => x.holes.length) ? " with holes" : ""}`),
+    if (this.target.kind === "repeat") kids.push(h("span", { class: "grow" }), h("span", { class: "muted" }, `${this.d.elements.length} path element${this.d.elements.length === 1 ? "" : "s"} · open or closed`),
+      h("button", { class: "btn small", title: "Undo in the sketch (Ctrl+Z)", disabled: !this.undoStack.length, onclick: () => this.undo() }, "↶"),
+      h("button", { class: "btn small primary", onclick: () => this.finish() }, "✓ Finish"), h("button", { class: "btn small", onclick: () => this.cancel() }, "✕ Cancel"));
+    else kids.push(h("span", { class: "grow" }), h("span", { class: r.error ? "muted warn" : "muted" }, r.error ? (this.d.elements.length ? "open: " + r.error.replace(/^the boundary is /, "") : "draw a closed boundary") : `${r.regions.length} closed area${r.regions.length > 1 ? "s" : ""}${r.regions.some(x => x.holes.length) ? " with holes" : ""}`),
       h("button", { class: "btn small", title: "Undo in the sketch (Ctrl+Z)", disabled: !this.undoStack.length, onclick: () => this.undo() }, "↶"),
       h("button", { class: "btn small primary", onclick: () => this.finish() }, "✓ Finish"), h("button", { class: "btn small", onclick: () => this.cancel() }, "✕ Cancel"));
     bar.append(...kids);
@@ -16142,7 +16536,7 @@ class View2D {
     if (this.app.pickMode) return this.pick(sx, sy);
     if (this.app.tool === "dim" && (this.kind === "ElevationView" || this.kind === "SectionView")) return this.levelDimClick(sx, sy);
     if (this.app.sketch && this.app.sketch.view === this) return this.app.sketch.click(this.toModel(sx, sy), e);
-    if (this.app.tool !== "select" && this.kind === "PlanView") return this.toolClick(this.toModel(sx, sy), e);
+    if (this.app.tool !== "select" && (this.kind === "PlanView" || (this.app.tool === "mtag" && (this.kind === "SectionView" || this.kind === "ElevationView")))) return this.toolClick(this.toModel(sx, sy), e);
     const hit = this.hitAt(sx, sy);
     if (this.kind === "Sheet") { this.app.select(hit ? [this.viewId + ":" + hit.id] : [], e.shiftKey, true); return; }
     if (pressed) { this.app.select([hit.id]); return; }
@@ -16325,6 +16719,12 @@ class View2D {
     }
     if (tool === "column") return addEl({ type: "Column", args: { position: q, columnType: { ref: o.columnType }, baseLevel: level ? { ref: level } : null, height: 3000, rotation: 0 } });
     if (tool === "space") return addEl({ type: "Space", name: o.spaceName || "Room", args: { level: level ? { ref: level } : null, upperLimit: { mode: "offset", offset: 3000 }, anchor: q, boundaryAt: o.boundaryAt || "finishFace" }, params: { Number: "", Department: "" } }, "Space placed: it keeps its name by this anchor");
+    if (tool === "mtag") {
+      // first click: the point that rests on the material; second: where the tag sits
+      T.pts.push(q); if (T.pts.length < 2) { this.app.say("Now click where the tag goes", "note"); this.draw(); return; }
+      const [a, b] = T.pts; T.pts = [];
+      return addEl({ type: "MaterialTag", args: { target: a, position: b, show: o.mtagShow || "Mark", frame: o.mtagFrame || "Keynote box", textSize: 2.5, view: { ref: this.viewId } } }, "Material tag placed: move its point and it reads the material there");
+    }
     if (tool === "text") {
       const sp = this.toScreen(q);
       const inp = h("input", { type: "text", placeholder: "Note text ⏎", style: { position: "absolute", left: sp[0] + "px", top: sp[1] - 14 + "px", zIndex: 9, width: "240px", height: "28px", border: "1px solid #1d6fd8", borderRadius: "4px", padding: "0 6px" } });
@@ -17320,7 +17720,7 @@ const roundCam = c => ({ azimuth: Math.round(((c.azimuth % 360) + 360) % 360 * 1
 
 
 const VIEW_TYPES = ["PlanView", "ElevationView", "SectionView", "View3D", "Schedule", "Sheet"];
-const PLACE_TOOLS = new Set(["section", "floor", "beam", "wall", "opening", "door", "window", "column", "grid", "text", "dim", "space", "elev", "sep"]);
+const PLACE_TOOLS = new Set(["section", "floor", "beam", "wall", "opening", "door", "window", "column", "grid", "text", "dim", "space", "elev", "sep", "mtag"]);
 
 const app = {
   doc: null, editor: null, selection: new Set(), activeView: null, tabs: [], tool: "select",
@@ -17414,7 +17814,7 @@ app.placeOpening = (tool, wallId, u) => {
 };
 const firstOf = type => { const f = app.doc.elements().find(g => app.doc.typeOf(g) === type); return f ? app.doc.idOf(f) : null; };
 const activeType = () => { const v = app.activeView && app.doc.element(app.activeView); return v ? app.doc.typeOf(v) : app.activeView; };
-const canUseTool = k => { const t = activeType(); if (t === "PlanView") return true; if (t === "ElevationView" || t === "SectionView") return k === "select" || k === "dim"; if (t === "View3D") return ["wall", "door", "window", "opening", "column", "select"].includes(k); return k === "select"; };
+const canUseTool = k => { const t = activeType(); if (t === "PlanView") return true; if (t === "ElevationView" || t === "SectionView") return k === "select" || k === "dim" || k === "mtag"; if (t === "View3D") return ["wall", "door", "window", "opening", "column", "select"].includes(k); return k === "select"; };
 
 // ---------------------------------------------------------------- documents
 /** There is always a {3D} view: the house button must have somewhere to go. */
@@ -17483,6 +17883,11 @@ const COMMANDS = {
   sep: tool("sep", "Room Separator", "sepline", "RS", "Two clicks: divides rooms where there is no wall."),
   dim: tool("dim", "Aligned", "dim", "DI", "Click two parallel references: faces, centrelines, grids. It binds to them, not to points."),
   text: tool("text", "Text", "text", "TX", "Click, type, Enter. Height is paper millimetres."),
+  mtag: tool("mtag", "Material Tag", "mtag", "MT", "Click on a material (a wall layer, a floor layer, a column), then where the tag goes: it shows that material's Mark. Works in plans and sections."),
+  keynote: { label: "Keynote", icon: "keynote", key: "KN", hint: "A material keynote: the material's Mark in a box, on a leader", tool: "mtag", run: () => { app.toolOpts.mtagShow = "Mark"; app.toolOpts.mtagFrame = "Keynote box"; app.setTool("mtag"); } },
+  repeat: { label: "Repeating Detail", icon: "repeat", key: "RD", hint: "Sketch a path (lines, arcs, splines): a component repeats along it - batt or rigid insulation, brick coursing, blocking, or any loaded symbol", run: () => startRepeatSketch("Batt insulation") },
+  insulation: { label: "Insulation", icon: "insul", key: "IN", hint: "Batt insulation along a sketched path; its width is the insulation's thickness", run: () => startRepeatSketch("Batt insulation") },
+  materials: { label: "Materials", icon: "material", key: "MA", run: () => materialsEditor(app) },
   elev: tool("elev", "Elevation", "elevview", "EL", "Two clicks: the marker line is the view."),
   section: tool("section", "Section", "section", "SE", "Two clicks: the section line. It looks to the right of the direction you drew it; double-click its head to open it."),
   move: tool("move", "Move", "move", "MV", "Click a base point, then the destination (or type a distance + Enter)."),
@@ -17567,7 +17972,8 @@ const RIBBON = [
   { tab: "Annotate", panels: [
     { title: "Dimension", items: [big("dim")] },
     { title: "Text", items: [big("text")] },
-    { title: "Detail", items: [big("region")] },
+    { title: "Detail", items: [big("region"), big("repeat"), big("insulation")] },
+    { title: "Tag", items: [big("mtag"), big("keynote")] },
     { title: "Symbol", items: [big("placesymbol")] },
   ] },
   { tab: "View", panels: [
@@ -17577,7 +17983,7 @@ const RIBBON = [
     { title: "Interface", items: [big("cadmode")] },
   ] },
   { tab: "Manage", panels: [
-    { title: "Settings", items: [big("pens"), big("projectinfo"), big("units")] },
+    { title: "Settings", items: [big("materials"), big("pens"), big("projectinfo"), big("units")] },
     { title: "Inquiry", items: [big("tests")] },
   ] },
   { tab: "Modify", panels: [
@@ -17670,7 +18076,7 @@ app.startSketch = (view, target, drawing) => {
   app.tool = "sketch"; app.selection.clear();
   if (target.kind === "crop" || (drawing && drawing.elements && drawing.elements.length)) app.sketch.tool = "select";
   app.refresh({ keepMain: true });
-  app.say(`${app.sketch.title}: ${target.kind === "crop" ? "the crop's boundary" : "closed loops make the floor; a loop inside another is a hole"}. Draw, then Finish ✓ on the ribbon (or Cancel ✕).`, "note");
+  app.say(`${app.sketch.title}: ${target.kind === "repeat" ? "lines, arcs and splines, open or closed: the component repeats along them" : target.kind === "crop" ? "the crop's boundary" : "closed loops make the floor; a loop inside another is a hole"}. Draw, then Finish ✓ on the ribbon (or Cancel ✕).`, "note");
 };
 app.endSketch = () => { app.sketch = null; app.tool = "select"; const v = app.views.get(app.activeView); if (v && v.hideHud) { v.hideHud(); v.showSnap && v.showSnap(null); } app.refresh({ keepMain: true }); };
 function planViewForSketch(levelId) {
@@ -17684,6 +18090,13 @@ function startFloorSketch() {
   const v = planViewForSketch(null); if (!v) return app.say("open a floor plan to sketch a floor in", "error");
   app.startSketch(v, { kind: "floor", id: null }, null);
 }
+/** Repeating Detail: sketch its path in the plan with the sketch tools; Finish places the component along it. */
+function startRepeatSketch(component) {
+  const v = app.views.get(app.activeView);
+  if (!v || v.kind !== "PlanView") return app.say("open a plan to sketch a repeating detail in", "error");
+  app.startSketch(v, { kind: "repeat", id: null, component }, null);
+}
+app.startRepeatSketch = startRepeatSketch;
 function startRegionSketch() {
   const v = app.views.get(app.activeView);
   if (!v || v.kind !== "PlanView") return app.say("open a plan to sketch a filled region in", "error");
@@ -17696,6 +18109,10 @@ app.stepInto = (id, view) => {
   const t = doc.typeOf(f);
   if (["ElevationView", "SectionView", "PlanView", "View3D", "Schedule", "Sheet"].includes(t)) return app.openView(id);
   if (t === "Floor") return app.editBoundary(id);
+  if (t === "RepeatingDetail") {
+    const vv = view && view.kind === "PlanView" ? view : app.views.get(app.activeView); if (!vv || vv.kind !== "PlanView") return;
+    return app.startSketch(vv, { kind: "repeat", id }, doc.argValue(f, "path"));
+  }
   if (t === "FilledRegion") {
     const vv = view && view.kind === "PlanView" ? view : app.views.get(app.activeView); if (!vv || vv.kind !== "PlanView") return;
     const sk = doc.argValue(f, "sketch");

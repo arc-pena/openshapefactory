@@ -46,18 +46,21 @@ export const PATTERNS = {
 };
 
 export const MATERIALS = {
-  "M-BRICK":  { name: "Brick, facing", cut: { pattern: "P-BRICK", pen: "heavy", lineColour: "#1b1f24", background: "#f3dcd0" }, projection: { pen: "thin", lineColour: "#1b1f24" }, shading: { colour: "#a4604a" } },
-  "M-BLOCK":  { name: "Blockwork", cut: { pattern: "P-BLOCK", pen: "heavy", lineColour: "#1b1f24", background: "#e3e5e8" }, projection: { pen: "thin", lineColour: "#1b1f24" }, shading: { colour: "#b9bcc0" } },
-  "M-INSUL":  { name: "Insulation, batt", cut: { pattern: "P-INSUL", pen: "thin", lineColour: "#3a3f47", background: "#fbf6dc" }, projection: { pen: "hairline" }, shading: { colour: "#e9d77a" } },
-  "M-RIGID":  { name: "Insulation, rigid", cut: { pattern: "P-RIGID", pen: "thin", lineColour: "#3a3f47", background: "#eef3e6" }, projection: { pen: "hairline" }, shading: { colour: "#d8e6b8" } },
-  "M-PLAS":   { name: "Plaster", cut: { pattern: "P-PLASTER", pen: "thin", lineColour: "#1b1f24", background: "#ffffff" }, projection: { pen: "hairline" }, shading: { colour: "#f1ede6" } },
-  "M-PB":     { name: "Plasterboard", cut: { pattern: "P-PLASTER", pen: "thin", lineColour: "#1b1f24", background: "#ffffff" }, projection: { pen: "hairline" }, shading: { colour: "#f4f2ee" } },
-  "M-STUD":   { name: "Metal stud zone", cut: { pattern: "P-DIAG", pen: "medium", lineColour: "#1b1f24", background: "#ffffff" }, projection: { pen: "thin" }, shading: { colour: "#c9ced6" } },
-  "M-CONC":   { name: "Concrete, cast in situ", cut: { pattern: "P-CONC", pen: "heavy", lineColour: "#1b1f24", background: "#e9eaec" }, projection: { pen: "thin" }, shading: { colour: "#a9adb2" } },
-  "M-TIMBER": { name: "Timber", cut: { pattern: "P-TIMBER", pen: "medium", lineColour: "#3b2a1a", background: "#f6ead8" }, projection: { pen: "thin" }, shading: { colour: "#c7995f" } },
-  "M-GLASS":  { name: "Glass", cut: { pattern: null, pen: "thin", lineColour: "#1b1f24", background: "#dff0f7" }, projection: { pen: "hairline" }, shading: { colour: "#9fd0e6" } },
-  "M-STEEL":  { name: "Steel", cut: { pattern: null, pen: "heavy", lineColour: "#1b1f24", background: "#2d3239" }, projection: { pen: "thin" }, shading: { colour: "#71777f" } },
-  "M-STONE":  { name: "Cast stone", cut: { pattern: "P-STONE", pen: "heavy", lineColour: "#1b1f24", background: "#efe9dd" }, projection: { pen: "thin" }, shading: { colour: "#d6cdbb" } },
+  "M-BRICK":  { name: "Brick, facing", mark: "BR-01", description: "Facing brick, 102.5 mm, stretcher bond", cut: { pattern: "P-BRICK", pen: "heavy", lineColour: "#1b1f24", background: "#f3dcd0" }, projection: { pen: "thin", lineColour: "#1b1f24", pattern: "P-BRICK" }, shading: { colour: "#a4604a" } },
+  "M-BLOCK":  { name: "Blockwork", mark: "BL-01", description: "Dense concrete blockwork", cut: { pattern: "P-BLOCK", pen: "heavy", lineColour: "#1b1f24", background: "#e3e5e8" }, projection: { pen: "thin", lineColour: "#1b1f24" }, shading: { colour: "#b9bcc0" } },
+  "M-INSUL":  { name: "Insulation, batt", mark: "IN-01", description: "Mineral wool batt insulation", cut: { pattern: "P-INSUL", pen: "thin", lineColour: "#3a3f47", background: "#fbf6dc" }, projection: { pen: "hairline" }, shading: { colour: "#e9d77a" } },
+  "M-RIGID":  { name: "Insulation, rigid", mark: "IN-02", description: "Rigid PIR insulation board", cut: { pattern: "P-RIGID", pen: "thin", lineColour: "#3a3f47", background: "#eef3e6" }, projection: { pen: "hairline" }, shading: { colour: "#d8e6b8" } },
+  "M-PLAS":   { name: "Plaster", mark: "PL-01", description: "Gypsum plaster skim", cut: { pattern: "P-PLASTER", pen: "thin", lineColour: "#1b1f24", background: "#ffffff" }, projection: { pen: "hairline" }, shading: { colour: "#f1ede6" } },
+  "M-PB":     { name: "Plasterboard", mark: "PB-01", description: "Gypsum plasterboard 12.5 mm", cut: { pattern: "P-PLASTER", pen: "thin", lineColour: "#1b1f24", background: "#ffffff" }, projection: { pen: "hairline" }, shading: { colour: "#f4f2ee" } },
+  "M-STUD":   { name: "Metal stud zone", mark: "ST-01", description: "Metal stud zone", cut: { pattern: "P-DIAG", pen: "medium", lineColour: "#1b1f24", background: "#ffffff" }, projection: { pen: "thin" }, shading: { colour: "#c9ced6" } },
+  "M-CONC":   { name: "Concrete, cast in situ", mark: "CN-01", description: "In-situ concrete C32/40", cut: { pattern: "P-CONC", pen: "heavy", lineColour: "#1b1f24", background: "#e9eaec" }, projection: { pen: "thin" }, shading: { colour: "#a9adb2" } },
+  "M-TIMBER": { name: "Timber", mark: "TM-01", description: "Softwood timber C24", cut: { pattern: "P-TIMBER", pen: "medium", lineColour: "#3b2a1a", background: "#f6ead8" }, projection: { pen: "thin" }, shading: { colour: "#c7995f" } },
+  "M-GLASS":  { name: "Glass", mark: "GL-01", description: "Clear float glass", cut: { pattern: null, pen: "thin", lineColour: "#1b1f24", background: "#dff0f7" }, projection: { pen: "hairline" }, shading: { colour: "#9fd0e6" } },
+  "M-STEEL":  { name: "Steel", mark: "SS-01", description: "Structural steel S355", cut: { pattern: null, pen: "heavy", lineColour: "#1b1f24", background: "#2d3239" }, projection: { pen: "thin" }, shading: { colour: "#71777f" } },
+  "M-CARPET": { name: "Carpet tile", mark: "FF-01", description: "Carpet tile on raised access floor", cut: { pattern: null, pen: "thin", lineColour: "#1b1f24", background: "#8f8ea3" }, projection: { pen: "hairline" }, shading: { colour: "#8f8ea3" } },
+  "M-TILE":   { name: "Ceramic tile", mark: "FF-02", description: "Porcelain floor tile, 10 mm, adhesive fixed", cut: { pattern: null, pen: "thin", lineColour: "#1b1f24", background: "#f2eee4" }, projection: { pen: "hairline" }, shading: { colour: "#e8e1d2" } },
+  "M-SCREED": { name: "Screed", mark: "SC-01", description: "Sand/cement screed", cut: { pattern: "P-CONC", pen: "thin", lineColour: "#1b1f24", background: "#f0efe9" }, projection: { pen: "hairline" }, shading: { colour: "#cfcac0" } },
+  "M-STONE":  { name: "Cast stone", mark: "SN-01", description: "Cast stone", cut: { pattern: "P-STONE", pen: "heavy", lineColour: "#1b1f24", background: "#efe9dd" }, projection: { pen: "thin" }, shading: { colour: "#d6cdbb" } },
 };
 
 /** Parameter specs: the typed property sets (§4.3). Kinds are the closed set. */
@@ -134,6 +137,8 @@ export const TYPES = {
   // floors: layers from the top surface down, like a wall's from its exterior face
   "T-FLOOR250":  { family: "F-FLOOR", name: "Concrete 200 + screed 50", mark: "FL1",
     layers: [ { function: "Finish 1", thickness: 50, material: "M-PLAS" }, { function: "Structure", thickness: 200, material: "M-CONC" } ], coreStart: 1, coreEnd: 2 },
+  "T-FLOOR240T":  { family: "F-FLOOR", name: "Tile 10 + screed 30 + concrete 200", mark: "FL3",
+    layers: [ { function: "Finish 1", thickness: 10, material: "M-TILE" }, { function: "Finish 2", thickness: 30, material: "M-SCREED" }, { function: "Structure", thickness: 200, material: "M-CONC" } ], coreStart: 2, coreEnd: 3 },
   "T-FLOOR150T": { family: "F-FLOOR", name: "Timber deck 150", mark: "FL2",
     layers: [ { function: "Finish 1", thickness: 22, material: "M-TIMBER" }, { function: "Structure", thickness: 128, material: "M-TIMBER" } ], coreStart: 1, coreEnd: 2 },
   // beams: a profile swept along the beam's axis
@@ -169,9 +174,9 @@ export const SYMBOLS = {
 export const VS_PRESENTATION = {
   name: "Presentation", paper: { background: "#FFFFFF" }, detailLevel: "Coarse",
   byCategory: {
-    IfcWall: { cut: { fill: "#2C3440", pattern: "solid", pen: "none", detailLevel: "Coarse" },
+    IfcWall: { materialPriority: "view", cut: { fill: "#2C3440", pattern: "solid", pen: "none", detailLevel: "Coarse" },
                projection: { pen: "hairline", colour: "#B4BCC8" }, beyond: { pen: "gossamer", colour: "#CBD2DC", lineType: "dashed2" } },
-    IfcColumn: { cut: { fill: "#2C3440", pattern: "solid", pen: "none" } },
+    IfcColumn: { materialPriority: "view", cut: { fill: "#2C3440", pattern: "solid", pen: "none" } },
     IfcDoor: { cut: { pen: "hairline", colour: "#8A94A6" }, projection: { pen: "hairline", colour: "#8A94A6" }, swing: { pen: "gossamer", colour: "#B4BCC8" } },
     IfcWindow: { cut: { pen: "hairline", colour: "#8A94A6" }, projection: { pen: "gossamer", colour: "#8A94A6" } },
     IfcOpeningElement: { cut: { pen: "hairline", colour: "#8A94A6" } },

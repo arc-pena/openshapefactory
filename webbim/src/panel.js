@@ -256,7 +256,7 @@ export function typeEditor(app, typeId) {
   const doc = app.doc;
   const t = clone(doc.lib.types[typeId]);
   const r = doc.resolveType(typeId);
-  const isWall = r && r.category === "IfcWall";
+  const isWall = r && (r.category === "IfcWall" || r.category === "IfcSlab") && Array.isArray(t.layers);
   const body = h("div", { style: { display: "grid", gap: "14px" } });
   const nameIn = h("input", { type: "text", value: t.name || typeId, id: "te-name" });
   body.append(h("div", { style: { display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" } }, h("label", { for: "te-name" }, "Name"), nameIn,
@@ -272,7 +272,7 @@ export function typeEditor(app, typeId) {
         h("td", { class: "mono" }, String(i + 1)),
         h("td", {}, h("select", { "aria-label": `Layer ${i + 1} function`, onchange: e => { L.function = e.target.value; redraw(); } }, funcs.map(fn => h("option", { selected: fn === L.function }, fn)))),
         h("td", {}, h("input", { type: "text", value: fmtLen(L.thickness), style: { width: "88px" }, "aria-label": `Layer ${i + 1} thickness`, onchange: e => { try { L.thickness = Math.max(0, parseLength(e.target.value)); } catch (err) { e.target.value = fmtLen(L.thickness); return; } e.target.value = fmtLen(L.thickness); redraw(); totalEl.textContent = total(); } })),
-        h("td", {}, h("select", { "aria-label": `Layer ${i + 1} material`, onchange: e => { L.material = e.target.value; redraw(); } }, Object.entries(doc.lib.materials).map(([k, m]) => h("option", { value: k, selected: k === L.material }, m.name)))),
+        h("td", {}, h("select", { "aria-label": `Layer ${i + 1} material`, onchange: e => { L.material = e.target.value; redraw(); } }, Object.entries(doc.lib.materials).map(([k, m]) => h("option", { value: k, selected: k === L.material }, (m.mark ? m.mark + " · " : "") + m.name)))),
         h("td", {}, h("span", { class: "chip" }, `p${LAYER_PRIORITY[L.function] ?? 4}`)),
         h("td", { style: { whiteSpace: "nowrap" } },
           h("button", { class: "iconbtn", "aria-label": "Move up", disabled: i === 0, onclick: () => { t.layers.splice(i - 1, 0, t.layers.splice(i, 1)[0]); rowsUI(); redraw(); } }, "↑"), " ",
@@ -284,7 +284,7 @@ export function typeEditor(app, typeId) {
     const core = h("div", { style: { display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" } }, "Core between boundaries",
       h("input", { type: "number", min: 0, value: t.coreStart ?? 0, style: { width: "56px" }, "aria-label": "Core start boundary", oninput: e => { t.coreStart = Number(e.target.value); redraw(); } }), "and",
       h("input", { type: "number", min: 0, value: t.coreEnd ?? t.layers.length, style: { width: "56px" }, "aria-label": "Core end boundary", oninput: e => { t.coreEnd = Number(e.target.value); redraw(); } }), totalEl);
-    body.append(h("h3", {}, "Layers, exterior first"),
+    body.append(h("h3", {}, r.category === "IfcSlab" ? "Layers, top first (each its own material: a finish, a screed, the slab)" : "Layers, exterior first", " ", h("button", { class: "btn small ghost", onclick: () => materialsEditor(app) }, "Materials…")),
       h("div", { class: "layers-edit" },
         h("div", {}, h("table", {}, h("thead", {}, h("tr", {}, ["#", "Function", "Thickness", "Material", "Priority", ""].map(x => h("th", {}, x)))), tbody),
           h("div", { style: { marginTop: "8px", display: "flex", gap: "8px" } }, h("button", { class: "btn small", onclick: () => { t.layers.push({ function: "Finish 1", thickness: 13, material: "M-PLAS" }); rowsUI(); redraw(); } }, "+ Layer")), core),
@@ -453,9 +453,17 @@ export function vvDialog(app, viewId, opts = {}) {
         annotation ? null : h("td", {}, h("div", { class: "cellrow" }, colourCell(k, "cut", "fill", "cut fill"), selCell(k, "cut", "pattern", ["solid", "none", ...patNames], "cut pattern"))),
         h("td", {}, h("input", { type: "checkbox", checked: !!val(k, null, "halftone"), disabled: dis, "aria-label": `${c.name} halftone`, onchange: e => put(k, null, "halftone", e.target.checked || (base(k).halftone ? false : undefined)) })),
         annotation ? null : h("td", {}, selCell(k, null, "detailLevel", ["By View", "Coarse", "Medium", "Fine"], "detail level")),
+        annotation ? null : h("td", {}, (() => {
+          // which wins where a component has a material: the material (default), this view's graphics, or neither
+          const cur = val(k, null, "materialPriority"), mine = own(k, null, "materialPriority");
+          const L = { material: "Material wins", view: "View wins", none: "Ignore materials" };
+          return h("select", { disabled: dis, class: mine ? "set" : "inherit", "aria-label": `${c.name} material priority`, title: "Material wins: a component with a material draws as its material (then the view, then the category). View wins: the view's graphics beat the material. Ignore materials: only the view and category.",
+            onchange: e => { put(k, null, "materialPriority", e.target.value); e.target.className = e.target.value ? "set" : "inherit"; } },
+            h("option", { value: "" }, mine ? "—" : `(${L[cur || "material"]})`), Object.entries(L).map(([v2, l]) => h("option", { value: v2, selected: mine && v2 === cur }, l)));
+        })()),
         h("td", {}, h("button", { class: "iconbtn", disabled: dis, title: "Clear this row's overrides", "aria-label": `Clear ${c.name} overrides`, onclick: () => { delete target.byCategory[k]; drawPane(); } }, "✕"))));
     }
-    const heads = annotation ? ["Visible", "Category", "Lines (colour · pen · type)", "Halftone", ""] : ["Visible", "Category", "Projection / surface lines", "Cut lines", "Cut pattern (fill · hatch)", "Halftone", "Detail level", ""];
+    const heads = annotation ? ["Visible", "Category", "Lines (colour · pen · type)", "Halftone", ""] : ["Visible", "Category", "Projection / surface lines", "Cut lines", "Cut pattern (fill · hatch)", "Halftone", "Detail level", "Material priority", ""];
     wrap.append(h("div", { class: "tablewrap" }, h("table", { class: "vvtable" + (dis ? " locked" : "") }, h("thead", {}, h("tr", {}, heads.map(x => h("th", {}, x)))), tb)));
     if (!cats.length) wrap.append(h("div", { class: "muted" }, "No categories of this kind in the file."));
     return wrap;
@@ -778,3 +786,71 @@ function importLayers(app, f) {
   return h("section", { class: "pgrid-group" }, h("div", { class: "pgrid-head" }, "DXF layers"),
     h("table", { class: "layers", style: { width: "100%", fontSize: "12px" } }, h("tbody", {}, rows)));
 }
+
+// ---------------------------------------------------------------- Materials (Revit's Material Browser, the drawing side)
+//! A material is what a layer is made of: its Mark (what a material tag or keynote shows), how it draws
+//! where it is cut and where its surface is seen, and the colour it renders. Walls and floors take a
+//! material per layer in Edit Type; columns and beams take one. Changes redraw every view.
+export function materialsEditor(app, materialId) {
+  const doc = app.doc;
+  let cur = materialId && doc.lib.materials[materialId] ? materialId : Object.keys(doc.lib.materials)[0];
+  let patch = null;
+  const body = h("div", { class: "vstyle" }), list = h("div", { class: "vslist", role: "listbox", "aria-label": "Materials" }), right = h("div", { class: "vsright" });
+  const usedBy = id => Object.entries(doc.lib.types).filter(([, t]) => t.material === id || (t.layers || []).some(L => L.material === id)).map(([k, t]) => t.name || k);
+  const pens = Object.keys((doc.lib.pens["PEN-ISO"] || {}).pens || {}), pats = Object.entries(doc.lib.patterns || {});
+  const newId = () => { let n = 1; while (doc.lib.materials["M-NEW" + n]) n++; return "M-NEW" + n; };
+  const swatch = m => h("span", { class: "mswatch", style: { background: ((m.cut || {}).background) || "#fff", borderColor: ((m.cut || {}).lineColour) || "#333" } });
+  const drawList = () => {
+    clear(list);
+    for (const [id, m] of Object.entries(doc.lib.materials)) list.append(h("button", { role: "option", "aria-selected": String(id === cur), class: "vsitem" + (id === cur ? " on" : ""), onclick: () => { flush(); cur = id; drawList(); drawRight(); } }, swatch(m), " ", m.name || id, h("span", { class: "muted mono" }, ` ${m.mark || ""}`)));
+    list.append(h("div", { class: "cellrow", style: { marginTop: "8px" } },
+      h("button", { class: "btn small", onclick: () => { flush(); const id = newId(); app.apply({ op: "type", lib: "materials", id, value: { name: "New material", mark: "", description: "", cut: { pen: "thin", lineColour: "#1b1f24", pattern: null, background: "#ffffff" }, projection: { pen: "thin", lineColour: "#1b1f24" }, shading: { colour: "#c8c8c8" } } }); cur = id; drawList(); drawRight(); } }, "New"),
+      h("button", { class: "btn small", onclick: () => { flush(); const id = newId(), m = clone(doc.lib.materials[cur]); m.name = (m.name || cur) + " copy"; app.apply({ op: "type", lib: "materials", id, value: m }); cur = id; drawList(); drawRight(); } }, "Duplicate"),
+      h("button", { class: "btn small", disabled: usedBy(cur).length > 0, title: usedBy(cur).length ? "In use by a type: take it off the layers first" : "Delete this material", onclick: () => { app.apply({ op: "type", lib: "materials", id: cur, remove: true }); cur = Object.keys(doc.lib.materials)[0]; drawList(); drawRight(); } }, "Delete")));
+  };
+  const preview = h("canvas", { class: "matprev", width: 220, height: 110, "aria-label": "Material preview: cut and surface" });
+  const drawPreview = m => {
+    const g = preview.getContext("2d"), W = 220, H = 110; g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, W, H);
+    const box = (x0, y0, x1, y1) => polyPathLocal([[x0, y0], [x1, y0], [x1, y1], [x0, y1]]);
+    const prims = [];
+    for (const [k, x0, label] of [["cut", 2, "Cut"], ["projection", 58, "Surface"]]) {
+      const gg = m[k] || {}, path = box(x0, 6, x0 + 50, 50), pat = gg.pattern && doc.lib.patterns[gg.pattern];
+      if (gg.background) prims.push({ t: "fill", path, colour: gg.background });
+      if (pat) prims.push({ t: "hatch", path, pattern: Object.assign({ id: gg.pattern }, pat), scale: pat.kind === "model" ? 1 / 20 : 1, colour: gg.lineColour || "#333", weight: 0.13 });
+      prims.push({ t: "stroke", path, weight: penWeight(doc, gg.pen || "thin", 20) || 0.2, colour: gg.lineColour || "#000" });
+      prims.push({ t: "text", at: [x0, 1], text: label, height: 3, colour: "#555" });
+    }
+    drawScene(g, { prims }, { x: 0, y: 0, z: 2, W, H, dpr: 1 });
+  };
+  const drawRight = () => {
+    clear(right);
+    const m = clone(doc.lib.materials[cur]); if (!m) return;
+    m.cut = m.cut || {}; m.projection = m.projection || {}; m.shading = m.shading || {};
+    patch = m;
+    const txt = (obj, k, label) => h("label", { class: "cellrow" }, h("span", { class: "lbl" }, label), h("input", { type: "text", value: obj[k] || "", "aria-label": `Material ${label}`, style: { flex: 1 }, oninput: e => { obj[k] = e.target.value; } }));
+    const col = (obj, k, label) => h("label", { class: "cellrow" }, h("span", { class: "lbl" }, label), h("input", { type: "color", value: /^#[0-9a-f]{6}$/i.test(obj[k] || "") ? obj[k] : "#ffffff", "aria-label": `Material ${label}`, oninput: e => { obj[k] = e.target.value; drawPreview(m); } }));
+    const sel = (obj, k, label, opts) => h("label", { class: "cellrow" }, h("span", { class: "lbl" }, label), h("select", { "aria-label": `Material ${label}`, onchange: e => { obj[k] = e.target.value || null; drawPreview(m); } }, opts.map(([v, l]) => h("option", { value: v, selected: (obj[k] || "") === v }, l))));
+    const patOpts = [["", "none"], ...pats.map(([id, p]) => [id, p.name || id])], penOpts = pens.map(p => [p, p]);
+    const u = usedBy(cur);
+    right.append(
+      h("h4", {}, "Identity"), txt(m, "name", "Name"), txt(m, "mark", "Mark"), txt(m, "description", "Description"),
+      h("div", { class: "muted small" }, "The Mark is what a material tag or keynote shows."),
+      h("div", { class: "matgrid" },
+        h("div", {}, h("h4", {}, "Cut (sections and plans)"), sel(m.cut, "pen", "Line pen", penOpts), col(m.cut, "lineColour", "Line colour"), sel(m.cut, "pattern", "Pattern", patOpts), col(m.cut, "background", "Background")),
+        h("div", {}, h("h4", {}, "Surface (projection)"), sel(m.projection, "pen", "Line pen", penOpts), col(m.projection, "lineColour", "Line colour"), sel(m.projection, "pattern", "Pattern", patOpts), col(m.projection, "background", "Background")),
+        h("div", {}, h("h4", {}, "Appearance (3D)"), col(m.shading, "colour", "Render colour"), preview)),
+      h("div", { class: "muted small" }, u.length ? `Used by ${u.length} type${u.length === 1 ? "" : "s"}: ${u.join(", ")}` : "Not used by any type yet: set it on a layer in Edit Type."),
+      h("div", { class: "muted small" }, "In Visibility/Graphics each category chooses whether a component's material wins over the view's graphics (the default), the view wins, or materials are ignored."));
+    drawPreview(m);
+  };
+  const makeOps = () => patch && doc.lib.materials[cur] ? [{ op: "type", lib: "materials", id: cur, value: patch }] : [];
+  const live = liveEdit(app, right, makeOps);
+  const flush = () => { const ops = makeOps(); if (ops.length && JSON.stringify(ops[0].value) !== JSON.stringify(doc.lib.materials[cur])) app.apply(ops, { quiet: true }); };
+  drawList(); drawRight();
+  body.append(live.status, h("div", { class: "vsgrid" }, list, right));
+  const d = dialog("Materials", body, [{ label: "Close", primary: true, run: () => { flush(); return true; } }], { modeless: true });
+  d.el.classList.add("wide");
+  d.onClose = () => { live.done(); drawList(); };
+  return d;
+}
+function polyPathLocal(pts) { return pts.map((p, i) => ({ k: "L", a: p, b: pts[(i + 1) % pts.length] })); }

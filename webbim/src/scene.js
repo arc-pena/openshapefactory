@@ -12,7 +12,7 @@ import { fmtLength, fmtArea } from "./units.js";
 import { outline, elementSegs } from "./bimsketch.js";
 import {
   TOL, add, sub, mul, dot, dist, perp, normalise, lerp, samplePath, pathArea, polyPath, bboxOf, segStart, segEnd, segMinusConvex,
-  ensureCCW, convexHull, TAU, pointInPoly, reversePath,
+  ensureCCW, convexHull, TAU, pointInPoly, reversePath, polyArea,
 } from "./geom2d.js";
 import { F, propertyOf, evalParam, displayParam } from "./ocaf.js";
 import { formatValue, parse, evaluate } from "./expr.js";
@@ -49,7 +49,7 @@ export function wrapText(str, h, width) {
 
 // ---------------------------------------------------------------- scene builder
 class SceneBuilder {
-  constructor(scale) { this.S = scale; this.prims = []; this.hits = []; this.links = []; this.later = []; }
+  constructor(scale) { this.S = scale; this.prims = []; this.hits = []; this.links = []; this.later = []; this.mat = []; }
   P(p) { return [p[0] / this.S, p[1] / this.S]; }
   path(model) {
     const S = this.S;
@@ -58,9 +58,9 @@ class SceneBuilder {
       : { k: "C", a: [s.a[0] / S, s.a[1] / S], c1: [s.c1[0] / S, s.c1[1] / S], c2: [s.c2[0] / S, s.c2[1] / S], b: [s.b[0] / S, s.b[1] / S] });
   }
   fill(model, colour, layer, id, paper = false) { if (colour) this.prims.push({ t: "fill", path: paper ? model : this.path(model), colour, layer, id }); }
-  hatch(model, pat, patId, colour, weight, layer, id) {
+  hatch(model, pat, patId, colour, weight, layer, id, paper = false) {
     if (!pat || weight === "none" || weight == null) return;
-    this.prims.push({ t: "hatch", path: this.path(model), pattern: Object.assign({ id: patId }, pat), scale: pat.kind === "model" ? 1 / this.S : 1, colour, weight, layer, id });
+    this.prims.push({ t: "hatch", path: paper ? model : this.path(model), pattern: Object.assign({ id: patId }, pat), scale: pat.kind === "model" ? 1 / this.S : 1, colour, weight, layer, id });
   }
   stroke(model, g, layer, id, paper = false) {
     if (!g || g.weight === "none" || g.weight == null || !g.visible && g.visible !== undefined) return;
@@ -216,6 +216,9 @@ export function planScene(doc, v, opts = {}) {
       const g = resolveGraphics(doc, ctx, f, bnd === "cut" ? "cut" : bnd === "beyond" ? "beyond" : "projection");
       if (bnd === "cut") B.fill(p.path, g.fill || ((doc.lib.materials[p.material] || {}).cut || {}).background || "#e9eaec", "IfcSlab", doc.idOf(f));
       B.stroke(p.path, g, "IfcSlab", doc.idOf(f)); B.hit(doc.idOf(f), p.foot);
+      // seen from above, a floor is its top layer
+      const top = (p.parts || []).reduce((a, x) => (!a || x.z1 > a.z1 ? x : a), null);
+      B.mat.push({ id: doc.idOf(f), material: (top && top.material) || p.material, poly: p.foot, floor: true });
     }
     if (t === "Generic" && vis(f)) {
       // a generic model reads like a column: poché where the cut crosses it, its outline below
@@ -238,6 +241,7 @@ export function planScene(doc, v, opts = {}) {
       const g = resolveGraphics(doc, ctx, f, bnd === "cut" ? "cut" : "projection", "Common", p.material);
       if (bnd === "cut") { if (g.pattern === "solid") B.fill(p.path, g.fill || "#000", "IfcColumn", doc.idOf(f)); else { B.fill(p.path, g.fill, "IfcColumn", doc.idOf(f)); if (g.pattern) B.hatch(p.path, doc.lib.patterns[g.pattern], g.pattern, g.colour, penWeight(doc, "hairline", S), "IfcColumn", doc.idOf(f)); } }
       B.stroke(p.path, g, "IfcColumn", doc.idOf(f)); B.hit(doc.idOf(f), p.foot.length ? p.foot : samplePath(p.path));
+      if (p.material) B.mat.push({ id: doc.idOf(f), material: p.material, poly: p.foot.length ? p.foot : samplePath(p.path) });
     }
     if (t === "Door" || t === "Window") {
       const d = doc.data(f), fr = d && d.frame; const host = fr && doc.element(fr.host), w = host && doc.plan(host);
@@ -273,12 +277,14 @@ export function planScene(doc, v, opts = {}) {
     if (t === "CADImport" && vis(f)) drawImport(doc, ctx, B, f);
     if (t === "Text" && categoryVisible(ctx, "Annotation")) drawText(doc, ctx, B, f);
     if (t === "SymbolInstance" && categoryVisible(ctx, "Annotation")) drawSymbol(doc, B, doc.lib.symbols[F.refId(f, "symbol")], B.P(F.point(f, "position")), F.real(f, "rotation"), "Annotation", doc.idOf(f));
+    if (t === "RepeatingDetail" && vis(f)) drawRepeating(doc, ctx, B, f);
+    if (t === "MaterialTag" && categoryVisible(ctx, "Annotation")) drawMaterialTag(doc, ctx, B, f);
     if (t === "Dimension" && categoryVisible(ctx, "Annotation") && measureRefs(doc, F.json(f, "of") || []).kind !== "levels") drawDimension(doc, ctx, B, f);
   }
   if (categoryVisible(ctx, "Annotation")) drawConstraintGlyphs(doc, ctx, B);
   B.prims.push(...B.later);          // labels sit on top of fills and furniture
   const clip = doc.argValue(v, "clip");
-  const scene = { prims: B.prims, hits: B.hits, links: B.links, scale: S, kind: "plan",
+  const scene = { prims: B.prims, hits: B.hits, links: B.links, scale: S, kind: "plan", mat: B.mat,
     stats: { walls: stat.walls, offsets: doc.stats.offsets - stat.offsetsBefore } };
   applyCrop(doc, v, clip, scene, S);
   return scene;
@@ -330,6 +336,7 @@ function drawWall(doc, ctx, B, f, w, bnd, cutZ) {
         else B.hatch(r.path, pat, g.pattern, gp.colour, gp.weight, "IfcWall-Pattern", id);
       }
     }
+    if (r.material) B.mat.push({ id, material: r.material, poly: samplePath(r.path, 16) });
     for (const e of r.edges) {
       if (e.role === "weld" || e.role === "hidden") continue;
       B.stroke([e.seg], e.role === "layer" ? Object.assign({}, g, { weight: gLayer.weight === "none" ? "none" : gLayer.weight }) : g, "IfcWall", id);
@@ -386,14 +393,31 @@ function drawGrid(doc, ctx, B, f) {
   const c = F.json(f, "line"), id = doc.idOf(f), S = ctx.scale;
   const g = resolveGraphics(doc, ctx, f, "projection");
   B.stroke([lineSeg(c.start, c.end)], Object.assign({}, g, { dash: LINE_TYPES.centre }), "IfcGrid", id);
-  // Paper-space bubbles: 8mm on the sheet at every scale.
-  const d = normalise(sub(c.end, c.start));
-  for (const [p, sgn] of [[c.start, -1], [c.end, 1]]) {
-    const cp = add(B.P(p), mul(d, sgn * 4));
-    B.stroke(circlePath(cp, 4), { weight: g.weight, colour: g.colour }, "IfcGrid", id, true);
-    B.text([cp[0], cp[1] - 1.25], F.text(f, "name"), 3.5 * 0.72, { align: "centre", layer: "IfcGrid", id });
+  // Paper-space heads: the head size and text size are paper millimetres, the same on the sheet at every scale.
+  const d = normalise(sub(c.end, c.start)), ends = F.choice(f, "ends") || "Both ends";
+  for (const [p, sgn, which] of [[c.start, -1, "Start"], [c.end, 1, "End"]]) {
+    if (ends === "None" || (ends !== "Both ends" && ends !== which)) continue;
+    gridHead(doc, B, f, B.P(p), mul(d, sgn), g, id);
   }
   B.hit(id, [c.start, c.end], "curve");
+}
+/** A grid's head at the end of its line (`at`, paper), pushed out along `out`: its shape or loaded symbol, its label. */
+export function gridHead(doc, B, f, at, out, g, id) {
+  const size = F.real(f, "headSize") || 8, r = size / 2, ts = F.real(f, "textSize") || 2.5, shape = F.choice(f, "head") || "Circle";
+  const cp = add(at, mul(out, r)), st = { weight: g.weight, colour: g.colour };
+  const poly = (n, rot) => polyPath(Array.from({ length: n }, (_, i) => { const a = rot + i * 2 * Math.PI / n; return [cp[0] + r * Math.cos(a), cp[1] + r * Math.sin(a)]; }));
+  if (shape === "Circle") B.stroke(circlePath(cp, r), st, "IfcGrid", id, true);
+  else if (shape === "Double circle") { B.stroke(circlePath(cp, r), st, "IfcGrid", id, true); B.stroke(circlePath(cp, r * 0.82), st, "IfcGrid", id, true); }
+  else if (shape === "Hexagon") B.stroke(poly(6, 0), st, "IfcGrid", id, true);
+  else if (shape === "Square") B.stroke(poly(4, Math.PI / 4), st, "IfcGrid", id, true);
+  else if (shape === "Diamond") B.stroke(poly(4, 0), st, "IfcGrid", id, true);
+  else if (shape === "Triangle") B.stroke(poly(3, Math.atan2(out[1], out[0])), st, "IfcGrid", id, true);
+  else if (shape === "Symbol") {
+    const sym = doc.lib.symbols[F.refId(f, "headSymbol")];
+    if (sym && sym.source) drawSymbol(doc, B, Object.assign({}, sym, { nominalSize: { w: size, h: size } }), cp, 0, "IfcGrid", id);
+    else B.stroke(circlePath(cp, r), st, "IfcGrid", id, true);
+  }
+  B.text([cp[0], cp[1] - ts * 0.36], F.text(f, "name"), ts, { align: "centre", layer: "IfcGrid", id });
 }
 /** A section line in plan: a chain line with a head at each end, the arrows pointing the way it looks. */
 function drawSectionMarker(doc, ctx, B, f, place) {
@@ -475,6 +499,150 @@ export function drawSymbol(doc, B, sym, atPaper, rotDeg = 0, layer = "Annotation
   for (const t of geo.r.texts) B.prims.push({ t: "text", at: T(t.at), text: t.text, height: t.height * k, rot: rotDeg, align: "centre", valign: "baseline", colour: "#000", layer, id });
 }
 
+// ---------------------------------------------------------------- repeating detail
+/** A sketch's elements as continuous runs: each a dense polyline, chained end to end where they meet. */
+export function pathRuns(sketch) {
+  const polys = [];
+  for (const el of (sketch && sketch.elements) || []) {
+    const segs = elementSegs(el); if (!segs || !segs.length) continue;
+    const pts = [];
+    for (const g of segs) {
+      const n = g.k === "L" ? 1 : g.k === "A" ? Math.max(8, Math.ceil(Math.abs(g.a1 - g.a0) / TAU * 96)) : 32;
+      for (let i = pts.length ? 1 : 0; i <= n; i++) {
+        const t = i / n;
+        pts.push(g.k === "L" ? lerp(g.a, g.b, t) : g.k === "A" ? [g.c[0] + g.r * Math.cos(g.a0 + (g.a1 - g.a0) * t), g.c[1] + g.r * Math.sin(g.a0 + (g.a1 - g.a0) * t)] : bezPt(g, t));
+      }
+    }
+    polys.push(pts);
+  }
+  // chain: join polylines whose ends meet (within 1 mm), reversing as needed
+  const runs = [], used = new Set(), near = (a, b) => dist(a, b) < 1;
+  for (let i = 0; i < polys.length; i++) {
+    if (used.has(i)) continue; used.add(i); let run = polys[i].slice(), grew = true;
+    while (grew) {
+      grew = false;
+      for (let j = 0; j < polys.length; j++) {
+        if (used.has(j)) continue; const q = polys[j];
+        if (near(run[run.length - 1], q[0])) run = run.concat(q.slice(1));
+        else if (near(run[run.length - 1], q[q.length - 1])) run = run.concat(q.slice(0, -1).reverse());
+        else if (near(run[0], q[q.length - 1])) run = q.slice(0, -1).concat(run);
+        else if (near(run[0], q[0])) run = q.slice(1).reverse().concat(run);
+        else continue;
+        used.add(j); grew = true;
+      }
+    }
+    runs.push(run);
+  }
+  return runs;
+}
+const bezPt = (g, t) => { const u = 1 - t; return [0, 1].map(k => u * u * u * g.a[k] + 3 * u * u * t * g.c1[k] + 3 * u * t * t * g.c2[k] + t * t * t * g.b[k]); };
+/** A run's frame: the point and unit tangent at arc length s, and the run's length. */
+function runFrame(pts) {
+  const cum = [0]; for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + dist(pts[i - 1], pts[i]));
+  const L = cum[cum.length - 1];
+  const at = s => {
+    s = Math.max(0, Math.min(L, s));
+    let lo = 0, hi = cum.length - 1; while (hi - lo > 1) { const m = (lo + hi) >> 1; if (cum[m] <= s) lo = m; else hi = m; }
+    const seg = cum[hi] - cum[lo] || 1, t = (s - cum[lo]) / seg, d = normalise(sub(pts[hi], pts[lo]));
+    return { p: lerp(pts[lo], pts[hi], t), d, n: [-d[1], d[0]] };
+  };
+  return { L, at };
+}
+/** Stations along a run: n equal steps for Fill available / Maximum spacing, a fixed step otherwise. */
+function stations(L, step, layout) {
+  if (!(step > 0) || !(L > 0)) return { step: L || 1, n: 1 };
+  if (layout === "Fixed distance") return { step, n: Math.max(1, Math.floor(L / step + 1e-6)) };
+  const n = layout === "Maximum spacing" ? Math.max(1, Math.ceil(L / step - 1e-6)) : Math.max(1, Math.round(L / step));
+  return { step: L / n, n };
+}
+function drawRepeating(doc, ctx, B, f) {
+  const id = doc.idOf(f), comp = F.choice(f, "component") || "Batt insulation", w = Math.max(1, F.real(f, "width") || 100);
+  const just = F.choice(f, "justify") || "Centre", off = just === "Left" ? w / 2 : just === "Right" ? -w / 2 : 0, h = w / 2;
+  const layout = F.choice(f, "layout") || "Fill available", sp = F.real(f, "spacing") || 0;
+  const g = resolveGraphics(doc, ctx, f, "projection"); const gs = { weight: g.weight === "none" ? penWeight(doc, "thin", ctx.scale) : g.weight, colour: g.colour };
+  for (const run of pathRuns(doc.argValue(f, "path"))) {
+    if (run.length < 2) continue;
+    const { L, at } = runFrame(run);
+    const W = (a, b) => { const fr = at(a); return add(fr.p, mul(fr.n, b + off)); };
+    const poly = (list) => { const out = []; for (let i = 1; i < list.length; i++) out.push(lineSeg(list[i - 1], list[i])); return out; };
+    const edge = b => { const n = Math.max(2, Math.ceil(L / Math.max(w / 4, 20))); return Array.from({ length: n + 1 }, (_, i) => W(L * i / n, b)); };
+    if (comp === "Batt insulation") {
+      // the batt: a meander of loops touching both faces, `step` per full loop
+      const { step, n } = stations(L, sp || w, layout === "Fixed distance" ? "Fill available" : layout), r = step / 4, pts = [];
+      const arc = (ca, cb, a0, a1) => { for (let i = 0; i <= 10; i++) { const t = a0 + (a1 - a0) * i / 10; pts.push(W(ca + r * Math.cos(t), cb + r * Math.sin(t))); } };
+      for (let k = 0; k < n; k++) { const a0 = k * step; arc(a0 + r, h - r, Math.PI, 0); arc(a0 + 3 * r, -h + r, Math.PI, 2 * Math.PI); }
+      B.stroke(poly(pts), gs, "Detail", id);
+    } else if (comp === "Rigid insulation" || comp === "Brick coursing") {
+      B.stroke(poly(edge(-h)), gs, "Detail", id); B.stroke(poly(edge(h)), gs, "Detail", id);
+      const { step, n } = stations(L, sp || (comp === "Rigid insulation" ? w : 225), layout);
+      for (let k = 0; k <= n; k++) { const a = Math.min(L, k * step); B.stroke([lineSeg(W(a, -h), W(a, h))], gs, "Detail", id); if (comp === "Rigid insulation" && k < n) B.stroke([lineSeg(W(a, -h), W(Math.min(L, a + step), h))], gs, "Detail", id); }
+    } else if (comp === "Blocking") {
+      const { step, n } = stations(L, sp || w * 1.5, layout);
+      for (let k = 0; k < n; k++) { const a = k * step + step * 0.08, b = (k + 1) * step - step * 0.08; B.stroke(poly([W(a, -h), W(b, -h), W(b, h), W(a, h), W(a, -h)]), gs, "Detail", id); B.stroke([lineSeg(W(a, -h), W(b, h))], gs, "Detail", id); B.stroke([lineSeg(W(a, h), W(b, -h))], gs, "Detail", id); }
+    } else {
+      const sym = doc.lib.symbols[F.refId(f, "symbol")];
+      const { step, n } = stations(L, sp || w, layout);
+      for (let k = 0; k < n; k++) {
+        const a = (k + 0.5) * step, fr = at(a), c = add(fr.p, mul(fr.n, off));
+        const rot = Math.atan2(fr.d[1], fr.d[0]) * 180 / Math.PI + (F.real(f, "rotation") || 0);
+        if (sym && sym.source) drawSymbol(doc, B, Object.assign({}, sym, { nominalSize: { w: 1e9, h: w / ctx.scale } }), B.P(c), rot, "Detail", id);
+        else B.stroke(circlePath(B.P(c), w / ctx.scale / 3), gs, "Detail", id, true);
+      }
+    }
+    B.hit(id, run, "curve");
+  }
+}
+
+/** The material at a point of a view: the smallest cut or seen region there that has one (a wall's
+ *  layer before the floor it stands on), else the material of whatever element is there. */
+export function materialAt(doc, B, q) {
+  let best = null, ba = Infinity;
+  for (const m of B.mat) if (m.material && pointInPoly(q, m.poly)) { const a = Math.abs(polyArea(m.poly)) * (m.floor ? 1e6 : 1); if (a < ba) { ba = a; best = m; } }
+  if (best) return best;
+  for (const hh of B.hits) if (hh.pts && hh.pts.length > 2 && pointInPoly(q, hh.pts)) { const f = doc.element(hh.id), m = f && elementMaterial(doc, f); if (m) return { id: hh.id, material: m }; }
+  return null;
+}
+/** An element's own material: its Material parameter, its type's, or its type's first (exterior / top) layer's. */
+export function elementMaterial(doc, f) {
+  const p = paramValue(doc, f, "Material"); if (p && doc.lib.materials[p]) return p;
+  for (const k of ["wallType", "floorType", "columnType", "beamType", "doorType", "windowType"]) {
+    const id = F.refId(f, k); if (!id) continue; const t = doc.resolveType(id); if (!t) continue;
+    if (t.material) return t.material;
+    if (t.layers && t.layers.length) return t.layers[0].material;
+  }
+  const pl = doc.plan(f); return pl && pl.material || null;
+}
+function paramValue(doc, f, k) { try { const v = propertyOf(doc, f, k); return v && !v.error ? v.v : null; } catch (e) { return null; } }
+/** What a material tag says, from the material it rests on. */
+export function materialTagText(doc, mat, show) {
+  const m = mat && doc.lib.materials[mat]; if (!m) return "?";
+  const mark = m.mark || mat;
+  return { Mark: mark, Name: m.name || mat, "Mark · Name": `${mark} ${m.name || ""}`.trim(), Description: m.description || m.name || mat, "Mark · Description": `${mark} ${m.description || m.name || ""}`.trim() }[show || "Mark"] || mark;
+}
+function drawMaterialTag(doc, ctx, B, f) {
+  const id = doc.idOf(f), tq = F.point(f, "target"), pq = F.point(f, "position");
+  const found = materialAt(doc, B, tq), text = materialTagText(doc, found && found.material, F.choice(f, "show"));
+  const ts = F.real(f, "textSize") || 2.5, frame = F.choice(f, "frame") || "Keynote box";
+  const T = B.P(tq), P = B.P(pq), w = textWidth(text, ts), pad = ts * 0.45;
+  const col = found ? "#000000" : "#b3261e", g = { weight: penWeight(doc, "hairline", ctx.scale), colour: col };
+  const right = P[0] >= T[0];
+  // the leader: from the point to the near side of the tag, a dot where it rests
+  const box = [P[0] - w / 2 - pad, P[1] - ts / 2 - pad, P[0] + w / 2 + pad, P[1] + ts / 2 + pad];
+  const end = frame === "Circle" ? add(P, mul(normalise(sub(T, P)), Math.max(w / 2, ts / 2) + pad)) : [right ? box[0] : box[2], P[1]];
+  B.stroke([lineSeg(T, end)], g, "Annotation-Tag", id, true);
+  B.fill(circlePath(T, 0.45), col, "Annotation-Tag", id, true);
+  if (frame === "Keynote box") { B.fill(polyPath([[box[0], box[1]], [box[2], box[1]], [box[2], box[3]], [box[0], box[3]]]), "#ffffff", "Annotation-Tag", id, true); B.stroke(polyPath([[box[0], box[1]], [box[2], box[1]], [box[2], box[3]], [box[0], box[3]]]), g, "Annotation-Tag", id, true); }
+  if (frame === "Circle") { const r = Math.max(w / 2, ts / 2) + pad; B.fill(circlePath(P, r), "#ffffff", "Annotation-Tag", id, true); B.stroke(circlePath(P, r), g, "Annotation-Tag", id, true); }
+  B.text([P[0], P[1] - ts * 0.36], text, ts, { align: "centre", layer: "Annotation-Tag", id, colour: col });
+  const S = ctx.scale; B.hit(id, [[box[0] * S, box[1] * S], [box[2] * S, box[1] * S], [box[2] * S, box[3] * S], [box[0] * S, box[3] * S]]);
+  B.hit(id, [tq, pq], "curve");
+}
+/** View-owned annotation for views that are not plans (sections, elevations): material tags. */
+function drawViewAnnotations(doc, ctx, B, v) {
+  if (!categoryVisible(ctx, "Annotation")) return;
+  for (const f of doc.elements()) if (doc.typeOf(f) === "MaterialTag" && F.refId(f, "view") === doc.idOf(v)) drawMaterialTag(doc, ctx, B, f);
+}
+
 /** Where a dimension sits: witness feet a, b; the measured direction; the dimension line A–Bp at its offset. */
 export function dimensionGeometry(doc, f, m = measureRefs(doc, F.json(f, "of") || [])) {
   if (!m || m.lost || m.value == null || m.kind === "levels") return null;
@@ -539,6 +707,7 @@ export function elevationScene(doc, v, opts = {}) {
   const vis = items.filter(inView).sort((a, b) => a.depth - b.depth || (a.id < b.id ? -1 : 1));   // deterministic ties (test 40)
   drawDatums(doc, ctx, B, v, G);
   drawProjection(doc, ctx, B, vis, G, []);
+  drawViewAnnotations(doc, ctx, B, v);
   const scene = { prims: B.prims, hits: B.hits, links: [], scale: S, kind: "elevation", stats: { items: vis.length } };
   scene.bbox = sceneBBox(B.prims);
   return scene;
@@ -609,12 +778,10 @@ function drawDatums(doc, ctx, B, v, G) {
     if (t < 0 || t > Lv) continue;
     const top = F.real(v, "top") + 600;
     B.stroke([lineSeg([t, -300], [t, top])], { weight: penWeight(doc, "hairline", S), colour: "#000", dash: LINE_TYPES.centre }, "IfcGrid", doc.idOf(f));
-    const bp = add(B.P([t, top]), [0, 4]);
-    B.stroke(circlePath(bp, 4), { weight: penWeight(doc, "thin", S), colour: "#000" }, "IfcGrid", doc.idOf(f), true);
-    B.text([bp[0], bp[1] - 1.25], F.text(f, "name"), 2.5, { align: "centre", layer: "IfcGrid", id: doc.idOf(f) });
+    if ((F.choice(f, "ends") || "Both ends") !== "None") gridHead(doc, B, f, B.P([t, top]), [0, 1], { weight: penWeight(doc, "thin", S), colour: "#000" }, doc.idOf(f));
     // pickable along its line and by its bubble
     B.hit(doc.idOf(f), [[t, -300], [t, top]], "curve");
-    const R_ = 4 * S, bc = [t, top + 4 * S];
+    const hr = (F.real(f, "headSize") || 8) / 2, R_ = hr * S, bc = [t, top + hr * S];
     B.hit(doc.idOf(f), [[bc[0] - R_, bc[1] - R_], [bc[0] + R_, bc[1] - R_], [bc[0] + R_, bc[1] + R_], [bc[0] - R_, bc[1] + R_]]);
   }
 }
@@ -722,14 +889,22 @@ export function sectionScene(doc, v, opts = {}) {
   const matOf = m => doc.lib.materials[m] || {};
   for (const r of rects) {
     const path = polyPath([[r.s0, r.z0], [r.s1, r.z0], [r.s1, r.z1], [r.s0, r.z1]].map(q => B.P(q)));
-    const mc = matOf(r.material).cut || {};
     const cat = { wall: "IfcWall", floor: "IfcSlab", beam: "IfcBeam", column: "IfcColumn" }[r.kind];
-    B.fill(path, mc.background || "#e9eaec", cat, r.id, true);
-    if (mc.pattern && doc.lib.patterns[mc.pattern]) B.hatch(path, doc.lib.patterns[mc.pattern], mc.pattern, mc.lineColour || "#000", penWeight(doc, "hairline", S), cat, r.id, true);
+    // each layer draws as its material, through the same resolution as the plan: V/G, filters and the
+    // category's material priority all apply to what a section cuts
+    const el = doc.element(r.id), g = el ? resolveGraphics(doc, ctx, el, "cut", "Layer", r.material) : null;
+    if (g && !g.visible) continue;
+    const mc = matOf(r.material).cut || {};
+    const fill = g ? (g.pattern === "solid" ? g.fill || "#000000" : g.fillNone ? null : g.fill || mc.background || "#e9eaec") : mc.background || "#e9eaec";
+    if (fill) B.fill(path, fill, cat, r.id, true);
+    const pat = g ? (g.pattern === "solid" ? null : g.pattern) : mc.pattern;
+    if (pat && doc.lib.patterns[pat]) { const gp = el ? resolveGraphics(doc, ctx, el, "cutPattern", "Layer", r.material) : { colour: mc.lineColour || "#000" }; B.hatch(path, doc.lib.patterns[pat], pat, gp.colour || "#000", penWeight(doc, "hairline", S), cat, r.id, true); }
+    B.mat.push({ id: r.id, material: r.material, poly: [[r.s0, r.z0], [r.s1, r.z0], [r.s1, r.z1], [r.s0, r.z1]] });
     B.hit(r.id, [[r.s0, r.z0], [r.s1, r.z0], [r.s1, r.z1], [r.s0, r.z1]]);
   }
   for (const e of cutOutline(rects)) B.stroke([lineSeg(e.a, e.b)], { weight: penWeight(doc, e.outer ? "heavy" : "thin", S), colour: "#000" }, "Section-Cut", e.id);
-  const scene = { prims: B.prims, hits: B.hits, links: [], scale: S, kind: "section", stats: { cut: rects.length, beyond: items.length } };
+  drawViewAnnotations(doc, ctx, B, v);
+  const scene = { prims: B.prims, hits: B.hits, links: [], scale: S, kind: "section", mat: B.mat, stats: { cut: rects.length, beyond: items.length } };
   applyCrop(doc, v, doc.argValue(v, "clip"), scene, S);
   return scene;
 }

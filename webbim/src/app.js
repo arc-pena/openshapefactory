@@ -19,7 +19,7 @@ import { elementsBox } from "./hlr.js";
 import { writePDF } from "./pdf.js";
 import { writeDXF, readDXF, dxfDrawing, makeZip } from "./dxf.js";
 import { runAll, CASES } from "./acceptance.js";
-import { renderPanel, renderSchedule, typeEditor, vvDialog, viewStyleEditor } from "./panel.js";
+import { renderPanel, renderSchedule, typeEditor, vvDialog, viewStyleEditor, materialsEditor } from "./panel.js";
 import { renderGraph } from "./graph.js";
 import { View2D, SNAP_KINDS, MODIFY_TOOLS } from "./canvas2d.js";
 import { View3D, VISUAL_STYLES, hiddenLineFor } from "./view3d.js";
@@ -28,7 +28,7 @@ import { bimToCad, cadEditsToOps, cadDiff, mergeModel } from "./cadbridge.js";
 import { importIfc } from "./ifcimport.js";
 
 const VIEW_TYPES = ["PlanView", "ElevationView", "SectionView", "View3D", "Schedule", "Sheet"];
-const PLACE_TOOLS = new Set(["section", "floor", "beam", "wall", "opening", "door", "window", "column", "grid", "text", "dim", "space", "elev", "sep"]);
+const PLACE_TOOLS = new Set(["section", "floor", "beam", "wall", "opening", "door", "window", "column", "grid", "text", "dim", "space", "elev", "sep", "mtag"]);
 
 const app = {
   doc: null, editor: null, selection: new Set(), activeView: null, tabs: [], tool: "select",
@@ -122,7 +122,7 @@ app.placeOpening = (tool, wallId, u) => {
 };
 const firstOf = type => { const f = app.doc.elements().find(g => app.doc.typeOf(g) === type); return f ? app.doc.idOf(f) : null; };
 const activeType = () => { const v = app.activeView && app.doc.element(app.activeView); return v ? app.doc.typeOf(v) : app.activeView; };
-const canUseTool = k => { const t = activeType(); if (t === "PlanView") return true; if (t === "ElevationView" || t === "SectionView") return k === "select" || k === "dim"; if (t === "View3D") return ["wall", "door", "window", "opening", "column", "select"].includes(k); return k === "select"; };
+const canUseTool = k => { const t = activeType(); if (t === "PlanView") return true; if (t === "ElevationView" || t === "SectionView") return k === "select" || k === "dim" || k === "mtag"; if (t === "View3D") return ["wall", "door", "window", "opening", "column", "select"].includes(k); return k === "select"; };
 
 // ---------------------------------------------------------------- documents
 /** There is always a {3D} view: the house button must have somewhere to go. */
@@ -191,6 +191,11 @@ const COMMANDS = {
   sep: tool("sep", "Room Separator", "sepline", "RS", "Two clicks: divides rooms where there is no wall."),
   dim: tool("dim", "Aligned", "dim", "DI", "Click two parallel references: faces, centrelines, grids. It binds to them, not to points."),
   text: tool("text", "Text", "text", "TX", "Click, type, Enter. Height is paper millimetres."),
+  mtag: tool("mtag", "Material Tag", "mtag", "MT", "Click on a material (a wall layer, a floor layer, a column), then where the tag goes: it shows that material's Mark. Works in plans and sections."),
+  keynote: { label: "Keynote", icon: "keynote", key: "KN", hint: "A material keynote: the material's Mark in a box, on a leader", tool: "mtag", run: () => { app.toolOpts.mtagShow = "Mark"; app.toolOpts.mtagFrame = "Keynote box"; app.setTool("mtag"); } },
+  repeat: { label: "Repeating Detail", icon: "repeat", key: "RD", hint: "Sketch a path (lines, arcs, splines): a component repeats along it - batt or rigid insulation, brick coursing, blocking, or any loaded symbol", run: () => startRepeatSketch("Batt insulation") },
+  insulation: { label: "Insulation", icon: "insul", key: "IN", hint: "Batt insulation along a sketched path; its width is the insulation's thickness", run: () => startRepeatSketch("Batt insulation") },
+  materials: { label: "Materials", icon: "material", key: "MA", run: () => materialsEditor(app) },
   elev: tool("elev", "Elevation", "elevview", "EL", "Two clicks: the marker line is the view."),
   section: tool("section", "Section", "section", "SE", "Two clicks: the section line. It looks to the right of the direction you drew it; double-click its head to open it."),
   move: tool("move", "Move", "move", "MV", "Click a base point, then the destination (or type a distance + Enter)."),
@@ -275,7 +280,8 @@ const RIBBON = [
   { tab: "Annotate", panels: [
     { title: "Dimension", items: [big("dim")] },
     { title: "Text", items: [big("text")] },
-    { title: "Detail", items: [big("region")] },
+    { title: "Detail", items: [big("region"), big("repeat"), big("insulation")] },
+    { title: "Tag", items: [big("mtag"), big("keynote")] },
     { title: "Symbol", items: [big("placesymbol")] },
   ] },
   { tab: "View", panels: [
@@ -285,7 +291,7 @@ const RIBBON = [
     { title: "Interface", items: [big("cadmode")] },
   ] },
   { tab: "Manage", panels: [
-    { title: "Settings", items: [big("pens"), big("projectinfo"), big("units")] },
+    { title: "Settings", items: [big("materials"), big("pens"), big("projectinfo"), big("units")] },
     { title: "Inquiry", items: [big("tests")] },
   ] },
   { tab: "Modify", panels: [
@@ -378,7 +384,7 @@ app.startSketch = (view, target, drawing) => {
   app.tool = "sketch"; app.selection.clear();
   if (target.kind === "crop" || (drawing && drawing.elements && drawing.elements.length)) app.sketch.tool = "select";
   app.refresh({ keepMain: true });
-  app.say(`${app.sketch.title}: ${target.kind === "crop" ? "the crop's boundary" : "closed loops make the floor; a loop inside another is a hole"}. Draw, then Finish ✓ on the ribbon (or Cancel ✕).`, "note");
+  app.say(`${app.sketch.title}: ${target.kind === "repeat" ? "lines, arcs and splines, open or closed: the component repeats along them" : target.kind === "crop" ? "the crop's boundary" : "closed loops make the floor; a loop inside another is a hole"}. Draw, then Finish ✓ on the ribbon (or Cancel ✕).`, "note");
 };
 app.endSketch = () => { app.sketch = null; app.tool = "select"; const v = app.views.get(app.activeView); if (v && v.hideHud) { v.hideHud(); v.showSnap && v.showSnap(null); } app.refresh({ keepMain: true }); };
 function planViewForSketch(levelId) {
@@ -392,6 +398,13 @@ function startFloorSketch() {
   const v = planViewForSketch(null); if (!v) return app.say("open a floor plan to sketch a floor in", "error");
   app.startSketch(v, { kind: "floor", id: null }, null);
 }
+/** Repeating Detail: sketch its path in the plan with the sketch tools; Finish places the component along it. */
+function startRepeatSketch(component) {
+  const v = app.views.get(app.activeView);
+  if (!v || v.kind !== "PlanView") return app.say("open a plan to sketch a repeating detail in", "error");
+  app.startSketch(v, { kind: "repeat", id: null, component }, null);
+}
+app.startRepeatSketch = startRepeatSketch;
 function startRegionSketch() {
   const v = app.views.get(app.activeView);
   if (!v || v.kind !== "PlanView") return app.say("open a plan to sketch a filled region in", "error");
@@ -404,6 +417,10 @@ app.stepInto = (id, view) => {
   const t = doc.typeOf(f);
   if (["ElevationView", "SectionView", "PlanView", "View3D", "Schedule", "Sheet"].includes(t)) return app.openView(id);
   if (t === "Floor") return app.editBoundary(id);
+  if (t === "RepeatingDetail") {
+    const vv = view && view.kind === "PlanView" ? view : app.views.get(app.activeView); if (!vv || vv.kind !== "PlanView") return;
+    return app.startSketch(vv, { kind: "repeat", id }, doc.argValue(f, "path"));
+  }
   if (t === "FilledRegion") {
     const vv = view && view.kind === "PlanView" ? view : app.views.get(app.activeView); if (!vv || vv.kind !== "PlanView") return;
     const sk = doc.argValue(f, "sketch");

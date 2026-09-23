@@ -103,14 +103,19 @@ export function resolveGraphics(doc, ctx, f, role, sub = "Common", material = nu
   const sc = subs[sub] || subs.Common || {};
   const sp = sc[role === "cutPattern" ? "cut" : role] ?? (role === "swing" ? sc.projection : undefined);
   if (sp) apply({ pen: sp }, `subcategory ${sub}`);
-  // 5. material graphics
-  if (material && doc.lib.materials[material]) {
+  // 5. material graphics. Where they sit is the category's choice in V/G (materialPriority):
+  //    "material" (the default) - a component with a material draws as its material, over the view's
+  //    category graphics; "view" - the view's category graphics win over the material; "none" - ignored.
+  const cs = style.byCategory && style.byCategory[cat];
+  const prio = (cs && cs.materialPriority) || "material";
+  const applyMaterial = () => {
+    if (!material || !doc.lib.materials[material] || prio === "none") return;
     const m = doc.lib.materials[material];
     const mg = role === "cut" || role === "cutPattern" ? m.cut : m.projection;
     if (mg) apply({ pen: role === "cutPattern" ? "hairline" : mg.pen, colour: mg.lineColour, pattern: role === "cut" || role === "cutPattern" ? mg.pattern : undefined, fill: mg.background }, `material ${material}`);
-  }
+  };
+  if (prio === "view") applyMaterial();
   // 4. category style
-  const cs = style.byCategory && style.byCategory[cat];
   if (cs) { if (cs.visible === false) g.visible = false; if (cs.halftone) g.halftone = true; if (cs.detailLevel && cs.detailLevel !== "By View") g.detailLevel = cs.detailLevel; apply(cs[role === "cutPattern" ? "cut" : role], `style ${cat}`); if (role === "fill") apply({ fill: cs.fill }, `style ${cat}`); }
   // Revit's Display Model: the whole model halftone (an underlay for a drawing of other things), or not drawn
   if (style.displayModel === "Halftone" && !isAnnotationCategory(cat)) g.halftone = true;
@@ -118,6 +123,7 @@ export function resolveGraphics(doc, ctx, f, role, sub = "Common", material = nu
   // 3. family style, root first so the nearest ancestor wins
   const chain = familyChainOf(doc, f).slice().reverse();
   for (const fam of chain) { const fs = style.byFamily && style.byFamily[fam]; if (fs) apply(fs[role === "cutPattern" ? "cut" : role], `family ${fam}`); }
+  if (prio === "material") applyMaterial();
   // 2. filter rules, in order: first match wins with stop, otherwise accumulate
   // The style's own rules, then any filters the view adds by id (from any style's rule list).
   for (const rule of ctx.rules || style.rules || []) {

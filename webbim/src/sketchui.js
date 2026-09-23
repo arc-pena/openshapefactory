@@ -12,6 +12,7 @@
 import { h, fmtLen, icon } from "./ui_util.js";
 import { parseLength, parseAngle, fmtArea } from "./units.js";
 import { F } from "./ocaf.js";
+import { REPEAT_COMPONENTS } from "./bim.js";
 import { add, sub, mul, dot, dist, perp, normalise, lerp } from "./geom2d.js";
 import { elementSegs, weld, sketchOf, regionsOf, outline, distanceTo, endsOf, addElements, remove, transform, scale1d, dragHandle, offsetChain,
   fillet, splitElement, arcThrough3, tempDimsFor, measureDim, setDimValue, toggleLock, addDim, handlesOf, newId, solve } from "./bimsketch.js";
@@ -51,7 +52,7 @@ export class SketchSession {
     app.sketchOpts = this.opts;
     this.undoStack = []; this.redoStack = []; this.typed = "";
   }
-  get title() { return this.target.kind === "crop" ? "Edit Crop" : this.target.id ? "Edit Boundary" : this.target.kind === "region" ? "Create Filled Region Boundary" : "Create Floor Boundary"; }
+  get title() { return this.target.kind === "repeat" ? (this.target.id ? "Edit Repeating Detail Path" : "Create Repeating Detail Path") : this.target.kind === "crop" ? "Edit Crop" : this.target.id ? "Edit Boundary" : this.target.kind === "region" ? "Create Filled Region Boundary" : "Create Floor Boundary"; }
   say(msg, kind = "note") { this.app.say(msg, kind); }
   commit(next, msg) { this.undoStack.push(this.d); this.redoStack = []; this.d = next; if (msg) this.say(msg, "ok"); this.refresh(); }
   refresh() { this.view.draw(); this.app.renderOptions && this.app.renderOptions(); }
@@ -340,6 +341,17 @@ export class SketchSession {
 
   // ------------------------------------------------------------ finishing
   finish() {
+    if (this.target.kind === "repeat") {
+      // a repeating detail's path is open or closed, any curves: nothing to close
+      if (!this.d.elements.length) { this.say(`${this.title}: sketch the path first`, "error"); return false; }
+      const path = weld(this.d), o = this.app.toolOpts;
+      const res = this.target.id ? this.app.apply({ op: "set", id: this.target.id, key: "path", value: path })
+        : this.app.apply({ op: "add", element: { type: "RepeatingDetail", args: { path, component: this.target.component || o.repeatComponent || "Batt insulation", width: o.repeatWidth || 100, spacing: 0, layout: "Fill available", justify: "Centre", rotation: 0, symbol: o.repeatSymbol ? { ref: o.repeatSymbol } : null, view: { ref: this.view.viewId } } } });
+      if (!res.ok) { this.say(res.error, "error"); return false; }
+      const rid = this.target.id || res.id; this.app.endSketch(); this.app.select([rid]);
+      this.say(`Repeating detail ${rid}: change its component, width and spacing in Properties`, "ok");
+      return true;
+    }
     const doc = this.app.doc, r = regionsOf(this.d);
     if (r.error) { this.say(`${this.title}: ${r.error}`, "error"); this.flashOpen = true; this.view.draw(); return false; }
     if (!r.regions.length) { this.say(`${this.title}: draw a closed boundary`, "error"); return false; }
@@ -481,7 +493,7 @@ export class SketchSession {
     const b = ([id, label, ic, hint], size) => ({ label, icon: ic, hint, size, on: this.tool === id, run: () => this.setTool(id) });
     const draw = SKETCH_DRAW.filter(r => r[0] !== "pickwalls" || this.target.kind !== "crop");
     return [
-      { title: "Mode", items: [{ label: "Finish", icon: "skfinish", hint: "Finish Edit Mode: the sketch becomes the " + ({ crop: "crop", region: "filled region" }[this.target.kind] || "floor"), size: "big", run: () => this.finish(), finish: true }, { label: "Cancel", icon: "close", hint: "Cancel Edit Mode: nothing changes", size: "big", run: () => this.cancel() }] },
+      { title: "Mode", items: [{ label: "Finish", icon: "skfinish", hint: "Finish Edit Mode: the sketch becomes the " + ({ crop: "crop", region: "filled region", repeat: "repeating detail's path" }[this.target.kind] || "floor"), size: "big", run: () => this.finish(), finish: true }, { label: "Cancel", icon: "close", hint: "Cancel Edit Mode: nothing changes", size: "big", run: () => this.cancel() }] },
       { title: "Draw", items: draw.map((r, i) => b(r, i < 5 || r[0] === "pickwalls" ? "big" : "small")) },
       { title: "Modify", items: SKETCH_MODIFY.filter(r => r[0] !== "dim").map((r, i) => b(r, i < 1 ? "big" : "small")) },
       { title: "Measure", items: [b(SKETCH_MODIFY.find(r => r[0] === "dim"), "big")] },
@@ -500,13 +512,24 @@ export class SketchSession {
       const cur = this.target.pattern || this.app.toolOpts.regionPattern || "P-DIAG";
       kids.push(h("label", {}, "Pattern ", h("select", { onchange: e => { this.target.pattern = this.app.toolOpts.regionPattern = e.target.value; if (this.target.id) this.app.apply({ op: "set", id: this.target.id, key: "pattern", value: e.target.value }, { quiet: true }); } }, pats.map(([id, pt]) => h("option", { value: id, selected: id === cur }, pt.name || id)))));
     }
+    if (this.target.kind === "repeat") {
+      const ao = this.app.toolOpts, syms = Object.entries(this.app.doc.lib.symbols || {}).filter(([, sy]) => sy.source);
+      if (!this.target.id) {
+        kids.push(h("label", {}, "Component ", h("select", { "aria-label": "Repeating component", onchange: e => { this.target.component = ao.repeatComponent = e.target.value; this.app.refresh({ keepMain: true }); } }, REPEAT_COMPONENTS.map(c => h("option", { selected: c === (this.target.component || "Batt insulation") }, c)))));
+        if ((this.target.component || "") === "Symbol") kids.push(h("label", {}, "Symbol ", h("select", { "aria-label": "Repeated symbol", onchange: e => { ao.repeatSymbol = e.target.value; } }, h("option", { value: "" }, "—"), syms.map(([id, sy]) => h("option", { value: id, selected: ao.repeatSymbol === id }, sy.name || id)))));
+        kids.push(h("label", {}, "Width ", h("input", { type: "text", value: fmtLen(ao.repeatWidth || 100), "aria-label": "Repeating detail width", style: { width: "72px" }, onchange: e => { const v = this.len(e.target.value); if (v) ao.repeatWidth = v; e.target.value = fmtLen(ao.repeatWidth || 100); }, onkeydown: e => e.stopPropagation() })));
+      }
+    }
     if (this.target.kind === "floor" && !this.target.id) {
       const doc = this.app.doc, ts = Object.entries(doc.lib.types).filter(([id]) => (doc.resolveType(id) || {}).category === "IfcSlab");
       kids.push(h("label", {}, "Type ", h("select", { onchange: e => { this.app.toolOpts.floorType = e.target.value; } }, ts.map(([id, ty]) => h("option", { value: id, selected: this.app.toolOpts.floorType === id }, ty.name)))),
         h("label", {}, "Height offset ", h("input", { type: "text", value: fmtLen(this.app.toolOpts.floorOffset ?? 0), style: { width: "72px" }, onchange: e => { const v = this.len(e.target.value); if (v !== null) this.app.toolOpts.floorOffset = v; e.target.value = fmtLen(this.app.toolOpts.floorOffset ?? 0); }, onkeydown: e => e.stopPropagation() })));
     }
     const r = regionsOf(this.d);
-    kids.push(h("span", { class: "grow" }), h("span", { class: r.error ? "muted warn" : "muted" }, r.error ? (this.d.elements.length ? "open: " + r.error.replace(/^the boundary is /, "") : "draw a closed boundary") : `${r.regions.length} closed area${r.regions.length > 1 ? "s" : ""}${r.regions.some(x => x.holes.length) ? " with holes" : ""}`),
+    if (this.target.kind === "repeat") kids.push(h("span", { class: "grow" }), h("span", { class: "muted" }, `${this.d.elements.length} path element${this.d.elements.length === 1 ? "" : "s"} · open or closed`),
+      h("button", { class: "btn small", title: "Undo in the sketch (Ctrl+Z)", disabled: !this.undoStack.length, onclick: () => this.undo() }, "↶"),
+      h("button", { class: "btn small primary", onclick: () => this.finish() }, "✓ Finish"), h("button", { class: "btn small", onclick: () => this.cancel() }, "✕ Cancel"));
+    else kids.push(h("span", { class: "grow" }), h("span", { class: r.error ? "muted warn" : "muted" }, r.error ? (this.d.elements.length ? "open: " + r.error.replace(/^the boundary is /, "") : "draw a closed boundary") : `${r.regions.length} closed area${r.regions.length > 1 ? "s" : ""}${r.regions.some(x => x.holes.length) ? " with holes" : ""}`),
       h("button", { class: "btn small", title: "Undo in the sketch (Ctrl+Z)", disabled: !this.undoStack.length, onclick: () => this.undo() }, "↶"),
       h("button", { class: "btn small primary", onclick: () => this.finish() }, "✓ Finish"), h("button", { class: "btn small", onclick: () => this.cancel() }, "✕ Cancel"));
     bar.append(...kids);

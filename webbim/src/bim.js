@@ -38,7 +38,12 @@ declare({ type: "Grid", guid: "wb-0002", category: "IfcGrid", kind: "grid", idPr
   summary: "A datum line with a bubble. Publishes its line as a reference.",
   args: [ text("name", "Label", "A", { group: "Identity Data" }), curve2d("line", "Line", ["line"], { type: "line", start: [0, 0], end: [0, 10000] }),
           // ticked, a grid only runs horizontal or vertical - its ends slide along it; unticked, they go anywhere
-          bool("orthogonal", "Orthogonal", true, { group: "Constraints" }), bool("pinned", "Pinned", false, { group: "Constraints" }) ],
+          bool("orthogonal", "Orthogonal", true, { group: "Constraints" }), bool("pinned", "Pinned", false, { group: "Constraints" }),
+          // the head: a shape or any loaded symbol, sized in paper millimetres so it reads the same at every scale
+          choice("head", "Head symbol", ["Circle", "Double circle", "Hexagon", "Square", "Diamond", "Triangle", "Symbol", "None"], 0, { group: "Graphics" }),
+          when(ref("headSymbol", "Head symbol (loaded)", ["symbol"], { group: "Graphics", view: true }), "head", "Symbol"),
+          real("headSize", "Head size (paper mm)", 8, 1, 60, 0.5, "", { group: "Graphics" }), real("textSize", "Text size (paper mm)", 2.5, 0.5, 30, 0.1, "", { group: "Graphics" }),
+          choice("ends", "Heads at", ["Both ends", "Start", "End", "None"], 0, { group: "Graphics" }) ],
   handles: (f) => {
     const c = F.json(f, "line");
     if (F.bool(f, "orthogonal") !== false) {
@@ -597,6 +602,32 @@ BUILDERS.SymbolInstance = { build: () => ({ data: {} }) };
 //! the parametric CAD's format with every element on its DXF layer. Placed by an offset of the file's
 //! origin, a scale and a rotation about that origin - numbers in Properties, so it can be put exactly
 //! - and pinned by default, so a stray drag cannot move it. Explode turns it into detail lines.
+/** Revit's Repeating Detail Component (and its Insulation tool): one component repeated along a path
+ *  sketched with the sketch tools - lines, arcs, splines. Width is across the path, in model mm. */
+export const REPEAT_COMPONENTS = ["Batt insulation", "Rigid insulation", "Brick coursing", "Blocking", "Symbol"];
+declare({ type: "RepeatingDetail", guid: "wb-0708", category: "Detail", kind: "detail", idPrefix: "RD",
+  summary: "A component repeated along a path: insulation, coursing, blocking or any loaded symbol, spaced along lines, arcs and splines.",
+  args: [ json("path", "Path", { elements: [], constraints: [], dims: [] }),
+          choice("component", "Component", REPEAT_COMPONENTS, 0),
+          when(ref("symbol", "Symbol", ["symbol"], { view: true }), "component", "Symbol"),
+          real("width", "Width", 100, 1, 1e5, 1, "mm"), real("spacing", "Spacing", 0, 0, 1e5, 1, "mm"),
+          choice("layout", "Layout", ["Fixed distance", "Fill available", "Maximum spacing"], 1),
+          choice("justify", "Justification", ["Centre", "Left", "Right"], 0), real("rotation", "Component rotation", 0, -360, 360, 1, "°"),
+          ref("view", "View", ["view"], { view: true }) ] });
+BUILDERS.RepeatingDetail = { build: () => ({ data: {} }) };
+
+/** Revit's Material Tag / Keynote: a leader whose point rests on something; the tag reads the material
+ *  there - the wall layer, the floor layer, the column - and shows its Mark (or name, or description). */
+declare({ type: "MaterialTag", guid: "wb-0707", category: "Annotation", kind: "detail", idPrefix: "MT",
+  summary: "A material tag: its leader's point finds the element and layer beneath it and shows that material's Mark.",
+  args: [ point2d("target", "Leader point", [0, 0]), point2d("position", "Tag position", [600, 600]),
+          choice("show", "Shows", ["Mark", "Name", "Mark · Name", "Description", "Mark · Description"], 0),
+          choice("frame", "Frame", ["Keynote box", "None", "Circle"], 0, { group: "Graphics" }),
+          real("textSize", "Text size (paper mm)", 2.5, 0.5, 30, 0.1, "", { group: "Graphics" }),
+          ref("view", "View", ["view"], { view: true }) ],
+  handles: (f) => [{ key: "target", at: F.point(f, "target"), constraint: "free2d", writes: "target" }, { key: "move", at: F.point(f, "position"), constraint: "free2d", writes: "position" }] });
+BUILDERS.MaterialTag = { build: () => ({ data: {} }) };
+
 declare({ type: "CADImport", guid: "wb-0706", category: "Detail", kind: "detail", idPrefix: "CAD",
   summary: "An imported DXF: one element, its layers kept. Pinned, it cannot be dragged; X/Y offset, scale and rotation place it.",
   args: [ text("file", "File", "", { group: "Identity Data" }), json("drawing", "Drawing", { elements: [], constraints: [], texts: [], fills: [], layers: [] }),
