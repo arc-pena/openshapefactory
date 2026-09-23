@@ -771,7 +771,7 @@ export function elevationScene(doc, v, opts = {}) {
   return scene;
 }
 /** An elevation's or a section's line in plan, and the maps from plan to view coordinates. */
-function viewLineGeometry(doc, v) {
+export function viewLineGeometry(doc, v) {
   const c = F.json(v, "line"), d = normalise(sub(c.end, c.start)), look = mul(perp(d), -1), Lv = dist(c.start, c.end);
   const depthMax = F.real(v, "depth");
   const lv = F.reference(v, "baseLevel"), Z0 = lv ? (doc.data(lv) || {}).value || 0 : 0, topZ = Z0 + F.real(v, "top");
@@ -837,6 +837,24 @@ function drawDatums(doc, ctx, B, v, G) {
     B.text(add(mid, [-0.9, 0]), dimText(doc, m.value), 2.5, { align: "centre", rot: 90, layer: "Annotation-Dimension", id });
     if (F.bool(f, "locked")) drawPadlock(B, add(mid, [-2.2, textWidth(dimText(doc, m.value), 2.5) / 2 + 3]), id);
     B.hit(id, [[sx - 300, Math.min(za, zb)], [sx + 300, Math.min(za, zb)], [sx + 300, Math.max(za, zb)], [sx - 300, Math.max(za, zb)]]);
+  }
+  // other sections that cross this view: a line where their cut plane passes, with their name - picked and dragged here as in plan
+  if (categoryVisible(ctx, "Annotation")) for (const f of doc.elements()) {
+    if (doc.typeOf(f) !== "SectionView" || f === v) continue;
+    const sl = F.json(f, "line"); if (!sl || sl.type !== "line") continue;
+    const sd = normalise(sub(sl.end, sl.start)), den = d[0] * sd[1] - d[1] * sd[0]; if (Math.abs(den) < 1e-9) continue;
+    const t = ((sl.start[0] - c.start[0]) * sd[1] - (sl.start[1] - c.start[1]) * sd[0]) / den;
+    // it shows where its cut plane passes through what this view sees: its line must reach into this view's depth
+    const da = G.depthOf(sl.start), db = G.depthOf(sl.end), dMax = G.depthMax || Infinity;
+    if (t < 0 || t > Lv || Math.max(da, db) < 0 || Math.min(da, db) > dMax) continue;
+    // its head sits below the grid bubbles (they stand 600 above the view's top)
+    const top = F.real(v, "top") - 700, id = doc.idOf(f), g = { weight: penWeight(doc, "thin", S), colour: "#000", dash: LINE_TYPES.dashed1 };
+    B.stroke([lineSeg([t, -300], [t, top])], g, "Annotation-Marker", id);
+    const hp = B.P([t, top]);
+    B.stroke(polyPath([hp, add(hp, [1.6, 3]), add(hp, [-1.6, 3])]), { weight: penWeight(doc, "thin", S), colour: "#000" }, "Annotation-Marker", id, true);
+    B.text(add(hp, [0, 4.4]), f.get("Name") || id, 2.2, { align: "centre", layer: "Annotation-Marker", id });
+    B.hit(id, [[t, -300], [t, top]], "curve");
+    B.hit(id, [[t - 3 * S, top], [t + 3 * S, top], [t + 3 * S, top + 7 * S], [t - 3 * S, top + 7 * S]]);
   }
   for (const f of doc.elements()) if (doc.typeOf(f) === "Grid" && categoryVisible(ctx, "IfcGrid")) {
     const gl = F.json(f, "line"), gd = normalise(sub(gl.end, gl.start));

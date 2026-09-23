@@ -125,7 +125,7 @@ app.placeOpening = (tool, wallId, u) => {
 };
 const firstOf = type => { const f = app.doc.elements().find(g => app.doc.typeOf(g) === type); return f ? app.doc.idOf(f) : null; };
 const activeType = () => { const v = app.activeView && app.doc.element(app.activeView); return v ? app.doc.typeOf(v) : app.activeView; };
-const canUseTool = k => { const t = activeType(); if (t === "PlanView") return true; if (t === "ElevationView" || t === "SectionView") return k === "select" || k === "dim" || k === "mtag"; if (t === "View3D") return ["wall", "door", "window", "opening", "column", "select"].includes(k); return k === "select"; };
+const canUseTool = k => { const t = activeType(); if (t === "PlanView") return true; if (t === "ElevationView" || t === "SectionView") return k === "select" || k === "dim" || k === "mtag" || k === "move" || k === "copy"; if (t === "View3D") return ["wall", "door", "window", "opening", "column", "select"].includes(k); return k === "select"; };
 
 // ---------------------------------------------------------------- documents
 /** There is always a {3D} view: the house button must have somewhere to go. */

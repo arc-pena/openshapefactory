@@ -192,6 +192,11 @@ The Artifact publishes `dist/web-bim-studio.html`. The CAD page rides in it as i
     - **Pack** tick (programme and parking tabs): untick an element to leave it out of the packing; it stays in the brief and its totals, and the report lists what sat out.
     - Drag an edge grip: that side moves and the other follows, so the area holds.
   - **Diagrams → A1 sheet:** lays out the site analysis, bubbles, matrix, pies, massing and summary on sheet A-001 (the sample ships with it). The diagrams redraw from the graph whenever it changes and print to PDF.
+- **Datums in elevations and sections:** grids, and sections whose line reaches into the view, are drawn where they cross it, and are edited right there.
+  - Drag a grid or section sideways and it moves along the view, in plan.
+  - Drag a level up or down.
+  - Move (MV) and Copy (CO) work in these views too: grids and sections slide along the view, levels change height.
+  - None of this switches to a plan.
 - **Two-letter shortcuts:** WA DR WN OP CL GR RM RS DI TX EL MV CO RO MM DE LL VV TL ZF 3D SA PP MD. Ctrl+Z / Ctrl+Y undo and redo; Esc cancels, then clears the selection.
 
 ## Known gaps (said, not hidden)

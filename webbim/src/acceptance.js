@@ -10,7 +10,7 @@ import { wallRegions, solidSpans } from "./joins.js";
 import { pointAt, uOf, boundary, wallPieces } from "./walls.js";
 import { newDocument, openDocument, measureRefs, resolveReference, importPlacer } from "./bim.js";
 import { Editor, propagate, massingStoreys } from "./ops.js";
-import { viewContext, sectionBoxKey, dimText, deriveView, planScene, elevationScene, placements, textWidth, sheetScene, visibilityKey, sectionCut, cutOutline } from "./scene.js";
+import { viewLineGeometry, viewContext, sectionBoxKey, dimText, deriveView, planScene, elevationScene, placements, textWidth, sheetScene, visibilityKey, sectionCut, cutOutline } from "./scene.js";
 import { chainLoop } from "./crop.js";
 import { importIfc } from "./ifcimport.js";
 import { writePDF, pathOps, PT_PER_MM } from "./pdf.js";
@@ -1677,4 +1677,16 @@ testCase("M55", "IFC bodies kept as their own shape: a brep stair, a swept-disk 
     && Math.abs(stair.z1 - 1500) < 1 && Math.abs(rail.z1 - 2425) < 10 && Math.abs(roof.z1 - roof.z0 - 2000) < 2 && Math.abs(basin.z0 - 800) < 1 && drawnStair;
   return R(ok, "7 generic models, nothing missed; stair/railing/furniture/fixture/wall categories; 6 shapes, the chairs sharing one 2 m apart; gable 1.00 m² at 1.2 m, ≈0.63 m² at 3.0 m, 4 m high; stair 1.5 m; rail to 2.425 m; roof tilted; basin from 0.8 m; the stair drawn in plan",
     `ok ${res.ok} ${res.error || ""}; missed ${JSON.stringify(r.report.missed)}; generic ${gm.length}; cats ${["Stair flight", "Handrail", "Chair 1", "Basin", "Gable wall"].map(cat).join("/")}; shapes ${shapes.length}; chairs ${c1 && c2 && (c2.mesh.positions[0] - c1.mesh.positions[0])}; gable ${Math.round(a12)} / ${Math.round(a30)} h ${wp && wp.z1}; stair ${stair && stair.z1}; rail ${rail && rail.z1}; roof ${roof && [roof.z0, roof.z1].map(Math.round)}; basin ${basin && basin.z0}; drawn ${drawnStair}; notes ${r.report.notes.join(" | ")}`);
+});
+
+testCase("M56", "Datums are edited where they are seen: a section crossing an elevation's depth is drawn there and picked there; a grid or section moved along the elevation moves in plan; a level moved in a section changes its elevation", () => {
+  const doc = buildPavilionSample(), ed = new Editor(doc), v = doc.element("V-E-S");
+  const sc = deriveView(doc, v), hitB = sc.hits.some(h => h.id === "V-S-B"), hitA = sc.hits.some(h => h.id === "V-S-A");
+  // South Elevation looks north: its line runs west, so +1 m along the view is 1 m west in plan
+  const d = viewLineGeometry(doc, v).d, r1 = ed.apply({ op: "transform", ids: ["G-B", "V-S-B"], move: [d[0] * 1000, d[1] * 1000] });
+  const gb = doc.argValue(doc.element("G-B"), "line").start[0], sb = doc.argValue(doc.element("V-S-B"), "line").start[0];
+  const r2 = ed.apply({ op: "set", id: "LR", key: "elevation", value: 4850 }), roof = doc.plan(doc.element("FL-ROOF"));
+  const ok = hitB && !hitA && r1.ok && Math.abs(gb - 19500) < 1 && Math.abs(sb - 21300) < 1 && r2.ok && Math.abs(roof.z1 - 4850) < 1;
+  return R(ok, "Section B-B (crossing) drawn and pickable in the South Elevation, Section A-A (parallel) not; grid B and section B-B 1 m west; the roof follows its level to +4.850",
+    `B ${hitB}, A ${hitA}; grid B x ${gb}, section B-B x ${sb}; roof top ${roof && roof.z1}`);
 });
