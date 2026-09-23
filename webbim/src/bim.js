@@ -15,7 +15,8 @@ import {
 import { wallRecord, wallReferences, pointAt, uOf, sideOf, boundary, wallPieces, faceLine, layerStack } from "./walls.js";
 import { resolveJoins, wallRegions, solidSpans, coarseMaterial, JOIN_TOL } from "./joins.js";
 import { findLoops, claimLoops, filterWallFaces, interiorPoint } from "./spaces.js";
-import { regionsOf, regionPaths, FINE } from "./bimsketch.js";
+import { regionsOf, regionPaths, FINE, elementSegs } from "./bimsketch.js";
+import { placeMesh, meshBox, meshMeasure, levelsIn } from "./massing.js";
 import {
   PEN_ISO, PATTERNS, MATERIALS, PARAM_SPECS, CATEGORIES, FAMILIES, TYPES, TEXT_TYPES, SYMBOLS, VS_PRESENTATION, VS_CONSTRUCTION,
 } from "./library.js";
@@ -435,15 +436,17 @@ declare({ type: "Generic", guid: "wb-0403", category: "IfcBuildingElementProxy",
   summary: "A generic model element: a plan outline pulled up through a height. What IFC calls a proxy.",
   args: [ json("boundary", "Boundary", [[0, 0], [1000, 0], [1000, 1000], [0, 1000]]), ref("level", "Level", ["level"]),
           real("baseOffset", "Base offset", 0, -100000, 100000, 1, "mm", { group: "Constraints" }), real("height", "Height", 1000, 1, 100000, 1, "mm", { group: "Dimensions" }),
-          text("ifcClass", "IFC class", "IfcBuildingElementProxy", { group: "IFC" }), text("material", "Material", "M-CONC", { group: "Materials" }) ],
+          text("ifcClass", "IFC class", "IfcBuildingElementProxy", { group: "IFC" }), text("material", "Material", "M-CONC", { group: "Materials" }),
+          text("colour", "Colour", "", { group: "Graphics" }) ],
   handles: (f) => { const b = F.json(f, "boundary") || []; return b.map((p, i) => ({ key: "v" + i, at: p, constraint: "free2d", writes: `boundary.${i}` })); } });
 BUILDERS.Generic = {
   precondition: (f) => { const b = F.json(f, "boundary"); return Array.isArray(b) && b.length >= 3 ? null : "a generic model needs an outline of three points or more"; },
   build: (f, doc) => {
     const b = F.json(f, "boundary"), z0 = levelElev(doc, f, "level") + F.real(f, "baseOffset"), h = F.real(f, "height"), material = F.text(f, "material") || "M-CONC";
-    const parts = [{ foot: b.map(p => p.slice()), z0, z1: z0 + h, sub: "Body", material }];
+    const colour = F.text(f, "colour") || null;
+    const parts = [{ foot: b.map(p => p.slice()), z0, z1: z0 + h, sub: "Body", material, colour }];
     const area = Math.abs(polyArea(b));
-    return { plan: { path: polyPath(b), foot: b, z0, z1: z0 + h, material, parts },
+    return { plan: { path: polyPath(b), foot: b, z0, z1: z0 + h, material, parts, colour },
       data: { value: area * h, kind: "Volume", parts, props: { Volume: { kind: "Volume", v: area * h }, Area: { kind: "Area", v: area }, Height: L(h), "Base elevation": L(z0), "IFC class": T(F.text(f, "ifcClass")) } } };
   },
 };
@@ -602,6 +605,95 @@ BUILDERS.SymbolInstance = { build: () => ({ data: {} }) };
 //! the parametric CAD's format with every element on its DXF layer. Placed by an offset of the file's
 //! origin, a scale and a rotation about that origin - numbers in Properties, so it can be put exactly
 //! - and pinned by default, so a stray drag cannot move it. Explode turns it into detail lines.
+/** The site boundary: the plot lines, as a closed sketch (lines and arcs, exact) - one per project.
+ *  Each edge of the sketch is an infinite vertical plane that limits the site; each carries its own
+ *  setback (the buildable line) and a zoning plane (rising from a height at an angle over the site),
+ *  so what may be built is the site cut by those planes. */
+declare({ type: "SiteBoundary", guid: "wb-0903", category: "Site", kind: "site", idPrefix: "SITE",
+  summary: "The plot lines: a closed sketch whose edges are the site's limiting planes, each with its own setback and zoning plane.",
+  args: [ json("sketch", "Boundary sketch", { elements: [], constraints: [], dims: [] }), json("edges", "Edges", {}),
+          real("setback", "Default setback", 0, 0, 1e6, 1, "mm", { group: "Setbacks" }),
+          ref("level", "Level", ["level"]), bool("showPlanes", "Show zoning planes in 3D", false, { group: "Zoning" }),
+          real("planeHeight", "Zoning planes drawn to", 60000, 1000, 1e6, 1, "mm", { group: "Zoning" }) ] });
+/** A closed sketch as one loop of points, counter-clockwise, with the sketch element each segment came from. */
+export function siteLoop(sketch) {
+  const polys = [];
+  for (const el of (sketch && sketch.elements) || []) {
+    const segs = elementSegs(el); if (!segs || !segs.length) continue;
+    const pts = [];
+    for (const g of segs) {
+      const n = g.k === "L" ? 1 : g.k === "A" ? Math.max(4, Math.ceil(Math.abs(g.a1 - g.a0) / TAU * 72)) : 16;
+      for (let i = pts.length ? 1 : 0; i <= n; i++) { const t = i / n; pts.push(g.k === "L" ? lerp(g.a, g.b, t) : g.k === "A" ? [g.c[0] + g.r * Math.cos(g.a0 + (g.a1 - g.a0) * t), g.c[1] + g.r * Math.sin(g.a0 + (g.a1 - g.a0) * t)] : [0, 1].map(k => { const u = 1 - t; return u * u * u * g.a[k] + 3 * u * u * t * g.c1[k] + 3 * u * t * t * g.c2[k] + t * t * t * g.b[k]; })); }
+    }
+    polys.push({ id: el.id, pts });
+  }
+  if (!polys.length) return { pts: [], edge: [] };
+  // chain end to end (reversing where needed), each segment remembering its element
+  const used = new Set([0]), pts = polys[0].pts.slice(), edge = polys[0].pts.slice(1).map(() => polys[0].id);
+  for (let guard = 0; guard < polys.length; guard++) {
+    const tip = pts[pts.length - 1]; let found = false;
+    for (let j = 0; j < polys.length; j++) {
+      if (used.has(j)) continue; const q = polys[j].pts;
+      if (dist(tip, q[0]) < 1) { used.add(j); for (let i = 1; i < q.length; i++) { pts.push(q[i]); edge.push(polys[j].id); } found = true; break; }
+      if (dist(tip, q[q.length - 1]) < 1) { used.add(j); for (let i = q.length - 2; i >= 0; i--) { pts.push(q[i]); edge.push(polys[j].id); } found = true; break; }
+    }
+    if (!found) break;
+  }
+  if (dist(pts[0], pts[pts.length - 1]) < 1) pts.pop(); else edge.pop();
+  // edge[i] belongs to segment i → i+1 (the closing one included)
+  while (edge.length < pts.length) edge.push(edge[edge.length - 1]);
+  if (polyArea(pts) < 0) { const rp = pts.slice().reverse(), re = []; for (let i = 0; i < rp.length; i++) re.push(edge[(pts.length - 2 - i + pts.length) % pts.length]); return { pts: rp, edge: re, closed: used.size === polys.length }; }
+  return { pts, edge, closed: used.size === polys.length };
+}
+BUILDERS.SiteBoundary = {
+  precondition: (f) => { const s = F.json(f, "sketch"); return s && s.elements && s.elements.length ? null : "the site boundary has no lines: sketch it, or import the plot lines from a DXF"; },
+  build: (f) => {
+    const loop = siteLoop(F.json(f, "sketch")), edges = F.json(f, "edges") || {}, dflt = F.real(f, "setback") || 0;
+    if (loop.pts.length < 3) throw new Error("the site boundary is not a closed loop");
+    const setbacks = loop.edge.map(id => (edges[id] && edges[id].setback !== undefined ? edges[id].setback : dflt));
+    // the buildable line: each edge moved in by its own setback, neighbours met
+    const P = loop.pts, n = P.length;
+    const lines = P.map((a, i) => { const b = P[(i + 1) % n], d = normalise(sub(b, a)), nr = [-d[1], d[0]]; return { p: add(a, mul(nr, setbacks[i])), d }; });
+    const buildable = P.map((_, i) => { const L1 = lines[(i + n - 1) % n], L2 = lines[i], den = L1.d[0] * L2.d[1] - L1.d[1] * L2.d[0]; if (Math.abs(den) < 1e-9) return L2.p; const t = ((L2.p[0] - L1.p[0]) * L2.d[1] - (L2.p[1] - L1.p[1]) * L2.d[0]) / den; return add(L1.p, mul(L1.d, t)); });
+    // zoning planes: from the edge (at its height) rising inward at its angle; 90° is the plain vertical limit
+    const H = F.real(f, "planeHeight") || 60000, mesh3d = [];
+    if (F.bool(f, "showPlanes")) {
+      const pos = [], idx = [];
+      for (let i = 0; i < n; i++) {
+        const z = (edges[loop.edge[i]] || {}).height || 0, ang = ((edges[loop.edge[i]] || {}).angle || 90) * Math.PI / 180;
+        const a = P[i], b = P[(i + 1) % n], nr = normalise([-(b[1] - a[1]), b[0] - a[0]]), run = (H - z) / Math.tan(ang), k = pos.length / 3;
+        pos.push(a[0], a[1], z, b[0], b[1], z, b[0] + nr[0] * run, b[1] + nr[1] * run, H, a[0] + nr[0] * run, a[1] + nr[1] * run, H); idx.push(k, k + 1, k + 2, k, k + 2, k + 3);
+      }
+      mesh3d.push({ positions: pos, index: idx, colour: "#d0312d", opacity: 0.12 });
+    }
+    const area = Math.abs(polyArea(P)), barea = Math.abs(polyArea(buildable));
+    let perim = 0; for (let i = 0; i < n; i++) perim += dist(P[i], P[(i + 1) % n]);
+    return { plan: { pts: P, edge: loop.edge, setbacks, buildable, closed: loop.closed, mesh3d: mesh3d.length ? mesh3d : null, z0: 0, z1: H },
+      data: { value: area, kind: "Area", props: { "Site area": { kind: "Area", v: area }, "Buildable area": { kind: "Area", v: barea }, Perimeter: L(perim), Edges: { kind: "Number", v: new Set(loop.edge).size } } } };
+  },
+};
+
+/** A massing: the maximum envelope, as a mesh (OBJ, STL, or STEP through the kernel). Levels are laid
+ *  through it at its floor-to-floor height; a space graph packs each level's plate. */
+declare({ type: "Massing", guid: "wb-0902", category: "Mass", kind: "massing", idPrefix: "MS",
+  summary: "The envelope a building may fill: a mesh. Cut at each level it gives the floor plates; picked, its faces make walls.",
+  args: [ json("mesh", "Mesh", { positions: [], index: [] }), text("file", "File", "", { group: "Identity Data" }),
+          real("offsetX", "X offset", 0, -1e9, 1e9, 1, "mm", { group: "Position" }), real("offsetY", "Y offset", 0, -1e9, 1e9, 1, "mm", { group: "Position" }),
+          real("offsetZ", "Z offset", 0, -1e9, 1e9, 1, "mm", { group: "Position" }), real("rotation", "Rotation", 0, -360, 360, 1, "°", { group: "Position" }),
+          real("floorToFloor", "Ideal floor-to-floor", 3500, 1000, 20000, 1, "mm", { group: "Levels" }),
+          real("minPlate", "Smallest plate that makes a storey", 20, 0, 1e6, 1, "", { group: "Levels" }) ] });
+BUILDERS.Massing = {
+  precondition: (f) => { const m = F.json(f, "mesh"); return m && m.index && m.index.length >= 3 ? null : "the massing has no triangles: import an OBJ, STL or STEP"; },
+  build: (f) => {
+    const m = placeMesh(F.json(f, "mesh"), { x: F.real(f, "offsetX"), y: F.real(f, "offsetY"), z: F.real(f, "offsetZ"), rotation: F.real(f, "rotation") });
+    const box = meshBox(m), me = meshMeasure(m), h = F.real(f, "floorToFloor");
+    const lv = levelsIn(m, h, { minPlate: (F.real(f, "minPlate") || 0) * 1e6 }), gfa = lv.reduce((a, l) => a + l.area, 0);
+    return { plan: { mesh: m, box, z0: box[2], z1: box[5], levels: lv },
+      data: { value: Math.abs(me.volume), kind: "Volume", props: { Volume: { kind: "Volume", v: Math.abs(me.volume) }, "Envelope area": { kind: "Area", v: me.area }, Height: L(box[5] - box[2]),
+        Storeys: { kind: "Number", v: lv.length }, "Gross floor area": { kind: "Area", v: gfa }, Triangles: { kind: "Number", v: m.index.length / 3 } } } };
+  },
+};
+
 /** A space graph: the program as nodes and adjacencies, the site and its setbacks, the entry and the
  *  packing options - and the saved slot order that is each room's identity. Its model is built by
  *  the sgbuild op (walls, slab, rooms, doors), tagged so a rebuild replaces it. */
@@ -610,7 +702,7 @@ declare({ type: "SpaceGraph", guid: "wb-0901", category: "Program", kind: "progr
   args: [ json("nodes", "Spaces", []), json("edges", "Adjacencies", []),
           json("site", "Site", { boundary: [], setbacks: [], entries: [], spine: null }),
           json("options", "Packing", {}), json("order", "Slot order", null),
-          ref("level", "Base level", ["level"]), bool("auto", "Rebuild on change", true) ] });
+          ref("level", "Base level", ["level"]), bool("auto", "Rebuild on change", true), ref("massing", "Massing", ["massing"]), ref("siteBoundary", "Site boundary", ["site"]) ] });
 BUILDERS.SpaceGraph = { build: () => ({ data: {} }) };
 
 /** Revit's Repeating Detail Component (and its Insulation tool): one component repeated along a path

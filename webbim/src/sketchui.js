@@ -52,7 +52,7 @@ export class SketchSession {
     app.sketchOpts = this.opts;
     this.undoStack = []; this.redoStack = []; this.typed = "";
   }
-  get title() { return this.target.kind === "repeat" ? (this.target.id ? "Edit Repeating Detail Path" : "Create Repeating Detail Path") : this.target.kind === "crop" ? "Edit Crop" : this.target.id ? "Edit Boundary" : this.target.kind === "region" ? "Create Filled Region Boundary" : "Create Floor Boundary"; }
+  get title() { return this.target.kind === "site" ? (this.target.id ? "Edit Site Boundary" : "Create Site Boundary") : this.target.kind === "repeat" ? (this.target.id ? "Edit Repeating Detail Path" : "Create Repeating Detail Path") : this.target.kind === "crop" ? "Edit Crop" : this.target.id ? "Edit Boundary" : this.target.kind === "region" ? "Create Filled Region Boundary" : "Create Floor Boundary"; }
   say(msg, kind = "note") { this.app.say(msg, kind); }
   commit(next, msg) { this.undoStack.push(this.d); this.redoStack = []; this.d = next; if (msg) this.say(msg, "ok"); this.refresh(); }
   refresh() { this.view.draw(); this.app.renderOptions && this.app.renderOptions(); }
@@ -358,6 +358,16 @@ export class SketchSession {
     const main = r.regions.reduce((b, x) => (Math.abs(skArea(x.outer)) > Math.abs(skArea(b.outer)) ? x : b), r.regions[0]);
     const boundary = main.outer.map(p => p.map(v => Math.round(v * 10) / 10));
     const sketch = weld(this.d);
+    if (this.target.kind === "site") {
+      // the plot lines: one closed loop; its edges keep their ids, so each edge keeps its setback
+      if (r.regions.length > 1 || main.holes.length) { this.say("Site Boundary: the plot is one closed loop, with no holes", "error"); return false; }
+      const res3 = this.target.id ? this.app.apply({ op: "set", id: this.target.id, key: "sketch", value: sketch })
+        : this.app.apply({ op: "add", element: { type: "SiteBoundary", name: "Site boundary", args: { sketch, edges: {}, setback: 0, level: F.refId(this.view.view, "level") ? { ref: F.refId(this.view.view, "level") } : null } } });
+      if (!res3.ok) { this.say(res3.error, "error"); return false; }
+      const sid = this.target.id || res3.id; this.app.endSketch(); this.app.select([sid]);
+      this.say(`Site boundary ${sid}: ${(Math.abs(skArea(boundary)) / 1e6).toFixed(0)} m² - set each edge's setback in Properties`, "ok");
+      return true;
+    }
     if (this.target.kind === "crop") {
       if (r.regions.length > 1 || main.holes.length) { this.say("Edit Crop: a crop is one closed loop, with no holes", "error"); return false; }
       const cv = this.target.cropView, clip = cv.clipOf(), xs = boundary.map(p => p[0]), ys = boundary.map(p => p[1]);
@@ -493,10 +503,11 @@ export class SketchSession {
     const b = ([id, label, ic, hint], size) => ({ label, icon: ic, hint, size, on: this.tool === id, run: () => this.setTool(id) });
     const draw = SKETCH_DRAW.filter(r => r[0] !== "pickwalls" || this.target.kind !== "crop");
     return [
-      { title: "Mode", items: [{ label: "Finish", icon: "skfinish", hint: "Finish Edit Mode: the sketch becomes the " + ({ crop: "crop", region: "filled region", repeat: "repeating detail's path" }[this.target.kind] || "floor"), size: "big", run: () => this.finish(), finish: true }, { label: "Cancel", icon: "close", hint: "Cancel Edit Mode: nothing changes", size: "big", run: () => this.cancel() }] },
       { title: "Draw", items: draw.map((r, i) => b(r, i < 5 || r[0] === "pickwalls" ? "big" : "small")) },
       { title: "Modify", items: SKETCH_MODIFY.filter(r => r[0] !== "dim").map((r, i) => b(r, i < 1 ? "big" : "small")) },
       { title: "Measure", items: [b(SKETCH_MODIFY.find(r => r[0] === "dim"), "big")] },
+      // Finish and Cancel last: the ribbon end nearest the drawing, not the far corner
+      { title: "Mode", items: [{ label: "Finish", icon: "skfinish", hint: "Finish Edit Mode: the sketch becomes the " + ({ crop: "crop", region: "filled region", repeat: "repeating detail's path", site: "site boundary" }[this.target.kind] || "floor"), size: "big", run: () => this.finish(), finish: true }, { label: "Cancel", icon: "close", hint: "Cancel Edit Mode: nothing changes", size: "big", run: () => this.cancel() }] },
     ];
   }
   optionsBar(bar) {

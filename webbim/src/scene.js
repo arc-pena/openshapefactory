@@ -11,6 +11,7 @@
 import { fmtLength, fmtArea } from "./units.js";
 import { outline, elementSegs } from "./bimsketch.js";
 import { buildableArea } from "./spacegraph.js";
+import { plateAt } from "./massing.js";
 import {
   TOL, add, sub, mul, dot, dist, perp, normalise, lerp, samplePath, pathArea, polyPath, bboxOf, segStart, segEnd, segMinusConvex,
   ensureCCW, convexHull, TAU, pointInPoly, reversePath, polyArea,
@@ -221,13 +222,37 @@ export function planScene(doc, v, opts = {}) {
       const top = (p.parts || []).reduce((a, x) => (!a || x.z1 > a.z1 ? x : a), null);
       B.mat.push({ id: doc.idOf(f), material: (top && top.material) || p.material, poly: p.foot, floor: true });
     }
+    if (t === "SiteBoundary" && vis(f)) {
+      // the plot lines: a heavy property-line chain; the setback line dashed inside it; the area written in
+      const p = doc.plan(f); if (!p) continue; const id = doc.idOf(f);
+      B.stroke(polyPath(p.pts), { weight: penWeight(doc, "bold", S), colour: "#1b1f24", dash: [9, 1.5, 1.2, 1.5, 1.2, 1.5] }, "Site", id);
+      if (p.setbacks.some(x => x > 0)) B.stroke(polyPath(p.buildable), { weight: penWeight(doc, "thin", S), colour: "#d0312d", dash: LINE_TYPES.dashed1 }, "Site", id);
+      const c = p.pts.reduce((a, q) => add(a, q), [0, 0]).map(v => v / p.pts.length), d = doc.data(f);
+      if (d && d.props) B.text(add(B.P(c), [0, 0]), `SITE ${fmtArea(d.props["Site area"].v)}`, 3.5, { align: "centre", layer: "Site", id, colour: "#1b1f24" });
+      B.hit(id, p.pts, "curve");
+    }
+    if (t === "Massing" && vis(f)) {
+      // the envelope where the plan cuts it: a pale fill and a chain outline, as Revit draws a mass
+      const p = doc.plan(f); if (!p || cutZ < p.z0 || cutZ > p.z1) continue;
+      const g = resolveGraphics(doc, ctx, f, "cut");
+      for (const pl of plateAt(p.mesh, cutZ).plates) {
+        const path = [...polyPath(pl.outer), ...pl.holes.flatMap(hh => polyPath(hh))];
+        B.fill(path, g.halftone ? "#eef3f9" : "#e3ecf7", "Mass", doc.idOf(f));
+        B.stroke(path, { weight: g.weight === "none" ? penWeight(doc, "thin", S) : g.weight, colour: g.colour === "#000000" ? "#3b6fb0" : g.colour, dash: LINE_TYPES.centre }, "Mass", doc.idOf(f));
+        B.hit(doc.idOf(f), pl.outer);
+      }
+    }
     if (t === "Generic" && vis(f)) {
       // a generic model reads like a column: poché where the cut crosses it, its outline below
       const p = doc.plan(f); if (!p) continue; const bnd = band(p.z0, p.z1);
       if (bnd === "above" || bnd === "below") continue;
       const g = resolveGraphics(doc, ctx, f, bnd === "cut" ? "cut" : "projection");
-      if (bnd === "cut") B.fill(p.path, g.fill || ((doc.lib.materials[p.material] || {}).cut || {}).background || "#e9eaec", "IfcBuildingElementProxy", doc.idOf(f));
-      B.stroke(p.path, g, "IfcBuildingElementProxy", doc.idOf(f)); B.hit(doc.idOf(f), p.foot);
+      // a coloured mass (a block of programme) keeps its colour: solid where cut, paler seen from above
+      if (bnd === "cut") B.fill(p.path, p.colour || g.fill || ((doc.lib.materials[p.material] || {}).cut || {}).background || "#e9eaec", "IfcBuildingElementProxy", doc.idOf(f));
+      else if (p.colour) B.fill(p.path, mix(p.colour, "#ffffff", 0.45), "IfcBuildingElementProxy", doc.idOf(f));
+      B.stroke(p.path, p.colour && bnd !== "cut" ? Object.assign({}, g, { dash: LINE_TYPES.dashed2 }) : g, "IfcBuildingElementProxy", doc.idOf(f)); B.hit(doc.idOf(f), p.foot);
+      // a coloured mass is a block of programme: it says what it is
+      if (p.colour) { const c = p.foot.reduce((a, q) => add(a, q), [0, 0]).map(v => v / p.foot.length); B.text(B.P(c), f.get("Name"), 2.2, { align: "centre", layer: "IfcBuildingElementProxy", id: doc.idOf(f), colour: "#1b1f24" }); }
     }
     if (t === "Beam" && vis(f)) {
       // a beam above the cut is drawn dashed, as it is seen from below; cut, it is a section

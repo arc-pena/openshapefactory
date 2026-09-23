@@ -91,6 +91,8 @@ export const CATEGORIES = {
   IfcGrid:           { name: "Grids", subcategories: { Common: { projection: "thin" } } },
   IfcBuildingStorey: { name: "Levels", subcategories: { Common: { projection: "thin" } } },
   Annotation:        { name: "Annotation", subcategories: { Common: { symbolic: "thin" }, Dimension: { symbolic: "hairline" }, Text: { symbolic: "thin" }, Leader: { symbolic: "hairline" }, Marker: { symbolic: "medium" }, Constraint: { symbolic: "hairline" } } },
+  Site:              { name: "Site", subcategories: { Common: { projection: "heavy" } } },
+  Mass:              { name: "Mass", subcategories: { Common: { projection: "thin", cut: "medium" } } },
   Detail:            { name: "Detail items", subcategories: { Common: { projection: "thin" } } },
   IfcSlab:           { name: "Floors", subcategories: { Common: { cut: "heavy", projection: "thin", beyond: "hairline" } } },
   IfcBeam:           { name: "Structural Framing", subcategories: { Common: { cut: "heavy", projection: "thin", beyond: "hairline" } } },
@@ -140,6 +142,12 @@ export const TYPES = {
   // floors: layers from the top surface down, like a wall's from its exterior face
   "T-FLOOR250":  { family: "F-FLOOR", name: "Concrete 200 + screed 50", mark: "FL1",
     layers: [ { function: "Finish 1", thickness: 50, material: "M-PLAS" }, { function: "Structure", thickness: 200, material: "M-CONC" } ], coreStart: 1, coreEnd: 2 },
+  // system slab types, as Revit ships Generic floors: one concrete layer, and one built-up finish (top first)
+  "T-SLAB100":   { family: "F-FLOOR", name: "Generic - 100mm", mark: "SL1", layers: [ { function: "Structure", thickness: 100, material: "M-CONC" } ], coreStart: 0, coreEnd: 1 },
+  "T-SLAB200":   { family: "F-FLOOR", name: "Generic - 200mm", mark: "SL2", layers: [ { function: "Structure", thickness: 200, material: "M-CONC" } ], coreStart: 0, coreEnd: 1 },
+  "T-SLAB300":   { family: "F-FLOOR", name: "Generic - 300mm", mark: "SL3", layers: [ { function: "Structure", thickness: 300, material: "M-CONC" } ], coreStart: 0, coreEnd: 1 },
+  "T-SLAB230T":  { family: "F-FLOOR", name: "200mm + 20mm screed + 10mm ceramic tile", mark: "SL4",
+    layers: [ { function: "Finish 1", thickness: 10, material: "M-TILE" }, { function: "Finish 2", thickness: 20, material: "M-SCREED" }, { function: "Structure", thickness: 200, material: "M-CONC" } ], coreStart: 2, coreEnd: 3 },
   "T-FLOOR240T":  { family: "F-FLOOR", name: "Tile 10 + screed 30 + concrete 200", mark: "FL3",
     layers: [ { function: "Finish 1", thickness: 10, material: "M-TILE" }, { function: "Finish 2", thickness: 30, material: "M-SCREED" }, { function: "Structure", thickness: 200, material: "M-CONC" } ], coreStart: 2, coreEnd: 3 },
   "T-FLOOR150T": { family: "F-FLOOR", name: "Timber deck 150", mark: "FL2",

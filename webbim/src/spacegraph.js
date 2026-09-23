@@ -10,6 +10,7 @@
 //! new node's area and the strip shifts to fit - "rename the room, update its width, move the rest".
 
 import { add, sub, mul, dot, dist, normalise, perp, lerp, polyArea, pointInPoly } from "./geom2d.js";
+import { simplifyLoop, offsetLoop, clipStrip } from "./massing.js";
 
 // ---------------------------------------------------------------- program in
 /** Header words a program sheet uses for each field, lower case. */
@@ -137,6 +138,7 @@ export function looksLikeMatrix(rows) {
  * "internal / no daylight"; "back of house" or "circulation" for the zone; "level 1" / "ground floor".
  */
 export function programFromBrief(text) {
+  if (looksStructured(String(text || ""))) return programFromStructuredBrief(String(text));
   const rows = [["Name", "Qty", "Area", "Department", "Facade", "Adjacent to", "Avoid", "Level"]];
   let dept = "";
   for (const raw of String(text || "").split(/\n|•|;(?=\s*\d*\s*x?\s*[A-Z])/)) {
@@ -384,8 +386,8 @@ function sgEntryOn(frame, entries) {
  * Returns everything drawn and built: the buildable area, footprint, strips, corridors and rooms
  * with their slots, and a report of what did not work out and why.
  */
-export function planSpaceGraph(sg, { relax = true } = {}) {
-  const o = Object.assign({}, SG_DEFAULTS, sg.options || {});
+export function planSpaceGraph(sg, { relax = true, storeys = null } = {}) {
+  const o = Object.assign({}, SG_DEFAULTS, SG_PLATE_DEFAULTS, sg.options || {});
   // the room depth, unless set: the depth that best keeps the facade rooms' own proportions - each
   // room's preferred depth is sqrt(area / its width:depth), the middle of its range (0.8 when it has none)
   if (!(sg.options && sg.options.roomDepth)) {
@@ -394,6 +396,11 @@ export function planSpaceGraph(sg, { relax = true } = {}) {
   }
   const nodes = (sg.nodes || []).map(nd => Object.assign({}, nd)), edges = sg.edges || [], report = [];
   if (relax && nodes.length) relaxBubbles(nodes, edges, 250);
+  // masterplan scale (towers, parking, or more programme than a building of rooms) plans as blocks first
+  const big = nodes.some(nd => nd.zone === "Tower" || nd.zone === "Parking") || nodes.reduce((a, nd) => a + (nd.area || 0), 0) > 20000;
+  const mode = o.mode && o.mode !== "auto" ? o.mode : storeys && storeys.length ? "plates" : big ? "blocks" : "rooms";
+  if (mode === "blocks") { const pl = planBlocks(sg, nodes, edges, o, report); pl.bubbles = nodes.map(nd => ({ id: nd.id, x: nd.x, y: nd.y })); return pl; }
+  if (storeys && storeys.length) { const pl = planOnMassing(sg, nodes, edges, o, storeys, report); pl.bubbles = nodes.map(nd => ({ id: nd.id, x: nd.x, y: nd.y })); pl.site = sg.site && sg.site.boundary && sg.site.boundary.length >= 3 ? sg.site.boundary : null; return pl; }
   const site = sg.site && sg.site.boundary && sg.site.boundary.length >= 3 ? sg.site.boundary : null;
   const buildable = site ? buildableArea(site, sg.site.setbacks || []) : null;
   const packable = nodes.filter(nd => nd.zone !== "Circulation");
@@ -533,59 +540,535 @@ export function swapInOrder(order, a, b) {
 }
 
 // ---------------------------------------------------------------- the model it builds
+/** A strip level (rectangular footprint) as the builder's generic model: slab, walls, spaces, doors. */
+export function stripModel(L, fr, o) {
+  const walls = [], spaces = [], doors = [];
+  const P = fr.poly;
+  for (let i = 0; i < 4; i++) walls.push({ a: P[i], b: P[(i + 1) % 4], kind: "exterior", pid: "perimeter" });
+  const corridorWall = {};
+  for (const st of L.strips) {
+    if (st.key === "C") { const c = [fr.at(st.u0, st.v0), fr.at(st.u1, st.v0), fr.at(st.u1, st.v1), fr.at(st.u0, st.v1)]; for (let i = 0; i < 4; i++) walls.push({ a: c[i], b: c[(i + 1) % 4], kind: "core", pid: "core" }); continue; }
+    const v = st.v0 > 0 ? st.v0 : st.v1; if (v <= 0 || v >= fr.D) continue;
+    corridorWall[st.key] = walls.length; walls.push({ a: fr.at(0, v), b: fr.at(fr.W, v), kind: "corridor", pid: "corridor" });
+  }
+  for (const st of L.strips) {
+    const rs = L.rooms.filter(r => r.strip === st.key).sort((a, b) => a.u0 - b.u0);
+    const cuts = rs.slice(0, -1).map(r => r.u1).concat(L.spares.filter(sp => sp.strip === st.key).map(sp => sp.u0));
+    for (const u of cuts) if (u > st.u0 + 1 && u < st.u1 - 1) { const r = rs.find(x => Math.abs(x.u1 - u) < 1); walls.push({ a: fr.at(u, st.v0), b: fr.at(u, st.v1), kind: "cross", pid: r ? r.id : "spare" }); }
+  }
+  for (const r of L.rooms) {
+    spaces.push({ name: r.name, number: r.number || r.id, dept: r.dept || r.zone, at: fr.at((r.u0 + r.u1) / 2, (r.v0 + r.v1) / 2), pid: r.id });
+    const wi = corridorWall[r.strip]; if (wi !== undefined && r.u1 - r.u0 >= 1500) doors.push({ wall: wi, at: (r.u0 + r.u1) / 2, pid: r.id });
+  }
+  L.corridors.forEach((c, i) => spaces.push({ name: "Circulation", number: `C${i + 1}`, dept: "Circulation", at: fr.at((c.u0 + c.u1) / 2, (c.v0 + c.v1) / 2), pid: "corridor" }));
+  L.spares.forEach((sp, i) => spaces.push({ name: "Spare", number: `S${i + 1}`, dept: "Unassigned", at: fr.at((sp.u0 + sp.u1) / 2, (sp.v0 + sp.v1) / 2), pid: "spare" }));
+  return { slab: P, walls, spaces, doors };
+}
 /**
- * The ops that make a plan real, replacing whatever this space graph built before: per level, the
- * perimeter walls, the corridor walls, a cross wall between neighbouring rooms, a floor slab, a
- * Space per room (named, numbered, its department) and per corridor, and a door from each room onto
- * the corridor. Everything carries SpaceGraph = the graph's id and ProgramId = its node, so a
- * rebuild finds and replaces it, and a room's walls are known as the room's.
+ * The ops that make a plan real, replacing whatever this space graph built before: per level, its
+ * slab, walls, a Space per room (named, numbered, its department) and per corridor, and a door from
+ * each room onto the corridor. Everything carries SpaceGraph = the graph's id and ProgramId = its
+ * node, so a rebuild finds and replaces it, and a room's walls are known as the room's.
  */
 export function buildOpsFor(doc, sgId, plan, { levelFor, types = {} } = {}) {
   const ops = [], tag = pid => ({ SpaceGraph: sgId, ProgramId: pid });
-  const old = doc.elements().filter(f => doc.getParam && doc.getParam(f, "SpaceGraph") !== undefined && (doc.getParam(f, "SpaceGraph") === sgId || (doc.getParam(f, "SpaceGraph") || {}).v === sgId));
+  const old = doc.elements().filter(f => doc.getParam(f, "SpaceGraph") === sgId);
   if (old.length) ops.push({ op: "delete", ids: old.map(f => doc.idOf(f)) });
-  const fr = plan.frame, o = plan.options, ends = [];
   // ids are reused across rebuilds: what this graph built before is deleted first, in the same step
   const oldIds = new Set(old.map(f => doc.idOf(f)));
+  const o = plan.options, ends = [];
+  if (plan.mode === "blocks") {
+    // a massing study: one generic mass per block, coloured by the legend, on the base level
+    const lv = levelFor(""); if (!lv) return ops;
+    for (const b of plan.blocks) b.colour = b.colour || legendColour(o.legend, b);
+    for (const b of plan.blocks) ops.push({ op: "add", element: { type: "Generic", name: b.name, args: { boundary: b.poly.map(p => p.map(v => Math.round(v))), level: { ref: lv }, baseOffset: Math.round(b.z0), height: Math.round(b.z1 - b.z0), ifcClass: b.zone === "Parking" ? "IfcBuildingElementProxy" : "IfcBuildingElementProxy", material: "M-CONC", colour: b.colour || "" }, params: Object.assign({ Comments: `${b.storeys} storeys × ${(b.f2f / 1000).toFixed(1)} m · ${Math.round(b.area).toLocaleString()} m²` }, tag(b.id)) } });
+    return ops;
+  }
   let wn = 0; const wid = () => { let id; do { id = `${sgId}-W${++wn}`; } while (doc.element(id) && !oldIds.has(id)); return id; };
-  const line = (a, b) => ({ type: "line", start: a.map(v => Math.round(v * 10) / 10), end: b.map(v => Math.round(v * 10) / 10) });
+  const r1 = v => Math.round(v * 10) / 10, line = (a, b) => ({ type: "line", start: a.map(r1), end: b.map(r1) });
   for (const L of plan.levels) {
     const lv = levelFor(L.key); if (!lv) continue;
-    const wall = (a, b, type, pid) => { const id = wid(); ops.push({ op: "add", element: { id, type: "Wall", name: id, args: { centreline: line(a, b), mounting: "Centred", wallType: { ref: type }, baseLevel: { ref: lv }, baseOffset: 0, height: o.wallHeight, flipped: false }, params: Object.assign({ Phase: "New" }, tag(pid)) } }); ends.push({ id, end: "start" }, { id, end: "end" }); return id; };
-    const P = fr.poly;
-    for (let i = 0; i < 4; i++) wall(P[i], P[(i + 1) % 4], types.exterior || "T-EXTCAV300", "perimeter");
-    // corridor walls: every long edge between a strip and a corridor
-    const corridorWalls = [];
-    for (const st of L.strips) {
-      if (st.key === "C") { const c = [fr.at(st.u0, st.v0), fr.at(st.u1, st.v0), fr.at(st.u1, st.v1), fr.at(st.u0, st.v1)]; for (let i = 0; i < 4; i++) corridorWalls.push({ id: wall(c[i], c[(i + 1) % 4], types.interior || "T-PART100", "core"), strip: "C", side: i, a: c[i], b: c[(i + 1) % 4] }); continue; }
-      const v = st.v0 > 0 ? st.v0 : st.v1; if (v <= 0 || v >= fr.D) continue;
-      corridorWalls.push({ id: wall(fr.at(0, v), fr.at(fr.W, v), types.interior || "T-PART100", "corridor"), strip: st.key, v });
-    }
-    // cross walls: between neighbouring rooms of a strip, facade (or core edge) to corridor
-    for (const st of L.strips) {
-      const rs = L.rooms.filter(r => r.strip === st.key).sort((a, b) => a.u0 - b.u0);
-      const cuts = rs.slice(0, -1).map(r => r.u1).concat(L.spares.filter(sp => sp.strip === st.key).map(sp => sp.u0));
-      for (const u of cuts) if (u > st.u0 + 1 && u < st.u1 - 1) wall(fr.at(u, st.v0), fr.at(u, st.v1), types.interior || "T-PART100", rs.find(r => Math.abs(r.u1 - u) < 1) ? rs.find(r => Math.abs(r.u1 - u) < 1).id : "spare");
-    }
-    // the slab
-    ops.push({ op: "add", element: { type: "Floor", name: `${sgId} slab ${L.key || ""}`.trim(), args: { boundary: P.map(p => p.map(v => Math.round(v))), floorType: { ref: types.floor || "T-FLOOR250" }, level: { ref: lv }, heightOffset: 0 }, params: tag("slab") } });
-    // rooms, corridors and spare slots as Spaces, anchored at their middles
+    const M = L.model || stripModel(L, plan.frame, o);
+    const wallIds = M.walls.map(w => {
+      if (dist(w.a, w.b) < 50) return null;
+      const id = wid(), type = w.kind === "exterior" ? (types.exterior || "T-EXTCAV300") : (types.interior || "T-PART100");
+      ops.push({ op: "add", element: { id, type: "Wall", name: id, args: { centreline: line(w.a, w.b), mounting: "Centred", wallType: { ref: type }, baseLevel: { ref: lv }, baseOffset: 0, height: o.wallHeight, flipped: false }, params: Object.assign({ Phase: "New" }, tag(w.pid)) } });
+      ends.push({ id, end: "start" }, { id, end: "end" }); return id;
+    });
+    if (M.slab && M.slab.length >= 3) ops.push({ op: "add", element: { type: "Floor", name: `${sgId} slab ${L.name || L.key || ""}`.trim(), args: { boundary: M.slab.map(p => p.map(v => Math.round(v))), floorType: { ref: types.floor || "T-FLOOR250" }, level: { ref: lv }, heightOffset: 0 }, params: tag("slab") } });
     const upper = { mode: "offset", offset: o.wallHeight };
-    for (const r of L.rooms) {
-      const c = fr.at((r.u0 + r.u1) / 2, (r.v0 + r.v1) / 2);
-      ops.push({ op: "add", element: { type: "Space", name: r.name, args: { level: { ref: lv }, upperLimit: upper, anchor: c.map(Math.round), boundaryAt: "wallCentre" }, params: Object.assign({ Number: r.number || r.id, Department: r.dept || r.zone }, tag(r.id)) } });
-    }
-    L.corridors.forEach((c, i) => { const m = fr.at((c.u0 + c.u1) / 2, (c.v0 + c.v1) / 2); ops.push({ op: "add", element: { type: "Space", name: "Circulation", args: { level: { ref: lv }, upperLimit: upper, anchor: m.map(Math.round), boundaryAt: "wallCentre" }, params: Object.assign({ Number: `C${i + 1}`, Department: "Circulation" }, tag("corridor")) } }); });
-    L.spares.forEach((sp, i) => { const m = fr.at((sp.u0 + sp.u1) / 2, (sp.v0 + sp.v1) / 2); ops.push({ op: "add", element: { type: "Space", name: "Spare", args: { level: { ref: lv }, upperLimit: upper, anchor: m.map(Math.round), boundaryAt: "wallCentre" }, params: Object.assign({ Number: `S${i + 1}`, Department: "Unassigned" }, tag("spare")) } }); });
-    // doors: each room onto the corridor wall it faces, at its middle
-    if (o.doors !== false && types.door) for (const r of L.rooms) {
-      const cw = r.strip === "C" ? null : corridorWalls.find(w => w.strip === r.strip); if (!cw) continue;
-      const u = (r.u0 + r.u1) / 2; if (r.u1 - r.u0 < 1500) continue;
-      let opId = `${sgId}-O-${r.id}`.replace(/[^A-Za-z0-9-]/g, ""); while (doc.element(opId) && !oldIds.has(opId)) opId += "x";
-      ops.push({ op: "add", element: { id: opId, type: "Opening", args: { host: { ref: cw.id }, profile: { kind: "rect", at: Math.round(u), sill: 0, w: types.doorWidth || 915, h: types.doorHeight || 2100 }, farProfile: null, depth: "through" }, params: tag(r.id) } });
-      ops.push({ op: "add", element: { type: "Door", args: { fills: { ref: opId }, doorType: { ref: types.door } }, params: Object.assign({ Phase: "New" }, tag(r.id)) } });
+    for (const sp of M.spaces) ops.push({ op: "add", element: { type: "Space", name: sp.name, args: { level: { ref: lv }, upperLimit: upper, anchor: sp.at.map(Math.round), boundaryAt: "wallCentre" }, params: Object.assign({ Number: sp.number, Department: sp.dept }, tag(sp.pid)) } });
+    if (o.doors !== false && types.door) for (const d of M.doors) {
+      const host = wallIds[d.wall]; if (!host) continue;
+      let opId = `${sgId}-O-${d.pid}`.replace(/[^A-Za-z0-9-]/g, ""); while (doc.element(opId) && !oldIds.has(opId)) opId += "x";
+      ops.push({ op: "add", element: { id: opId, type: "Opening", args: { host: { ref: host }, profile: { kind: "rect", at: Math.round(d.at), sill: 0, w: types.doorWidth || 915, h: types.doorHeight || 2100 }, farProfile: null, depth: "through" }, params: tag(d.pid) } });
+      ops.push({ op: "add", element: { type: "Door", args: { fills: { ref: opId }, doorType: { ref: types.door } }, params: Object.assign({ Phase: "New" }, tag(d.pid)) } });
     }
   }
   if (ends.length) ops.push({ op: "autojoin", ends });
   return ops;
+}
+
+// ---------------------------------------------------------------- packing floor plates of any shape
+//! On a massing, each storey's plate is whatever the envelope cuts - curved, faceted, leaning. The
+//! rooms that need daylight ring its edge, so a room's outer side IS the facade however it runs; a
+//! corridor rings inside them; what needs no daylight fills the core. Rooms take their place on the
+//! ring from where their bubbles sit, pulled toward any attractor (an anchor like a station to the
+//! south, or a point you want a department at), and the order is improved by swaps while it gets closer.
+export const SG_PLATE_DEFAULTS = { efficiency: 0.75 };
+const circDist = (a, b, L) => { const d = Math.abs(a - b) % L; return Math.min(d, L - d); };
+/** The ring of a plate: facade loop, the loop a room depth in, the loop a corridor further in (the core). */
+export function plateRing(outer, rd, c, simplifyTol = 60) {
+  let P = simplifyLoop(outer, simplifyTol); if (polyArea(P) < 0) P = P.slice().reverse();
+  // an offset is usable when it kept its turn and its size went down, and it sits (almost all) inside
+  const ok = (Q, R) => Q.length >= 3 && polyArea(Q) > 1e6 && polyArea(Q) < polyArea(R) && Q.filter(q => pointInPoly(q, R)).length >= Q.length * 0.9;
+  const inner = offsetLoop(P, rd), mid = offsetLoop(P, rd / 2);
+  if (!ok(inner, P)) return { P, inner: null };
+  const core = offsetLoop(inner, c);
+  const cum = [0]; for (let i = 0; i < mid.length; i++) cum.push(cum[i] + dist(mid[i], mid[(i + 1) % mid.length]));
+  const L = cum[cum.length - 1];
+  return { P, inner, mid, cum, L, core: ok(core, inner) ? core : null };
+}
+/** The facade, corridor and mid points of the ring at parameter u (length along the mid loop). */
+export function ringAt(R, u) {
+  const n = R.P.length; u = ((u % R.L) + R.L) % R.L;
+  let k = 0; while (k < n - 1 && R.cum[k + 1] <= u) k++;
+  const t = (u - R.cum[k]) / ((R.cum[k + 1] - R.cum[k]) || 1), k1 = (k + 1) % n;
+  return { o: lerp(R.P[k], R.P[k1], t), i: lerp(R.inner[k], R.inner[k1], t), m: lerp(R.mid[k], R.mid[k1], t), edge: k, t };
+}
+/** The room between parameters u0 and u1 (u1 > u0, may run past the ring's start): facade side then corridor side. */
+export function ringRoom(R, u0, u1) {
+  const n = R.P.length, outer = [ringAt(R, u0).o], inner = [ringAt(R, u0).i];
+  for (let lap = 0; lap <= 1; lap++) for (let k = 0; k < n; k++) { const uk = R.cum[k] + lap * R.L; if (uk > u0 + 1e-6 && uk < u1 - 1e-6) { outer.push(R.P[k]); inner.push(R.inner[k]); } }
+  outer.push(ringAt(R, u1).o); inner.push(ringAt(R, u1).i);
+  return outer.concat(inner.reverse());
+}
+/** The parameter u1 at which the room from u0 has `area` (mm²), by bisection. */
+function ringSolve(R, u0, area, uMax) {
+  let lo = u0, hi = Math.min(uMax, u0 + R.L);
+  if (Math.abs(polyArea(ringRoom(R, u0, hi))) <= area) return hi;
+  for (let it = 0; it < 40; it++) { const mid = (lo + hi) / 2; if (Math.abs(polyArea(ringRoom(R, u0, mid))) < area) lo = mid; else hi = mid; }
+  return (lo + hi) / 2;
+}
+/** The ring parameter nearest a point. */
+function ringParamOf(R, p) {
+  let best = 0, bd = Infinity;
+  for (let k = 0; k < R.mid.length; k++) { const a = R.mid[k], b = R.mid[(k + 1) % R.mid.length], d = sub(b, a), L2 = dot(d, d) || 1, t = Math.max(0, Math.min(1, dot(sub(p, a), d) / L2)), q = add(a, mul(d, t)), dd = dist(p, q); if (dd < bd) { bd = dd; best = R.cum[k] + t * Math.sqrt(L2); } }
+  return best;
+}
+/** Attractors that pull a node: its own, its department's, its zone's, and the anchors that pull everything of a kind. */
+export function attractorsFor(nd, attractors) {
+  return (attractors || []).filter(a => (a.node && a.node === nd.id) || (a.dept && a.dept === nd.dept) || (a.zone && a.zone === nd.zone));
+}
+/** Put each space on a storey: locks first, the entry's on the ground, then along the graph from the entry, filling storeys by capacity. */
+export function assignLevels(nodes, edges, storeys, o, report) {
+  // what each storey holds: the facade ring for rooms that need daylight, the core for the rest -
+  // no more, together, than the efficiency target allows of the plate
+  const buckets = storeys.map(s => {
+    const pl = s.plates.slice().sort((a, b) => Math.abs(polyArea(b.outer)) - Math.abs(polyArea(a.outer)))[0], R = pl ? plateRing(pl.outer, o.roomDepth, o.corridor) : { inner: null };
+    const gia = (pl ? Math.abs(polyArea(pl.outer)) : 0) / 1e6, ring = R.inner ? gia - Math.abs(polyArea(R.inner)) / 1e6 : gia * 0.6, core = R.core ? Math.abs(polyArea(R.core)) / 1e6 : 0;
+    const k = Math.min(1, gia * (o.efficiency || 0.75) / Math.max(1e-6, ring + core));
+    return { ring: ring * k, core: core >= 4 ? core * k : 0 };
+  });
+  const cap = buckets.map(b => b.ring + b.core), used = storeys.map(() => 0), usedR = storeys.map(() => 0), usedC = storeys.map(() => 0), at = new Map();
+  const fits = (nd, i) => nd.facade || !buckets[i].core ? usedR[i] + nd.area <= buckets[i].ring * 1.02 : usedC[i] + nd.area <= buckets[i].core * 1.02;
+  const find = key => { if (!key) return -1; const k = String(key).toLowerCase(); let i = storeys.findIndex(s => s.key.toLowerCase() === k || String(s.name || "").toLowerCase() === k || String(s.name || "").toLowerCase() === "level " + k); if (i < 0 && /^-?\d+$/.test(k)) i = Number(k) < storeys.length ? Number(k) : -1; if (i < 0 && /^(g|gf|ground)$/.test(k)) i = 0; return i; };
+  const put = (nd, i) => { at.set(nd.id, i); used[i] += nd.area; if (nd.facade || !buckets[i].core) usedR[i] += nd.area; else usedC[i] += nd.area; };
+  for (const nd of nodes) if (nd.lockLevel && find(nd.level) >= 0) put(nd, find(nd.level));
+  for (const nd of nodes) if (!at.has(nd.id) && nd.zone === "Entry") put(nd, 0);
+  // along the graph from what is already placed, strongest links first
+  const adj = new Map(nodes.map(nd => [nd.id, []])); for (const e of edges) if (e.w > 0 && adj.has(e.a) && adj.has(e.b)) { adj.get(e.a).push([e.b, e.w]); adj.get(e.b).push([e.a, e.w]); }
+  const rest = nodes.filter(nd => !at.has(nd.id));
+  const pickFor = nd => {
+    const pref = find(nd.level); if (pref >= 0 && fits(nd, pref)) return pref;
+    // where its placed neighbours are, weighted, if there is room there
+    const votes = storeys.map(() => 0); for (const [b, w] of adj.get(nd.id)) if (at.has(b)) votes[at.get(b)] += w;
+    const byVote = votes.map((v, i) => [v, i]).filter(([v]) => v > 0).sort((a, b) => b[0] - a[0]);
+    for (const [, i] of byVote) if (fits(nd, i)) return i;
+    for (let i = 0; i < storeys.length; i++) if (fits(nd, i)) return i;
+    return used.map((u, i) => [u / (cap[i] || 1), i]).sort((a, b) => a[0] - b[0])[0][1];
+  };
+  // breadth first from the placed ones, bigger spaces first among equals
+  const queue = []; const seen = new Set(at.keys());
+  for (const id of at.keys()) for (const [b] of adj.get(id) || []) if (!seen.has(b)) { seen.add(b); queue.push(b); }
+  while (queue.length || rest.some(nd => !at.has(nd.id))) {
+    let id = queue.shift();
+    if (id === undefined) { const nd = rest.filter(x => !at.has(x.id)).sort((a, b) => b.area - a.area)[0]; id = nd.id; seen.add(id); }
+    const nd = nodes.find(x => x.id === id); if (!nd || at.has(id)) continue;
+    put(nd, pickFor(nd));
+    for (const [b] of adj.get(id).sort((x, y) => y[1] - x[1])) if (!seen.has(b)) { seen.add(b); queue.push(b); }
+  }
+  used.forEach((u, i) => { if (u > cap[i] * 1.02) report.push(`${storeys[i].name || storeys[i].key}: ${u.toFixed(0)} m² placed on ${cap[i].toFixed(0)} m² of usable plate (${Math.round((o.efficiency || 0.75) * 100)}% of ${(storeys[i].area / 1e6).toFixed(0)} m²)`); });
+  return { at, cap, used };
+}
+/** One storey's plate packed: ring rooms (ordered by bubbles and attractors, improved by swaps), core rooms, walls, spaces, doors. */
+export function packPlate(st, ns, sg, o, report, saved) {
+  const plate = st.plates.slice().sort((a, b) => Math.abs(polyArea(b.outer)) - Math.abs(polyArea(a.outer)))[0];
+  if (!plate) return null;
+  if (st.plates.length > 1) report.push(`${st.name}: the envelope cuts ${st.plates.length} separate plates here - the largest is planned`);
+  if (plate.holes.length) report.push(`${st.name}: the plate has ${plate.holes.length} opening(s) (atria) - rooms are not yet kept clear of them`);
+  const R = plateRing(plate.outer, o.roomDepth, o.corridor);
+  const walls = [], spaces = [], doors = [], rooms = [], spares = [];
+  if (!R.inner) { report.push(`${st.name}: the plate is too small for a ${(o.roomDepth / 1000).toFixed(1)} m ring of rooms - lower the room depth`); return { plate: R.P, rooms, spares, model: { slab: R.P, walls: R.P.map((a, i) => ({ a, b: R.P[(i + 1) % R.P.length], kind: "exterior", pid: "perimeter" })), spaces, doors } }; }
+  const coreArea = R.core ? Math.abs(polyArea(R.core)) : 0;
+  const inRing = ns.filter(nd => nd.facade || !R.core || coreArea < 4e6), inCore = ns.filter(nd => !inRing.includes(nd));
+  // where each ring room wants to be: an attractor's nearest ring point, else its bubble's bearing
+  const cp = R.P.reduce((a, p) => add(a, p), [0, 0]).map(v => v / R.P.length);
+  const bc = ns.length ? [ns.reduce((a, nd) => a + (nd.x || 0), 0) / ns.length, ns.reduce((a, nd) => a + (nd.y || 0), 0) / ns.length] : [0, 0];
+  const bearingParam = th => { let best = 0, bd = Infinity; for (let s = 0; s < 180; s++) { const u = R.L * s / 180, p = ringAt(R, u).m, a = Math.atan2(p[1] - cp[1], p[0] - cp[0]), d = Math.abs(Math.atan2(Math.sin(a - th), Math.cos(a - th))); if (d < bd) { bd = d; best = u; } } return best; };
+  const want = new Map(), weight = new Map();
+  const attr = (sg.site && sg.site.attractors) || [];
+  const pulled = inRing.filter(nd => attractorsFor(nd, attr).length);
+  for (const nd of pulled) { const as = attractorsFor(nd, attr), W = as.reduce((a, x) => a + (x.w || 1), 0), p = as.reduce((a, x) => add(a, mul(x.at, (x.w || 1) / W)), [0, 0]); want.set(nd.id, ringParamOf(R, p)); weight.set(nd.id, 4 * W); }
+  // the bubbles turned to agree with the pulled rooms (or with the entry), then read as bearings
+  const ang = nd => Math.atan2((nd.y || 0) - bc[1], (nd.x || 0) - bc[0]);
+  let rot = 0;
+  const entry = sg.site && sg.site.entries && sg.site.entries[0], ents = inRing.filter(nd => nd.zone === "Entry");
+  const refs = pulled.length ? pulled.map(nd => [ang(nd), Math.atan2(ringAt(R, want.get(nd.id)).m[1] - cp[1], ringAt(R, want.get(nd.id)).m[0] - cp[0])]) : entry && ents.length ? ents.map(nd => [ang(nd), Math.atan2(entry.at[1] - cp[1], entry.at[0] - cp[0])]) : [];
+  if (refs.length) { let bestE = Infinity; for (let s = 0; s < 72; s++) { const r = s * Math.PI / 36, E = refs.reduce((a, [b, t]) => a + Math.abs(Math.atan2(Math.sin(b + r - t), Math.cos(b + r - t))), 0); if (E < bestE) { bestE = E; rot = r; } } }
+  if (entry && ents.length && !ents.some(nd => want.has(nd.id))) for (const nd of ents) { want.set(nd.id, ringParamOf(R, entry.at)); weight.set(nd.id, 6); }
+  for (const nd of inRing) if (!want.has(nd.id)) { want.set(nd.id, bearingParam(ang(nd) + rot)); weight.set(nd.id, 1); }
+  // the order: a saved one (identity) or by wanted place; then the start that best meets the wants, and swaps that help
+  const ringArea = Math.abs(polyArea(R.P)) - Math.abs(polyArea(R.inner)), demand = inRing.reduce((a, nd) => a + nd.area * 1e6, 0);
+  const grow = demand > 0 ? Math.min(1.15, ringArea / demand) : 1;
+  if (grow < 0.98) report.push(`${st.name}: the facade ring holds ${(ringArea / 1e6).toFixed(0)} m², the rooms on it ask ${(demand / 1e6).toFixed(0)} m² - every room gives ${Math.round((1 - grow) * 100)}%`);
+  const widthOf = nd => nd.area * 1e6 * grow / o.roomDepth;
+  let order = saved && saved.R ? saved.R.map(id => inRing.find(nd => nd.id === id)).filter(Boolean) : [];
+  order = order.concat(inRing.filter(nd => !order.includes(nd)).sort((a, b) => want.get(a.id) - want.get(b.id)));
+  const cost = (ord, s0) => { let u = s0, c = 0; for (const nd of ord) { const w = widthOf(nd); c += weight.get(nd.id) * circDist(u + w / 2, want.get(nd.id), R.L); u += w; } return c; };
+  const bestStart = ord => { let b = 0, bc2 = Infinity; for (let s = 0; s < 144; s++) { const s0 = R.L * s / 144, c = cost(ord, s0); if (c < bc2) { bc2 = c; b = s0; } } return [b, bc2]; };
+  let [s0, cur] = bestStart(order);
+  if (!(saved && saved.R)) for (let pass = 0; pass < 4; pass++) { let better = false; for (let i = 0; i + 1 < order.length; i++) { const t = order.slice(); [t[i], t[i + 1]] = [t[i + 1], t[i]]; const [s1, c1] = bestStart(t); if (c1 < cur - 1) { order = t; s0 = s1; cur = c1; better = true; } } if (!better) break; }
+  // exact rooms: each from where the last ended, to its area, the last closing the ring or leaving a spare
+  let u = s0; const end = s0 + R.L;
+  order.forEach((nd, i) => {
+    const target = nd.area * 1e6 * grow, u1 = ringSolve(R, u, target, end);
+    const poly = ringRoom(R, u, u1), area = Math.abs(polyArea(poly)) / 1e6, w = dist(ringAt(R, u).m, ringAt(R, u1).m);
+    const warn = []; if (Math.abs(area - nd.area) / nd.area > 0.15) warn.push(`${area.toFixed(1)} m² for ${nd.area} m²`);
+    if (nd.ratio) { const r = (u1 - u) / o.roomDepth; if (r < nd.ratio[0] - 0.02 || r > nd.ratio[1] + 0.02) warn.push(`width:depth ${r.toFixed(2)} outside ${nd.ratio[0]}–${nd.ratio[1]}`); }
+    const off = circDist((u + u1) / 2, want.get(nd.id), R.L); if (weight.get(nd.id) > 1 && off > 3000) warn.push(`${(off / 1000).toFixed(1)} m from where it is pulled`);
+    rooms.push({ id: nd.id, name: nd.name, number: nd.number, dept: nd.dept, zone: nd.zone, strip: "R", slot: i, u0: u, u1, poly, area, target: nd.area, ratio: (u1 - u) / o.roomDepth, facade: true, warn, pull: weight.get(nd.id) > 1 ? off : null });
+    u = u1;
+  });
+  if (end - u > 1500) spares.push({ strip: "R", u0: u, u1: end, poly: ringRoom(R, u, end) });
+  // the core: sliced across its long axis, each room to its area
+  const coreRooms = [];
+  if (R.core && inCore.length) {
+    const pts = R.core, c0 = pts.reduce((a, p) => add(a, p), [0, 0]).map(v => v / pts.length);
+    let xx = 0, xy = 0, yy = 0; for (const p of pts) { const dx = p[0] - c0[0], dy = p[1] - c0[1]; xx += dx * dx; xy += dx * dy; yy += dy * dy; }
+    const a = 0.5 * Math.atan2(2 * xy, xx - yy), ax = [Math.cos(a), Math.sin(a)], xs = pts.map(p => dot(p, ax)), lo0 = Math.min(...xs), hi0 = Math.max(...xs);
+    const cdemand = inCore.reduce((s, nd) => s + nd.area * 1e6, 0), cgrow = Math.min(1.15, coreArea / cdemand);
+    if (cgrow < 0.98) report.push(`${st.name}: the core holds ${(coreArea / 1e6).toFixed(0)} m², the spaces in it ask ${(cdemand / 1e6).toFixed(0)} m²`);
+    const order2 = saved && saved.C ? saved.C.map(id => inCore.find(nd => nd.id === id)).filter(Boolean).concat(inCore.filter(nd => !(saved.C || []).includes(nd.id))) : inCore.slice().sort((p, q) => dot([(p.x || 0), (p.y || 0)], ax) - dot([(q.x || 0), (q.y || 0)], ax));
+    let x = lo0;
+    for (const nd of order2) {
+      const target = nd.area * 1e6 * cgrow; let lo = x, hi = hi0;
+      for (let it = 0; it < 40; it++) { const m = (lo + hi) / 2; if (Math.abs(polyArea(clipStrip(pts, ax, x, m))) < target) lo = m; else hi = m; }
+      const x1 = (lo + hi) / 2, poly = clipStrip(pts, ax, x, x1), area = Math.abs(polyArea(poly)) / 1e6;
+      coreRooms.push({ id: nd.id, name: nd.name, number: nd.number, dept: nd.dept, zone: nd.zone, strip: "C", x0: x, x1, poly, area, target: nd.area, facade: false, warn: Math.abs(area - nd.area) / nd.area > 0.15 ? [`${area.toFixed(1)} m² for ${nd.area} m²`] : [] });
+      x = x1;
+    }
+    if (hi0 - x > 1500) spares.push({ strip: "C", x0: x, x1: hi0, poly: clipStrip(pts, ax, x, hi0) });
+    // cut walls across the core, and the core's doors on its edge nearest each room
+    for (const r of coreRooms.slice(0, -1)) { const cut = chordAt(pts, ax, r.x1); if (cut) walls.push({ a: cut[0], b: cut[1], kind: "cross", pid: r.id }); }
+    for (const sp of spares.filter(s => s.strip === "C")) { const cut = chordAt(pts, ax, sp.x0); if (cut) walls.push({ a: cut[0], b: cut[1], kind: "cross", pid: "spare" }); }
+    coreRooms.forEach(r => { r.ax = ax; });
+  }
+  // walls: the facade, the corridor side of the rooms, the core, and a cross wall at every room boundary
+  R.P.forEach((a, i) => walls.push({ a, b: R.P[(i + 1) % R.P.length], kind: "exterior", pid: "perimeter" }));
+  const innerStart = walls.length; R.inner.forEach((a, i) => walls.push({ a, b: R.inner[(i + 1) % R.inner.length], kind: "corridor", pid: "corridor" }));
+  const coreStart = walls.length; if (R.core) R.core.forEach((a, i) => walls.push({ a, b: R.core[(i + 1) % R.core.length], kind: "core", pid: "core" }));
+  for (const r of rooms) { const p = ringAt(R, r.u1); if (Math.abs(r.u1 - (s0 + R.L)) > 1 || spares.some(s => s.strip === "R")) walls.push({ a: p.o, b: p.i, kind: "cross", pid: r.id }); }
+  if (rooms.length) { const p = ringAt(R, s0); walls.push({ a: p.o, b: p.i, kind: "cross", pid: rooms[0].id }); }
+  for (const r of rooms) {
+    const um = (r.u0 + r.u1) / 2, p = ringAt(R, um);
+    spaces.push({ name: r.name, number: r.number || r.id, dept: r.dept || r.zone, at: lerp(p.o, p.i, 0.5), pid: r.id });
+    if (dist(ringAt(R, r.u0).i, ringAt(R, r.u1).i) >= 1500) { const k = p.edge; doors.push({ wall: innerStart + k, at: dist(R.inner[k], p.i), pid: r.id }); }
+  }
+  for (const r of coreRooms) {
+    const c = r.poly.reduce((a, q) => add(a, q), [0, 0]).map(v => v / r.poly.length);
+    spaces.push({ name: r.name, number: r.number || r.id, dept: r.dept || r.zone, at: c, pid: r.id });
+    // the door: on the core edge nearest the room's middle, where it touches the room
+    let best = null, bd = Infinity; R.core.forEach((a, k) => { const b = R.core[(k + 1) % R.core.length], d = sub(b, a), L2 = dot(d, d) || 1, t = Math.max(0.05, Math.min(0.95, dot(sub(c, a), d) / L2)), q = add(a, mul(d, t)), dd = dist(c, q); if (dd < bd && pointInPoly(lerp(q, c, 0.02), r.poly.length > 2 ? r.poly : [q, q, q])) { bd = dd; best = { k, at: t * Math.sqrt(L2), len: Math.sqrt(L2) }; } });
+    if (best && best.len > 1500) doors.push({ wall: coreStart + best.k, at: Math.max(600, Math.min(best.len - 600, best.at)), pid: r.id });
+  }
+  const corr = ringAt(R, s0), cin = R.core ? lerp(corr.i, R.core[corr.edge], 0.5) : lerp(corr.i, cp, 0.1);
+  spaces.push({ name: "Circulation", number: "C1", dept: "Circulation", at: lerp(corr.i, cin, 0.5), pid: "corridor" });
+  spares.forEach((sp, i) => { const c = sp.poly.reduce((a, q) => add(a, q), [0, 0]).map(v => v / sp.poly.length); spaces.push({ name: "Spare", number: `S${i + 1}`, dept: "Unassigned", at: c, pid: "spare" }); });
+  const ringA = ringArea / 1e6, coreA = coreArea / 1e6, gia = Math.abs(polyArea(R.P)) / 1e6;
+  return { plate: R.P, inner: R.inner, core: R.core, rooms: rooms.concat(coreRooms), spares, s0,
+    metrics: { gia, ring: ringA, corridor: gia - ringA - coreA, core: coreA, packed: rooms.concat(coreRooms).reduce((a, r) => a + r.area, 0) },
+    model: { slab: R.P, walls, spaces, doors }, order: { R: order.map(nd => nd.id), C: coreRooms.map(r => r.id) } };
+}
+/** Where the line dot(p, ax) = x crosses a polygon: its two outermost crossings. */
+function chordAt(poly, ax, x) {
+  const hits = []; for (let i = 0; i < poly.length; i++) { const a = poly[i], b = poly[(i + 1) % poly.length], da = dot(a, ax) - x, db = dot(b, ax) - x; if ((da > 0) !== (db > 0)) hits.push(lerp(a, b, da / (da - db))); }
+  if (hits.length < 2) return null; const n = [-ax[1], ax[0]]; hits.sort((p, q) => dot(p, n) - dot(q, n)); return [hits[0], hits[hits.length - 1]];
+}
+/** A space graph planned on a massing's storeys: levels assigned, each plate packed, and the metrics. */
+export function planOnMassing(sg, nodes, edges, o, storeys, report) {
+  const packable = nodes.filter(nd => nd.zone !== "Circulation");
+  const assign = assignLevels(packable, edges, storeys, o, report);
+  const out = { massing: true, levels: [], report, options: o, order: {}, storeys };
+  storeys.forEach((st, i) => {
+    const ns = packable.filter(nd => assign.at.get(nd.id) === i);
+    const saved = sg.order && sg.order[st.key];
+    const pk = packPlate(st, ns, sg, o, report, saved);
+    if (!pk) return;
+    out.order[st.key] = pk.order || {};
+    out.levels.push({ key: st.key, name: st.name, z: st.z, kind: pk.core ? "facade ring + core" : "facade ring", rooms: pk.rooms, spares: pk.spares, corridors: [], plate: pk.plate, inner: pk.inner, core: pk.core, model: pk.model,
+      metrics: Object.assign({ capacity: assign.cap[i], assigned: assign.used[i] }, pk.metrics || {}) });
+  });
+  const T = k => out.levels.reduce((a, L) => a + ((L.metrics || {})[k] || 0), 0);
+  const program = packable.reduce((a, nd) => a + nd.area, 0) + nodes.filter(nd => nd.zone === "Circulation").reduce((a, nd) => a + nd.area, 0);
+  const site = sg.site && sg.site.boundary && sg.site.boundary.length >= 3 ? Math.abs(polyArea(sg.site.boundary)) / 1e6 : null;
+  const perStorey = out.levels.length ? T("capacity") / out.levels.length : 0;
+  out.metrics = { program, gia: T("gia"), capacity: T("capacity"), packed: T("packed"), storeys: out.levels.length,
+    storeysNeeded: perStorey ? Math.ceil(program / perStorey) : null, efficiency: T("gia") ? T("packed") / T("gia") : 0,
+    far: site ? T("gia") / site : null, coverage: site && out.levels[0] ? out.levels[0].metrics.gia / site : null, site };
+  return out;
+}
+
+// ---------------------------------------------------------------- structured briefs
+//! Briefs written for machines as well as people - like a masterplan brief with a node table in JSON,
+//! typed edges ("A -> B | ADJ | 5 | note") and external nodes (a station, a boulevard). Read without
+//! AI: the JSON nodes (and table rows the JSON left out), every edge with its relation and strength,
+//! groups named in an edge ("LIF precinct", "H01/H02/H03", "P-*", "all precincts"), and context nodes
+//! (outside the plot) placed on the side of the site the brief says.
+const SG_REL = { ADJ: 1, CONN: 0.7, SERV: 0.8, STACK: 0.9, VIEW: 0.35 };
+/** An edge's pull in the relaxation from its relation and strength (1 weak … 5 must); SEP pushes apart. */
+export const relWeight = (rel, s5) => rel === "SEP" ? -1 : Math.round((SG_REL[rel] || 0.7) * (s5 || 3) * 0.6 * 100) / 100;
+const USE_DEFAULTS = {
+  retail_anchor: { zone: "Room", storeys: 1, f2f: 7000, facade: true }, retail: { zone: "Room", storeys: 2, f2f: 6500, facade: true },
+  leisure: { zone: "Room", storeys: 1, f2f: 8000, facade: true }, fnb: { zone: "Room", storeys: 2, f2f: 6500, facade: true },
+  office: { zone: "Tower", storeys: 25, f2f: 4100, facade: true }, hotel: { zone: "Tower", storeys: 17, f2f: 3500, facade: true },
+  residential: { zone: "Tower", storeys: 12, f2f: 3200, facade: true }, parking: { zone: "Parking", storeys: 3, f2f: 6000, facade: false },
+  service: { zone: "BOH", storeys: 1, f2f: 6000, facade: false }, plant: { zone: "BOH", storeys: 1, f2f: 6000, facade: false },
+};
+const rangeMid = v => { if (typeof v === "number") return v; const m = String(v ?? "").replace(/,/g, "").match(/(\d+(?:\.\d+)?)(?:\s*[-–]\s*(\d+(?:\.\d+)?))?/); return m ? (m[2] ? (Number(m[1]) + Number(m[2])) / 2 : Number(m[1])) : NaN; };
+/** Is this text a structured brief (a JSON node table, or typed edges)? */
+export function looksStructured(text) { return /"nodes"\s*:\s*\[/.test(text) || /^\s*[\w\/ .&,*-]+->\s*[^|]+\|\s*[A-Z]{3,5}\s*\|\s*\d/m.test(text); }
+/** The first balanced JSON object in the text that has a "nodes" array. */
+function jsonWithNodes(text) {
+  const at = text.search(/\{\s*"(site|nodes)"/); if (at < 0) return null;
+  let depth = 0, inStr = false;
+  for (let i = at; i < text.length; i++) {
+    const c = text[i];
+    if (inStr) { if (c === "\\") i++; else if (c === '"') inStr = false; continue; }
+    if (c === '"') inStr = true; else if (c === "{") depth++; else if (c === "}" && --depth === 0) { try { const j = JSON.parse(text.slice(at, i + 1)); return j.nodes ? j : null; } catch (e) { return null; } }
+  }
+  return null;
+}
+export function programFromStructuredBrief(text) {
+  const report = [], nodes = [], edges = [], byId = new Map();
+  const add = nd => { nodes.push(nd); byId.set(nd.id, nd); return nd; };
+  const j = jsonWithNodes(text);
+  const USE_DEPT = { office: "Office", hotel: "Hotel", residential: "Residential", parking: "Parking", service: "Service", plant: "Service" };
+  const precinctOf = (p, use) => { const s = String(p || "").trim(); return !s ? (USE_DEPT[use] || "Mixed") : /^all$/i.test(s) ? "Mixed" : s.split("/")[0].trim(); };
+  for (const n of (j && j.nodes) || []) {
+    const use = String(n.use || "").toLowerCase(), d = USE_DEFAULTS[use] || USE_DEFAULTS.retail;
+    let area = rangeMid(n.gla ?? n.gfa ?? n.nla ?? n.area ?? n.area_m2 ?? n.footprint_m2);
+    let note = "";
+    if (!(area > 0) && n.bays_day1) { area = rangeMid(n.bays_day1) * 31; note = `${n.bays_day1} bays × 31 m²`; }
+    if (!(area > 0) && n.keys) { area = rangeMid(n.keys) * 70; note = `${n.keys} keys × 70 m²`; }
+    if (!(area > 0) && use === "service") { area = 1500; note = "assumed 1,500 m²"; }
+    if (!(area > 0)) { report.push(`${n.id} ${n.name}: no area - kept as context`); add({ id: n.id, name: n.name, zone: "Context", area: 0, facade: false, dept: precinctOf(n.precinct, use), use }); continue; }
+    let storeys = Number(n.levels) > 0 ? Number(n.levels) : Number(n.room_floors) > 0 ? Number(n.room_floors) + 1 : d.storeys;
+    if (n.height_m && !(Number(n.levels) > 0)) storeys = 1;
+    const f2f = n.f2f_m ? n.f2f_m * 1000 : n.height_m && storeys === 1 ? n.height_m * 1000 : d.f2f;
+    const plate = n.plate_gfa ? Number(n.plate_gfa) : n.footprint_m2 ? rangeMid(n.footprint_m2) : null;
+    if (n.plate_gfa && !(Number(n.levels) > 0)) storeys = Math.max(1, Math.round(area / n.plate_gfa));
+    add({ id: n.id, name: n.name, base: n.name, number: n.id, dept: precinctOf(n.precinct, use), use, zone: d.zone, area, facade: d.facade, storeys, f2f, plate, pilotis: !!n.on_pilotis, note, level: "" });
+  }
+  // a decision stated once for a kind ("parking decks elevated on pilotis") holds for every node of that kind
+  if (/pilotis/i.test(text) && nodes.some(n => n.pilotis)) for (const n of nodes) if (n.use === "parking") n.pilotis = true;
+  // rows of the written tables the JSON did not carry: "  S04  Waste / compactor room 230 m², …"
+  for (const line of text.split(/\r?\n/)) {
+    const m = line.match(/^\s{1,4}([A-Z]\d{2}|[A-Z]-[A-Z]{3})\s{2,}([A-Za-z][^|]*?)(?:\s{2,}|$)(.*)$/); if (!m || byId.has(m[1])) continue;
+    const name = m[2].replace(/\s+\d[\d,]*.*$/, "").replace(/\s*[\[(,].*$/, "").trim(); if (!name || name.length > 60) continue;
+    const am = (m[2] + " " + m[3]).match(/(\d[\d,]*(?:\s*[-–]\s*\d[\d,]*)?)\s*m²/);
+    const area = am ? rangeMid(am[1]) : 0;
+    const svc = /^S\d/.test(m[1]);
+    add({ id: m[1], name, base: name, number: m[1], dept: svc ? "Service" : "Mixed", use: svc ? "service" : "", zone: area > 0 ? (svc ? "BOH" : "Room") : /ring|corridor|core/i.test(name) ? "Circulation" : "Context", area, facade: !svc, storeys: 1, f2f: 6000, level: "" });
+  }
+  // where the context nodes are: the site section's compass words
+  // the site section: from its numbered heading to the next numbered heading
+  const sAt = text.search(/^\s*\d+\.\s+SITE\b/m), rest = sAt >= 0 ? text.slice(sAt + 10) : "", nx = rest.search(/^\s*\d+\.\s+[A-Z]/m);
+  const siteText = sAt >= 0 ? rest.slice(0, nx > 0 ? nx : undefined) : text;
+  // the line that names it (near its start) says which side: "PUA light-rail … SOUTH edge", "Grand Central Station (GCS) WEST"
+  const sideOf = key => { const words = key.toLowerCase().split(/[_\s]+/).filter(w => w.length > 2 && !/station|head|edge|retail|the|own/.test(w)); if (!words.length) return null; for (const line of siteText.split("\n")) { const l = line.trim().toLowerCase(), lead = l.slice(0, 40); if (!/^!!/.test(l) && words.some(w => lead.includes(w))) { const d = l.match(/\b(north|south|east|west)\b/); if (d) return d[1]; } } return null; };
+  const context = key => {
+    const id = key.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_|_$/g, ""); if (byId.has(id)) return byId.get(id);
+    const nm = key.replace(/_/g, " ").split(/\s+/).map(w => w.length <= 4 && w === w.toUpperCase() && /[A-Z]/.test(w) && !/^(THE|AND|HEAD|OWN|OF|TO)$/.test(w) ? w : w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
+    const circ = /spine|street|pulse|ring|loop/i.test(key);
+    return add({ id, name: nm, zone: circ ? "Circulation" : "Context", area: 0, facade: false, dept: "Context", side: circ ? null : sideOf(key), level: "" });
+  };
+  // a reference in an edge → the nodes it means
+  const retailish = () => nodes.filter(n => n.zone === "Room" && /retail|leisure|fnb/.test(n.use || "retail"));
+  const resolve = raw => {
+    let s = raw.replace(/\(.*?\)/g, "").trim(); if (!s) return [];
+    if (/^(all precincts|every retail unit|every shopfront|all retail)$/i.test(s)) return retailish();
+    const pm = s.match(/^(\w+)\s+precinct$/i); if (pm) { const g = nodes.filter(n => String(n.dept).toUpperCase() === pm[1].toUpperCase()); return g.length ? g : [context(s)]; }
+    const star = s.match(/^([A-Z]+-)\*$/); if (star) return nodes.filter(n => n.id.startsWith(star[1]));
+    // lists: "R04, R05, R06", "H01/H02/H03"; a leading id names the node ("R01 ULO", "S01 docks")
+    const parts = s.split(/\s*[,\/]\s*/).map(x => x.trim()).filter(Boolean);
+    const ids = parts.map(p => (p.match(/^([A-Z]\d{2}|[A-Z]-[A-Z]{3})\b/) || [])[1]).filter(Boolean);
+    if (ids.length && ids.every(id => byId.has(id))) return ids.map(id => byId.get(id));
+    const lead = s.match(/^([A-Z]\d{2}|[A-Z]-[A-Z]{3})\b/); if (lead && byId.has(lead[1])) return [byId.get(lead[1])];
+    const named = nodes.find(n => n.name && n.name.toLowerCase() === s.toLowerCase()); if (named) return [named];
+    return [context(parts[0])];
+  };
+  const seen = new Map();
+  for (const line of text.split(/\r?\n/)) {
+    const m = line.match(/^\s*(.+?)\s*->\s*(.+?)\s*\|\s*([A-Z]{3,5})\s*\|\s*(\d)\s*\|?\s*(.*)$/); if (!m) continue;
+    const rel = m[3], s5 = Number(m[4]), A = resolve(m[1]), B = resolve(m[2]);
+    for (const a of A) for (const b of B) {
+      if (a === b) continue; const k = [a.id, b.id].sort().join("|") + rel;
+      if (seen.has(k)) continue; seen.set(k, true);
+      const w = relWeight(rel, s5);
+      edges.push({ a: a.id, b: b.id, w, rel, s: s5, note: m[5].trim() });
+    }
+  }
+  // the site, as the brief states it
+  const site = {};
+  if (j && j.site) { if (j.site.area_total_m2) site.area = j.site.area_total_m2; if (j.site.area_developable_m2) site.developable = j.site.area_developable_m2; }
+  const kinds = {}; for (const e of edges) kinds[e.rel] = (kinds[e.rel] || 0) + 1;
+  report.unshift(`${nodes.filter(n => n.area > 0).length} programme nodes, ${nodes.filter(n => !(n.area > 0)).length} context nodes, ${edges.length} edges (${Object.entries(kinds).map(([k, v]) => `${v} ${k}`).join(", ")})`);
+  return { nodes, edges, report, site, structured: true };
+}
+
+// ---------------------------------------------------------------- block massing (a first attempt, no site needed)
+//! At masterplan scale the first attempt is not rooms but volumes: each programme element a block
+//! whose footprint is its area over its storeys, as tall as its storeys times its floor-to-floor,
+//! placed where the relaxed graph puts it (context nodes held on their side of the site), pushed
+//! apart by a street, and - when there is a site - held inside what the setbacks allow.
+const SG_ASPECT = { retail_anchor: 1.5, leisure: 1.3, retail: 2.2, fnb: 2.2, office: 1.2, hotel: 1.8, residential: 2.5, parking: 2.6, service: 1.8, plant: 1.6 };
+export function blockOf(nd) {
+  const d = USE_DEFAULTS[nd.use] || (nd.zone === "Tower" ? USE_DEFAULTS.office : nd.zone === "Parking" ? USE_DEFAULTS.parking : nd.zone === "BOH" ? USE_DEFAULTS.service : USE_DEFAULTS.retail);
+  let storeys = Math.max(1, Math.round(nd.storeys || d.storeys)), fp = nd.plate ? nd.plate : nd.area / storeys;
+  if (nd.plate) storeys = Math.max(1, Math.ceil(nd.area / nd.plate));
+  const asp = SG_ASPECT[nd.use] || (nd.zone === "Tower" ? 1.3 : 1.8), w = Math.sqrt(fp * asp) * 1000, dd = Math.sqrt(fp / asp) * 1000;
+  const f2f = nd.f2f || d.f2f, z0 = nd.pilotis ? 6000 : 0;
+  return { id: nd.id, name: nd.name, dept: nd.dept, use: nd.use, zone: nd.zone, area: nd.area, storeys, footprint: fp, w, d: dd, f2f, z0, z1: z0 + storeys * f2f };
+}
+export function planBlocks(sg, nodes, edges, o, report) {
+  const prog = nodes.filter(n => n.area > 0 && n.zone !== "Context" && n.zone !== "Circulation");
+  const blocks = prog.map(blockOf), byId = new Map(blocks.map(b => [b.id, b]));
+  const totalFp = blocks.reduce((a, b) => a + b.footprint, 0), totalA = prog.reduce((a, n) => a + n.area, 0) || 1;
+  // the bubble diagram, scaled from programme area to footprint, relaxed again at that scale
+  const k = Math.sqrt(totalFp / totalA);
+  const dirs = { north: [0, 1], south: [0, -1], east: [1, 0], west: [-1, 0] };
+  // the frame: the site's middle (metres), and how far each compass side is - or a circle round the programme
+  const buildable = sg.site && sg.site.boundary && sg.site.boundary.length >= 3 ? buildableArea(sg.site.boundary, sg.site.setbacks || []) : null;
+  const B0 = sg.site && sg.site.boundary && sg.site.boundary.length >= 3 ? sg.site.boundary : null;
+  const C = B0 ? B0.reduce((a, p) => add(a, p), [0, 0]).map(v => v / B0.length / 1000) : [0, 0];
+  const reach = d => B0 ? Math.max(...B0.map(p => (p[0] / 1000 - C[0]) * d[0] + (p[1] / 1000 - C[1]) * d[1])) + 30 : Math.sqrt(totalFp / Math.PI) * 1.3;
+  // an attractor (a point where you want a thing - a department store here, the station there) holds its block at that point
+  const attr = (sg.site && sg.site.attractors) || [];
+  const phys = nodes.filter(n => byId.has(n.id) || n.zone === "Context" || n.zone === "Circulation").map(n => {
+    const b = byId.get(n.id), side = dirs[n.side], as = b ? attractorsFor(n, attr) : [];
+    if (as.length) { const W = as.reduce((a, x) => a + (x.w || 1), 0), p = as.reduce((a, x) => add(a, mul(x.at, (x.w || 1) / W / 1000)), [0, 0]); return { id: n.id, area: b.footprint, x: p[0], y: p[1], pinned: true, held: true }; }
+    return { id: n.id, area: b ? b.footprint : 1, x: C[0] + (side ? side[0] * reach(side) : (n.x || 0) * k), y: C[1] + (side ? side[1] * reach(side) : (n.y || 0) * k), pinned: !!side };
+  });
+  relaxBubbles(phys, edges, 400);
+  // the programme's middle back on the site's middle (the relaxation drifts), context with it unless pinned
+  const pm = phys.filter(p => byId.has(p.id)), mx = pm.reduce((a, p) => a + p.x, 0) / Math.max(1, pm.length) - C[0], my = pm.reduce((a, p) => a + p.y, 0) / Math.max(1, pm.length) - C[1];
+  if (!phys.some(p => p.held)) for (const p of phys) if (!p.pinned) { p.x -= mx; p.y -= my; }
+  // blocks at those points, then pushed apart until a street runs between every two
+  const gap = o.street || 12000, pos = new Map(phys.map(p => [p.id, [p.x * 1000, p.y * 1000]]));
+  for (const b of blocks) { const p = pos.get(b.id); b.x = p[0]; b.y = p[1]; }
+  const attract = edges.filter(e => e.w >= 1.5 && byId.has(e.a) && byId.has(e.b));
+  // held inside the buildable line: a corner outside moves the block in by exactly how far it is out
+  const bc = buildable ? buildable.reduce((a, p) => add(a, p), [0, 0]).map(v => v / buildable.length) : null;
+  const outBy = (p) => { if (pointInPoly(p, buildable)) return null; let best = null, bd = Infinity; for (let i = 0; i < buildable.length; i++) { const a = buildable[i], b = buildable[(i + 1) % buildable.length], d = sub(b, a), L2 = dot(d, d) || 1, t = Math.max(0, Math.min(1, dot(sub(p, a), d) / L2)), q = add(a, mul(d, t)), dd = dist(p, q); if (dd < bd) { bd = dd; best = q; } } return sub(best, p); };
+  const contain = b => { let mv = false; for (let k = 0; k < 4; k++) { const cs = [[b.x - b.w / 2, b.y - b.d / 2], [b.x + b.w / 2, b.y - b.d / 2], [b.x + b.w / 2, b.y + b.d / 2], [b.x - b.w / 2, b.y + b.d / 2]]; let worst = null, wl = 0; for (const c of cs) { const v = outBy(c); if (v && Math.hypot(...v) > wl) { wl = Math.hypot(...v); worst = v; } } if (!worst) break; const n = normalise(worst), push = add(worst, mul(n, 500)); b.x += push[0]; b.y += push[1]; mv = true; } return mv; };
+  // greedy placement: attracted blocks first, then the biggest; each at the free spot nearest where the
+  // graph wants it - inside the buildable line, a street clear of every block already placed, turned
+  // 90° when that fits better. A block with no legal spot left keeps its wanted place and is reported.
+  const target = new Map(blocks.map(b => [b.id, [b.x, b.y]])), held = new Set(phys.filter(p => p.held).map(p => p.id));
+  const placed = [], cornersOf = (x, y, w, d) => [[x - w / 2, y - d / 2], [x + w / 2, y - d / 2], [x + w / 2, y + d / 2], [x - w / 2, y + d / 2]];
+  const inside = (x, y, w, d) => !buildable || cornersOf(x, y, w, d).every(c => pointInPoly(c, buildable)) && [[x, y - d / 2], [x + w / 2, y], [x, y + d / 2], [x - w / 2, y]].every(c => pointInPoly(c, buildable));
+  // decks on pilotis are their own layer: they keep clear of each other, not of what stands under them
+  let layer = false;
+  const clear = (x, y, w, d) => placed.every(q => (q.z0 > 0) !== layer || Math.abs(x - q.x) >= (w + q.w) / 2 + gap - 1 || Math.abs(y - q.y) >= (d + q.d) / 2 + gap - 1);
+  const ext = buildable ? (() => { const xs = buildable.map(p => p[0]), ys = buildable.map(p => p[1]); return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]; })() : null;
+  // grow along the graph: next is the block most strongly tied to what is placed (held ones and the
+  // biggest start it), aimed between its placed neighbours and where the bubbles put it
+  const tie = new Map(blocks.map(b => [b.id, []])); for (const e of edges) if (e.w > 0 && tie.has(e.a) && tie.has(e.b)) { tie.get(e.a).push([e.b, e.w]); tie.get(e.b).push([e.a, e.w]); }
+  const seq = [], left = new Set(blocks.map(b => b.id)), isPlaced = new Set();
+  for (const lay of [false, true]) {
+    for (;;) {
+      const cand = blocks.filter(b => left.has(b.id) && (b.z0 > 0) === lay); if (!cand.length) break;
+      const score = b => held.has(b.id) ? 1e9 : tie.get(b.id).reduce((a, [o, w]) => a + (isPlaced.has(o) ? w : 0), 0) * 1e6 + b.footprint;
+      const next = cand.sort((a, b) => score(b) - score(a))[0]; seq.push(next); left.delete(next.id); isPlaced.add(next.id);
+    }
+  }
+  const byIdPlaced = new Map();
+  for (const b of seq) {
+    layer = b.z0 > 0;
+    const nb = tie.get(b.id).filter(([o]) => byIdPlaced.has(o)), W = nb.reduce((a, [, w]) => a + w, 0);
+    if (W > 0 && !held.has(b.id)) { const m = nb.reduce((a, [o, w]) => add(a, mul([byIdPlaced.get(o).x, byIdPlaced.get(o).y], w / W)), [0, 0]), t = target.get(b.id); target.set(b.id, lerp(t, m, 0.75)); }
+    const [tx, ty] = target.get(b.id), step = Math.max(3000, Math.min(gap, 8000));
+    const maxR = ext ? Math.max(ext[2] - ext[0], ext[3] - ext[1]) : Math.sqrt(totalFp) * 1000 * 3;
+    let best = null;
+    for (let r = 0; r <= maxR && !best; r += step) {
+      const cands = [];
+      if (r === 0) cands.push([tx, ty]); else for (let t = -r; t < r; t += step) cands.push([tx + t, ty - r], [tx + r, ty + t], [tx - t, ty + r], [tx - r, ty - t]);
+      cands.sort((p, q) => dist(p, [tx, ty]) - dist(q, [tx, ty]));
+      // a keep-apart partner already placed: at least five streets away (the brief's dumbbell anchors want more; say so)
+      const apart = edges.filter(e => e.w < 0 && (e.a === b.id || e.b === b.id)).map(e => byIdPlaced.get(e.a === b.id ? e.b : e.a)).filter(Boolean);
+      const far = (x, y, w, d) => apart.every(q => Math.max(Math.abs(x - q.x) - (w + q.w) / 2, Math.abs(y - q.y) - (d + q.d) / 2) >= gap * 5);
+      for (const [x, y] of cands) { for (const [w, d] of [[b.w, b.d], [b.d, b.w]]) if (inside(x, y, w, d) && clear(x, y, w, d) && far(x, y, w, d)) { best = { x, y, w, d }; break; } if (best) break; }
+    }
+    if (best) Object.assign(b, best); else { b.x = tx; b.y = ty; }
+    placed.push(b); byIdPlaced.set(b.id, b);
+  }
+  // a deck over low-rise stands on its roof: it starts where the tallest thing it crosses ends
+  for (const b of blocks) if (b.z0 > 0) {
+    const under = blocks.filter(q => q.z0 === 0 && q.storeys <= 3 && Math.abs(b.x - q.x) < (b.w + q.w) / 2 && Math.abs(b.y - q.y) < (b.d + q.d) / 2);
+    const z0 = Math.max(b.z0, ...under.map(q => q.z1)); b.z1 = z0 + (b.z1 - b.z0); b.z0 = z0; b.over = under.map(q => q.name);
+  }
+  // what could not be resolved is said, not hidden
+  let overlaps = 0; for (let i = 0; i < blocks.length; i++) for (let j = i + 1; j < blocks.length; j++) { const a = blocks[i], b = blocks[j]; if ((a.z0 > 0) === (b.z0 > 0) && Math.abs(a.x - b.x) < (a.w + b.w) / 2 - 1 && Math.abs(a.y - b.y) < (a.d + b.d) / 2 - 1) overlaps++; }
+  const outside = buildable ? blocks.filter(b => [[b.x - b.w / 2, b.y - b.d / 2], [b.x + b.w / 2, b.y - b.d / 2], [b.x + b.w / 2, b.y + b.d / 2], [b.x - b.w / 2, b.y + b.d / 2]].some(p => outBy(p) && Math.hypot(...outBy(p)) > 1000)) : [];
+  if (overlaps) report.unshift(`${overlaps} pair${overlaps === 1 ? "" : "s"} of blocks still overlap: the programme does not fit this plot at these storey counts with ${Math.round(gap / 1000)} m streets - add storeys, narrow the streets, or deck over`);
+  if (outside.length) report.unshift(`${outside.map(b => b.name).join(", ")} ${outside.length === 1 ? "sits" : "sit"} over the buildable line`);
+  if (!buildable && blocks.length) { const m = blocks.reduce((a, b) => add(a, [b.x, b.y]), [0, 0]).map(v => v / blocks.length); for (const b of blocks) { b.x -= m[0]; b.y -= m[1]; } for (const p of phys) if (!p.pinned) { p.x -= m[0] / 1000; p.y -= m[1] / 1000; } }
+  for (const b of blocks) b.poly = [[b.x - b.w / 2, b.y - b.d / 2], [b.x + b.w / 2, b.y - b.d / 2], [b.x + b.w / 2, b.y + b.d / 2], [b.x - b.w / 2, b.y + b.d / 2]];
+  // how the graph was met: adjacencies within a street and a half, keep-aparts at least three streets
+  const gapOf = (a, b) => Math.max(Math.abs(a.x - b.x) - (a.w + b.w) / 2, Math.abs(a.y - b.y) - (a.d + b.d) / 2);
+  const adj = edges.filter(e => e.w >= 2 && byId.has(e.a) && byId.has(e.b)), sep = edges.filter(e => e.w < 0 && byId.has(e.a) && byId.has(e.b));
+  const adjMet = adj.filter(e => gapOf(byId.get(e.a), byId.get(e.b)) <= gap * 1.5), sepMet = sep.filter(e => gapOf(byId.get(e.a), byId.get(e.b)) >= gap * 3);
+  for (const e of adj.filter(x => !adjMet.includes(x))) report.push(`${byId.get(e.a).name} — ${byId.get(e.b).name}: ${e.rel || "adjacent"} ${e.s || ""} asked, ${(gapOf(byId.get(e.a), byId.get(e.b)) / 1000).toFixed(0)} m apart`);
+  for (const e of sep.filter(x => !sepMet.includes(x))) report.push(`${byId.get(e.a).name} — ${byId.get(e.b).name}: kept apart asked, only ${(gapOf(byId.get(e.a), byId.get(e.b)) / 1000).toFixed(0)} m`);
+  const site = buildable ? Math.abs(polyArea(sg.site.boundary)) / 1e6 : (sg.site && sg.site.area) || null, dev = buildable ? Math.abs(polyArea(buildable)) / 1e6 : (sg.site && sg.site.developable) || null;
+  const ground = blocks.filter(b => b.z0 < 1).reduce((a, b) => a + b.footprint, 0), gfa = blocks.reduce((a, b) => a + b.area, 0);
+  const byDept = {}; for (const b of blocks) byDept[b.dept || "—"] = (byDept[b.dept || "—"] || 0) + b.area;
+  if (dev && ground > dev) report.push(`the ground footprint is ${Math.round(ground).toLocaleString()} m², more than the ${Math.round(dev).toLocaleString()} m² developable - stack higher or deck over`);
+  const xs = blocks.flatMap(b => [b.x - b.w / 2, b.x + b.w / 2]), ys = blocks.flatMap(b => [b.y - b.d / 2, b.y + b.d / 2]);
+  return { mode: "blocks", blocks, levels: [], report, options: o, order: {}, buildable, site: buildable ? sg.site.boundary : null,
+    context: phys.filter(p => !byId.has(p.id)).map(p => ({ id: p.id, name: (nodes.find(n => n.id === p.id) || {}).name, at: [p.x * 1000, p.y * 1000] })),
+    metrics: { overlaps, outside: outside.length, gfa, ground, footprint: blocks.reduce((a, b) => a + b.footprint, 0), blocks: blocks.length, maxHeight: Math.max(0, ...blocks.map(b => b.z1)) / 1000,
+      site, developable: dev, far: site ? gfa / site : null, coverage: site ? ground / site : null, byDept,
+      adjacency: adj.length ? adjMet.length / adj.length : null, separation: sep.length ? sepMet.length / sep.length : null,
+      extent: xs.length ? [(Math.max(...xs) - Math.min(...xs)) / 1000, (Math.max(...ys) - Math.min(...ys)) / 1000] : null } };
+}
+
+// ---------------------------------------------------------------- the legend
+//! One colour key for the whole analysis - bubbles, plan, blocks in 3D: an entry per department (or use,
+//! or zone), each with its colour and label. Made from the programme when there is none; read from an
+//! image of a legend by Claude when you drop one; edited by hand.
+export const SG_PALETTE = ["#e8a23b", "#d9534f", "#5b8fd6", "#62b27a", "#a77fd3", "#e07fb0", "#4fb3bf", "#c2a15e", "#8c9aa8", "#f0cf5a", "#7d6bb5", "#e3836b"];
+const KNOWN_COLOURS = { ent: "#e8633b", lif: "#d9538f", day: "#62b27a", mixed: "#e8a23b", office: "#5b8fd6", hotel: "#a77fd3", residential: "#c2a15e", parking: "#9aa3ad", service: "#6b7280", context: "#cfd6de", circulation: "#e3e6ea", boh: "#8c9aa8" };
+export function defaultLegend(nodes) {
+  const keys = [...new Set(nodes.filter(n => n.zone !== "Context").map(n => n.dept || n.zone || "—"))];
+  return keys.map((k, i) => ({ key: k, label: k, colour: KNOWN_COLOURS[String(k).toLowerCase()] || SG_PALETTE[i % SG_PALETTE.length] }));
+}
+/** A node's colour: its department's entry, then its use's, its zone's, its name's; else a stable palette colour. */
+export function legendColour(legend, nd) {
+  const L = legend || [], k = s => String(s || "").toLowerCase();
+  for (const f of [nd.dept, nd.use, nd.zone, nd.name, nd.base]) { const e = L.find(x => k(x.key) === k(f) && f); if (e) return e.colour; }
+  if (nd.zone === "Context") return KNOWN_COLOURS.context; if (nd.zone === "Circulation") return KNOWN_COLOURS.circulation;
+  const key = k(nd.dept || nd.zone); if (KNOWN_COLOURS[key]) return KNOWN_COLOURS[key];
+  let h = 0; for (const c of key) h = (h * 31 + c.charCodeAt(0)) >>> 0; return SG_PALETTE[h % SG_PALETTE.length];
 }

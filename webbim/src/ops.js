@@ -13,6 +13,7 @@ import { resolveReference, orthoLine, importPlacer, importLayerMap } from "./bim
 import { outline } from "./bimsketch.js";
 import { lockedKey, pushStyleSettings } from "./styles.js";
 import { planSpaceGraph, buildOpsFor, swapInOrder } from "./spacegraph.js";
+import { storeysFor, placeMesh } from "./massing.js";
 
 export class Editor {
   constructor(doc) {
@@ -294,9 +295,10 @@ const HANDLERS = {
    *  identity, make any levels it names, and replace the walls, slab, rooms and doors it built before. */
   sgbuild(doc, o, ed) {
     const f = doc.element(o.id); if (!f || doc.typeOf(f) !== "SpaceGraph") throw new Error(`${o.id} is not a space graph`);
-    const sg = { nodes: doc.argValue(f, "nodes") || [], edges: doc.argValue(f, "edges") || [], site: doc.argValue(f, "site") || {}, options: doc.argValue(f, "options") || {}, order: o.replan ? null : doc.argValue(f, "order") };
+    doc.regenerate();
+    const sg = { nodes: doc.argValue(f, "nodes") || [], edges: doc.argValue(f, "edges") || [], site: effectiveSite(doc, f), options: doc.argValue(f, "options") || {}, order: o.replan ? null : doc.argValue(f, "order") };
     if (!sg.nodes.length) return { said: "the space graph has no spaces yet" };
-    const plan = planSpaceGraph(sg, { relax: !!o.relax });
+    const plan = planSpaceGraph(sg, { relax: !!o.relax, storeys: massingStoreys(doc, f) });
     doc.setArg(f, "order", plan.order);
     if (o.relax) { const pos = new Map(plan.bubbles.map(b => [b.id, b])); doc.setArg(f, "nodes", sg.nodes.map(nd => Object.assign({}, nd, { x: pos.get(nd.id).x, y: pos.get(nd.id).y }))); }
     // levels: the base level for the first (or unnamed) one; others found by name, or made above it
@@ -307,6 +309,7 @@ const HANDLERS = {
     const keys = plan.levels.map(L => L.key);
     const levelFor = key => {
       if (made.has(key)) return made.get(key);
+      if (key && doc.element(key) && doc.typeOf(doc.element(key)) === "Level") return key;
       const i = keys.indexOf(key); let id = null;
       if (!key || i === 0) id = doc.idOf(base);
       else {
@@ -332,6 +335,28 @@ const HANDLERS = {
     for (const op of ops) HANDLERS[op.op](doc, op, ed);
     const rooms = plan.levels.reduce((a, L) => a + L.rooms.length, 0);
     return { said: `${o.id}: ${rooms} rooms on ${plan.levels.length} level${plan.levels.length === 1 ? "" : "s"}, ${plan.levels.map(L => L.kind).join(" / ")}${plan.report.length ? " · " + plan.report[0] : ""}`, plan };
+  },
+  /** Levels through a massing at its floor-to-floor height: every storey with a plate gets a level
+   *  (an existing level within 10 mm is used as it is) and a floor plan. Levels are the user's after
+   *  that - moved, renamed, removed as any level is. */
+  masslevels(doc, o, ed) {
+    const f = doc.element(o.id); if (!f || doc.typeOf(f) !== "Massing") throw new Error(`${o.id} is not a massing`);
+    if (o.height) doc.setArg(f, "floorToFloor", o.height);
+    doc.regenerate();
+    const p = doc.plan(f); if (!p) throw new Error(doc.error(f) || "the massing did not build");
+    const levels = () => doc.elements().filter(g => doc.typeOf(g) === "Level");
+    let made = 0; const ids = [];
+    for (const L of p.levels) {
+      const hit = levels().find(g => Math.abs(F.real(g, "elevation") - L.z) < 10);
+      if (hit) { ids.push(doc.idOf(hit)); continue; }
+      const taken = new Set(levels().map(g => F.text(g, "name")));
+      let name = `Level ${L.index}`; if (taken.has(name)) name = `${o.id} level ${L.index}`;
+      const id = doc.freshId("Level");
+      HANDLERS.add(doc, { element: { id, type: "Level", name, args: { name, elevation: Math.round(L.z) }, params: { Comments: `from ${o.id}` } } });
+      HANDLERS.add(doc, { element: { type: "PlanView", name: `${name} Plan`, args: { level: { ref: id }, scale: 200, viewRange: { top: 2300, cut: 1200, bottom: 0, depth: 0 }, detailLevel: "Coarse", style: doc.lib.viewStyles["VS-CONSTRUCTION"] ? { ref: "VS-CONSTRUCTION" } : null } } });
+      ids.push(id); made++;
+    }
+    return { said: `${o.id}: ${p.levels.length} storeys of ${F.real(f, "floorToFloor")} mm fit; ${made} level${made === 1 ? "" : "s"} made, ${p.levels.length - made} already there`, levels: ids };
   },
   /** Two rooms trade places: each takes the other's slot, the widths follow the areas, the strip shifts. */
   sgswap(doc, o, ed) {
@@ -494,6 +519,23 @@ const HANDLERS = {
   },
 };
 export { HANDLERS };
+/** The site a space graph plans on: its own entries and attractors, and the plot lines and setbacks of
+ *  the project's Site Boundary (the one it names, or the project's first). */
+export function effectiveSite(doc, f) {
+  const site = clone(doc.argValue(f, "site") || {});
+  const sb = doc.element(F.refId(f, "siteBoundary") || "") || doc.elements().find(g => doc.typeOf(g) === "SiteBoundary");
+  const p = sb && !doc.error(sb) && doc.plan(sb);
+  if (p && p.pts && p.pts.length >= 3) { site.boundary = p.pts; site.setbacks = p.setbacks; site.fromElement = doc.idOf(sb); }
+  return site;
+}
+/** The storeys of the massing a space graph names (or the project's first), between the levels that exist. */
+export function massingStoreys(doc, f) {
+  const m = F.refId(f, "massing") ? doc.element(F.refId(f, "massing")) : null;
+  if (!m || doc.error(m)) return null;
+  const p = doc.plan(m); if (!p || !p.mesh) return null;
+  const levels = doc.elements().filter(g => doc.typeOf(g) === "Level").map(g => ({ id: doc.idOf(g), name: F.text(g, "name"), z: F.real(g, "elevation") }));
+  return storeysFor(p.mesh, levels, F.real(m, "floorToFloor"), (F.real(m, "minPlate") || 0) * 1e6);
+}
 
 // ---------------------------------------------------------------- automatic joins
 function lineWall(doc, g) {

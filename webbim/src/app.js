@@ -12,6 +12,7 @@ import { formatValue } from "./expr.js";
 import { fromPolygon } from "./bimsketch.js";
 import { Editor } from "./ops.js";
 import { buildSample } from "./sample.js";
+import { buildRmuhSample } from "./sample_rmuh.js";
 import { openDocument, newDocument, sheetSize } from "./bim.js";
 import { F, CATALOGUE } from "./ocaf.js";
 import { deriveView, sheetScene, shownInView } from "./scene.js";
@@ -33,7 +34,7 @@ const PLACE_TOOLS = new Set(["section", "floor", "beam", "wall", "opening", "doo
 
 const app = {
   doc: null, editor: null, selection: new Set(), activeView: null, tabs: [], tool: "select",
-  toolOpts: { wallType: "T-EXTCAV300", mounting: "Core exterior", height: 3000, doorType: "T-DOOR915", windowType: "T-WIN1215", columnType: "T-COL400", floorType: "T-FLOOR250", beamType: "T-UB406", floorOffset: 0, beamTop: 3000, width: 1000, height_: 2100, openSill: 0, sill: 900, boundaryAt: "finishFace", spaceName: "Room", mirrorCopy: true, moveCopy: false, rotateCopy: false },
+  toolOpts: { wallType: "T-EXTCAV300", mounting: "Core exterior", height: 3000, doorType: "T-DOOR915", windowType: "T-WIN1215", columnType: "T-COL400", floorType: "T-SLAB200", beamType: "T-UB406", floorOffset: 0, beamTop: 3000, width: 1000, height_: 2100, openSill: 0, sill: 900, boundaryAt: "finishFace", spaceName: "Room", mirrorCopy: true, moveCopy: false, rotateCopy: false },
   snaps: Object.fromEntries(SNAP_KINDS.map(k => [k, k !== "angle"])), thinLines: false, pickMode: null,
   views: new Map(), visualStyle3d: {}, expanded: new Set(["Views (all)", "Floor Plans", "3D Views", "Elevations (Building Elevation)", "Schedules/Quantities (all)", "Sheets (all)"]),
   ribbonTab: "Architecture", ribbonAuto: null, ribbonCollapsed: false, browserTab: "browser", treeFilter: "", lastCommand: null, workLevel: null,
@@ -163,6 +164,8 @@ function setDocument(doc, note) {
   app.doc = doc; app.editor = new Editor(doc); app.selection.clear(); app.views.clear();
   const saved = store("tabs");
   app.tabs = (saved && saved.tabs || []).filter(t => t.startsWith("__") || doc.element(t));
+  // a project with a brief opens on its analysis; otherwise on its ground plan and 3D
+  if (!app.tabs.length && doc.elements().some(g => doc.typeOf(g) === "SpaceGraph")) app.tabs = ["__spacegraph", firstOf("PlanView"), default3D()].filter(Boolean);
   if (!app.tabs.length) app.tabs = ["V-P00", default3D()].filter(t => t && doc.element(t));
   if (!app.tabs.length) { const p = firstOf("PlanView"); if (p) app.tabs = [p]; }
   app.activeView = saved && app.tabs.includes(saved.active) ? saved.active : app.tabs[0] || null;
@@ -171,7 +174,7 @@ function setDocument(doc, note) {
 }
 function default3D() { const f = app.doc.elements().find(g => app.doc.typeOf(g) === "View3D" && g.get("Name") === "{3D}") || app.doc.elements().find(g => app.doc.typeOf(g) === "View3D"); return f ? app.doc.idOf(f) : null; }
 let draftTimer = null;
-function saveDraftSoon() { clearTimeout(draftTimer); draftTimer = setTimeout(() => { try { store("draft-v4", app.doc.toJSON()); } catch (e) { /* too big or blocked: the draft is a convenience only */ } }, 800); }
+function saveDraftSoon() { clearTimeout(draftTimer); draftTimer = setTimeout(() => { try { store("draft-v5", app.doc.toJSON()); } catch (e) { /* too big or blocked: the draft is a convenience only */ } }, 800); }
 
 // ---------------------------------------------------------------- the command registry
 //! Ribbon buttons, the Quick Access Toolbar, keyboard shortcuts and the
@@ -196,7 +199,13 @@ const COMMANDS = {
   keynote: { label: "Keynote", icon: "keynote", key: "KN", hint: "A material keynote: the material's Mark in a box, on a leader", tool: "mtag", run: () => { app.toolOpts.mtagShow = "Mark"; app.toolOpts.mtagFrame = "Keynote box"; app.setTool("mtag"); } },
   repeat: { label: "Repeating Detail", icon: "repeat", key: "RD", hint: "Sketch a path (lines, arcs, splines): a component repeats along it - batt or rigid insulation, brick coursing, blocking, or any loaded symbol", run: () => startRepeatSketch("Batt insulation") },
   insulation: { label: "Insulation", icon: "insul", key: "IN", hint: "Batt insulation along a sketched path; its width is the insulation's thickness", run: () => startRepeatSketch("Batt insulation") },
-  spacegraph: { label: "Space Graph", icon: "bubbles", key: "SG", hint: "The program as a graph: import an Excel program or write a brief, relax the bubble diagram, set the site, setbacks and entry - it packs and builds the rooms", run: () => app.openView("__spacegraph") },
+  siteboundary: { label: "Site Boundary", icon: "skpoly", key: "SB", hint: "The plot lines: sketch them (or edit the project's), or import them from a DXF in Brief Analysis. Each edge takes its own setback and zoning plane.", run: () => {
+    const doc = app.doc, sb = doc.elements().find(g => doc.typeOf(g) === "SiteBoundary"), v = app.views.get(app.activeView);
+    if (!v || v.kind !== "PlanView") return app.say("open a plan to sketch the site boundary in", "error");
+    if (sb) return app.stepInto(doc.idOf(sb), v);
+    app.startSketch(v, { kind: "site", id: null }, null);
+  } },
+  spacegraph: { label: "Brief Analysis", icon: "bubbles", key: "SG", hint: "The program as a graph: import an Excel program or write a brief, relax the bubble diagram, set the site, setbacks and entry - it packs and builds the rooms", run: () => app.openView("__spacegraph") },
   sgimport: { label: "Import Program", icon: "importI", run: () => importProgram(app) },
   sgbrief: { label: "Brief", icon: "text", run: () => briefDialog(app) },
   materials: { label: "Materials", icon: "material", key: "MA", run: () => materialsEditor(app) },
@@ -272,6 +281,7 @@ const RIBBON = [
     { title: "Opening", items: [big("opening")] },
     { title: "Room & Area", items: [big("space"), small("sep"), small("schedule")] },
     { title: "Program", items: [big("spacegraph"), small("sgimport"), small("sgbrief")] },
+    { title: "Site", items: [big("siteboundary")] },
     { title: "Datum", items: [big("level"), big("grid"), big("planview")] },
   ] },
   { tab: "Structure", panels: [
@@ -422,6 +432,10 @@ app.stepInto = (id, view) => {
   const t = doc.typeOf(f);
   if (["ElevationView", "SectionView", "PlanView", "View3D", "Schedule", "Sheet"].includes(t)) return app.openView(id);
   if (t === "Floor") return app.editBoundary(id);
+  if (t === "SiteBoundary") {
+    const vv = view && view.kind === "PlanView" ? view : app.views.get(app.activeView); if (!vv || vv.kind !== "PlanView") return;
+    return app.startSketch(vv, { kind: "site", id }, doc.argValue(f, "sketch"));
+  }
   if (t === "RepeatingDetail") {
     const vv = view && view.kind === "PlanView" ? view : app.views.get(app.activeView); if (!vv || vv.kind !== "PlanView") return;
     return app.startSketch(vv, { kind: "repeat", id }, doc.argValue(f, "path"));
@@ -455,7 +469,7 @@ function renderQAT() {
   const q = clear(document.getElementById("qat"));
   const b = (id, ic) => h("button", { class: "qbtn", title: COMMANDS[id].label + (COMMANDS[id].key ? ` (${COMMANDS[id].key})` : ""), "aria-label": COMMANDS[id].label, disabled: (id === "undo" && !app.editor.undoStack.length) || (id === "redo" && !app.editor.redoStack.length), onclick: () => app.run(id) }, icon(ic || COMMANDS[id].icon, 16));
   const v = app.activeView && app.doc.element(app.activeView);
-  const viewName = v ? `${{ PlanView: "Floor Plan", ElevationView: "Elevation", SectionView: "Section", View3D: "3D View", Schedule: "Schedule", Sheet: "Sheet" }[app.doc.typeOf(v)]}: ${v.get("Name")}` : app.activeView === "__graph" ? "Node Graph" : app.activeView === "__spacegraph" ? "Space Graph" : app.activeView === "__tree" ? "Feature Tree" : app.activeView === "__diag" ? "Acceptance Tests" : "";
+  const viewName = v ? `${{ PlanView: "Floor Plan", ElevationView: "Elevation", SectionView: "Section", View3D: "3D View", Schedule: "Schedule", Sheet: "Sheet" }[app.doc.typeOf(v)]}: ${v.get("Name")}` : app.activeView === "__graph" ? "Node Graph" : app.activeView === "__spacegraph" ? "Brief Analysis" : app.activeView === "__tree" ? "Feature Tree" : app.activeView === "__diag" ? "Acceptance Tests" : "";
   q.append(
     h("button", { class: "qbtn mobile-only", "aria-label": "Palettes", onclick: () => document.body.classList.toggle("show-left") }, icon("menu", 16)),
     h("div", { class: "logo", title: "Web BIM" }, "B"),
@@ -532,7 +546,8 @@ function fileMenu(anchor) {
   menuAt(r.left, r.bottom, [
     { label: "New", icon: "sheet", run: () => newEmpty() }, { label: "Open…", icon: "open", run: () => openFile() }, { label: "Save", icon: "save", run: () => saveModel() },
     "-", { label: "Export…", icon: "exportI", run: () => exportDialog() }, { label: "Import IFC…", icon: "importI", run: () => importIfcFile() }, { label: "Import DXF Symbol…", icon: "importI", run: () => importDXF() },
-    "-", { label: "Project Information…", icon: "info", run: () => projectInfo() }, { label: "Reset to Sample Project", icon: "house", run: () => { forget("draft-v4"); forget("tabs"); setDocument(buildSample(), { msg: "Sample project loaded", kind: "ok" }); } },
+    "-", { label: "Project Information…", icon: "info", run: () => projectInfo() }, { label: "Reset to Sample Project (D1 RMUH)", icon: "house", run: () => { forget("draft-v5"); forget("tabs"); setDocument(buildRmuhSample(), { msg: "D1 RMUH sample loaded: the brief analysed, the client's plot as the site boundary", kind: "ok" }); app.openView("__spacegraph"); } },
+    { label: "Studio House Sample", icon: "house", run: () => { forget("draft-v5"); forget("tabs"); setDocument(buildSample(), { msg: "Studio House sample loaded", kind: "ok" }); } },
   ]);
 }
 
@@ -706,7 +721,7 @@ function renderMain() {
   const area = clear(document.getElementById("main"));
   const doc = app.doc;
   const tabs = h("div", { class: "dtabs", role: "tablist" }, app.tabs.map(t => {
-    const f = doc.element(t), label = t === "__graph" ? "Node Graph" : t === "__spacegraph" ? "Space Graph" : t === "__diag" ? "Acceptance Tests" : t === "__tree" ? "Feature Tree" : f ? f.get("Name") : t;
+    const f = doc.element(t), label = t === "__graph" ? "Node Graph" : t === "__spacegraph" ? "Brief Analysis" : t === "__diag" ? "Acceptance Tests" : t === "__tree" ? "Feature Tree" : f ? f.get("Name") : t;
     const ic = t === "__graph" ? "graph" : t === "__spacegraph" ? "bubbles" : t === "__diag" ? "tests" : t === "__tree" ? "tree" : { PlanView: "plan", View3D: "view3d", ElevationView: "elevview", SectionView: "section", Schedule: "schedule", Sheet: "sheet" }[f && doc.typeOf(f)];
     return h("button", { class: "dtab", role: "tab", "aria-selected": String(t === app.activeView), onclick: () => app.openView(t), onauxclick: e => { if (e.button === 1) app.closeTab(t); } }, icon(ic, 14), h("span", {}, label),
       h("span", { class: "x", role: "button", "aria-label": `Close ${label}`, onclick: e => { e.stopPropagation(); app.closeTab(t); } }, "✕"));
@@ -888,7 +903,7 @@ function openFile() {
 }
 async function saveModel() { const r = await saveFile(`${app.doc.meta.name || "model"}.json`, app.doc.serialise(), "application/json"); app.say(r.ok ? "Model saved" : r.error, r.ok ? "ok" : "error"); }
 function newEmpty() {
-  forget("draft-v4"); forget("tabs");
+  forget("draft-v5"); forget("tabs");
   const doc = newDocument("Untitled");
   doc.addElement({ id: "L0", type: "Level", name: "Level 1", args: { name: "Level 1", elevation: 0 } });
   doc.addElement({ id: "L1", type: "Level", name: "Level 2", args: { name: "Level 2", elevation: 3000 } });
@@ -1208,6 +1223,8 @@ async function switchToRevit() {
   app.say("Revit-style interface — the same model", "ok");
 }
 window.addEventListener("message", e => { if (e.data && e.data.webbim === "revit") switchToRevit(); });
+/** A STEP (or BREP) read by the OpenCascade kernel for its triangles, without switching interface. */
+app.kernelMesh = async ({ format, name, data, encoding }) => { const b = await bootCad(); if (!b.importMesh) throw new Error("this build's CAD kernel cannot hand back meshes"); return b.importMesh({ format, name, data, encoding }); };
 
 // ---------------------------------------------------------------- keys (Revit two-letter shortcuts)
 const SHORTCUTS = Object.fromEntries(Object.entries(COMMANDS).filter(([, c]) => c.key).map(([id, c]) => [c.key.toUpperCase(), id]));
@@ -1263,9 +1280,9 @@ async function boot() {
   const split = store("split"); if (split) document.getElementById("left").style.setProperty("--split", (split * 100).toFixed(1) + "%");
   await loadDrawingFont();
   let doc = null, note = null;
-  const draft = store("draft-v4");
+  const draft = store("draft-v5");
   if (draft) { try { doc = openDocument(draft); doc.regenerate(); note = { msg: "Restored your draft from this browser. File › New to start empty.", kind: "note" }; } catch (e) { doc = null; } }
-  if (!doc) doc = buildSample();
-  setDocument(doc, note || { msg: `Studio House: ${doc.elements().length} elements. Double-click a view in the Project Browser to open it; WA draws walls; 3D opens the {3D} view.`, kind: "ok" });
+  if (!doc) { try { doc = buildRmuhSample(); } catch (e) { console.error(e); doc = buildSample(); } }
+  setDocument(doc, note || { msg: doc.meta.brief ? `D1 RMUH: the brief read into a space graph (${(doc.meta.brief.report || [])[0] || ""}) and a first massing built on the client's plot. File › Studio House Sample for the small house.` : `Studio House: ${doc.elements().length} elements.`, kind: "ok" });
 }
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();

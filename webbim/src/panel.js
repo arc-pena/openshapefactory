@@ -75,6 +75,7 @@ export function renderPanel(app, root) {
   if (viewMode && ["PlanView", "ElevationView", "SectionView", "View3D"].includes(doc.typeOf(f0))) pp.append(h("div", { style: { padding: "12px 14px" } }, h("button", { class: "btn", onclick: () => vvDialog(app, ids[0]) }, "Visibility / Graphics…")));
   root.append(pp);
   if (ids.length === 1 && doc.typeOf(doc.element(ids[0])) === "CADImport") root.append(importLayers(app, doc.element(ids[0])));
+  if (ids.length === 1 && doc.typeOf(doc.element(ids[0])) === "SiteBoundary") root.append(siteEdges(app, doc.element(ids[0])));
 }
 function countUsers(doc, typeId) { return doc.elements().filter(f => TYPE_KEYS.some(k => F.refId(f, k) === typeId)).length; }
 
@@ -854,3 +855,17 @@ export function materialsEditor(app, materialId) {
   return d;
 }
 function polyPathLocal(pts) { return pts.map((p, i) => ({ k: "L", a: p, b: pts[(i + 1) % pts.length] })); }
+
+/** A site boundary's edges: each sketch element of the plot, its length, its setback and its zoning plane. */
+function siteEdges(app, f) {
+  const doc = app.doc, id = doc.idOf(f), sk = doc.argValue(f, "sketch") || { elements: [] }, edges = JSON.parse(JSON.stringify(doc.argValue(f, "edges") || {})), dflt = F.real(f, "setback") || 0;
+  const set = () => app.apply({ op: "set", id, key: "edges", value: edges });
+  const lenOf = el => el.type === "line" ? Math.hypot(el.b[0] - el.a[0], el.b[1] - el.a[1]) : el.type === "arc" ? Math.abs(el.a1 - el.a0) * el.r : null;
+  const num = (el, k, label, isLen) => { const e = edges[el.id] || {}, v = e[k]; return h("input", { type: "text", value: v === undefined ? "" : isLen ? fmtLen(v) : String(v), placeholder: k === "setback" ? fmtLen(dflt) : k === "angle" ? "90" : "0", style: { width: "70px" }, "aria-label": `Edge ${el.id} ${label}`,
+    onchange: ev => { const t = ev.target.value.trim(); edges[el.id] = Object.assign({}, edges[el.id]); if (!t) delete edges[el.id][k]; else { try { edges[el.id][k] = isLen ? parseLength(t) : parseNumber(t); } catch (er) { ev.target.value = ""; return; } } set(); } }); };
+  const rows = sk.elements.map((el, i) => h("tr", {}, h("td", { class: "mono" }, `${i + 1}`), h("td", {}, el.type), h("td", { class: "muted" }, lenOf(el) ? fmtLen(Math.round(lenOf(el))) : "–"),
+    h("td", {}, num(el, "setback", "setback", true)), h("td", {}, num(el, "height", "zoning height", true)), h("td", {}, num(el, "angle", "zoning angle", false))));
+  return h("section", { class: "pgrid-group" }, h("div", { class: "pgrid-head" }, "Site edges - setback and zoning plane"),
+    h("div", { class: "muted", style: { fontSize: "11.5px", padding: "4px 8px" } }, "Each edge is a vertical plane limiting the site. Setback: the buildable line. Zoning: a plane rising from the edge at a height, at an angle over the site (90° = vertical)."),
+    h("table", { class: "layers", style: { width: "100%", fontSize: "12px" } }, h("thead", {}, h("tr", {}, ["#", "Edge", "Length", "Setback", "Zone h", "Angle°"].map(x => h("th", {}, x)))), h("tbody", {}, rows)));
+}

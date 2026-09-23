@@ -6219,6 +6219,8 @@ function sprawl(face, edges) {
       out.normals = readFloats(faces.getNormalsPtr(), faces.getNormalsSize());
       out.index = readInts(faces.getTrianglesPtr(), faces.getTrianglesSize());
       out.triangles = out.index.length / 3;
+      // which B-Rep face each run of triangles came from: [start, count, faceId] in index units
+      out.faceGroups = readInts(faces.getFaceGroupsPtr(), faces.getFaceGroupsSize());
       faces.delete();
     }
 

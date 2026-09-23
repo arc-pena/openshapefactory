@@ -3,13 +3,13 @@
 //! before the program is asked; a test whose expectation came from running the
 //! code would prove only that the code is deterministic (measured-truth).
 
-import { TOL, dist, sub, add, mul, pathArea, samplePath, intersectLines, lineThrough, bez, polyArea, segEnd, segStart, distToSeg } from "./geom2d.js";
+import { TOL, dist, sub, add, mul, pointInPoly, pathArea, samplePath, intersectLines, lineThrough, bez, polyArea, segEnd, segStart, distToSeg } from "./geom2d.js";
 import { parse, evaluate, formatValue } from "./expr.js";
 import { CATALOGUE, F, loadDocument, danglingRefs, clone } from "./ocaf.js";
 import { wallRegions, solidSpans } from "./joins.js";
 import { pointAt, uOf, boundary, wallPieces } from "./walls.js";
 import { newDocument, openDocument, measureRefs, resolveReference, importPlacer } from "./bim.js";
-import { Editor, propagate } from "./ops.js";
+import { Editor, propagate, massingStoreys } from "./ops.js";
 import { viewContext, sectionBoxKey, dimText, deriveView, planScene, elevationScene, placements, textWidth, sheetScene, visibilityKey, sectionCut, cutOutline } from "./scene.js";
 import { chainLoop } from "./crop.js";
 import { importIfc } from "./ifcimport.js";
@@ -24,7 +24,9 @@ import { parseLength, setLengthUnit } from "./units.js";
 import { bimToCad, cadEditsToOps } from "./cadbridge.js";
 import { fromPolygon, addElements, fillet, toggleLock, measureDim, dragHandle, regionsOf, shapeFromClicks, filletCorners, toCentreline, elementSegs, splitElement, bsplineAt, bsplineDomain } from "./bimsketch.js";
 import { cadSketchOutline } from "./cadsketch.js";
-import { programFromBrief, planSpaceGraph } from "./spacegraph.js";
+import { programFromBrief, planSpaceGraph, relaxBubbles } from "./spacegraph.js";
+import { buildRmuhSample, RMUH_BRIEF } from "./sample_rmuh.js";
+import { parseOBJ, storeysFor } from "./massing.js";
 
 export const CASES = [];
 const testCase = (id, name, fn, opts = {}) => CASES.push(Object.assign({ id, name, fn }, opts));
@@ -1481,4 +1483,79 @@ testCase("M43", "Build and swap: the graph becomes walls, slab, rooms and doors 
   const ok = b.ok && errs === 0 && spaces >= 12 && walls > 8 && doors >= 6 && floors === 1 && s.ok && traded && same && named === nd(a).name && back;
   return R(ok, "built with no errors (rooms + corridor spaces, walls, a slab, doors); the swap trades the two slots, the moved room keeps its own width, the other gets its area; same element count after rebuild; undo restores",
     `${spaces} spaces, ${walls} walls, ${doors} doors, ${floors} slab, ${errs} errors; swap ${a}⇄${z}: A ${A.join(",")} → ${A2.join(",")}, ${a} width ${w0.u1 - w0.u0} → ${w1.u1 - w1.u0}; elements ${n0} → ${mine().length}; room ${named}; undo ${back}`);
+});
+
+testCase("M44", "A structured brief (D1 RMUH) read without AI: its JSON node table, typed edges with groups expanded, context nodes on their stated side, the site's areas", () => {
+  const g = programFromBrief(RMUH_BRIEF), by = id => g.nodes.find(n => n.id === id);
+  const E = (a, b, rel) => g.edges.find(e => ((e.a === a && e.b === b) || (e.a === b && e.b === a)) && (!rel || e.rel === rel));
+  const lifGroup = ["R07", "R08"].every(id => E("R02", id, "ADJ")), hotels = ["H01", "H02", "H03"].every(id => E(id, "P-HOT", "CONN")), parkWild = ["P-RET", "P-OFF", "P-HOT"].every(id => E(id, "RETAIL_CORES"));
+  const ok = by("R01").area === 25000 && by("P-RET").area === 8000 * 31 && by("O01").storeys === 25 && E("R02", "R03", "SEP").w < 0 && lifGroup && hotels && parkWild
+    && by("PUA_STATION") && by("PUA_STATION").side === "south" && by("GCS").side === "west" && g.site.area === 336500 && g.site.developable === 292000;
+  return R(ok, "ULO 25,000 m²; retail parking 8,000 bays × 31 m²; office 25 storeys as the brief states (its 1,500 m² plate recorded); Dept–Hyper kept apart; 'LIF precinct', 'H01/H02/H03', 'P-*' expanded; PUA south, GCS west; site 336,500 / 292,000 m²",
+    `${g.nodes.length} nodes, ${g.edges.length} edges; ULO ${by("R01").area}; P-RET ${by("P-RET").area}; office storeys ${by("O01").storeys}; LIF ${lifGroup}, hotels ${hotels}, P-* ${parkWild}; PUA ${by("PUA_STATION") && by("PUA_STATION").side}, GCS ${by("GCS") && by("GCS").side}; site ${g.site.area}/${g.site.developable}`);
+});
+testCase("M45", "The D1 RMUH sample: the client's plot as the Site Boundary; the brief planned as blocks inside it, none overlapping, decks on pilotis over the ground, keep-aparts kept", () => {
+  const doc = buildRmuhSample(), sb = doc.element("SITE"), area = doc.data(sb).props["Site area"].v / 1e6;
+  const blocks = doc.elements().filter(f => doc.typeOf(f) === "Generic" && doc.getParam(f, "SpaceGraph") === "SG1");
+  const P = doc.plan(sb).pts, inside = blocks.every(f => (F.json(f, "boundary") || []).every(p => pointInPoly(p, P)));
+  const boxes = blocks.map(f => { const b = F.json(f, "boundary"), xs = b.map(p => p[0]), ys = b.map(p => p[1]); return { deck: F.real(f, "baseOffset") > 0, x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) }; });
+  let overlaps = 0; for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) { const a = boxes[i], b = boxes[j]; if (a.deck === b.deck && Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0) > 1 && Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0) > 1) overlaps++; }
+  const decks = boxes.filter(b => b.deck).length, errs = doc.elements().filter(f => doc.error(f)).length;
+  const dept = blocks.find(f => f.get("Name") === "Department Store"), hyper = blocks.find(f => f.get("Name") === "Hypermarket");
+  const bb = f => { const b = F.json(f, "boundary"); return [Math.min(...b.map(p => p[0])), Math.min(...b.map(p => p[1])), Math.max(...b.map(p => p[0])), Math.max(...b.map(p => p[1]))]; };
+  const [A, B] = [bb(dept), bb(hyper)], apart = Math.max(Math.max(A[0], B[0]) - Math.min(A[2], B[2]), Math.max(A[1], B[1]) - Math.min(A[3], B[3]));
+  const ok = Math.abs(area - 331800) < 500 && blocks.length === 21 && inside && overlaps === 0 && decks === 3 && errs === 0 && apart >= 5 * 18000 - 1;
+  return R(ok, "site ≈331,800 m² from the DXF; 21 blocks, all inside the plot, none overlapping within their layer; the 3 parking decks on pilotis; Department Store and Hypermarket ≥ 90 m apart; no errors",
+    `site ${Math.round(area)} m²; ${blocks.length} blocks; inside ${inside}; overlaps ${overlaps}; decks ${decks}; errors ${errs}; Dept–Hyper ${Math.round(apart / 1000)} m`);
+});
+testCase("M46", "Site boundary: each edge's own setback moves the buildable line in by exactly that much; the zoning planes are there when asked", () => {
+  const doc = newDocument("t"), ed = new Editor(doc);
+  ed.apply({ op: "add", element: { id: "L0", type: "Level", name: "L0", args: { name: "L0", elevation: 0 } } });
+  const P = [[0, 0], [100000, 0], [100000, 60000], [0, 60000]], sketch = { elements: P.map((p, i) => ({ id: "e" + (i + 1), type: "line", a: p, b: P[(i + 1) % 4] })), constraints: [], dims: [] };
+  ed.apply({ op: "add", element: { id: "S", type: "SiteBoundary", args: { sketch, edges: { e1: { setback: 10000 }, e3: { setback: 5000 } }, setback: 3000, level: { ref: "L0" } } } });
+  const p = doc.plan(doc.element("S")), xs = p.buildable.map(q => q[0]), ys = p.buildable.map(q => q[1]);
+  const exact = Math.abs(Math.min(...ys) - 10000) < 1e-6 && Math.abs(Math.max(...ys) - 55000) < 1e-6 && Math.abs(Math.min(...xs) - 3000) < 1e-6 && Math.abs(Math.max(...xs) - 97000) < 1e-6;
+  const area = doc.data(doc.element("S")).props["Buildable area"].v / 1e6;
+  ed.apply([{ op: "set", id: "S", key: "showPlanes", value: true }, { op: "set", id: "S", key: "edges", value: { e1: { setback: 10000, height: 20000, angle: 45 } } }]);
+  const planes = doc.plan(doc.element("S")).mesh3d, m = planes && planes[0], zTop = m ? Math.max(...m.positions.filter((_, i) => i % 3 === 2)) : 0;
+  const ok = exact && Math.abs(area - 94 * 45) < 0.01 && m && m.index.length === 4 * 6 && zTop === 60000;
+  return R(ok, "front edge 10 m, rear 5 m, sides the 3 m default: buildable 3–97 × 10–55 m = 4,230 m²; four zoning planes drawn to 60 m", `buildable x ${Math.min(...xs)}–${Math.max(...xs)}, y ${Math.min(...ys)}–${Math.max(...ys)} (${area.toFixed(1)} m²); planes ${m ? m.index.length / 6 : 0}, top ${zTop}`);
+});
+testCase("M47", "Slab system types: Generic 100 / 200 / 300 mm and 200 mm + 20 mm screed + 10 mm tile, their layers stacked down from the top in a section", () => {
+  const doc = buildSample(), T = doc.lib.types, th = id => T[id].layers.reduce((a, l) => a + l.thickness, 0);
+  const ok = th("T-SLAB100") === 100 && th("T-SLAB200") === 200 && th("T-SLAB300") === 300 && th("T-SLAB230T") === 230 && T["T-SLAB230T"].layers.map(l => l.material).join(",") === "M-TILE,M-SCREED,M-CONC" && doc.resolveType("T-SLAB230T").category === "IfcSlab";
+  return R(ok, "100, 200, 300 and 230 mm; the finished one tile / screed / concrete, top first; all slab types", `${["T-SLAB100", "T-SLAB200", "T-SLAB300", "T-SLAB230T"].map(th).join(", ")}; ${T["T-SLAB230T"].layers.map(l => l.material).join(",")}`);
+});
+testCase("M48", "Rooms on massing plates: a curved, tapering tower's storeys; rooms ring the facade on each plate; a locked space stays on its level; an attractor pulls its room toward it", () => {
+  let obj = ""; const N = 48;
+  for (let k = 0; k <= 8; k++) { const z = 40000 * k / 8, s = 1 - 0.15 * k / 8; for (let i = 0; i < N; i++) { const a = i / N * Math.PI * 2; obj += `v ${25000 * s * Math.cos(a)} ${15000 * s * Math.sin(a)} ${z}\n`; } }
+  obj += `v 0 0 0\nv 0 0 40000\n`;
+  for (let k = 0; k < 8; k++) for (let i = 0; i < N; i++) obj += `f ${k * N + i + 1} ${k * N + (i + 1) % N + 1} ${(k + 1) * N + (i + 1) % N + 1} ${(k + 1) * N + i + 1}\n`;
+  for (let i = 0; i < N; i++) obj += `f ${9 * N + 1} ${(i + 1) % N + 1} ${i + 1}\nf ${9 * N + 2} ${8 * N + i + 1} ${8 * N + (i + 1) % N + 1}\n`;
+  const m = parseOBJ(obj), storeys = storeysFor(m, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(i => ({ id: "L" + i, name: "Level " + i, z: i * 4000 })), 4000);
+  const g = programFromBrief(`Lobby 200 m2 entrance\nCafe 150 m2 facade near Lobby*\nRetail 400 m2 facade near Lobby\n12 x Office 40 m2 facade\nMeeting 60 m2 near Office\n4 x Plant 60 m2 back of house\nStore 80 m2 back of house`);
+  relaxBubbles(g.nodes, g.edges, 300);
+  const retail = g.nodes.find(n => n.name === "Retail"); retail.lockLevel = true; retail.level = "L1";
+  const cafe = g.nodes.find(n => n.name === "Cafe");
+  const plan = planSpaceGraph({ nodes: g.nodes, edges: g.edges, site: { entries: [{ at: [0, -15000], dir: [0, 1] }], attractors: [{ at: [25000, 0], node: cafe.id, w: 1 }] }, options: { roomDepth: 6000 } }, { relax: false, storeys });
+  const all = plan.levels.flatMap(L => L.rooms.map(r => Object.assign({ L: L.key }, r)));
+  const rRetail = all.find(r => r.name === "Retail"), rCafe = all.find(r => r.name === "Cafe"), cc = rCafe.poly.reduce((a, p) => [a[0] + p[0] / rCafe.poly.length, a[1] + p[1] / rCafe.poly.length], [0, 0]);
+  const L0 = plan.levels[0], onFacade = L0.rooms.filter(r => r.strip === "R").every(r => r.poly.some(p => Math.abs((p[0] / 25000) ** 2 + (p[1] / 15000) ** 2 - 1) < 0.08));
+  const noErr = plan.levels.every(L => L.model && L.model.walls.length > 0);
+  const ok = storeys.length === 10 && rRetail && rRetail.L === "L1" && cc[0] > 12000 && onFacade && noErr && plan.metrics.gia > 9000;
+  return R(ok, "10 storeys; Retail on L1 (locked); Cafe on the +x side where its attractor is; every ring room's outer edge on the elliptical facade; walls built on every plate",
+    `${storeys.length} storeys; Retail on ${rRetail && rRetail.L}; Cafe centre x ${Math.round(cc[0])}; facade-following ${onFacade}; GIA ${Math.round(plan.metrics.gia)} m²`);
+});
+testCase("M49", "Levels through a massing: storeys at the floor-to-floor wherever the envelope still has a plate; made as levels with plans; moving a level moves the plate", () => {
+  const doc = newDocument("t"), ed = new Editor(doc);
+  const obj = `v 0 0 0\nv 40 0 0\nv 40 20 0\nv 0 20 0\nv 5 2 30\nv 35 2 30\nv 35 18 30\nv 5 18 30\nf 1 4 3 2\nf 5 6 7 8\nf 1 2 6 5\nf 2 3 7 6\nf 3 4 8 7\nf 4 1 5 8`;
+  ed.apply({ op: "add", element: { id: "M", type: "Massing", args: { mesh: parseOBJ(obj, 1000), floorToFloor: 3500, minPlate: 20 } } });
+  const r = ed.apply({ op: "masslevels", id: "M", height: 3500 });
+  const lv = doc.elements().filter(f => doc.typeOf(f) === "Level"), plans = doc.elements().filter(f => doc.typeOf(f) === "PlanView").length;
+  const sg = ed.apply({ op: "add", element: { id: "SG", type: "SpaceGraph", args: { nodes: [], edges: [], site: {}, options: {}, massing: { ref: "M" } } } });
+  const st1 = massingStoreys(doc, doc.element("SG")), a1 = st1[0].area;
+  ed.apply({ op: "set", id: lv[1] ? doc.idOf(lv.sort((a, b) => F.real(a, "elevation") - F.real(b, "elevation"))[1]) : "", key: "elevation", value: 4500 });
+  const st2 = massingStoreys(doc, doc.element("SG")), a2 = st2[0].area;   // the ground storey now runs to 4.5 m: its plate is taken at its ceiling
+  const ok = r.ok && lv.length === 8 && plans === 8 && sg.ok && a2 < a1;
+  return R(ok, "8 storeys of 3.5 m in a 30 m tapering block, each a level with a plan; level 1 moved up to 4.5 m: the ground storey is taller, so its plate (taken at its ceiling) is smaller", `${lv.length} levels, ${plans} plans; ground plate ${Math.round(a1 / 1e6)} m², with level 1 at 4.5 m ${Math.round(a2 / 1e6)} m²`);
 });

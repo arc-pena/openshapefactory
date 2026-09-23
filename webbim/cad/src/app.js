@@ -14305,6 +14305,18 @@ const bimBridge = {
   model: async () => JSON.parse(await mdl.modelText(0)),
   fit: () => fitView(),
   say: text => say(text),
+  //! A FILE READ FOR ITS TRIANGLES ONLY: the Revit-style side asks for a STEP massing as a mesh
+  //! (with the B-Rep face each triangle came from, so a click can pick one face). The file is
+  //! imported, tessellated, and removed again - the model is left as it was.
+  importMesh: async ({ format, name = "", data, encoding = "text" }) => {
+    const before = new Set((JSON.parse(await mdl.modelText(0)).features || []).map(f => f.id));
+    await mdl.run({ op: "import", format, name, data, encoding, as: "single" });
+    const ids = (JSON.parse(await mdl.modelText(0)).features || []).map(f => f.id).filter(id => !before.has(id));
+    try {
+      const payload = await kernel.mesh(ids);
+      return payload.features.map(f => ({ positions: f.positions, index: f.index, faceGroups: f.faceGroups || [], error: f.meshError || null }));
+    } finally { for (const id of ids) { try { await mdl.run({ op: "delete", id }); } catch (e) { /* already gone */ } } }
+  },
 };
 globalThis.__webbimCad = bimBridge;
 if (window.parent !== window) {

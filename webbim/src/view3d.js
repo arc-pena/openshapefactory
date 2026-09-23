@@ -94,6 +94,7 @@ export class View3D {
       if (vw && !shownInView(doc, vw, f)) continue;          // Visibility/Graphics is data: the 3D view obeys it too
       const t = doc.typeOf(f), p = doc.plan(f);
       if (p && PART_TYPES.has(t)) { this.addParts(f, t, style); continue; }
+      if (p && (p.mesh3d || (t === "Massing" && p.mesh))) { this.addMeshes(f, p.mesh3d || [{ positions: p.mesh.positions, index: p.mesh.index, colour: "#7fa7d8", opacity: 0.28 }], style); continue; }
       if (!p || (t !== "Wall" && t !== "Column")) continue;
       const id = doc.idOf(f);
       const m = one(f, p, t);
@@ -114,6 +115,21 @@ export class View3D {
     }
     this.render();
   }
+  /** Meshes an element carries as they are: a massing (see-through, so the building inside it shows)
+   *  or a face-based wall's layers. Picking reports the triangle, for Wall by Face. */
+  addMeshes(f, list, style) {
+    const T = this.T, id = this.doc.idOf(f), g = new T.Group(); g.userData.id = id;
+    for (const m of list) {
+      const geo = new T.BufferGeometry(); geo.setAttribute("position", new T.Float32BufferAttribute(m.positions, 3)); geo.setIndex(m.index); geo.computeVertexNormals();
+      const colour = style === "Hidden Line" ? "#ffffff" : m.colour || "#c8c8c8";
+      const mat = style === "Consistent Colors" || style === "Hidden Line" ? new T.MeshBasicMaterial({ color: new T.Color(colour), side: T.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 })
+        : new T.MeshLambertMaterial({ color: new T.Color(colour), side: T.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+      if (m.opacity < 1 || style === "Wireframe") { mat.transparent = true; mat.opacity = style === "Wireframe" ? 0.06 : m.opacity; mat.depthWrite = false; }
+      const mesh = new T.Mesh(geo, mat); mesh.userData.id = id; mesh.userData.triMesh = true; g.add(mesh); this.meshes.push(mesh);
+      const eg = new T.EdgesGeometry(geo, 25); const line = new T.LineSegments(eg, new T.LineBasicMaterial({ color: m.opacity < 1 ? 0x3b6fb0 : 0x1b2230, transparent: m.opacity < 1, opacity: m.opacity < 1 ? 0.6 : 1 })); line.userData.edges = true; g.add(line);
+    }
+    this.groups.set(id, g); this.scene.add(g);
+  }
   /** Doors, windows, floors, beams: prisms from their family's parts. A door's
    *  leaf and handles sit in their own group pivoting on the hinge, so the leaf
    *  can be swung without rebuilding anything. */
@@ -131,7 +147,7 @@ export class View3D {
       const foot = pt.foot.map(q => [q[0] - off[0], q[1] - off[1]]), holes = (pt.holes || []).map(h => h.map(q => [q[0] - off[0], q[1] - off[1]]));
       const { pos, nrm } = prismMesh(foot, pt.z0, pt.z1, holes);
       const geo = new T.BufferGeometry(); geo.setAttribute("position", new T.Float32BufferAttribute(pos, 3)); geo.setAttribute("normal", new T.Float32BufferAttribute(nrm, 3));
-      const colour = style === "Hidden Line" ? "#ffffff" : (PART_COLOURS[pt.sub] || PART_COLOURS[t] || "#c8c8c8");
+      const colour = style === "Hidden Line" ? "#ffffff" : (pt.colour || PART_COLOURS[pt.sub] || PART_COLOURS[t] || "#c8c8c8");
       const glass = pt.sub === "Glass" && style !== "Hidden Line";
       const mat = style === "Consistent Colors" || style === "Hidden Line" ? new T.MeshBasicMaterial({ color: new T.Color(colour), side: T.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 })
         : new T.MeshLambertMaterial({ color: new T.Color(colour), side: T.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
