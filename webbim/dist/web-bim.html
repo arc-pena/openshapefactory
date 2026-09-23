@@ -4381,6 +4381,31 @@ const HANDLERS = {
     for (const [id, cl] of res.set) if (id !== o.id) { const g = doc.element(id); doc.setArg(g, geomKey(g, doc), cl); }
     return { moved: [...res.set.keys()].filter(id => id !== o.id) };
   },
+  /** Keep joins true to the geometry after an end moves (§10.9): release the join
+   *  it left, and make the one it arrived at — a shared corner with a nearby end,
+   *  or a T where it lands anywhere inside another wall's thickness. */
+  autojoin(doc, o) {
+    const made = [], released = [];
+    for (const { id, end } of o.ends || []) {
+      const f = doc.element(id); if (!f || doc.typeOf(f) !== "Wall") continue;
+      const c = clone(doc.argValue(f, "centreline")); if (!c || c.type !== "line") continue;
+      const here = r => r && r.of === id && r.end === end;
+      const mine = doc.joins.filter(j => here(j.a) || here(j.b));
+      // a disallowed or hand-set join is the user's decision: leave it alone
+      if (mine.some(j => j.allowed === false || (j.kind && j.kind !== "auto"))) continue;
+      const still = mine.filter(j => joinHolds(doc, j));
+      for (const j of mine) if (!still.includes(j)) { doc.joins.splice(doc.joins.indexOf(j), 1); released.push(j.b.of === id ? j.a.of : j.b.of); }
+      if (still.length) continue;
+      const hit = findJoin(doc, id, end, c);
+      if (!hit) continue;
+      if (dist(hit.p, c[end]) > 1e-9) { c[end] = hit.p; doc.setArg(f, "centreline", c); }
+      for (const m of hit.moveOther || []) { const g = doc.element(m.id), gc = clone(doc.argValue(g, "centreline")); gc[m.end] = hit.p; doc.setArg(g, "centreline", gc); }
+      for (const row of hit.rows) HANDLERS.relate(doc, { store: "joins", row: Object.assign(row, { kind: "auto", order: 0, allowed: true }) });
+      made.push(hit.what);
+    }
+    doc.relationRevision++;
+    return { joined: made, released, said: made.length ? `Joined: ${made.join("; ")}` : released.length ? `Join released from ${[...new Set(released)].join(", ")}` : undefined };
+  },
   draw(doc, o) {
     // Chain-draw walls: click, click, click (§10.9). Each vertex shares a node
     // with an existing end (L join), lands on a centreline (T join, never a
@@ -4409,9 +4434,68 @@ const HANDLERS = {
     }
     for (const r of first) HANDLERS.relate(doc, { store: "joins", row: Object.assign(r, { kind: "auto", order: 0, allowed: true }) });
     if (o.closed && ids.length > 1) HANDLERS.relate(doc, { store: "joins", row: { a: { of: ids[ids.length - 1], end: "end" }, b: { of: ids[0], end: "start" }, kind: "auto", order: 0, allowed: true } });
+    // a chain that stops on a wall's face (not only on its location line) still joins it
+    if (!o.closed && ids.length) HANDLERS.autojoin(doc, { ends: [{ id: ids[0], end: "start" }, { id: ids[ids.length - 1], end: "end" }] });
     return { ids };
   },
 };
+
+// ---------------------------------------------------------------- automatic joins
+function lineWall(doc, g) {
+  if (doc.typeOf(g) !== "Wall") return null;
+  const c = doc.argValue(g, "centreline"); if (!c || c.type !== "line") return null;
+  const L = dist(c.start, c.end); if (L < TOL) return null;
+  const w = doc.plan(g), sv = w && w.stack && w.stack.s && w.stack.s.length ? w.stack.s : [-100, 100];
+  return { id: doc.idOf(g), c, L, line: lineThrough(c.start, c.end), sMin: Math.min(...sv), sMax: Math.max(...sv), half: Math.max(...sv.map(Math.abs)) };
+}
+/** Does a join row still describe the geometry? */
+function joinHolds(doc, j) {
+  const A = doc.element(j.a.of), B = doc.element(j.b.of); if (!A || !B) return false;
+  const ca = doc.argValue(A, "centreline"), cb = doc.argValue(B, "centreline"); if (!ca || !cb) return false;
+  const pa = ca[j.a.end]; if (!pa) return false;
+  if (j.b.end) return !!cb[j.b.end] && dist(pa, cb[j.b.end]) <= 1;
+  if (cb.type !== "line") return true;                     // arcs: resolveJoins judges and notes
+  const L = lineThrough(cb.start, cb.end), u = dot(sub(pa, L.p), L.d);
+  return Math.abs(signedDistance(L, pa)) <= 1 && u > -1 && u < dist(cb.start, cb.end) + 1;
+}
+/** The join an end has arrived at, and the point it should sit on. Corners win over Ts;
+ *  a T lands anywhere within the other wall's thickness and snaps onto its location line
+ *  along the moving wall's own direction, so the wall never bends. */
+function findJoin(doc, id, end, c) {
+  const me = lineWall(doc, doc.element(id)); if (!me) return null;
+  const p = c[end], q = end === "start" ? c.end : c.start, dir = normalise(sub(p, q));
+  const walls = doc.elements().filter(g => doc.idOf(g) !== id).map(g => lineWall(doc, g)).filter(Boolean);
+  // 1. a corner: another wall's end within the walls' half-thickness
+  let best = null;
+  for (const B of walls) for (const e of ["start", "end"]) {
+    const d = dist(p, B.c[e]), tol = Math.max(me.half, B.half) + 1;
+    if (d <= tol && (!best || d < best.d)) best = { d, B, e };
+  }
+  if (best) {
+    const P = best.B.c[best.e];
+    const rows = [{ a: { of: id, end }, b: { of: best.B.id, end: best.e } }];
+    const node = new Set([best.B.id + ":" + best.e]);
+    for (const B of walls) for (const e of ["start", "end"]) if (!node.has(B.id + ":" + e) && dist(B.c[e], P) <= 1) { node.add(B.id + ":" + e); rows.push({ a: { of: id, end }, b: { of: B.id, end: e } }); }
+    return { p: P, rows, what: `${id} ${end} ⟷ ${best.B.id} ${best.e}` };
+  }
+  // 2. a T: the end is inside another wall's footprint (or within 30 mm of it)
+  let T = null;
+  for (const B of walls) {
+    if (Math.abs(cross(dir, B.line.d)) < 0.3) continue;      // nearly parallel: no T
+    const s = signedDistance(B.line, p), u = dot(sub(p, B.line.p), B.line.d);
+    if (s < B.sMin - 30 || s > B.sMax + 30 || u < -me.half || u > B.L + me.half) continue;
+    const X = intersectLines(lineThrough(q, p), B.line); if (!X) continue;
+    const uX = dot(sub(X, B.line.p), B.line.d), d = Math.abs(s);
+    if (T && T.d <= d) continue;
+    // landing at the very end of B makes a corner: both walls meet at X
+    if (uX < me.half + 1) { T = { d, p: X, rows: [{ a: { of: id, end }, b: { of: B.id, end: "start" } }], moveOther: [{ id: B.id, end: "start" }], what: `${id} ${end} ⟷ ${B.id} start (corner)` }; continue; }
+    if (uX > B.L - me.half - 1) { T = { d, p: X, rows: [{ a: { of: id, end }, b: { of: B.id, end: "end" } }], moveOther: [{ id: B.id, end: "end" }], what: `${id} ${end} ⟷ ${B.id} end (corner)` }; continue; }
+    T = { d, p: X, rows: [{ a: { of: id, end }, b: { of: B.id, u: uX } }], what: `${id} ${end} T onto ${B.id}` };
+  }
+  return T;
+}
+/** Every end of these walls, for autojoin. */
+function wallEnds(doc, ids) { return ids.filter(id => { const f = doc.element(id); return f && doc.typeOf(f) === "Wall"; }).flatMap(id => [{ id, end: "start" }, { id, end: "end" }]); }
 
 // ---------------------------------------------------------------- propagation (§10.5)
 /** Which argument moves an element as a whole. */
@@ -6973,6 +7057,26 @@ testCase("M5", "Dragging a wall end stretches the joined neighbour", () => {
   const b = doc.argValue(doc.element("B"), "centreline");
   return R(b.start[0] === 7000 && b.end[0] === 6000, "B's start follows to (7000, 0)", `${b.start} → ${b.end}`);
 });
+testCase("M6", "An end dragged into another wall's thickness makes a T on its location line", () => {
+  const { doc, ed } = fixture();
+  wall(doc, "A", [0, 0], [6000, 0], "T-300"); wall(doc, "B", [3000, 3000], [3000, 1000], "T-300"); doc.regenerate();
+  // 3000,120 is inside A's thickness but 120 mm off its location line
+  ed.apply({ op: "drag", id: "B", key: "centreline.end", value: [3000, 120] });
+  ed.apply({ op: "autojoin", ends: [{ id: "B", end: "end" }] });
+  const b = doc.argValue(doc.element("B"), "centreline"), j = doc.joins.find(r => r.a.of === "B" && r.b.of === "A");
+  const w = doc.plan(doc.element("B"));
+  return R(b.end[0] === 3000 && Math.abs(b.end[1]) < 1e-9 && j && Math.abs(j.b.u - 3000) < 1e-9 && w.ends.end.k === "T", "end at (3000, 0); T at u = 3000; resolved as T", `${b.end} ${j ? "u=" + j.b.u : "no join"} ${w.ends.end.k}`);
+});
+testCase("M7", "Dragging a T end away releases the join; a nearby end makes a corner", () => {
+  const { doc, ed } = fixture();
+  wall(doc, "A", [0, 0], [6000, 0], "T-300"); wall(doc, "B", [3000, 3000], [3000, 0], "T-300"); wall(doc, "C", [5000, 3000], [5000, 5000], "T-300");
+  doc.joins.push({ id: "J1", a: { of: "B", end: "end" }, b: { of: "A", u: 3000 }, kind: "auto", order: 0, allowed: true }); doc.regenerate();
+  ed.apply({ op: "drag", id: "B", key: "centreline.end", value: [3000, 1500] }); ed.apply({ op: "autojoin", ends: [{ id: "B", end: "end" }] });
+  const released = !doc.joins.some(r => r.a.of === "B");
+  ed.apply({ op: "drag", id: "B", key: "centreline.start", value: [5080, 3060] }); ed.apply({ op: "autojoin", ends: [{ id: "B", end: "start" }] });
+  const b = doc.argValue(doc.element("B"), "centreline"), corner = doc.joins.some(r => r.a.of === "B" && r.a.end === "start" && r.b.of === "C" && r.b.end === "start");
+  return R(released && corner && b.start[0] === 5000 && b.start[1] === 3000, "T released; start snapped to C's start (5000, 3000) with a corner join", `released ${released}, corner ${corner}, start ${b.start}`);
+});
 
 // ===== ui_util.js =====
 //! Small DOM vocabulary shared by the interface modules. The interface only
@@ -7900,7 +8004,7 @@ class View2D {
   // ---------------------------------------------------------------- handles (§10.7)
   startHandle(e, f, hd, el) {
     e.preventDefault(); e.stopPropagation();
-    el.setPointerCapture(e.pointerId);        // a fast drag that leaves the element keeps the gesture
+    // the overlay (and this handle) is rebuilt on every redraw, so the gesture listens on the window
     const id = this.doc.idOf(f), grab = this.quantise(this.toModel(...this.evPos(e)));
     const orig = JSON.parse(JSON.stringify(getPath(this.doc, f, hd.writes)));
     const key = `set:${id}:${hd.writes}`;
@@ -7944,9 +8048,12 @@ class View2D {
       typed = ev.key === "Backspace" ? typed.slice(0, -1) : typed + ev.key;
       this.hudInput = true; this.hud.textContent = `type: ${typed || "…"} mm ⏎`;
     };
-    const finish = () => { el.removeEventListener("pointermove", move); window.removeEventListener("keydown", key_, true); this.app.editor.seal(); this.showSnap(null); this.hideHud(); this.app.refresh(); };
-    el.addEventListener("pointermove", move);
-    el.addEventListener("pointerup", finish, { once: true });
+    const finish = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", finish); window.removeEventListener("keydown", key_, true);
+      // the end let go of a wall or landed on one: joins follow the geometry, in the same undo step
+      if (this.doc.typeOf(f) === "Wall" && hd.writes.startsWith("centreline")) { const ends = hd.writes === "centreline" ? wallEnds(this.doc, [id]) : [{ id, end: hd.writes.split(".")[1] }]; this.app.apply({ op: "autojoin", ends }, { quiet: true, coalesce: key }); }
+      this.app.editor.seal(); this.showSnap(null); this.hideHud(); this.app.refresh(); };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", finish);
     el.addEventListener("pointercancel", finish, { once: true });
     window.addEventListener("keydown", key_, true);
   }
@@ -8063,7 +8170,7 @@ class View2D {
     const pressed = this.pressSelected; this.pressSelected = false;
     if (!d) return;
     if (d.viewport) { this.guides = []; this.app.editor.seal(); this.draw(); if (d.moved) return; }
-    if (d.body && d.moved) { this.app.editor.seal(); this.showSnap(null); this.hideHud(); this.app.refresh({ keepMain: true }); return; }
+    if (d.body && d.moved) { const ends = wallEnds(this.doc, d.body.ids); if (ends.length) this.app.apply({ op: "autojoin", ends }, { quiet: true, coalesce: `move:${d.body.ids.join(",")}:${d.start.join(",")}` }); this.app.editor.seal(); this.showSnap(null); this.hideHud(); this.app.refresh({ keepMain: true }); return; }
     if (d.dim && d.moved) { this.app.editor.seal(); this.hideHud(); this.app.refresh({ keepMain: true }); return; }
     if (d.level && d.moved) { this.app.editor.seal(); this.hideHud(); this.app.refresh({ keepMain: true }); this.app.say("Level moved: walls, rooms and views bound to it followed", "ok"); return; }
     if (d.box && d.moved) return this.finishBox(d, e);
@@ -8263,8 +8370,9 @@ class View2D {
     this.commitModify(T.cursor);
   }
   commitModify(target) {
-    const T = this.tool, tool = this.app.tool, op = this.modifyOp(tool, T, target);
-    const r = this.app.apply(op);
+    const T = this.tool, tool = this.app.tool, op = this.modifyOp(tool, T, target), key = `modify:${Date.now()}`;
+    const r = this.app.apply(op, { coalesce: key });
+    if (r.ok) { const ends = wallEnds(this.doc, r.copied || r.moved || []); if (ends.length) this.app.apply({ op: "autojoin", ends }, { quiet: true, coalesce: key }); this.app.editor.seal(); }
     T.pts = []; T.ghost = null; T.centre = null; this.hideHud();
     if (r.ok) { this.app.say(`${tool === "copy" || op.copy ? "Copied" : tool[0].toUpperCase() + tool.slice(1) + "d"} ${(r.copied || r.moved || []).length} element(s)`, "ok"); if (r.copied) this.app.select(r.copied); }
     this.app.setTool("select");
@@ -8834,7 +8942,9 @@ class View3D {
         }
         this.refresh();
       },
-      end: () => { this.app.editor.seal(); this.hud.hidden = true; this.app.refresh({ keepMain: true }); this.refresh(); if (drv) this.app.say(`Moved level ${drv.level}: every wall bound to it followed`, "ok"); else if (wasBound) this.app.say(`height was bound to ${orig.ref}; the grip set it to a literal — undo to restore the binding`, "note"); },
+      end: () => {
+        if (g.kind === "end" || g.kind === "move") { const ends = g.kind === "move" ? [{ id, end: "start" }, { id, end: "end" }] : [{ id, end: g.writes.split(".")[1] }]; if (doc.typeOf(f) === "Wall") this.app.apply({ op: "autojoin", ends }, { quiet: true, coalesce: key }); }
+        this.app.editor.seal(); this.hud.hidden = true; this.app.refresh({ keepMain: true }); this.refresh(); if (drv) this.app.say(`Moved level ${drv.level}: every wall bound to it followed`, "ok"); else if (wasBound) this.app.say(`height was bound to ${orig.ref}; the grip set it to a literal — undo to restore the binding`, "note"); },
     };
   }
   finishWall(closed) {

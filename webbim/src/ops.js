@@ -5,7 +5,7 @@
 //! fixture, a sample and an assistant all use this path. Consecutive edits with
 //! the same coalescing key collapse into one undo step.
 
-import { TOL, add, sub, mul, dot, dist, perp, normalise, lineThrough, signedDistance, offsetLine, rot, len } from "./geom2d.js";
+import { TOL, add, sub, mul, dot, dist, perp, normalise, lineThrough, signedDistance, offsetLine, rot, len, cross, intersectLines } from "./geom2d.js";
 import { parse, namesIn, evaluate, saysFormula, readValue, ExprError, formatValue } from "./expr.js";
 import { CATALOGUE, F, clone, documentLookup, MODEL_LIBS } from "./ocaf.js";
 import { resolveReference } from "./bim.js";
@@ -277,6 +277,31 @@ const HANDLERS = {
     for (const [id, cl] of res.set) if (id !== o.id) { const g = doc.element(id); doc.setArg(g, geomKey(g, doc), cl); }
     return { moved: [...res.set.keys()].filter(id => id !== o.id) };
   },
+  /** Keep joins true to the geometry after an end moves (§10.9): release the join
+   *  it left, and make the one it arrived at — a shared corner with a nearby end,
+   *  or a T where it lands anywhere inside another wall's thickness. */
+  autojoin(doc, o) {
+    const made = [], released = [];
+    for (const { id, end } of o.ends || []) {
+      const f = doc.element(id); if (!f || doc.typeOf(f) !== "Wall") continue;
+      const c = clone(doc.argValue(f, "centreline")); if (!c || c.type !== "line") continue;
+      const here = r => r && r.of === id && r.end === end;
+      const mine = doc.joins.filter(j => here(j.a) || here(j.b));
+      // a disallowed or hand-set join is the user's decision: leave it alone
+      if (mine.some(j => j.allowed === false || (j.kind && j.kind !== "auto"))) continue;
+      const still = mine.filter(j => joinHolds(doc, j));
+      for (const j of mine) if (!still.includes(j)) { doc.joins.splice(doc.joins.indexOf(j), 1); released.push(j.b.of === id ? j.a.of : j.b.of); }
+      if (still.length) continue;
+      const hit = findJoin(doc, id, end, c);
+      if (!hit) continue;
+      if (dist(hit.p, c[end]) > 1e-9) { c[end] = hit.p; doc.setArg(f, "centreline", c); }
+      for (const m of hit.moveOther || []) { const g = doc.element(m.id), gc = clone(doc.argValue(g, "centreline")); gc[m.end] = hit.p; doc.setArg(g, "centreline", gc); }
+      for (const row of hit.rows) HANDLERS.relate(doc, { store: "joins", row: Object.assign(row, { kind: "auto", order: 0, allowed: true }) });
+      made.push(hit.what);
+    }
+    doc.relationRevision++;
+    return { joined: made, released, said: made.length ? `Joined: ${made.join("; ")}` : released.length ? `Join released from ${[...new Set(released)].join(", ")}` : undefined };
+  },
   draw(doc, o) {
     // Chain-draw walls: click, click, click (§10.9). Each vertex shares a node
     // with an existing end (L join), lands on a centreline (T join, never a
@@ -305,10 +330,69 @@ const HANDLERS = {
     }
     for (const r of first) HANDLERS.relate(doc, { store: "joins", row: Object.assign(r, { kind: "auto", order: 0, allowed: true }) });
     if (o.closed && ids.length > 1) HANDLERS.relate(doc, { store: "joins", row: { a: { of: ids[ids.length - 1], end: "end" }, b: { of: ids[0], end: "start" }, kind: "auto", order: 0, allowed: true } });
+    // a chain that stops on a wall's face (not only on its location line) still joins it
+    if (!o.closed && ids.length) HANDLERS.autojoin(doc, { ends: [{ id: ids[0], end: "start" }, { id: ids[ids.length - 1], end: "end" }] });
     return { ids };
   },
 };
 export { HANDLERS };
+
+// ---------------------------------------------------------------- automatic joins
+function lineWall(doc, g) {
+  if (doc.typeOf(g) !== "Wall") return null;
+  const c = doc.argValue(g, "centreline"); if (!c || c.type !== "line") return null;
+  const L = dist(c.start, c.end); if (L < TOL) return null;
+  const w = doc.plan(g), sv = w && w.stack && w.stack.s && w.stack.s.length ? w.stack.s : [-100, 100];
+  return { id: doc.idOf(g), c, L, line: lineThrough(c.start, c.end), sMin: Math.min(...sv), sMax: Math.max(...sv), half: Math.max(...sv.map(Math.abs)) };
+}
+/** Does a join row still describe the geometry? */
+function joinHolds(doc, j) {
+  const A = doc.element(j.a.of), B = doc.element(j.b.of); if (!A || !B) return false;
+  const ca = doc.argValue(A, "centreline"), cb = doc.argValue(B, "centreline"); if (!ca || !cb) return false;
+  const pa = ca[j.a.end]; if (!pa) return false;
+  if (j.b.end) return !!cb[j.b.end] && dist(pa, cb[j.b.end]) <= 1;
+  if (cb.type !== "line") return true;                     // arcs: resolveJoins judges and notes
+  const L = lineThrough(cb.start, cb.end), u = dot(sub(pa, L.p), L.d);
+  return Math.abs(signedDistance(L, pa)) <= 1 && u > -1 && u < dist(cb.start, cb.end) + 1;
+}
+/** The join an end has arrived at, and the point it should sit on. Corners win over Ts;
+ *  a T lands anywhere within the other wall's thickness and snaps onto its location line
+ *  along the moving wall's own direction, so the wall never bends. */
+function findJoin(doc, id, end, c) {
+  const me = lineWall(doc, doc.element(id)); if (!me) return null;
+  const p = c[end], q = end === "start" ? c.end : c.start, dir = normalise(sub(p, q));
+  const walls = doc.elements().filter(g => doc.idOf(g) !== id).map(g => lineWall(doc, g)).filter(Boolean);
+  // 1. a corner: another wall's end within the walls' half-thickness
+  let best = null;
+  for (const B of walls) for (const e of ["start", "end"]) {
+    const d = dist(p, B.c[e]), tol = Math.max(me.half, B.half) + 1;
+    if (d <= tol && (!best || d < best.d)) best = { d, B, e };
+  }
+  if (best) {
+    const P = best.B.c[best.e];
+    const rows = [{ a: { of: id, end }, b: { of: best.B.id, end: best.e } }];
+    const node = new Set([best.B.id + ":" + best.e]);
+    for (const B of walls) for (const e of ["start", "end"]) if (!node.has(B.id + ":" + e) && dist(B.c[e], P) <= 1) { node.add(B.id + ":" + e); rows.push({ a: { of: id, end }, b: { of: B.id, end: e } }); }
+    return { p: P, rows, what: `${id} ${end} ⟷ ${best.B.id} ${best.e}` };
+  }
+  // 2. a T: the end is inside another wall's footprint (or within 30 mm of it)
+  let T = null;
+  for (const B of walls) {
+    if (Math.abs(cross(dir, B.line.d)) < 0.3) continue;      // nearly parallel: no T
+    const s = signedDistance(B.line, p), u = dot(sub(p, B.line.p), B.line.d);
+    if (s < B.sMin - 30 || s > B.sMax + 30 || u < -me.half || u > B.L + me.half) continue;
+    const X = intersectLines(lineThrough(q, p), B.line); if (!X) continue;
+    const uX = dot(sub(X, B.line.p), B.line.d), d = Math.abs(s);
+    if (T && T.d <= d) continue;
+    // landing at the very end of B makes a corner: both walls meet at X
+    if (uX < me.half + 1) { T = { d, p: X, rows: [{ a: { of: id, end }, b: { of: B.id, end: "start" } }], moveOther: [{ id: B.id, end: "start" }], what: `${id} ${end} ⟷ ${B.id} start (corner)` }; continue; }
+    if (uX > B.L - me.half - 1) { T = { d, p: X, rows: [{ a: { of: id, end }, b: { of: B.id, end: "end" } }], moveOther: [{ id: B.id, end: "end" }], what: `${id} ${end} ⟷ ${B.id} end (corner)` }; continue; }
+    T = { d, p: X, rows: [{ a: { of: id, end }, b: { of: B.id, u: uX } }], what: `${id} ${end} T onto ${B.id}` };
+  }
+  return T;
+}
+/** Every end of these walls, for autojoin. */
+export function wallEnds(doc, ids) { return ids.filter(id => { const f = doc.element(id); return f && doc.typeOf(f) === "Wall"; }).flatMap(id => [{ id, end: "start" }, { id, end: "end" }]); }
 
 // ---------------------------------------------------------------- propagation (§10.5)
 /** Which argument moves an element as a whole. */

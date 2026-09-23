@@ -8,7 +8,7 @@ Live artifact: https://claude.ai/artifact/EuWpSVPSYJtKFJB8GHDqfP
 
 ```
 node build.mjs            # writes BOTH targets, and refuses on any of the checks below
-node --test test/*.test.mjs   # 128 tests: the §15 acceptance suite, spaces, DXF, PDF raster measurement
+node --test test/*.test.mjs   # 130 tests: the §15 acceptance suite, spaces, DXF, PDF raster measurement
 ```
 
 1. **The Artifact**: republish `dist/web-bim.html` to the URL above so the link stays the same. Declare `capabilities: {downloads: true}`: file saves (PDF, zipped DXF, JSON) go through it. Publishing without the URL creates a second artifact.
@@ -58,6 +58,7 @@ The build refuses:
   - Middle-drag pans (Space+drag too). Shift+middle-drag orbits in 3D (Shift+right-drag too), about the selection or the point under the cursor, which stays put on screen, as in Revit. The wheel zooms about the cursor. Right-click opens the context menu.
 - **Everything moves:**
   - Walls: move, drag ends (joined neighbours follow), and drag height, in plan and 3D.
+  - Joins follow the geometry. Drop an end inside another wall's thickness and it snaps onto that wall's location line as a T. Drop it near another wall's end and it forms a corner. Pull it away and the join is released. The same applies when drawing, moving, rotating or mirroring walls.
   - Doors and windows slide along their host.
   - Levels drag up and down in elevations.
   - A wall-top grip on a wall whose height is `Top.elevation - Base.elevation` moves the level, so every wall bound to it follows.

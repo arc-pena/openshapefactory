@@ -12,7 +12,7 @@ import { F, CATALOGUE } from "./ocaf.js";
 import { uOf, pointAt } from "./walls.js";
 import { listeningDimensions, dimensionMove, pickCandidates } from "./props.js";
 import { resolveReference, measureRefs, sheetSize } from "./bim.js";
-import { getPath, geomKey } from "./ops.js";
+import { getPath, geomKey, wallEnds } from "./ops.js";
 
 export const SNAP_PX = 8;
 export const SNAP_KINDS = ["endpoint", "midpoint", "centre", "intersection", "perpendicular", "nearest", "grid", "angle"];
@@ -296,7 +296,7 @@ export class View2D {
   // ---------------------------------------------------------------- handles (§10.7)
   startHandle(e, f, hd, el) {
     e.preventDefault(); e.stopPropagation();
-    el.setPointerCapture(e.pointerId);        // a fast drag that leaves the element keeps the gesture
+    // the overlay (and this handle) is rebuilt on every redraw, so the gesture listens on the window
     const id = this.doc.idOf(f), grab = this.quantise(this.toModel(...this.evPos(e)));
     const orig = JSON.parse(JSON.stringify(getPath(this.doc, f, hd.writes)));
     const key = `set:${id}:${hd.writes}`;
@@ -340,9 +340,12 @@ export class View2D {
       typed = ev.key === "Backspace" ? typed.slice(0, -1) : typed + ev.key;
       this.hudInput = true; this.hud.textContent = `type: ${typed || "…"} mm ⏎`;
     };
-    const finish = () => { el.removeEventListener("pointermove", move); window.removeEventListener("keydown", key_, true); this.app.editor.seal(); this.showSnap(null); this.hideHud(); this.app.refresh(); };
-    el.addEventListener("pointermove", move);
-    el.addEventListener("pointerup", finish, { once: true });
+    const finish = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", finish); window.removeEventListener("keydown", key_, true);
+      // the end let go of a wall or landed on one: joins follow the geometry, in the same undo step
+      if (this.doc.typeOf(f) === "Wall" && hd.writes.startsWith("centreline")) { const ends = hd.writes === "centreline" ? wallEnds(this.doc, [id]) : [{ id, end: hd.writes.split(".")[1] }]; this.app.apply({ op: "autojoin", ends }, { quiet: true, coalesce: key }); }
+      this.app.editor.seal(); this.showSnap(null); this.hideHud(); this.app.refresh(); };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", finish);
     el.addEventListener("pointercancel", finish, { once: true });
     window.addEventListener("keydown", key_, true);
   }
@@ -459,7 +462,7 @@ export class View2D {
     const pressed = this.pressSelected; this.pressSelected = false;
     if (!d) return;
     if (d.viewport) { this.guides = []; this.app.editor.seal(); this.draw(); if (d.moved) return; }
-    if (d.body && d.moved) { this.app.editor.seal(); this.showSnap(null); this.hideHud(); this.app.refresh({ keepMain: true }); return; }
+    if (d.body && d.moved) { const ends = wallEnds(this.doc, d.body.ids); if (ends.length) this.app.apply({ op: "autojoin", ends }, { quiet: true, coalesce: `move:${d.body.ids.join(",")}:${d.start.join(",")}` }); this.app.editor.seal(); this.showSnap(null); this.hideHud(); this.app.refresh({ keepMain: true }); return; }
     if (d.dim && d.moved) { this.app.editor.seal(); this.hideHud(); this.app.refresh({ keepMain: true }); return; }
     if (d.level && d.moved) { this.app.editor.seal(); this.hideHud(); this.app.refresh({ keepMain: true }); this.app.say("Level moved: walls, rooms and views bound to it followed", "ok"); return; }
     if (d.box && d.moved) return this.finishBox(d, e);
@@ -659,8 +662,9 @@ export class View2D {
     this.commitModify(T.cursor);
   }
   commitModify(target) {
-    const T = this.tool, tool = this.app.tool, op = this.modifyOp(tool, T, target);
-    const r = this.app.apply(op);
+    const T = this.tool, tool = this.app.tool, op = this.modifyOp(tool, T, target), key = `modify:${Date.now()}`;
+    const r = this.app.apply(op, { coalesce: key });
+    if (r.ok) { const ends = wallEnds(this.doc, r.copied || r.moved || []); if (ends.length) this.app.apply({ op: "autojoin", ends }, { quiet: true, coalesce: key }); this.app.editor.seal(); }
     T.pts = []; T.ghost = null; T.centre = null; this.hideHud();
     if (r.ok) { this.app.say(`${tool === "copy" || op.copy ? "Copied" : tool[0].toUpperCase() + tool.slice(1) + "d"} ${(r.copied || r.moved || []).length} element(s)`, "ok"); if (r.copied) this.app.select(r.copied); }
     this.app.setTool("select");

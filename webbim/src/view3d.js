@@ -397,7 +397,9 @@ export class View3D {
         }
         this.refresh();
       },
-      end: () => { this.app.editor.seal(); this.hud.hidden = true; this.app.refresh({ keepMain: true }); this.refresh(); if (drv) this.app.say(`Moved level ${drv.level}: every wall bound to it followed`, "ok"); else if (wasBound) this.app.say(`height was bound to ${orig.ref}; the grip set it to a literal — undo to restore the binding`, "note"); },
+      end: () => {
+        if (g.kind === "end" || g.kind === "move") { const ends = g.kind === "move" ? [{ id, end: "start" }, { id, end: "end" }] : [{ id, end: g.writes.split(".")[1] }]; if (doc.typeOf(f) === "Wall") this.app.apply({ op: "autojoin", ends }, { quiet: true, coalesce: key }); }
+        this.app.editor.seal(); this.hud.hidden = true; this.app.refresh({ keepMain: true }); this.refresh(); if (drv) this.app.say(`Moved level ${drv.level}: every wall bound to it followed`, "ok"); else if (wasBound) this.app.say(`height was bound to ${orig.ref}; the grip set it to a literal — undo to restore the binding`, "note"); },
     };
   }
   finishWall(closed) {

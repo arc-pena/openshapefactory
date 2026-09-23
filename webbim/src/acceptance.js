@@ -828,3 +828,23 @@ testCase("M5", "Dragging a wall end stretches the joined neighbour", () => {
   const b = doc.argValue(doc.element("B"), "centreline");
   return R(b.start[0] === 7000 && b.end[0] === 6000, "B's start follows to (7000, 0)", `${b.start} → ${b.end}`);
 });
+testCase("M6", "An end dragged into another wall's thickness makes a T on its location line", () => {
+  const { doc, ed } = fixture();
+  wall(doc, "A", [0, 0], [6000, 0], "T-300"); wall(doc, "B", [3000, 3000], [3000, 1000], "T-300"); doc.regenerate();
+  // 3000,120 is inside A's thickness but 120 mm off its location line
+  ed.apply({ op: "drag", id: "B", key: "centreline.end", value: [3000, 120] });
+  ed.apply({ op: "autojoin", ends: [{ id: "B", end: "end" }] });
+  const b = doc.argValue(doc.element("B"), "centreline"), j = doc.joins.find(r => r.a.of === "B" && r.b.of === "A");
+  const w = doc.plan(doc.element("B"));
+  return R(b.end[0] === 3000 && Math.abs(b.end[1]) < 1e-9 && j && Math.abs(j.b.u - 3000) < 1e-9 && w.ends.end.k === "T", "end at (3000, 0); T at u = 3000; resolved as T", `${b.end} ${j ? "u=" + j.b.u : "no join"} ${w.ends.end.k}`);
+});
+testCase("M7", "Dragging a T end away releases the join; a nearby end makes a corner", () => {
+  const { doc, ed } = fixture();
+  wall(doc, "A", [0, 0], [6000, 0], "T-300"); wall(doc, "B", [3000, 3000], [3000, 0], "T-300"); wall(doc, "C", [5000, 3000], [5000, 5000], "T-300");
+  doc.joins.push({ id: "J1", a: { of: "B", end: "end" }, b: { of: "A", u: 3000 }, kind: "auto", order: 0, allowed: true }); doc.regenerate();
+  ed.apply({ op: "drag", id: "B", key: "centreline.end", value: [3000, 1500] }); ed.apply({ op: "autojoin", ends: [{ id: "B", end: "end" }] });
+  const released = !doc.joins.some(r => r.a.of === "B");
+  ed.apply({ op: "drag", id: "B", key: "centreline.start", value: [5080, 3060] }); ed.apply({ op: "autojoin", ends: [{ id: "B", end: "start" }] });
+  const b = doc.argValue(doc.element("B"), "centreline"), corner = doc.joins.some(r => r.a.of === "B" && r.a.end === "start" && r.b.of === "C" && r.b.end === "start");
+  return R(released && corner && b.start[0] === 5000 && b.start[1] === 3000, "T released; start snapped to C's start (5000, 3000) with a corner join", `released ${released}, corner ${corner}, start ${b.start}`);
+});
