@@ -173,6 +173,14 @@ export function planScene(doc, v, opts = {}) {
       if (bnd === "cut") B.fill(p.path, g.fill || ((doc.lib.materials[p.material] || {}).cut || {}).background || "#e9eaec", "IfcSlab", doc.idOf(f));
       B.stroke(p.path, g, "IfcSlab", doc.idOf(f)); B.hit(doc.idOf(f), p.foot);
     }
+    if (t === "Generic" && vis(f)) {
+      // a generic model reads like a column: poché where the cut crosses it, its outline below
+      const p = doc.plan(f); if (!p) continue; const bnd = band(p.z0, p.z1);
+      if (bnd === "above" || bnd === "below") continue;
+      const g = resolveGraphics(doc, ctx, f, bnd === "cut" ? "cut" : "projection");
+      if (bnd === "cut") B.fill(p.path, g.fill || ((doc.lib.materials[p.material] || {}).cut || {}).background || "#e9eaec", "IfcBuildingElementProxy", doc.idOf(f));
+      B.stroke(p.path, g, "IfcBuildingElementProxy", doc.idOf(f)); B.hit(doc.idOf(f), p.foot);
+    }
     if (t === "Beam" && vis(f)) {
       // a beam above the cut is drawn dashed, as it is seen from below; cut, it is a section
       const p = doc.plan(f); if (!p) continue; const bnd = band(p.z0, p.z1);
@@ -509,12 +517,12 @@ function gatherElevationItems(doc, ctx, G, skip = null) {
     if (!categoryVisible(ctx, categoryOf(doc, f))) continue;
     const t = doc.typeOf(f);
     if (t === "Wall") { const w = doc.plan(f); if (!w) continue; const it = elevWall(doc, f, w, V, sOf, depthOf, ctx); if (it) items.push(it); }
-    if (t === "Floor" || t === "Beam") {
+    if (t === "Floor" || t === "Beam" || t === "Generic") {
       const p = doc.plan(f); if (!p || !p.parts) continue;
       for (const part of p.parts) {
         const ss = part.foot.map(sOf), dd = part.foot.map(depthOf), s0 = Math.min(...ss), s1 = Math.max(...ss);
         const sil = [[s0, part.z0 - Z0], [s1, part.z0 - Z0], [s1, part.z1 - Z0], [s0, part.z1 - Z0]];
-        items.push({ id: doc.idOf(f), f, depth: Math.min(...dd), depthMax: Math.max(...dd), s0, s1, curves: polyPath(sil).map(x => [x.a, x.b]), sil: [sil], cat: t === "Floor" ? "IfcSlab" : "IfcBeam" });
+        items.push({ id: doc.idOf(f), f, depth: Math.min(...dd), depthMax: Math.max(...dd), s0, s1, curves: polyPath(sil).map(x => [x.a, x.b]), sil: [sil], cat: t === "Floor" ? "IfcSlab" : t === "Generic" ? "IfcBuildingElementProxy" : "IfcBeam" });
       }
     }
     if (t === "Column") { const p = doc.plan(f); if (!p) continue; const pts = p.foot.length ? p.foot : samplePath(p.path); const ss = pts.map(sOf), dd = pts.map(depthOf);
@@ -638,9 +646,9 @@ export function sectionCut(doc, v) {
         }
       }
     }
-    if ((t === "Floor" || t === "Beam") && p.parts) for (const part of p.parts) {
+    if ((t === "Floor" || t === "Beam" || t === "Generic") && p.parts) for (const part of p.parts) {
       const pr = LAYER_PRIORITY[part.sub] ?? (t === "Beam" ? 1 : 4);
-      for (const [s0, s1] of lineIntervals(part.foot, G)) push(f, t === "Floor" ? "floor" : "beam", s0, s1, part.z0, part.z1, part.material, pr);
+      for (const [s0, s1] of lineIntervals(part.foot, G)) push(f, t === "Floor" ? "floor" : t === "Generic" ? "generic" : "beam", s0, s1, part.z0, part.z1, part.material, pr);
     }
     if (t === "Column") { const foot = p.foot.length ? p.foot : samplePath(p.path); for (const [s0, s1] of lineIntervals(foot, G)) push(f, "column", s0, s1, p.z0, p.z1, p.material, 1); }
   }

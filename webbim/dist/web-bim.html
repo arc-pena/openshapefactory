@@ -1591,6 +1591,7 @@ const CATEGORIES = {
   Detail:            { name: "Detail items", subcategories: { Common: { projection: "thin" } } },
   IfcSlab:           { name: "Floors", subcategories: { Common: { cut: "heavy", projection: "thin", beyond: "hairline" } } },
   IfcBeam:           { name: "Structural Framing", subcategories: { Common: { cut: "heavy", projection: "thin", beyond: "hairline" } } },
+  IfcBuildingElementProxy: { name: "Generic Models", subcategories: { Common: { cut: "heavy", projection: "thin", beyond: "hairline" } } },
   Furniture:         { name: "Furniture", subcategories: { Common: { projection: "thin" } } },
 };
 
@@ -3792,13 +3793,14 @@ BUILDERS.Window = {
 declare({ type: "Column", guid: "wb-0301", category: "IfcColumn", kind: "column", idPrefix: "C",
   summary: "A column at a point. Columns do not join to walls — they overlap, deliberately (§16).",
   args: [ point2d("position", "Position", [0, 0]), ref("columnType", "Type", ["columnType"]), ref("baseLevel", "Base level", ["level"]),
-          real("height", "Height", 3000, 1, 100000, 1, "mm", { group: "Dimensions" }), real("rotation", "Rotation", 0, -360, 360, 1, "°") ],
+          real("height", "Height", 3000, 1, 100000, 1, "mm", { group: "Dimensions" }), real("rotation", "Rotation", 0, -360, 360, 1, "°"),
+          real("baseOffset", "Base offset", 0, -100000, 100000, 1, "mm", { group: "Constraints" }) ],
   handles: (f) => [{ key: "move", at: F.point(f, "position"), constraint: "free2d", writes: "position" }] });
 BUILDERS.Column = {
   precondition: (f) => F.type(f, "columnType") ? null : "pick a column type",
   build: (f, doc) => {
     const t = F.type(f, "columnType"), c = F.point(f, "position"), rot = F.real(f, "rotation") * Math.PI / 180;
-    const z0 = levelElev(doc, f), h = F.real(f, "height");
+    const z0 = levelElev(doc, f) + (F.real(f, "baseOffset") || 0), h = F.real(f, "height");
     let path, foot;
     if (t.round) { path = [{ k: "A", c, r: t.width / 2, a0: 0, a1: TAU }]; foot = []; for (let i = 0; i < 16; i++) foot.push(add(c, [Math.cos(i / 16 * TAU) * t.width / 2, Math.sin(i / 16 * TAU) * t.width / 2])); }
     else { foot = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([x, y]) => { const p = [x * t.width / 2, y * t.depth / 2]; return add(c, [p[0] * Math.cos(rot) - p[1] * Math.sin(rot), p[0] * Math.sin(rot) + p[1] * Math.cos(rot)]); }); path = polyPath(foot); }
@@ -3846,6 +3848,25 @@ BUILDERS.Beam = {
     const foot = band(W, 0, 0).foot, len = dist(c.start, c.end);
     return { plan: { path: polyPath(foot), foot, axis: c, z0: top - D, z1: top, parts },
       data: { value: len, kind: "Length", parts, refs: [{ key: "axis", kind: "line", geom: lineThrough(c.start, c.end) }], props: { Length: L(len), Depth: L(D), Width: L(W), "Top elevation": L(top), TypeMark: T(t.mark || t.id) } } };
+  },
+};
+
+//! A generic model: IFC's IfcBuildingElementProxy, "something that is part of the building". It has
+//! no system of its own, so it is kept as what it is: an outline on a level pulled up through its height.
+declare({ type: "Generic", guid: "wb-0403", category: "IfcBuildingElementProxy", kind: "generic", idPrefix: "GM",
+  summary: "A generic model element: a plan outline pulled up through a height. What IFC calls a proxy.",
+  args: [ json("boundary", "Boundary", [[0, 0], [1000, 0], [1000, 1000], [0, 1000]]), ref("level", "Level", ["level"]),
+          real("baseOffset", "Base offset", 0, -100000, 100000, 1, "mm", { group: "Constraints" }), real("height", "Height", 1000, 1, 100000, 1, "mm", { group: "Dimensions" }),
+          text("ifcClass", "IFC class", "IfcBuildingElementProxy", { group: "IFC" }), text("material", "Material", "M-CONC", { group: "Materials" }) ],
+  handles: (f) => { const b = F.json(f, "boundary") || []; return b.map((p, i) => ({ key: "v" + i, at: p, constraint: "free2d", writes: `boundary.${i}` })); } });
+BUILDERS.Generic = {
+  precondition: (f) => { const b = F.json(f, "boundary"); return Array.isArray(b) && b.length >= 3 ? null : "a generic model needs an outline of three points or more"; },
+  build: (f, doc) => {
+    const b = F.json(f, "boundary"), z0 = levelElev(doc, f, "level") + F.real(f, "baseOffset"), h = F.real(f, "height"), material = F.text(f, "material") || "M-CONC";
+    const parts = [{ foot: b.map(p => p.slice()), z0, z1: z0 + h, sub: "Body", material }];
+    const area = Math.abs(polyArea(b));
+    return { plan: { path: polyPath(b), foot: b, z0, z1: z0 + h, material, parts },
+      data: { value: area * h / 1e9, kind: "Number", parts, props: { Volume: { kind: "Number", v: area * h / 1e9 }, Height: L(h), "Base elevation": L(z0), "IFC class": T(F.text(f, "ifcClass")) } } };
   },
 };
 
@@ -4171,7 +4192,7 @@ function elementParts(doc, f) {
   if (!p) return [];
   if (t === "Wall") return (p.pieces || []).map(pc => Object.assign({ sub: "Wall" }, pc));
   if (t === "Column") return [{ foot: p.foot.length ? p.foot : samplePath(p.path).slice(0, -1), z0: p.z0, z1: p.z1, sub: "Column", smooth: p.foot.length === 16 }];
-  if (t === "Door" || t === "Window" || t === "Floor" || t === "Beam") { const d = doc.data(f); return (d && d.parts) || (p.parts || []); }
+  if (t === "Door" || t === "Window" || t === "Floor" || t === "Beam" || t === "Generic") { const d = doc.data(f); return (d && d.parts) || (p.parts || []); }
   return [];
 }
 
@@ -5248,6 +5269,14 @@ function planScene(doc, v, opts = {}) {
       if (bnd === "cut") B.fill(p.path, g.fill || ((doc.lib.materials[p.material] || {}).cut || {}).background || "#e9eaec", "IfcSlab", doc.idOf(f));
       B.stroke(p.path, g, "IfcSlab", doc.idOf(f)); B.hit(doc.idOf(f), p.foot);
     }
+    if (t === "Generic" && vis(f)) {
+      // a generic model reads like a column: poché where the cut crosses it, its outline below
+      const p = doc.plan(f); if (!p) continue; const bnd = band(p.z0, p.z1);
+      if (bnd === "above" || bnd === "below") continue;
+      const g = resolveGraphics(doc, ctx, f, bnd === "cut" ? "cut" : "projection");
+      if (bnd === "cut") B.fill(p.path, g.fill || ((doc.lib.materials[p.material] || {}).cut || {}).background || "#e9eaec", "IfcBuildingElementProxy", doc.idOf(f));
+      B.stroke(p.path, g, "IfcBuildingElementProxy", doc.idOf(f)); B.hit(doc.idOf(f), p.foot);
+    }
     if (t === "Beam" && vis(f)) {
       // a beam above the cut is drawn dashed, as it is seen from below; cut, it is a section
       const p = doc.plan(f); if (!p) continue; const bnd = band(p.z0, p.z1);
@@ -5584,12 +5613,12 @@ function gatherElevationItems(doc, ctx, G, skip = null) {
     if (!categoryVisible(ctx, categoryOf(doc, f))) continue;
     const t = doc.typeOf(f);
     if (t === "Wall") { const w = doc.plan(f); if (!w) continue; const it = elevWall(doc, f, w, V, sOf, depthOf, ctx); if (it) items.push(it); }
-    if (t === "Floor" || t === "Beam") {
+    if (t === "Floor" || t === "Beam" || t === "Generic") {
       const p = doc.plan(f); if (!p || !p.parts) continue;
       for (const part of p.parts) {
         const ss = part.foot.map(sOf), dd = part.foot.map(depthOf), s0 = Math.min(...ss), s1 = Math.max(...ss);
         const sil = [[s0, part.z0 - Z0], [s1, part.z0 - Z0], [s1, part.z1 - Z0], [s0, part.z1 - Z0]];
-        items.push({ id: doc.idOf(f), f, depth: Math.min(...dd), depthMax: Math.max(...dd), s0, s1, curves: polyPath(sil).map(x => [x.a, x.b]), sil: [sil], cat: t === "Floor" ? "IfcSlab" : "IfcBeam" });
+        items.push({ id: doc.idOf(f), f, depth: Math.min(...dd), depthMax: Math.max(...dd), s0, s1, curves: polyPath(sil).map(x => [x.a, x.b]), sil: [sil], cat: t === "Floor" ? "IfcSlab" : t === "Generic" ? "IfcBuildingElementProxy" : "IfcBeam" });
       }
     }
     if (t === "Column") { const p = doc.plan(f); if (!p) continue; const pts = p.foot.length ? p.foot : samplePath(p.path); const ss = pts.map(sOf), dd = pts.map(depthOf);
@@ -5713,9 +5742,9 @@ function sectionCut(doc, v) {
         }
       }
     }
-    if ((t === "Floor" || t === "Beam") && p.parts) for (const part of p.parts) {
+    if ((t === "Floor" || t === "Beam" || t === "Generic") && p.parts) for (const part of p.parts) {
       const pr = LAYER_PRIORITY[part.sub] ?? (t === "Beam" ? 1 : 4);
-      for (const [s0, s1] of lineIntervals(part.foot, G)) push(f, t === "Floor" ? "floor" : "beam", s0, s1, part.z0, part.z1, part.material, pr);
+      for (const [s0, s1] of lineIntervals(part.foot, G)) push(f, t === "Floor" ? "floor" : t === "Generic" ? "generic" : "beam", s0, s1, part.z0, part.z1, part.material, pr);
     }
     if (t === "Column") { const foot = p.foot.length ? p.foot : samplePath(p.path); for (const [s0, s1] of lineIntervals(foot, G)) push(f, "column", s0, s1, p.z0, p.z1, p.material, 1); }
   }
@@ -6240,7 +6269,7 @@ function buildHLRModel(doc, opts = {}) {
     if (f.get("Integer") === 0 || doc.error(f)) continue;
     if (opts.visible && !opts.visible(f)) continue;           // the view's Visibility/Graphics
     const t = doc.typeOf(f);
-    if (t === "Door" || t === "Window" || t === "Floor" || t === "Beam") { for (const pt of elementParts(doc, f)) if (pt.foot && pt.foot.length >= 3) prism(pt.foot, pt.z0, pt.z1, solids, edges, false); continue; }
+    if (t === "Door" || t === "Window" || t === "Floor" || t === "Beam" || t === "Generic") { for (const pt of elementParts(doc, f)) if (pt.foot && pt.foot.length >= 3) prism(pt.foot, pt.z0, pt.z1, solids, edges, false); continue; }
     if (t === "Wall") { const w = doc.plan(f); if (!w || !w.pieces) continue; wallSolids(w, solids); wallEdges(w, edges, chord); }
     if (t === "Column") { const p = doc.plan(f); if (!p) continue; const foot = p.foot.length ? p.foot : samplePath(p.path).slice(0, -1); prism(foot, p.z0, p.z1, solids, edges, !!(p.foot.length === 16)); }
   }
@@ -6838,6 +6867,7 @@ function buildSample() {
   space("SP3", "Store", [9300, 5900], "G.03", "Support", 0);
   // views
   add({ id: "V-P00", type: "PlanView", name: "Ground Floor Plan", args: { level: { ref: "L0" }, scale: 100, viewRange: { top: 2300, cut: 1200, bottom: 0 }, detailLevel: "Fine", style: { ref: "VS-CONSTRUCTION" }, filters: ["FL-DEMO"], clip: { rect: [-3500, -7200, 16000, 11500], visible: false, active: true }, overrides: {} } });
+  add({ id: "V-P01", type: "PlanView", name: "First Floor Plan", args: { level: { ref: "L1" }, scale: 100, viewRange: { top: 2300, cut: 1200, bottom: 0 }, detailLevel: "Fine", style: { ref: "VS-CONSTRUCTION" }, filters: [], clip: { rect: null, visible: false, active: false }, overrides: {} } });
   add({ id: "V-P00P", type: "PlanView", name: "Ground Floor — Presentation", args: { level: { ref: "L0" }, scale: 100, viewRange: { top: 2300, cut: 1200, bottom: 0 }, detailLevel: "Coarse", style: { ref: "VS-PRESENTATION" }, filters: [], clip: { rect: [-1500, -1500, 13500, 9500], visible: false, active: true }, overrides: {} } });
   add({ id: "V-P00D", type: "PlanView", name: "Corner Detail", args: { level: { ref: "L0" }, scale: 20, viewRange: { top: 2300, cut: 1200, bottom: 0 }, detailLevel: "Fine", style: { ref: "VS-CONSTRUCTION" }, filters: [], clip: { rect: [10600, -1300, 13400, 1800], visible: true, active: true }, overrides: {} } });
   add({ id: "V-E01", type: "ElevationView", name: "South Elevation", args: { line: line([15500, -6000], [-3500, -6000]), depth: 16000, scale: 100, baseLevel: { ref: "L0" }, top: 5000, style: { ref: "VS-CONSTRUCTION" }, detailLevel: "Coarse", clip: { rect: null, visible: false, active: false } } });
@@ -8979,6 +9009,7 @@ const SLABS = new Set(["IFCSLAB", "IFCSLABSTANDARDCASE", "IFCSLABELEMENTEDCASE",
 const COLUMNS = new Set(["IFCCOLUMN", "IFCCOLUMNSTANDARDCASE", "IFCMEMBER"]);
 const BEAMS = new Set(["IFCBEAM", "IFCBEAMSTANDARDCASE"]);
 const FILLERS = new Set(["IFCDOOR", "IFCDOORSTANDARDCASE", "IFCWINDOW", "IFCWINDOWSTANDARDCASE"]);
+const PROXIES = new Set(["IFCBUILDINGELEMENTPROXY"]);
 const IGNORED = new Set(["IFCOPENINGELEMENT", "IFCSPACE", "IFCSITE", "IFCBUILDING", "IFCBUILDINGSTOREY", "IFCPROJECT", "IFCANNOTATION", "IFCGRID"]);
 
 const r1 = v => Math.round(v * 10) / 10;
@@ -9018,20 +9049,97 @@ function orientedBox(pts) {
   const cu = (u0 + u1) / 2, cv = (v0 + v1) / 2, centre = [d[0] * cu + n[0] * cv, d[1] * cu + n[1] * cv];
   return { centre, dir: long, length: L, width: W };
 }
-/** One extruded body in world coordinates: its footprint (for vertical extrusions), height range, and the frame. */
-function extrusion(model, entity, scale) {
-  const frame = ifcWorldFrame(model, entity.args[5], scale);
-  for (const item of ifcBodyItems(model, entity)) {
-    if (item.type !== "IFCEXTRUDEDAREASOLID") continue;
-    const a = item.args, place = ifcCompose(frame, ifcPlacementFrame(model, a[1], scale));
-    const profile = ifcProfile(model, a[0], scale), local = profilePoints(profile);
-    const dl = ifcDirection(model, a[2], [0, 0, 1]), depth = asNumber(a[3]) * scale;
-    const dw = [place.x[0] * dl[0] + place.y[0] * dl[1] + place.z[0] * dl[2], place.x[1] * dl[0] + place.y[1] * dl[1] + place.z[1] * dl[2], place.x[2] * dl[0] + place.y[2] * dl[1] + place.z[2] * dl[2]];
-    const world = local ? local.map(p => ifcAt(place, [p[0], p[1], 0])) : null;
-    return { frame, place, profile, local, world, dir: dw, depth };
-  }
+/** Everything an element's body is made of, in world coordinates. Extrusions stay extrusions (their
+ *  profile and direction are what makes a wall a wall and a beam a beam); a mapped item is followed
+ *  through its map (a Revit file is mostly those: nine hundred beams sharing one shape); a boolean
+ *  result is its first operand (a wall clipped under a roof is still the wall); and anything else -
+ *  a brep, a face set, a swept disk - arrives as the points it is made of. */
+function bodySolids(model, entity, scale) {
+  const frame = ifcWorldFrame(model, entity.args[5], scale), out = [];
+  let clipped = false;
+  const turn = (f, v) => [f.x[0] * v[0] + f.y[0] * v[1] + f.z[0] * v[2], f.x[1] * v[0] + f.y[1] * v[1] + f.z[1] * v[2], f.x[2] * v[0] + f.y[2] * v[1] + f.z[2] * v[2]];
+  const visit = (item, fr, depth) => {
+    if (!item || depth > 8) return;
+    const a = item.args || [];
+    if (item.type === "IFCEXTRUDEDAREASOLID" || item.type === "IFCEXTRUDEDAREASOLIDTAPERED") {
+      const place = ifcCompose(fr, ifcPlacementFrame(model, a[1], scale));
+      const profile = ifcProfile(model, a[0], scale), local = profilePoints(profile);
+      const dir = turn(place, ifcDirection(model, a[2], [0, 0, 1])), len = asNumber(a[3]) * scale;
+      const world = local ? local.map(p => ifcAt(place, [p[0], p[1], 0])) : null;
+      out.push({ kind: "extrusion", place, profile, local, world, dir, depth: len,
+        points: world ? world.concat(world.map(p => [p[0] + dir[0] * len, p[1] + dir[1] * len, p[2] + dir[2] * len])) : [] });
+    } else if (item.type === "IFCMAPPEDITEM") {
+      const src = follow(model, a[0]), rep = src && follow(model, src.args[1]); if (!rep) return;
+      const place = ifcCompose(ifcCompose(fr, ifcPlacementFrame(model, a[1], scale)), ifcPlacementFrame(model, src.args[0], scale));
+      for (const it of followAll(model, rep.args[3])) visit(it, place, depth + 1);
+    } else if (item.type === "IFCBOOLEANRESULT" || item.type === "IFCBOOLEANCLIPPINGRESULT") {
+      clipped = true; visit(follow(model, a[1]), fr, depth + 1);
+    } else if (item.type === "IFCCSGSOLID") {
+      visit(follow(model, a[0]), fr, depth + 1);
+    } else if (item.type === "IFCBLOCK") {
+      const place = ifcCompose(fr, ifcPlacementFrame(model, a[0], scale)), [dx, dy, dz] = [1, 2, 3].map(i => asNumber(a[i]) * scale);
+      const pts = []; for (const x of [0, dx]) for (const y of [0, dy]) for (const z of [0, dz]) pts.push(ifcAt(place, [x, y, z]));
+      out.push({ kind: "points", points: pts });
+    } else {
+      const pts = collectPoints(model, item, scale);
+      if (pts.length >= 3) out.push({ kind: "points", points: pts.map(p => ifcAt(fr, p)) });
+    }
+  };
+  for (const it of ifcBodyItems(model, entity)) visit(it, frame, 0);
+  const points = out.flatMap(x => x.points);
+  return { frame, solids: out, points, clipped, extrusions: out.filter(x => x.kind === "extrusion") };
+}
+/** The points a brep or face set is made of: its cartesian points and point lists, and nothing that is
+ *  only a placement or a direction. Each entity is read once however many faces share it. */
+const PLACEMENTS = new Set(["IFCAXIS2PLACEMENT2D", "IFCAXIS2PLACEMENT3D", "IFCDIRECTION", "IFCSTYLEDITEM", "IFCPRESENTATIONLAYERASSIGNMENT", "IFCCARTESIANTRANSFORMATIONOPERATOR3D"]);
+function collectPoints(model, item, scale) {
+  const pts = [], seen = new Set(), LIMIT = 50000;
+  const walk = (e, depth) => {
+    if (!e || depth > 16 || seen.has(e.id) || pts.length > LIMIT) return; seen.add(e.id);
+    if (PLACEMENTS.has(e.type)) return;
+    if (e.type === "IFCCARTESIANPOINT") { const l = asList(e.args[0]).map(n => asNumber(n) * scale); pts.push([l[0] || 0, l[1] || 0, l[2] || 0]); return; }
+    if (e.type === "IFCCARTESIANPOINTLIST3D") { for (const q of asList(e.args[0])) { const l = asList(q).map(n => asNumber(n) * scale); pts.push([l[0] || 0, l[1] || 0, l[2] || 0]); } return; }
+    for (const v of e.args || []) for (const one of asList(v)) if (isRef(one)) walk(follow(model, one), depth + 1);
+  };
+  walk(item, 0);
+  return pts;
+}
+/** Convex hull of plan points (monotone chain), counter-clockwise. */
+function hull2(pts) {
+  const P = pts.map(p => [p[0], p[1]]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  if (P.length < 3) return P;
+  const cross = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lo = [], hi = [];
+  for (const p of P) { while (lo.length >= 2 && cross(lo[lo.length - 2], lo[lo.length - 1], p) <= 1e-9) lo.pop(); lo.push(p); }
+  for (let i = P.length - 1; i >= 0; i--) { const p = P[i]; while (hi.length >= 2 && cross(hi[hi.length - 2], hi[hi.length - 1], p) <= 1e-9) hi.pop(); hi.push(p); }
+  return lo.slice(0, -1).concat(hi.slice(0, -1));
+}
+/** The long axis of a cloud of points, by power iteration on its covariance: a beam's line. */
+function principalAxis(pts) {
+  const n = pts.length, c = [0, 1, 2].map(k => pts.reduce((s, p) => s + p[k], 0) / n);
+  const C = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+  for (const p of pts) { const d = [p[0] - c[0], p[1] - c[1], p[2] - c[2]]; for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) C[i][j] += d[i] * d[j]; }
+  let v = [1, 0.3, 0.1];
+  for (let it = 0; it < 60; it++) { const w = [0, 1, 2].map(i => C[i][0] * v[0] + C[i][1] * v[1] + C[i][2] * v[2]); const L = Math.hypot(...w); if (L < 1e-12) break; v = w.map(x => x / L); }
+  return { centre: c, axis: v };
+}
+/** Width and depth of a profile: its stated sizes, or the extent of the outline it was drawn as. */
+function profileSize(profile, local) {
+  const v = profile.values || {};
+  if (profile.kind === "circle") return { W: v.radius * 2, D: v.radius * 2, round: true };
+  if (profile.kind === "rect") return { W: v.width, D: v.height };
+  if (profile.kind === "ellipse") return { W: v.major * 2, D: v.minor * 2 };
+  if (profile.kind === "section" && v.width && v.depth) return { W: v.width, D: v.depth };
+  if (local && local.length) { const xs = local.map(p => p[0]), ys = local.map(p => p[1]); return { W: Math.max(...xs) - Math.min(...xs), D: Math.max(...ys) - Math.min(...ys) }; }
   return null;
 }
+/** The profile's centre in its own plane: its seat, or the middle of what was drawn. */
+function profileCentre(profile, local) {
+  if (profile.kind !== "drawn") return profile.at || [0, 0];
+  const xs = local.map(p => p[0]), ys = local.map(p => p[1]);
+  return [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2];
+}
+const zRange = pts => [Math.min(...pts.map(p => p[2])), Math.max(...pts.map(p => p[2]))];
 
 function importIfc(doc, text) {
   const model = readIfc(text), scale = ifcScale(model);
@@ -9056,6 +9164,16 @@ function importIfc(doc, text) {
     if (!lv) { const id = fresh("L"); ops.push({ op: "add", element: { id, type: "Level", name, args: { name, elevation: r1(z) } } }); lv = { id, z }; levels.push(lv); made("Level"); }
     levelOf.set(st.id, lv);
   }
+  //! One floor plan per level: every storey the file brings in (and any level still without one)
+  //! gets its plan, as Revit makes a plan with each level. A level that already has a plan keeps it.
+  const planned = new Set(doc.elements().filter(f => doc.typeOf(f) === "PlanView").map(f => ((doc.argValue(f, "level") || {}).ref)));
+  const style = doc.lib.viewStyles && doc.lib.viewStyles["VS-CONSTRUCTION"] ? { ref: "VS-CONSTRUCTION" } : null;
+  for (const lv of new Set(levelOf.values())) {
+    if (planned.has(lv.id)) continue; planned.add(lv.id);
+    const name = (ops.find(o => o.element && o.element.id === lv.id) || {}).element?.name || (doc.element(lv.id) && doc.element(lv.id).get("Name")) || lv.id;
+    ops.push({ op: "add", element: { id: fresh("V-P"), type: "PlanView", name: `${name} Plan`, args: { level: { ref: lv.id }, scale: 100, viewRange: { top: 2300, cut: 1200, bottom: 0 }, detailLevel: "Fine", style, filters: [], clip: { rect: null, visible: false, active: false }, overrides: {} } } });
+    made("Floor plan");
+  }
   const storeyOf = new Map();
   for (const rel of ofType(model, "IFCRELCONTAINEDINSPATIALSTRUCTURE")) {
     const st = follow(model, rel.args[5]); if (!st) continue;
@@ -9064,52 +9182,121 @@ function importIfc(doc, text) {
   const fallback = levels.slice().sort((a, b) => a.z - b.z)[0] || null;
   const levelFor = e => levelOf.get(storeyOf.get(e.id)) || fallback;
   const wallOf = new Map();                                  // IFC wall id → { id, a, b, z0, len }
+  const noteOnce = new Set(), note = (key, text) => { if (!noteOnce.has(key)) { noteOnce.add(key); report.notes.push(text); } };
   const products = model.entities ? [...model.entities.values()] : [];
+  const addColumn = (e, lv, c, W, D, round, rot, z0, h) => {
+    const typeId = typeFor(`col:${W}x${D}:${round}`, () => ({ family: "F-RCCOLUMN", name: round ? `IFC Ø${W}` : `IFC ${W}×${D}`, mark: "C", width: W, depth: D, round, material: "M-CONC" }));
+    const id = fresh("C");
+    ops.push({ op: "add", element: { id, type: "Column", name: ifcName(e) || id, args: { position: [r1(c[0]), r1(c[1])], columnType: { ref: typeId }, baseLevel: lv ? { ref: lv.id } : null, height: r1(h), rotation: r1(rot), baseOffset: r1(z0 - (lv ? lv.z : 0)) } } });
+    made("Column");
+  };
+  const addBeam = (e, lv, c0, c1, W, D, I, v) => {
+    const typeId = typeFor(`beam:${W}x${D}:${I}`, () => I ? { family: "F-STEELBEAM", name: `IFC I ${D}×${W}`, mark: "B", shape: "I", width: W, depth: D, flange: r1(v.flange || 12), web: r1(v.web || 8), material: "M-STEEL" } : { family: "F-RCBEAM", name: `IFC ${W}×${D}`, mark: "B", shape: "rect", width: W, depth: D, material: "M-CONC" });
+    const id = fresh("B"), top = Math.max(c0[2], c1[2]) + D / 2;
+    if (Math.abs(c1[2] - c0[2]) > 1) note("slope", "sloping beams come in level, at their higher end");
+    ops.push({ op: "add", element: { id, type: "Beam", name: ifcName(e) || id, args: { axis: { type: "line", start: [r1(c0[0]), r1(c0[1])], end: [r1(c1[0]), r1(c1[1])] }, beamType: { ref: typeId }, level: lv ? { ref: lv.id } : null, topOffset: r1(top - (lv ? lv.z : 0)) } } });
+    made("Beam");
+  };
+  //! A flat element: a slab, a roof, a footing. One vertical extrusion is exact; anything else keeps its
+  //! plan outline (the hull of what it is made of) and its thickness, and says so.
+  const addFlat = (e, T, body, lv) => {
+    const x = body.extrusions.length === 1 && body.solids.length === 1 ? body.extrusions[0] : null;
+    let boundary, top, thick;
+    if (x && x.world && Math.abs(x.dir[2]) > 0.9) { boundary = x.world; const zb = Math.min(...x.world.map(p => p[2])); top = x.dir[2] > 0 ? zb + x.depth : zb; thick = x.depth; }
+    else {
+      if (body.points.length < 3) return false;
+      boundary = hull2(body.points); if (boundary.length < 3) return false;
+      const [z0, z1] = zRange(body.points); top = z1;
+      thick = x && Math.abs(x.dir[2]) <= 0.9 ? x.depth : z1 - z0;
+      note("hull:" + T, `${T === "IFCFOOTING" ? "footings" : "slabs"} that are not one upright extrusion come in as their plan outline and thickness (sloped roofs flat at their top)`);
+    }
+    thick = r1(Math.max(1, thick));
+    const footing = T === "IFCFOOTING";
+    const typeId = typeFor((footing ? "footing:" : "slab:") + thick, () => ({ family: "F-FLOOR", name: `IFC ${footing ? "footing" : "slab"} ${thick}`, mark: footing ? "FT" : "FL", layers: [{ function: "Structure", thickness: thick, material: "M-CONC" }], coreStart: 0, coreEnd: 1 }));
+    const id = fresh(footing ? "FT" : "FL");
+    ops.push({ op: "add", element: { id, type: "Floor", name: ifcName(e) || id, args: { boundary: boundary.map(p => [r1(p[0]), r1(p[1])]), floorType: { ref: typeId }, level: lv ? { ref: lv.id } : null, heightOffset: r1(top - (lv ? lv.z : 0)) } } });
+    made(T === "IFCROOF" ? "Floor (roof)" : footing ? "Floor (footing)" : "Floor");
+    return true;
+  };
   for (const e of products) {
     const T = e.type;
-    if (WALLS.has(T)) {
-      const x = extrusion(model, e, scale);
-      if (!x || !x.world || Math.abs(x.dir[2]) < 0.9) { missed(T); continue; }
-      const box = orientedBox(x.world.map(p => [p[0], p[1]])); if (!box) { missed(T); continue; }
-      const lv = levelFor(e), z0 = Math.min(...x.world.map(p => p[2])), h = x.depth * Math.abs(x.dir[2]);
-      const t = r1(box.width), a = [box.centre[0] - box.dir[0] * box.length / 2, box.centre[1] - box.dir[1] * box.length / 2], b = [box.centre[0] + box.dir[0] * box.length / 2, box.centre[1] + box.dir[1] * box.length / 2];
+    if (/^IFCREL/.test(T) || !e.args || !isRef(e.args[6])) continue;
+    const isWall = WALLS.has(T), isSlab = SLABS.has(T) || T === "IFCFOOTING", isCol = COLUMNS.has(T), isBeam = BEAMS.has(T), isProxy = PROXIES.has(T);
+    if (!(isWall || isSlab || isCol || isBeam || isProxy)) { if (!FILLERS.has(T) && /^IFC/.test(T) && e.args.length > 6 && isRef(e.args[5]) && !IGNORED.has(T)) missed(T); continue; }
+    const body = bodySolids(model, e, scale), lv = levelFor(e);
+    if (!body.points.length) { missed(T); continue; }
+    const [zLo, zHi] = zRange(body.points);
+    if (body.clipped) note("clip", "elements cut by a boolean in the file (a wall clipped under a roof) come in whole, before the cut");
+    if (isWall) {
+      //! A wall is its plan's long box: the centreline down its middle, the short side its thickness.
+      //! That reads an upright extrusion exactly and a brep, a clipped wall or an elevation-profile
+      //! extrusion (what Revit writes for a gable) by the space they fill.
+      const box = orientedBox(hull2(body.points)); if (!box || box.length < 1) { missed(T); continue; }
+      const t = r1(Math.max(1, box.width)), a = [box.centre[0] - box.dir[0] * box.length / 2, box.centre[1] - box.dir[1] * box.length / 2], b = [box.centre[0] + box.dir[0] * box.length / 2, box.centre[1] + box.dir[1] * box.length / 2];
+      if (!(body.extrusions.length === 1 && body.solids.length === 1 && Math.abs(body.extrusions[0].dir[2]) > 0.9)) note("wallbox", "walls that are not one upright extrusion come in as the box they fill (a gable wall at its full height)");
       const typeId = typeFor("wall:" + t, () => ({ family: "F-BASICWALL", name: `IFC wall ${t}`, mark: "IW", layers: [{ function: "Structure", thickness: t, material: "M-BLOCK" }], coreStart: 0, coreEnd: 1 }));
       const id = fresh("W");
-      ops.push({ op: "add", element: { id, type: "Wall", name: ifcName(e) || id, args: { centreline: { type: "line", start: a.map(r1), end: b.map(r1) }, mounting: "Centred", wallType: { ref: typeId }, baseLevel: lv ? { ref: lv.id } : null, baseOffset: r1(z0 - (lv ? lv.z : 0)), height: r1(h) } } });
-      wallOf.set(e.id, { id, a, b, z0, len: box.length }); made("Wall");
-    } else if (SLABS.has(T)) {
-      const x = extrusion(model, e, scale);
-      if (!x || !x.world || Math.abs(x.dir[2]) < 0.9) { missed(T); continue; }
-      const lv = levelFor(e), zs = x.world.map(p => p[2]), zb = Math.min(...zs), top = x.dir[2] > 0 ? zb + x.depth : zb, thick = r1(x.depth);
-      const typeId = typeFor("slab:" + thick, () => ({ family: "F-FLOOR", name: `IFC slab ${thick}`, mark: "FL", layers: [{ function: "Structure", thickness: thick, material: "M-CONC" }], coreStart: 0, coreEnd: 1 }));
-      const id = fresh("FL");
-      ops.push({ op: "add", element: { id, type: "Floor", name: ifcName(e) || id, args: { boundary: x.world.map(p => [r1(p[0]), r1(p[1])]), floorType: { ref: typeId }, level: lv ? { ref: lv.id } : null, heightOffset: r1(top - (lv ? lv.z : 0)) } } });
-      made(T === "IFCROOF" ? "Floor (roof)" : "Floor");
-    } else if (COLUMNS.has(T) || BEAMS.has(T)) {
-      const x = extrusion(model, e, scale); if (!x || !x.profile) { missed(T); continue; }
-      const lv = levelFor(e);
-      const v = x.profile.values || {}, round = x.profile.kind === "circle";
-      const W = r1(round ? v.radius * 2 : x.profile.kind === "section" ? v.width : v.width || 200), D = r1(round ? v.radius * 2 : x.profile.kind === "section" ? v.depth : v.height || 200);
-      const vertical = Math.abs(x.dir[2]) > 0.9;
-      if (vertical && !BEAMS.has(T)) {
-        const c = ifcAt(x.place, [x.profile.at ? x.profile.at[0] : 0, x.profile.at ? x.profile.at[1] : 0, 0]);
-        const typeId = typeFor(`col:${W}x${D}:${round}`, () => ({ family: "F-RCCOLUMN", name: round ? `IFC Ø${W}` : `IFC ${W}×${D}`, mark: "C", width: W, depth: D, round, material: "M-CONC" }));
-        const id = fresh("C");
-        ops.push({ op: "add", element: { id, type: "Column", name: ifcName(e) || id, args: { position: [r1(c[0]), r1(c[1])], columnType: { ref: typeId }, baseLevel: lv ? { ref: lv.id } : null, height: r1(x.depth), rotation: r1(Math.atan2(x.place.x[1], x.place.x[0]) * 180 / Math.PI) } } });
-        made("Column");
-      } else if (!vertical) {
-        // a beam: the profile's centre swept along the extrusion direction
-        const c0 = ifcAt(x.place, [x.profile.at ? x.profile.at[0] : 0, x.profile.at ? x.profile.at[1] : 0, 0]);
-        const c1 = [c0[0] + x.dir[0] * x.depth, c0[1] + x.dir[1] * x.depth, c0[2] + x.dir[2] * x.depth];
-        const I = x.profile.kind === "section" && /^I/.test(x.profile.sectionKind || "");
-        const typeId = typeFor(`beam:${W}x${D}:${I}`, () => I ? { family: "F-STEELBEAM", name: `IFC I ${D}×${W}`, mark: "B", shape: "I", width: W, depth: D, flange: r1(v.flange || 12), web: r1(v.web || 8), material: "M-STEEL" } : { family: "F-RCBEAM", name: `IFC ${W}×${D}`, mark: "B", shape: "rect", width: W, depth: D, material: "M-CONC" });
-        const id = fresh("B"), top = Math.max(c0[2], c1[2]) + D / 2;
-        if (Math.abs(c1[2] - c0[2]) > 1) report.notes.push(`${id}: a sloping beam comes in level, at its higher end`);
-        ops.push({ op: "add", element: { id, type: "Beam", name: ifcName(e) || id, args: { axis: { type: "line", start: [r1(c0[0]), r1(c0[1])], end: [r1(c1[0]), r1(c1[1])] }, beamType: { ref: typeId }, level: lv ? { ref: lv.id } : null, topOffset: r1(top - (lv ? lv.z : 0)) } } });
-        made("Beam");
-      } else missed(T);
-    } else if (!FILLERS.has(T) && /^IFC/.test(T) && e.args && e.args.length > 6 && isRef(e.args[5]) && isRef(e.args[6]) && !IGNORED.has(T)) missed(T);
+      ops.push({ op: "add", element: { id, type: "Wall", name: ifcName(e) || id, args: { centreline: { type: "line", start: a.map(r1), end: b.map(r1) }, mounting: "Centred", wallType: { ref: typeId }, baseLevel: lv ? { ref: lv.id } : null, baseOffset: r1(zLo - (lv ? lv.z : 0)), height: r1(zHi - zLo) } } });
+      wallOf.set(e.id, { id, a, b, z0: zLo, len: box.length }); made("Wall");
+    } else if (isSlab) {
+      if (!addFlat(e, T, body, lv)) missed(T);
+    } else if (isCol || isBeam) {
+      const x = body.extrusions.length === 1 ? body.extrusions[0] : null, size = x && x.profile ? profileSize(x.profile, x.local || []) : null;
+      if (x && size && size.W > 0 && size.D > 0) {
+        const W = r1(size.W), D = r1(size.D), pc = profileCentre(x.profile, x.local || []);
+        const c0 = ifcAt(x.place, [pc[0], pc[1], 0]), c1 = [c0[0] + x.dir[0] * x.depth, c0[1] + x.dir[1] * x.depth, c0[2] + x.dir[2] * x.depth];
+        if (Math.abs(x.dir[2]) > 0.9) {
+          if (isBeam) note("vbeam", "upright beams come in as columns");
+          addColumn(e, lv, c0, W, D, !!size.round, Math.atan2(x.place.x[1], x.place.x[0]) * 180 / Math.PI, zLo, zHi - zLo);
+        } else {
+          const I = x.profile.kind === "section" && /^I/.test(x.profile.sectionKind || "");
+          addBeam(e, lv, c0, c1, W, D, I, x.profile.values || {});
+        }
+        continue;
+      }
+      //! No single extrusion: read the member off its points. Its long axis says column or beam;
+      //! across it, the extents are its section.
+      const { centre, axis } = principalAxis(body.points);
+      const up = Math.abs(axis[2]) > 0.9;
+      if (up) {
+        const box = orientedBox(hull2(body.points)); if (!box) { missed(T); continue; }
+        addColumn(e, lv, box.centre, r1(Math.max(1, box.length)), r1(Math.max(1, box.width)), false, Math.atan2(box.dir[1], box.dir[0]) * 180 / Math.PI, zLo, zHi - zLo);
+      } else {
+        const hz = Math.hypot(axis[0], axis[1]), n = [-axis[1] / hz, axis[0] / hz, 0];
+        const m = [n[1] * axis[2] - n[2] * axis[1], n[2] * axis[0] - n[0] * axis[2], n[0] * axis[1] - n[1] * axis[0]];
+        const along = p => (p[0] - centre[0]) * axis[0] + (p[1] - centre[1]) * axis[1] + (p[2] - centre[2]) * axis[2];
+        const across = (p, v) => (p[0] - centre[0]) * v[0] + (p[1] - centre[1]) * v[1] + (p[2] - centre[2]) * v[2];
+        const us = body.points.map(along), ns = body.points.map(p => across(p, n)), ms = body.points.map(p => across(p, m));
+        const u0 = Math.min(...us), u1 = Math.max(...us), nm = (Math.min(...ns) + Math.max(...ns)) / 2, mm = (Math.min(...ms) + Math.max(...ms)) / 2;
+        const mid = [0, 1, 2].map(k => centre[k] + n[k] * nm + m[k] * mm);
+        const c0 = [0, 1, 2].map(k => mid[k] + axis[k] * u0), c1 = [0, 1, 2].map(k => mid[k] + axis[k] * u1);
+        const W = r1(Math.max(1, Math.max(...ns) - Math.min(...ns))), D = r1(Math.max(1, Math.max(...ms) - Math.min(...ms)));
+        if (isCol) note("hcol", "horizontal members come in as beams");
+        addBeam(e, lv, c0, c1, W, D, false, {});
+        note("beampts", "members that are not one extrusion come in as the box around them");
+      }
+    } else if (isProxy) {
+      //! A proxy is IFC's "something": kept as a Generic model, its plan outline pulled up through its height.
+      const boundary = hull2(body.points); if (boundary.length < 3) { missed(T); continue; }
+      const id = fresh("GM"), cls = T.replace(/^IFC/, "Ifc").replace(/BUILDINGELEMENTPROXY/, "BuildingElementProxy");
+      ops.push({ op: "add", element: { id, type: "Generic", name: ifcName(e) || id, args: { boundary: boundary.map(p => [r1(p[0]), r1(p[1])]), level: lv ? { ref: lv.id } : null, baseOffset: r1(zLo - (lv ? lv.z : 0)), height: r1(Math.max(1, zHi - zLo)), ifcClass: cls } } });
+      made("Generic model");
+    }
   }
+  //! Wall joins: IfcRelConnectsPathElements says two walls meet. Our centrelines are read off the
+  //! geometry, so which of our ends is its ATSTART is not known; the end nearer the other wall is.
+  //! The joins themselves are left to autojoin, which decides corner or T from the geometry.
+  const joinEnds = new Map();
+  const nearEnd = (w, o) => { const d = (p) => { const L = o.len || 1, t = Math.max(0, Math.min(1, ((p[0] - o.a[0]) * (o.b[0] - o.a[0]) + (p[1] - o.a[1]) * (o.b[1] - o.a[1])) / (L * L))); return Math.hypot(p[0] - (o.a[0] + (o.b[0] - o.a[0]) * t), p[1] - (o.a[1] + (o.b[1] - o.a[1]) * t)); }; return d(w.a) <= d(w.b) ? "start" : "end"; };
+  let connections = 0;
+  for (const rel of ofType(model, "IFCRELCONNECTSPATHELEMENTS")) {
+    const A = wallOf.get((follow(model, rel.args[5]) || {}).id), B_ = wallOf.get((follow(model, rel.args[6]) || {}).id);
+    if (!A || !B_) { missed("IFCRELCONNECTSPATHELEMENTS"); continue; }
+    const kinds = [asText(rel.args[10], ""), asText(rel.args[9], "")];
+    [[A, B_, kinds[0]], [B_, A, kinds[1]]].forEach(([w, o, k]) => { if (!/ATPATH/i.test(k)) { const end = nearEnd(w, o); joinEnds.set(w.id + ":" + end, { id: w.id, end }); } });
+    connections++;
+  }
+  if (connections) { report.made["Wall join"] = connections; }
   // doors and windows: the opening that voids a wall, and the filler in it
   const hostOfOpening = new Map();
   for (const rel of ofType(model, "IFCRELVOIDSELEMENT")) { const w = follow(model, rel.args[4]), o = follow(model, rel.args[5]); if (w && o && wallOf.has(w.id)) hostOfOpening.set(o.id, w.id); }
@@ -9118,7 +9305,7 @@ function importIfc(doc, text) {
     const host = wallOf.get(hostOfOpening.get(o.id)); if (!host) { missed(fill.type); continue; }
     const door = /DOOR/.test(fill.type);
     const hgt = asNumber(fill.args[8]) * scale, wid = asNumber(fill.args[9]) * scale;
-    const x = extrusion(model, o, scale), fr = ifcWorldFrame(model, o.args[5], scale);
+    const ob = bodySolids(model, o, scale), x = ob.extrusions[0] || (ob.points.length ? { world: ob.points, depth: zRange(ob.points)[1] - zRange(ob.points)[0] } : null), fr = ob.frame;
     let centre = fr.o, bottom = fr.o[2], W = wid, H = hgt;
     if (x && x.world) { const xs = x.world; centre = [xs.reduce((s, p) => s + p[0], 0) / xs.length, xs.reduce((s, p) => s + p[1], 0) / xs.length, 0]; bottom = Math.min(...xs.map(p => p[2])); if (!W) { const bx = orientedBox(xs.map(p => [p[0], p[1]])); W = bx ? bx.length : 900; } if (!H) H = x.depth; }
     const d = [(host.b[0] - host.a[0]) / host.len, (host.b[1] - host.a[1]) / host.len];
@@ -9131,6 +9318,7 @@ function importIfc(doc, text) {
     made(door ? "Door" : "Window");
   }
   const typeOps = [...newTypes.entries()].map(([id, value]) => ({ op: "type", lib: "types", id, value }));
+  if (joinEnds.size) ops.push({ op: "autojoin", ends: [...joinEnds.values()] });
   return { ops: typeOps.concat(ops), report, types: newTypes.size };
 }
 
@@ -10153,6 +10341,60 @@ testCase("M20", "Elevations and sections show their extent in plan: grips set th
   const b1 = beyond(), e1 = eItems();
   const ok = far && far.writes === "depth" && Math.abs(far.at[0] - 15000) < 1 && hs.some(x => x.key === "width end") && b1 < b0 && e1 < e0;
   return R(ok, "far-clip grip 12000 beyond the line; shrinking the far clip drops what lies past it", `far at ${far && far.at}, section beyond ${b0}→${b1}, elevation items ${e0}→${e1}`);
+});
+
+// What Revit and Tekla actually write: shared (mapped) beams, a brep column, a wall clipped by a
+// boolean, a footing, a proxy as a face set, walls joined by IfcRelConnectsPathElements, two storeys.
+const IFC_HARD = `ISO-10303-21;
+HEADER;FILE_DESCRIPTION((''),'2;1');FILE_NAME('h.ifc','',(''),(''),'','','');FILE_SCHEMA(('IFC4'));ENDSEC;
+DATA;
+#1=IFCSIUNIT(*,.LENGTHUNIT.,.MILLI.,.METRE.);#2=IFCUNITASSIGNMENT((#1));
+#10=IFCCARTESIANPOINT((0.,0.,0.));#11=IFCDIRECTION((0.,0.,1.));#12=IFCDIRECTION((1.,0.,0.));#13=IFCAXIS2PLACEMENT3D(#10,#11,#12);#14=IFCLOCALPLACEMENT($,#13);
+#15=IFCDIRECTION((0.,1.,0.));
+#20=IFCPROJECT('p',$,'T',$,$,$,$,$,#2);#23=IFCBUILDINGSTOREY('s1',$,'Ground',$,$,#14,$,$,.ELEMENT.,0.);#24=IFCBUILDINGSTOREY('s2',$,'Roof',$,$,#14,$,$,.ELEMENT.,3500.);
+#30=IFCCARTESIANPOINT((2500.,0.));#31=IFCAXIS2PLACEMENT2D(#30,$);#32=IFCRECTANGLEPROFILEDEF(.AREA.,'A',#31,5000.,200.);
+#33=IFCEXTRUDEDAREASOLID(#32,#13,#11,3000.);#34=IFCSHAPEREPRESENTATION($,'Body','SweptSolid',(#33));#35=IFCPRODUCTDEFINITIONSHAPE($,$,(#34));
+#36=IFCWALL('wa',$,'Wall A',$,$,#14,#35,$,$);
+#40=IFCCARTESIANPOINT((5000.,2000.));#41=IFCAXIS2PLACEMENT2D(#40,$);#42=IFCRECTANGLEPROFILEDEF(.AREA.,'B',#41,200.,4000.);
+#43=IFCEXTRUDEDAREASOLID(#42,#13,#11,3000.);#44=IFCPLANE(#13);#45=IFCHALFSPACESOLID(#44,.F.);#46=IFCBOOLEANCLIPPINGRESULT(.DIFFERENCE.,#43,#45);
+#47=IFCSHAPEREPRESENTATION($,'Body','Clipping',(#46));#48=IFCPRODUCTDEFINITIONSHAPE($,$,(#47));#49=IFCWALL('wb',$,'Wall B',$,$,#14,#48,$,$);
+#50=IFCRELCONNECTSPATHELEMENTS('j',$,$,$,$,#36,#49,(),(),.ATSTART.,.ATEND.);
+#60=IFCCARTESIANPOINT((0.,0.));#61=IFCAXIS2PLACEMENT2D(#60,$);#62=IFCRECTANGLEPROFILEDEF(.AREA.,'BM',#61,200.,400.);
+#63=IFCAXIS2PLACEMENT3D(#10,#12,#15);#64=IFCEXTRUDEDAREASOLID(#62,#63,#11,4000.);#65=IFCSHAPEREPRESENTATION($,'Body','SweptSolid',(#64));
+#66=IFCREPRESENTATIONMAP(#13,#65);
+#67=IFCCARTESIANPOINT((0.,1000.,3300.));#68=IFCCARTESIANTRANSFORMATIONOPERATOR3D($,$,#67,1.,$);#69=IFCMAPPEDITEM(#66,#68);
+#70=IFCSHAPEREPRESENTATION($,'Body','MappedRepresentation',(#69));#71=IFCPRODUCTDEFINITIONSHAPE($,$,(#70));#72=IFCBEAM('b1',$,'Beam 1',$,$,#14,#71,$,$);
+#73=IFCCARTESIANPOINT((0.,2000.,3300.));#74=IFCCARTESIANTRANSFORMATIONOPERATOR3D($,$,#73,1.,$);#75=IFCMAPPEDITEM(#66,#74);
+#76=IFCSHAPEREPRESENTATION($,'Body','MappedRepresentation',(#75));#77=IFCPRODUCTDEFINITIONSHAPE($,$,(#76));#78=IFCBEAM('b2',$,'Beam 2',$,$,#14,#77,$,$);
+#80=IFCCARTESIANPOINT((-150.,3850.,0.));#81=IFCCARTESIANPOINT((150.,3850.,0.));#82=IFCCARTESIANPOINT((150.,4150.,0.));#83=IFCCARTESIANPOINT((-150.,4150.,0.));
+#84=IFCCARTESIANPOINT((-150.,3850.,3000.));#85=IFCCARTESIANPOINT((150.,3850.,3000.));#86=IFCCARTESIANPOINT((150.,4150.,3000.));#87=IFCCARTESIANPOINT((-150.,4150.,3000.));
+#88=IFCPOLYLOOP((#80,#81,#82,#83));#89=IFCPOLYLOOP((#84,#85,#86,#87));#90=IFCFACEOUTERBOUND(#88,.T.);#91=IFCFACEOUTERBOUND(#89,.T.);#92=IFCFACE((#90));#93=IFCFACE((#91));
+#94=IFCCLOSEDSHELL((#92,#93));#95=IFCFACETEDBREP(#94);#96=IFCSHAPEREPRESENTATION($,'Body','Brep',(#95));#97=IFCPRODUCTDEFINITIONSHAPE($,$,(#96));#98=IFCCOLUMN('c',$,'Column',$,$,#14,#97,$,$);
+#100=IFCRECTANGLEPROFILEDEF(.AREA.,'F',#61,1000.,1000.);#101=IFCCARTESIANPOINT((0.,0.,-600.));#102=IFCAXIS2PLACEMENT3D(#101,#11,#12);#103=IFCEXTRUDEDAREASOLID(#100,#102,#11,400.);
+#104=IFCSHAPEREPRESENTATION($,'Body','SweptSolid',(#103));#105=IFCPRODUCTDEFINITIONSHAPE($,$,(#104));#106=IFCFOOTING('f',$,'Pad',$,$,#14,#105,$,.PAD_FOOTING.);
+#110=IFCCARTESIANPOINTLIST3D(((6000.,0.,0.),(7000.,0.,0.),(7000.,1000.,0.),(6000.,1000.,0.),(6500.,500.,800.)));
+#111=IFCTRIANGULATEDFACESET(#110,$,.T.,((1,2,5),(2,3,5),(3,4,5),(4,1,5),(1,2,3)),$);#112=IFCSHAPEREPRESENTATION($,'Body','Tessellation',(#111));#113=IFCPRODUCTDEFINITIONSHAPE($,$,(#112));
+#114=IFCBUILDINGELEMENTPROXY('x',$,'Plinth',$,$,#14,#113,$,$);
+#120=IFCRELCONTAINEDINSPATIALSTRUCTURE('c1',$,$,$,(#36,#49,#98,#106,#114),#23);#121=IFCRELCONTAINEDINSPATIALSTRUCTURE('c2',$,$,$,(#72,#78),#24);
+ENDSEC;END-ISO-10303-21;`;
+testCase("M21", "IFC as written by real exporters: mapped beams, brep columns, clipped walls, footings, proxies, path joins, and one floor plan per storey", () => {
+  const doc = newDocument("ifc"), ed = new Editor(doc);
+  const r = importIfc(doc, IFC_HARD), res = ed.apply(r.ops);
+  const byType = t => doc.elements().filter(f => doc.typeOf(f) === t);
+  const beams = byType("Beam").map(f => [doc.argValue(f, "axis"), doc.plan(f)]), col = byType("Column")[0], cp = col && doc.plan(col);
+  const walls = byType("Wall"), gm = byType("Generic")[0], gp = gm && doc.plan(gm);
+  const ft = byType("Floor").find(f => /footing/.test(F.type(f, "floorType").name)), fp = ft && doc.plan(ft);
+  const plans = byType("PlanView").map(f => F.refId(f, "level")), levels = byType("Level").map(f => doc.idOf(f));
+  const b1 = beams.find(([a]) => Math.abs(a.start[1] - 1000) < 1);
+  const ok = res.ok && !Object.keys(r.report.missed).length
+    && beams.length === 2 && b1 && Math.abs(b1[0].end[0] - b1[0].start[0]) > 3999 && Math.abs(b1[1].z1 - 3500) < 1 && Math.abs(b1[1].z0 - 3100) < 1
+    && cp && Math.abs(cp.z1 - cp.z0 - 3000) < 1 && Math.abs(F.point(col, "position")[1] - 4000) < 1
+    && walls.length === 2 && doc.joins.some(j => [j.a.of, j.b.of].sort().join() === walls.map(w => doc.idOf(w)).sort().join())
+    && fp && Math.abs(fp.z1 + 200) < 1 && Math.abs(fp.z0 + 600) < 1
+    && gp && Math.abs(gp.z1 - 800) < 1 && Math.abs(polyArea(F.json(gm, "boundary")) ) > 999999
+    && levels.length === 2 && levels.every(l => plans.filter(p => p === l).length === 1);
+  return R(ok, "nothing missed; 2 mapped beams 4000 long top 3500; brep column 3000 high at y 4000; the two walls joined; pad footing -600→-200; proxy a Generic 800 high; a plan for each of 2 levels",
+    `ok ${res.ok} ${res.error || ""}; missed ${JSON.stringify(r.report.missed)}; beams ${JSON.stringify(beams.map(([a, p]) => [a.start, a.end, p.z0, p.z1]))}; column ${cp && [cp.z0, cp.z1]} ${col && F.point(col, "position")}; joins ${JSON.stringify(doc.joins)}; footing ${fp && [fp.z0, fp.z1]}; generic ${gp && [gp.z0, gp.z1]}; plans ${plans} levels ${levels}; notes ${r.report.notes.join(" | ")}`);
 });
 
 // ===== ui_util.js =====
@@ -12501,8 +12743,8 @@ class View3D {
 function clear3(scene) { for (const o of scene.children.slice()) { scene.remove(o); if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); } }
 const vdot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const v3sub3 = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
-const PART_TYPES = new Set(["Door", "Window", "Floor", "Beam"]);
-const PART_COLOURS = { Frame: "#eeeeec", Panel: "#9c7650", Glass: "#9fd0ee", Handle: "#b8bcc4", Sill: "#d9d6cf", Door: "#9c7650", Window: "#eeeeec", Floor: "#c9c7c1", Beam: "#8f9aa8" };
+const PART_TYPES = new Set(["Door", "Window", "Floor", "Beam", "Generic"]);
+const PART_COLOURS = { Frame: "#eeeeec", Panel: "#9c7650", Glass: "#9fd0ee", Handle: "#b8bcc4", Sill: "#d9d6cf", Door: "#9c7650", Window: "#eeeeec", Floor: "#c9c7c1", Beam: "#8f9aa8", Generic: "#b9b2a6", Body: "#b9b2a6" };
 /** Triangles of a prism: a plan footprint between two heights, any winding. */
 function prismTriangles(foot, z0, z1) {
   const n = foot.length, pos = [];
@@ -12563,9 +12805,9 @@ const roundCam = c => ({ azimuth: Math.round(((c.azimuth % 360) + 360) % 360 * 1
 const PREFIX = "B_";
 const sid = id => String(id).replace(/[^A-Za-z0-9]/g, "_");
 const COLOURS = { Wall: [0.80, 0.62, 0.52], Column: [0.62, 0.63, 0.66], Door: [0.55, 0.40, 0.26], Window: [0.55, 0.75, 0.90],
-  Floor: [0.72, 0.72, 0.70], Beam: [0.50, 0.55, 0.62] };
+  Floor: [0.72, 0.72, 0.70], Beam: [0.50, 0.55, 0.62], Generic: [0.70, 0.66, 0.60] };
 const SUB_COLOURS = { Glass: [0.62, 0.82, 0.95], Frame: [0.93, 0.93, 0.92], Handle: [0.75, 0.75, 0.78], Panel: [0.62, 0.45, 0.30] };
-const CAD_TYPES = ["Wall", "Column", "Door", "Window", "Floor", "Beam"];
+const CAD_TYPES = ["Wall", "Column", "Door", "Window", "Floor", "Beam", "Generic"];
 const cround = v => Math.round(v * 1000) / 1000;
 
 /** The document written as a modeller file, and the table of which nodes are parameters of what. */
@@ -12849,7 +13091,7 @@ const COMMANDS = {
   undo: { label: "Undo", icon: "undo", run: () => { app.editor.undo(); app.refresh(); saveDraftSoon(); } },
   redo: { label: "Redo", icon: "redo", run: () => { app.editor.redo(); app.refresh(); saveDraftSoon(); } },
   default3d: { label: "Default 3D View", icon: "house", key: "3D", run: () => { ensureDefault3D(app.doc); app.openView(default3D()); } },
-  planview: { label: "Plan View", icon: "plan", run: () => newPlanView() },
+  planview: { label: "Floor Plan", icon: "plan", hint: "Pick a level without a floor plan: one plan per level", run: () => floorPlanDialog() },
   level: { label: "Level", icon: "level", key: "LL", run: () => newLevel() },
   schedule: { label: "Schedule", icon: "schedule", run: () => newSchedule() },
   sheet: { label: "Sheet", icon: "sheet", run: () => newSheet() },
@@ -12872,7 +13114,7 @@ const COMMANDS = {
   open: { label: "Open…", icon: "open", run: () => openFile() },
   save: { label: "Save", icon: "save", key: "", run: () => saveModel() },
   importdxf: { label: "Import DXF Symbol", icon: "importI", run: () => importDXF() },
-  importifc: { label: "Import IFC", icon: "importI", hint: "IfcWall, IfcSlab, IfcColumn, IfcBeam, IfcDoor and IfcWindow come in as walls, floors, columns, beams, doors and windows", run: () => importIfcFile() },
+  importifc: { label: "Import IFC", icon: "importI", hint: "IfcWall, IfcSlab, IfcFooting, IfcColumn, IfcBeam, IfcDoor, IfcWindow and IfcBuildingElementProxy come in as walls, floors, columns, beams, doors, windows and generic models; each storey gets its floor plan", run: () => importIfcFile() },
   placesymbol: { label: "Symbol", icon: "symbol", run: () => placeSymbol(Object.keys(app.doc.lib.symbols).find(k => app.doc.lib.symbols[k].source) || "SY-NORTH") },
   export: { label: "Export", icon: "exportI", run: () => exportDialog() },
   selectall: { label: "Select All Instances", icon: "select", key: "SA", run: () => selectAllInstances() },
@@ -12897,7 +13139,7 @@ const RIBBON = [
     { title: "Build", items: [big("wall"), big("door"), big("window"), big("column")] },
     { title: "Opening", items: [big("opening")] },
     { title: "Room & Area", items: [big("space"), small("sep"), small("schedule")] },
-    { title: "Datum", items: [big("level"), big("grid")] },
+    { title: "Datum", items: [big("level"), big("grid"), big("planview")] },
   ] },
   { tab: "Structure", panels: [
     { title: "Structure", items: [big("beam"), big("column"), big("floor"), big("wall")] },
@@ -12914,7 +13156,7 @@ const RIBBON = [
   ] },
   { tab: "View", panels: [
     { title: "Graphics", items: [big("vv"), small("thin"), small("zoomfit")] },
-    { title: "Create", items: [big("default3d"), big("section"), small("planview"), small("elev"), small("schedule"), big("sheet")] },
+    { title: "Create", items: [big("planview"), big("default3d"), big("section"), small("elev"), small("schedule"), big("sheet")] },
     { title: "Windows", items: [small("graph"), small("tree"), small("closehidden")] },
     { title: "Interface", items: [big("cadmode")] },
   ] },
@@ -13260,10 +13502,38 @@ function selectAllInstances() {
   const ids = app.doc.elements().filter(f => t ? ["wallType", "doorType", "windowType", "columnType"].some(k => F.refId(f, k) === t) : app.doc.typeOf(f) === app.doc.typeOf(f0)).map(f => app.doc.idOf(f));
   app.select(ids); app.say(`${ids.length} instances selected`, "note");
 }
-function newPlanView(levelId) {
+/** Levels with no floor plan yet: one plan per level, so these are the only ones a new plan can be for. */
+function levelsWithoutPlan() {
+  const planned = new Set(app.doc.elements().filter(f => app.doc.typeOf(f) === "PlanView").map(f => F.refId(f, "level")));
+  return app.doc.elements().filter(f => app.doc.typeOf(f) === "Level" && !planned.has(app.doc.idOf(f)))
+    .sort((a, b) => F.real(a, "elevation") - F.real(b, "elevation"));
+}
+/** View ▸ Floor Plan, as Revit's New Floor Plan: pick among the levels that have no plan (several at once). */
+function floorPlanDialog() {
+  const free = levelsWithoutPlan();
+  if (!app.doc.elements().some(f => app.doc.typeOf(f) === "Level")) return app.say("add a level first (LL)", "error");
+  if (!free.length) return app.say("every level already has its floor plan: open it from the Project Browser", "note");
+  const picked = new Set(free.length === 1 ? [app.doc.idOf(free[0])] : []);
+  const list = h("div", { class: "levelpick", role: "listbox", "aria-multiselectable": "true", style: { display: "grid", gap: "2px", maxHeight: "50vh", overflow: "auto", minWidth: "280px" } },
+    free.map(f => { const id = app.doc.idOf(f);
+      return h("label", { style: { display: "flex", gap: "8px", alignItems: "center", padding: "3px 4px" } },
+        h("input", { type: "checkbox", checked: picked.has(id), onchange: e => e.target.checked ? picked.add(id) : picked.delete(id) }),
+        h("span", { style: { flex: "1" } }, F.text(f, "name") || id), h("span", { class: "muted" }, `+${(F.real(f, "elevation") / 1000).toFixed(3)}`)); }));
+  dialog("New Floor Plan", h("div", { style: { display: "grid", gap: "8px" } },
+    h("div", { class: "muted" }, "Levels without a floor plan. Each level has one plan; pick one or more."), list), [
+    { label: "Select all", run: () => { list.querySelectorAll("input").forEach((c, i) => { c.checked = true; picked.add(app.doc.idOf(free[i])); }); return false; } },
+    { label: "Cancel", run: () => true },
+    { label: "OK", primary: true, run: () => { if (!picked.size) { app.say("pick a level", "note"); return false; } let last = null; for (const id of picked) last = newPlanView(id, { open: false }) || last; if (last) app.openView(last); app.say(`${picked.size} floor plan${picked.size > 1 ? "s" : ""} made`, "ok"); return true; } },
+  ]);
+}
+function newPlanView(levelId, { open = true } = {}) {
   const lv = levelId || app.workLevel || firstOf("Level"); if (!lv) return app.say("add a level first", "error");
+  // one plan per level: a level that has one opens it
+  const has = app.doc.elements().find(f => app.doc.typeOf(f) === "PlanView" && F.refId(f, "level") === lv);
+  if (has) { if (open) app.openView(app.doc.idOf(has)); return app.doc.idOf(has); }
   const r = app.apply({ op: "add", element: { type: "PlanView", name: `${F.text(app.doc.element(lv), "name")} Plan`, args: { level: { ref: lv }, scale: 100, viewRange: { top: 2300, cut: 1200, bottom: 0 }, detailLevel: "Fine", style: { ref: "VS-CONSTRUCTION" }, filters: [], clip: { rect: null, visible: false, active: false }, overrides: {} } } });
-  if (r.ok) app.openView(r.id);
+  if (r.ok && open) app.openView(r.id);
+  return r.ok ? r.id : null;
 }
 function newLevel() {
   const lv = app.doc.elements().filter(f => app.doc.typeOf(f) === "Level");

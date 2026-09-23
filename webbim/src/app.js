@@ -160,7 +160,7 @@ const COMMANDS = {
   undo: { label: "Undo", icon: "undo", run: () => { app.editor.undo(); app.refresh(); saveDraftSoon(); } },
   redo: { label: "Redo", icon: "redo", run: () => { app.editor.redo(); app.refresh(); saveDraftSoon(); } },
   default3d: { label: "Default 3D View", icon: "house", key: "3D", run: () => { ensureDefault3D(app.doc); app.openView(default3D()); } },
-  planview: { label: "Plan View", icon: "plan", run: () => newPlanView() },
+  planview: { label: "Floor Plan", icon: "plan", hint: "Pick a level without a floor plan: one plan per level", run: () => floorPlanDialog() },
   level: { label: "Level", icon: "level", key: "LL", run: () => newLevel() },
   schedule: { label: "Schedule", icon: "schedule", run: () => newSchedule() },
   sheet: { label: "Sheet", icon: "sheet", run: () => newSheet() },
@@ -183,7 +183,7 @@ const COMMANDS = {
   open: { label: "Open…", icon: "open", run: () => openFile() },
   save: { label: "Save", icon: "save", key: "", run: () => saveModel() },
   importdxf: { label: "Import DXF Symbol", icon: "importI", run: () => importDXF() },
-  importifc: { label: "Import IFC", icon: "importI", hint: "IfcWall, IfcSlab, IfcColumn, IfcBeam, IfcDoor and IfcWindow come in as walls, floors, columns, beams, doors and windows", run: () => importIfcFile() },
+  importifc: { label: "Import IFC", icon: "importI", hint: "IfcWall, IfcSlab, IfcFooting, IfcColumn, IfcBeam, IfcDoor, IfcWindow and IfcBuildingElementProxy come in as walls, floors, columns, beams, doors, windows and generic models; each storey gets its floor plan", run: () => importIfcFile() },
   placesymbol: { label: "Symbol", icon: "symbol", run: () => placeSymbol(Object.keys(app.doc.lib.symbols).find(k => app.doc.lib.symbols[k].source) || "SY-NORTH") },
   export: { label: "Export", icon: "exportI", run: () => exportDialog() },
   selectall: { label: "Select All Instances", icon: "select", key: "SA", run: () => selectAllInstances() },
@@ -208,7 +208,7 @@ const RIBBON = [
     { title: "Build", items: [big("wall"), big("door"), big("window"), big("column")] },
     { title: "Opening", items: [big("opening")] },
     { title: "Room & Area", items: [big("space"), small("sep"), small("schedule")] },
-    { title: "Datum", items: [big("level"), big("grid")] },
+    { title: "Datum", items: [big("level"), big("grid"), big("planview")] },
   ] },
   { tab: "Structure", panels: [
     { title: "Structure", items: [big("beam"), big("column"), big("floor"), big("wall")] },
@@ -225,7 +225,7 @@ const RIBBON = [
   ] },
   { tab: "View", panels: [
     { title: "Graphics", items: [big("vv"), small("thin"), small("zoomfit")] },
-    { title: "Create", items: [big("default3d"), big("section"), small("planview"), small("elev"), small("schedule"), big("sheet")] },
+    { title: "Create", items: [big("planview"), big("default3d"), big("section"), small("elev"), small("schedule"), big("sheet")] },
     { title: "Windows", items: [small("graph"), small("tree"), small("closehidden")] },
     { title: "Interface", items: [big("cadmode")] },
   ] },
@@ -571,10 +571,38 @@ function selectAllInstances() {
   const ids = app.doc.elements().filter(f => t ? ["wallType", "doorType", "windowType", "columnType"].some(k => F.refId(f, k) === t) : app.doc.typeOf(f) === app.doc.typeOf(f0)).map(f => app.doc.idOf(f));
   app.select(ids); app.say(`${ids.length} instances selected`, "note");
 }
-function newPlanView(levelId) {
+/** Levels with no floor plan yet: one plan per level, so these are the only ones a new plan can be for. */
+function levelsWithoutPlan() {
+  const planned = new Set(app.doc.elements().filter(f => app.doc.typeOf(f) === "PlanView").map(f => F.refId(f, "level")));
+  return app.doc.elements().filter(f => app.doc.typeOf(f) === "Level" && !planned.has(app.doc.idOf(f)))
+    .sort((a, b) => F.real(a, "elevation") - F.real(b, "elevation"));
+}
+/** View ▸ Floor Plan, as Revit's New Floor Plan: pick among the levels that have no plan (several at once). */
+function floorPlanDialog() {
+  const free = levelsWithoutPlan();
+  if (!app.doc.elements().some(f => app.doc.typeOf(f) === "Level")) return app.say("add a level first (LL)", "error");
+  if (!free.length) return app.say("every level already has its floor plan: open it from the Project Browser", "note");
+  const picked = new Set(free.length === 1 ? [app.doc.idOf(free[0])] : []);
+  const list = h("div", { class: "levelpick", role: "listbox", "aria-multiselectable": "true", style: { display: "grid", gap: "2px", maxHeight: "50vh", overflow: "auto", minWidth: "280px" } },
+    free.map(f => { const id = app.doc.idOf(f);
+      return h("label", { style: { display: "flex", gap: "8px", alignItems: "center", padding: "3px 4px" } },
+        h("input", { type: "checkbox", checked: picked.has(id), onchange: e => e.target.checked ? picked.add(id) : picked.delete(id) }),
+        h("span", { style: { flex: "1" } }, F.text(f, "name") || id), h("span", { class: "muted" }, `+${(F.real(f, "elevation") / 1000).toFixed(3)}`)); }));
+  dialog("New Floor Plan", h("div", { style: { display: "grid", gap: "8px" } },
+    h("div", { class: "muted" }, "Levels without a floor plan. Each level has one plan; pick one or more."), list), [
+    { label: "Select all", run: () => { list.querySelectorAll("input").forEach((c, i) => { c.checked = true; picked.add(app.doc.idOf(free[i])); }); return false; } },
+    { label: "Cancel", run: () => true },
+    { label: "OK", primary: true, run: () => { if (!picked.size) { app.say("pick a level", "note"); return false; } let last = null; for (const id of picked) last = newPlanView(id, { open: false }) || last; if (last) app.openView(last); app.say(`${picked.size} floor plan${picked.size > 1 ? "s" : ""} made`, "ok"); return true; } },
+  ]);
+}
+function newPlanView(levelId, { open = true } = {}) {
   const lv = levelId || app.workLevel || firstOf("Level"); if (!lv) return app.say("add a level first", "error");
+  // one plan per level: a level that has one opens it
+  const has = app.doc.elements().find(f => app.doc.typeOf(f) === "PlanView" && F.refId(f, "level") === lv);
+  if (has) { if (open) app.openView(app.doc.idOf(has)); return app.doc.idOf(has); }
   const r = app.apply({ op: "add", element: { type: "PlanView", name: `${F.text(app.doc.element(lv), "name")} Plan`, args: { level: { ref: lv }, scale: 100, viewRange: { top: 2300, cut: 1200, bottom: 0 }, detailLevel: "Fine", style: { ref: "VS-CONSTRUCTION" }, filters: [], clip: { rect: null, visible: false, active: false }, overrides: {} } } });
-  if (r.ok) app.openView(r.id);
+  if (r.ok && open) app.openView(r.id);
+  return r.ok ? r.id : null;
 }
 function newLevel() {
   const lv = app.doc.elements().filter(f => app.doc.typeOf(f) === "Level");

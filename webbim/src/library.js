@@ -88,6 +88,7 @@ export const CATEGORIES = {
   Detail:            { name: "Detail items", subcategories: { Common: { projection: "thin" } } },
   IfcSlab:           { name: "Floors", subcategories: { Common: { cut: "heavy", projection: "thin", beyond: "hairline" } } },
   IfcBeam:           { name: "Structural Framing", subcategories: { Common: { cut: "heavy", projection: "thin", beyond: "hairline" } } },
+  IfcBuildingElementProxy: { name: "Generic Models", subcategories: { Common: { cut: "heavy", projection: "thin", beyond: "hairline" } } },
   Furniture:         { name: "Furniture", subcategories: { Common: { projection: "thin" } } },
 };
 

@@ -13,6 +13,6 @@ export function elementParts(doc, f) {
   if (!p) return [];
   if (t === "Wall") return (p.pieces || []).map(pc => Object.assign({ sub: "Wall" }, pc));
   if (t === "Column") return [{ foot: p.foot.length ? p.foot : samplePath(p.path).slice(0, -1), z0: p.z0, z1: p.z1, sub: "Column", smooth: p.foot.length === 16 }];
-  if (t === "Door" || t === "Window" || t === "Floor" || t === "Beam") { const d = doc.data(f); return (d && d.parts) || (p.parts || []); }
+  if (t === "Door" || t === "Window" || t === "Floor" || t === "Beam" || t === "Generic") { const d = doc.data(f); return (d && d.parts) || (p.parts || []); }
   return [];
 }

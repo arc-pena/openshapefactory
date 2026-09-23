@@ -1017,3 +1017,57 @@ testCase("M20", "Elevations and sections show their extent in plan: grips set th
   const ok = far && far.writes === "depth" && Math.abs(far.at[0] - 15000) < 1 && hs.some(x => x.key === "width end") && b1 < b0 && e1 < e0;
   return R(ok, "far-clip grip 12000 beyond the line; shrinking the far clip drops what lies past it", `far at ${far && far.at}, section beyond ${b0}→${b1}, elevation items ${e0}→${e1}`);
 });
+
+// What Revit and Tekla actually write: shared (mapped) beams, a brep column, a wall clipped by a
+// boolean, a footing, a proxy as a face set, walls joined by IfcRelConnectsPathElements, two storeys.
+const IFC_HARD = `ISO-10303-21;
+HEADER;FILE_DESCRIPTION((''),'2;1');FILE_NAME('h.ifc','',(''),(''),'','','');FILE_SCHEMA(('IFC4'));ENDSEC;
+DATA;
+#1=IFCSIUNIT(*,.LENGTHUNIT.,.MILLI.,.METRE.);#2=IFCUNITASSIGNMENT((#1));
+#10=IFCCARTESIANPOINT((0.,0.,0.));#11=IFCDIRECTION((0.,0.,1.));#12=IFCDIRECTION((1.,0.,0.));#13=IFCAXIS2PLACEMENT3D(#10,#11,#12);#14=IFCLOCALPLACEMENT($,#13);
+#15=IFCDIRECTION((0.,1.,0.));
+#20=IFCPROJECT('p',$,'T',$,$,$,$,$,#2);#23=IFCBUILDINGSTOREY('s1',$,'Ground',$,$,#14,$,$,.ELEMENT.,0.);#24=IFCBUILDINGSTOREY('s2',$,'Roof',$,$,#14,$,$,.ELEMENT.,3500.);
+#30=IFCCARTESIANPOINT((2500.,0.));#31=IFCAXIS2PLACEMENT2D(#30,$);#32=IFCRECTANGLEPROFILEDEF(.AREA.,'A',#31,5000.,200.);
+#33=IFCEXTRUDEDAREASOLID(#32,#13,#11,3000.);#34=IFCSHAPEREPRESENTATION($,'Body','SweptSolid',(#33));#35=IFCPRODUCTDEFINITIONSHAPE($,$,(#34));
+#36=IFCWALL('wa',$,'Wall A',$,$,#14,#35,$,$);
+#40=IFCCARTESIANPOINT((5000.,2000.));#41=IFCAXIS2PLACEMENT2D(#40,$);#42=IFCRECTANGLEPROFILEDEF(.AREA.,'B',#41,200.,4000.);
+#43=IFCEXTRUDEDAREASOLID(#42,#13,#11,3000.);#44=IFCPLANE(#13);#45=IFCHALFSPACESOLID(#44,.F.);#46=IFCBOOLEANCLIPPINGRESULT(.DIFFERENCE.,#43,#45);
+#47=IFCSHAPEREPRESENTATION($,'Body','Clipping',(#46));#48=IFCPRODUCTDEFINITIONSHAPE($,$,(#47));#49=IFCWALL('wb',$,'Wall B',$,$,#14,#48,$,$);
+#50=IFCRELCONNECTSPATHELEMENTS('j',$,$,$,$,#36,#49,(),(),.ATSTART.,.ATEND.);
+#60=IFCCARTESIANPOINT((0.,0.));#61=IFCAXIS2PLACEMENT2D(#60,$);#62=IFCRECTANGLEPROFILEDEF(.AREA.,'BM',#61,200.,400.);
+#63=IFCAXIS2PLACEMENT3D(#10,#12,#15);#64=IFCEXTRUDEDAREASOLID(#62,#63,#11,4000.);#65=IFCSHAPEREPRESENTATION($,'Body','SweptSolid',(#64));
+#66=IFCREPRESENTATIONMAP(#13,#65);
+#67=IFCCARTESIANPOINT((0.,1000.,3300.));#68=IFCCARTESIANTRANSFORMATIONOPERATOR3D($,$,#67,1.,$);#69=IFCMAPPEDITEM(#66,#68);
+#70=IFCSHAPEREPRESENTATION($,'Body','MappedRepresentation',(#69));#71=IFCPRODUCTDEFINITIONSHAPE($,$,(#70));#72=IFCBEAM('b1',$,'Beam 1',$,$,#14,#71,$,$);
+#73=IFCCARTESIANPOINT((0.,2000.,3300.));#74=IFCCARTESIANTRANSFORMATIONOPERATOR3D($,$,#73,1.,$);#75=IFCMAPPEDITEM(#66,#74);
+#76=IFCSHAPEREPRESENTATION($,'Body','MappedRepresentation',(#75));#77=IFCPRODUCTDEFINITIONSHAPE($,$,(#76));#78=IFCBEAM('b2',$,'Beam 2',$,$,#14,#77,$,$);
+#80=IFCCARTESIANPOINT((-150.,3850.,0.));#81=IFCCARTESIANPOINT((150.,3850.,0.));#82=IFCCARTESIANPOINT((150.,4150.,0.));#83=IFCCARTESIANPOINT((-150.,4150.,0.));
+#84=IFCCARTESIANPOINT((-150.,3850.,3000.));#85=IFCCARTESIANPOINT((150.,3850.,3000.));#86=IFCCARTESIANPOINT((150.,4150.,3000.));#87=IFCCARTESIANPOINT((-150.,4150.,3000.));
+#88=IFCPOLYLOOP((#80,#81,#82,#83));#89=IFCPOLYLOOP((#84,#85,#86,#87));#90=IFCFACEOUTERBOUND(#88,.T.);#91=IFCFACEOUTERBOUND(#89,.T.);#92=IFCFACE((#90));#93=IFCFACE((#91));
+#94=IFCCLOSEDSHELL((#92,#93));#95=IFCFACETEDBREP(#94);#96=IFCSHAPEREPRESENTATION($,'Body','Brep',(#95));#97=IFCPRODUCTDEFINITIONSHAPE($,$,(#96));#98=IFCCOLUMN('c',$,'Column',$,$,#14,#97,$,$);
+#100=IFCRECTANGLEPROFILEDEF(.AREA.,'F',#61,1000.,1000.);#101=IFCCARTESIANPOINT((0.,0.,-600.));#102=IFCAXIS2PLACEMENT3D(#101,#11,#12);#103=IFCEXTRUDEDAREASOLID(#100,#102,#11,400.);
+#104=IFCSHAPEREPRESENTATION($,'Body','SweptSolid',(#103));#105=IFCPRODUCTDEFINITIONSHAPE($,$,(#104));#106=IFCFOOTING('f',$,'Pad',$,$,#14,#105,$,.PAD_FOOTING.);
+#110=IFCCARTESIANPOINTLIST3D(((6000.,0.,0.),(7000.,0.,0.),(7000.,1000.,0.),(6000.,1000.,0.),(6500.,500.,800.)));
+#111=IFCTRIANGULATEDFACESET(#110,$,.T.,((1,2,5),(2,3,5),(3,4,5),(4,1,5),(1,2,3)),$);#112=IFCSHAPEREPRESENTATION($,'Body','Tessellation',(#111));#113=IFCPRODUCTDEFINITIONSHAPE($,$,(#112));
+#114=IFCBUILDINGELEMENTPROXY('x',$,'Plinth',$,$,#14,#113,$,$);
+#120=IFCRELCONTAINEDINSPATIALSTRUCTURE('c1',$,$,$,(#36,#49,#98,#106,#114),#23);#121=IFCRELCONTAINEDINSPATIALSTRUCTURE('c2',$,$,$,(#72,#78),#24);
+ENDSEC;END-ISO-10303-21;`;
+testCase("M21", "IFC as written by real exporters: mapped beams, brep columns, clipped walls, footings, proxies, path joins, and one floor plan per storey", () => {
+  const doc = newDocument("ifc"), ed = new Editor(doc);
+  const r = importIfc(doc, IFC_HARD), res = ed.apply(r.ops);
+  const byType = t => doc.elements().filter(f => doc.typeOf(f) === t);
+  const beams = byType("Beam").map(f => [doc.argValue(f, "axis"), doc.plan(f)]), col = byType("Column")[0], cp = col && doc.plan(col);
+  const walls = byType("Wall"), gm = byType("Generic")[0], gp = gm && doc.plan(gm);
+  const ft = byType("Floor").find(f => /footing/.test(F.type(f, "floorType").name)), fp = ft && doc.plan(ft);
+  const plans = byType("PlanView").map(f => F.refId(f, "level")), levels = byType("Level").map(f => doc.idOf(f));
+  const b1 = beams.find(([a]) => Math.abs(a.start[1] - 1000) < 1);
+  const ok = res.ok && !Object.keys(r.report.missed).length
+    && beams.length === 2 && b1 && Math.abs(b1[0].end[0] - b1[0].start[0]) > 3999 && Math.abs(b1[1].z1 - 3500) < 1 && Math.abs(b1[1].z0 - 3100) < 1
+    && cp && Math.abs(cp.z1 - cp.z0 - 3000) < 1 && Math.abs(F.point(col, "position")[1] - 4000) < 1
+    && walls.length === 2 && doc.joins.some(j => [j.a.of, j.b.of].sort().join() === walls.map(w => doc.idOf(w)).sort().join())
+    && fp && Math.abs(fp.z1 + 200) < 1 && Math.abs(fp.z0 + 600) < 1
+    && gp && Math.abs(gp.z1 - 800) < 1 && Math.abs(polyArea(F.json(gm, "boundary")) ) > 999999
+    && levels.length === 2 && levels.every(l => plans.filter(p => p === l).length === 1);
+  return R(ok, "nothing missed; 2 mapped beams 4000 long top 3500; brep column 3000 high at y 4000; the two walls joined; pad footing -600→-200; proxy a Generic 800 high; a plan for each of 2 levels",
+    `ok ${res.ok} ${res.error || ""}; missed ${JSON.stringify(r.report.missed)}; beams ${JSON.stringify(beams.map(([a, p]) => [a.start, a.end, p.z0, p.z1]))}; column ${cp && [cp.z0, cp.z1]} ${col && F.point(col, "position")}; joins ${JSON.stringify(doc.joins)}; footing ${fp && [fp.z0, fp.z1]}; generic ${gp && [gp.z0, gp.z1]}; plans ${plans} levels ${levels}; notes ${r.report.notes.join(" | ")}`);
+});

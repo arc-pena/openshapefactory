@@ -35,6 +35,8 @@ The **Parametric CAD** button (top right, or `PC`) swaps the whole interface for
 - **Edits in CAD:** changing a building's parameter node in the modeller becomes an ordinary BIM op (set, drag, autojoin). The modeller is then shown what the building made of it, as the smallest set of `set`/`sketch` edits.
 - **Your own CAD work:** anything you add in the modeller that is not the building's (ids not starting `B_`) is kept.
 - **IFC:** the modeller's IFC package loads automatically.
+- **IFC import (Insert ▸ Import IFC):** walls, slabs, roofs and footings, columns and members, beams, doors and windows, and proxies come in as Walls, Floors, Columns, Beams, Doors/Windows and Generic models. Bodies are read through mapped items (a Revit file's shared beams), boolean clips (taken whole, and reported), breps and face sets (read off their points). `IfcRelConnectsPathElements` becomes wall joins. Each storey gets its floor plan. Anything approximated is named in the import report.
+- **Floor plans:** one per level. View ▸ Floor Plan (also on Architecture ▸ Datum) lists only the levels that have no plan yet, so you can pick one or more.
 
 `cad/` is a copy of the modeller from `arc-pena/OCAF_V1`, branch `claude/opencascade-ocaf-parametric-cad-fp589v`. That repository was only read. The copy adds three things, marked "Web BIM" in `cad/src/app.js`:
 

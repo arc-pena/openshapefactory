@@ -324,13 +324,14 @@ BUILDERS.Window = {
 declare({ type: "Column", guid: "wb-0301", category: "IfcColumn", kind: "column", idPrefix: "C",
   summary: "A column at a point. Columns do not join to walls — they overlap, deliberately (§16).",
   args: [ point2d("position", "Position", [0, 0]), ref("columnType", "Type", ["columnType"]), ref("baseLevel", "Base level", ["level"]),
-          real("height", "Height", 3000, 1, 100000, 1, "mm", { group: "Dimensions" }), real("rotation", "Rotation", 0, -360, 360, 1, "°") ],
+          real("height", "Height", 3000, 1, 100000, 1, "mm", { group: "Dimensions" }), real("rotation", "Rotation", 0, -360, 360, 1, "°"),
+          real("baseOffset", "Base offset", 0, -100000, 100000, 1, "mm", { group: "Constraints" }) ],
   handles: (f) => [{ key: "move", at: F.point(f, "position"), constraint: "free2d", writes: "position" }] });
 BUILDERS.Column = {
   precondition: (f) => F.type(f, "columnType") ? null : "pick a column type",
   build: (f, doc) => {
     const t = F.type(f, "columnType"), c = F.point(f, "position"), rot = F.real(f, "rotation") * Math.PI / 180;
-    const z0 = levelElev(doc, f), h = F.real(f, "height");
+    const z0 = levelElev(doc, f) + (F.real(f, "baseOffset") || 0), h = F.real(f, "height");
     let path, foot;
     if (t.round) { path = [{ k: "A", c, r: t.width / 2, a0: 0, a1: TAU }]; foot = []; for (let i = 0; i < 16; i++) foot.push(add(c, [Math.cos(i / 16 * TAU) * t.width / 2, Math.sin(i / 16 * TAU) * t.width / 2])); }
     else { foot = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([x, y]) => { const p = [x * t.width / 2, y * t.depth / 2]; return add(c, [p[0] * Math.cos(rot) - p[1] * Math.sin(rot), p[0] * Math.sin(rot) + p[1] * Math.cos(rot)]); }); path = polyPath(foot); }
@@ -378,6 +379,25 @@ BUILDERS.Beam = {
     const foot = band(W, 0, 0).foot, len = dist(c.start, c.end);
     return { plan: { path: polyPath(foot), foot, axis: c, z0: top - D, z1: top, parts },
       data: { value: len, kind: "Length", parts, refs: [{ key: "axis", kind: "line", geom: lineThrough(c.start, c.end) }], props: { Length: L(len), Depth: L(D), Width: L(W), "Top elevation": L(top), TypeMark: T(t.mark || t.id) } } };
+  },
+};
+
+//! A generic model: IFC's IfcBuildingElementProxy, "something that is part of the building". It has
+//! no system of its own, so it is kept as what it is: an outline on a level pulled up through its height.
+declare({ type: "Generic", guid: "wb-0403", category: "IfcBuildingElementProxy", kind: "generic", idPrefix: "GM",
+  summary: "A generic model element: a plan outline pulled up through a height. What IFC calls a proxy.",
+  args: [ json("boundary", "Boundary", [[0, 0], [1000, 0], [1000, 1000], [0, 1000]]), ref("level", "Level", ["level"]),
+          real("baseOffset", "Base offset", 0, -100000, 100000, 1, "mm", { group: "Constraints" }), real("height", "Height", 1000, 1, 100000, 1, "mm", { group: "Dimensions" }),
+          text("ifcClass", "IFC class", "IfcBuildingElementProxy", { group: "IFC" }), text("material", "Material", "M-CONC", { group: "Materials" }) ],
+  handles: (f) => { const b = F.json(f, "boundary") || []; return b.map((p, i) => ({ key: "v" + i, at: p, constraint: "free2d", writes: `boundary.${i}` })); } });
+BUILDERS.Generic = {
+  precondition: (f) => { const b = F.json(f, "boundary"); return Array.isArray(b) && b.length >= 3 ? null : "a generic model needs an outline of three points or more"; },
+  build: (f, doc) => {
+    const b = F.json(f, "boundary"), z0 = levelElev(doc, f, "level") + F.real(f, "baseOffset"), h = F.real(f, "height"), material = F.text(f, "material") || "M-CONC";
+    const parts = [{ foot: b.map(p => p.slice()), z0, z1: z0 + h, sub: "Body", material }];
+    const area = Math.abs(polyArea(b));
+    return { plan: { path: polyPath(b), foot: b, z0, z1: z0 + h, material, parts },
+      data: { value: area * h / 1e9, kind: "Number", parts, props: { Volume: { kind: "Number", v: area * h / 1e9 }, Height: L(h), "Base elevation": L(z0), "IFC class": T(F.text(f, "ifcClass")) } } };
   },
 };
 

@@ -17,9 +17,9 @@ import { elementParts } from "./solids.js";
 const PREFIX = "B_";
 const sid = id => String(id).replace(/[^A-Za-z0-9]/g, "_");
 const COLOURS = { Wall: [0.80, 0.62, 0.52], Column: [0.62, 0.63, 0.66], Door: [0.55, 0.40, 0.26], Window: [0.55, 0.75, 0.90],
-  Floor: [0.72, 0.72, 0.70], Beam: [0.50, 0.55, 0.62] };
+  Floor: [0.72, 0.72, 0.70], Beam: [0.50, 0.55, 0.62], Generic: [0.70, 0.66, 0.60] };
 const SUB_COLOURS = { Glass: [0.62, 0.82, 0.95], Frame: [0.93, 0.93, 0.92], Handle: [0.75, 0.75, 0.78], Panel: [0.62, 0.45, 0.30] };
-export const CAD_TYPES = ["Wall", "Column", "Door", "Window", "Floor", "Beam"];
+export const CAD_TYPES = ["Wall", "Column", "Door", "Window", "Floor", "Beam", "Generic"];
 const cround = v => Math.round(v * 1000) / 1000;
 
 /** The document written as a modeller file, and the table of which nodes are parameters of what. */

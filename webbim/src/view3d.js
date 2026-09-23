@@ -533,8 +533,8 @@ export class View3D {
 function clear3(scene) { for (const o of scene.children.slice()) { scene.remove(o); if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); } }
 const vdot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const v3sub3 = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
-const PART_TYPES = new Set(["Door", "Window", "Floor", "Beam"]);
-const PART_COLOURS = { Frame: "#eeeeec", Panel: "#9c7650", Glass: "#9fd0ee", Handle: "#b8bcc4", Sill: "#d9d6cf", Door: "#9c7650", Window: "#eeeeec", Floor: "#c9c7c1", Beam: "#8f9aa8" };
+const PART_TYPES = new Set(["Door", "Window", "Floor", "Beam", "Generic"]);
+const PART_COLOURS = { Frame: "#eeeeec", Panel: "#9c7650", Glass: "#9fd0ee", Handle: "#b8bcc4", Sill: "#d9d6cf", Door: "#9c7650", Window: "#eeeeec", Floor: "#c9c7c1", Beam: "#8f9aa8", Generic: "#b9b2a6", Body: "#b9b2a6" };
 /** Triangles of a prism: a plan footprint between two heights, any winding. */
 function prismTriangles(foot, z0, z1) {
   const n = foot.length, pos = [];
