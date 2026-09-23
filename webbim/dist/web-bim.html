@@ -7876,9 +7876,30 @@ class View2D {
     this.scalebar.innerHTML = `<div style="width:${px}px;height:5px;border:1px solid #333;border-top:0"></div><div>${nice} m · 1:${this.S}</div>`;
   }
   /** Transient things drawn in screen space: the rubber band, listening dimensions. */
+  /** Swing a door's leaf open to its swing angle and back, drawn over the plan (nothing is edited). */
+  animateDoor(id, ms = 2600) {
+    const f = this.doc.element(id), d = f && this.doc.data(f); if (!d || !d.swing || this.kind !== "PlanView") return false;
+    const t0 = performance.now();
+    const step = now => {
+      const k = Math.min(1, (now - t0) / ms), phase = k < 0.5 ? k * 2 : (1 - k) * 2, e = phase * phase * (3 - 2 * phase);
+      this.doorAnim = k < 1 ? { swing: d.swing, e } : null; this.draw();
+      if (k < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step); return true;
+  }
   drawTemp(g) {
     g.save(); g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     const blue = "#1d6fd8";
+    if (this.doorAnim) {
+      g.fillStyle = "rgba(232,89,26,.25)"; g.strokeStyle = "#e8591a"; g.lineWidth = 2;
+      for (const sw of this.doorAnim.swing) {
+        const deg = sw.openDeg + (sw.swingDeg - sw.openDeg) * this.doorAnim.e, r = deg * Math.PI / 180;
+        const dv = [sw.closed[0] * Math.cos(r) + sw.open[0] * Math.sin(r), sw.closed[1] * Math.cos(r) + sw.open[1] * Math.sin(r)];
+        const tv = [-sw.open[0] * Math.cos(r) + sw.closed[0] * Math.sin(r), -sw.open[1] * Math.cos(r) + sw.closed[1] * Math.sin(r)];
+        const P = [sw.hinge, add(sw.hinge, mul(dv, sw.len)), add(add(sw.hinge, mul(dv, sw.len)), mul(tv, sw.lt)), add(sw.hinge, mul(tv, sw.lt))].map(q => this.toScreen(q));
+        g.beginPath(); P.forEach((q, i) => i ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1])); g.closePath(); g.fill(); g.stroke();
+      }
+    }
     const T = this.tool;
     if (T.pts.length && T.cursor) {
       g.strokeStyle = blue; g.lineWidth = 1.5; g.setLineDash([6, 4]);
