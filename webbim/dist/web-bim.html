@@ -298,6 +298,50 @@ table.sched td.id { font: 11.5px var(--mono); color: var(--ink-3); }
 .dialog-back.modeless .dialog { pointer-events: auto; position: fixed; right: 16px; top: 96px; width: min(480px, calc(100vw - 32px)); max-height: calc(100vh - 120px); box-shadow: 0 6px 28px rgba(23,32,44,.28); }
 .dialog-back.modeless .dialog header { cursor: move; background: var(--chrome-2); border-radius: 6px 6px 0 0; padding: 8px 12px; }
 .dialog .live { font-size: 11.5px; color: var(--ok); }
+.dialog-back.modeless .dialog.wide { width: min(940px, calc(100vw - 32px)); }
+.vvtabs { display: flex; gap: 2px; border-bottom: 1px solid var(--rule); margin: 6px 0 10px; overflow-x: auto; }
+.vvtab { background: none; border: 1px solid transparent; border-bottom: 0; padding: 6px 10px; font: inherit; font-size: 12.5px; color: var(--ink-2); cursor: pointer; border-radius: 5px 5px 0 0; white-space: nowrap; }
+.vvtab.on { background: var(--panel); border-color: var(--rule); color: var(--ink); font-weight: 600; margin-bottom: -1px; }
+.vv .small, .vstyle .small { font-size: 11.5px; margin: 4px 0 8px; }
+.vv h4 { margin: 12px 0 6px; font-size: 12.5px; display: flex; gap: 6px; align-items: center; }
+.vvtable { font-size: 12px; border-collapse: collapse; width: 100%; }
+.vvtable th { position: sticky; top: 0; background: var(--chrome-2); font-weight: 600; text-align: left; padding: 4px 6px; font-size: 11.5px; }
+.vvtable td { padding: 3px 6px; border-top: 1px solid var(--rule); vertical-align: middle; }
+.vvtable tr.ovr td.catname { font-weight: 600; }
+.vvtable .catname .mono { font-size: 10.5px; font-weight: 400; }
+.vvtable select { max-width: 92px; font-size: 11.5px; }
+.cellrow { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.cellrow .lbl { min-width: 104px; font-size: 12px; color: var(--ink-2); }
+.cellrow .grow { flex: 1; }
+input[type=color] { width: 30px; height: 22px; padding: 0 1px; border: 1px solid var(--rule); border-radius: 3px; background: none; cursor: pointer; }
+input[type=color].inherit, select.inherit { opacity: .55; }
+table.locked, .rulecard.locked, .prow.locked { opacity: .55; }
+.ro.locked { color: var(--ink-3); }
+.banner.lock { display: flex; gap: 8px; align-items: center; justify-content: space-between; background: var(--chrome-2); border: 1px solid var(--rule); border-radius: 5px; padding: 6px 10px; font-size: 12px; margin-bottom: 8px; }
+.rulecard { border: 1px solid var(--rule); border-radius: 6px; padding: 8px; display: grid; gap: 6px; margin-bottom: 8px; }
+.rulecard.off { opacity: .6; }
+.rulesum { font-size: 12px; padding: 4px 8px; border-left: 3px solid var(--rule); margin-bottom: 4px; background: var(--panel-2); }
+.rulesum.off { opacity: .5; text-decoration: line-through; }
+.rulecard .conds { display: grid; gap: 4px; padding-left: 8px; border-left: 2px solid var(--rule); }
+.rulecard .gfx { display: grid; gap: 4px; background: var(--chrome-2); border-radius: 4px; padding: 6px; }
+.rulename { font-weight: 600; min-width: 160px; }
+input.bad { outline: 2px solid var(--error); }
+.schemes { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; margin: 8px 0; }
+.scheme { border: 1px solid var(--rule); border-radius: 6px; padding: 6px; background: var(--panel); cursor: pointer; display: grid; gap: 4px; text-align: left; font: inherit; font-size: 11.5px; }
+.scheme.on { outline: 2px solid var(--accent); outline-offset: 1px; }
+.scheme .sw { position: relative; height: 54px; border-radius: 4px; border: 1px solid var(--rule); overflow: hidden; }
+.scheme .sw i { position: absolute; display: block; }
+.schemeedit { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 6px 14px; }
+.vsgrid { display: grid; grid-template-columns: 200px 1fr; gap: 14px; }
+@media (max-width: 640px) { .vsgrid { grid-template-columns: 1fr; } }
+.vslist { display: grid; gap: 2px; align-content: start; }
+.vsitem { text-align: left; background: none; border: 1px solid transparent; border-radius: 4px; padding: 5px 8px; font: inherit; font-size: 12.5px; cursor: pointer; color: var(--ink); }
+.vsitem.on { background: var(--chrome-2); border-color: var(--rule); font-weight: 600; }
+.vstable { width: 100%; font-size: 12px; border-collapse: collapse; margin: 8px 0; }
+.vstable th, .vstable td { padding: 4px 6px; border-top: 1px solid var(--rule); text-align: left; vertical-align: middle; }
+.vstable .c { text-align: center; }
+.vstable tr.incl td:first-child { font-weight: 600; }
+.btn.danger { color: var(--error); border-color: var(--error); }
 @media (max-width: 860px) { .dialog-back.modeless .dialog { left: 8px; right: 8px; top: auto; bottom: 32px; width: auto; max-height: 55vh; } }
 .dialog header { padding: 14px 18px; border-bottom: 1px solid var(--rule); display: flex; align-items: center; gap: 10px; }
 .dialog header h2 { margin: 0; font: 600 16px var(--cond); flex: 1; }
@@ -6553,7 +6597,7 @@ declare({ type: "PlanView", guid: "wb-0501", category: "View", kind: "view", idP
           json("viewRange", "View range", { top: 2300, cut: 1200, bottom: 0 }), choice("detailLevel", "Detail level", ["Coarse", "Medium", "Fine"], 2, { group: "Graphics" }),
           ref("style", "View style", ["viewStyle"], { group: "Graphics" }), json("filters", "Filters", [], { group: "Graphics" }),
           json("clip", "Crop region", { rect: [-3000, -3000, 20000, 14000], visible: false, active: false }, { group: "Extents" }),
-          json("overrides", "Element overrides", {}, { group: "Graphics" }) ] });
+          json("overrides", "Element overrides", {}, { group: "Graphics" }), json("vg", "Visibility/Graphics", {}, { group: "Graphics" }) ] });
 BUILDERS.PlanView = { precondition: (f) => F.reference(f, "level") ? null : "pick a level", build: () => ({ data: {} }) };
 
 /** What an elevation or section sees, in plan: the view line swept along its look direction to
@@ -6578,7 +6622,8 @@ declare({ type: "ElevationView", guid: "wb-0502", category: "View", kind: "view"
   args: [ curve2d("line", "View line", ["line"], { type: "line", start: [0, -3000], end: [12000, -3000] }), real("depth", "Depth", 15000, 1, 1e6, 1),
           integer("scale", "Scale 1:", 100, 1, 5000, { group: "Graphics" }), ref("baseLevel", "Base level", ["level"]), real("top", "Top", 6000, 1, 1e5, 1),
           ref("style", "View style", ["viewStyle"], { group: "Graphics" }), choice("detailLevel", "Detail level", ["Coarse", "Medium", "Fine"], 0, { group: "Graphics" }),
-          json("clip", "Crop region", { rect: null, visible: false, active: false }, { group: "Extents" }) ],
+          json("clip", "Crop region", { rect: null, visible: false, active: false }, { group: "Extents" }),
+          json("vg", "Visibility/Graphics", {}, { group: "Graphics" }) ],
   handles: viewLineHandles });
 BUILDERS.ElevationView = { build: () => ({ data: {} }) };
 declare({ type: "SectionView", guid: "wb-0505", category: "View", kind: "view", idPrefix: "V-S",
@@ -6586,14 +6631,18 @@ declare({ type: "SectionView", guid: "wb-0505", category: "View", kind: "view", 
   args: [ curve2d("line", "Section line", ["line"], { type: "line", start: [0, 4000], end: [12000, 4000] }), real("depth", "Far clip", 15000, 1, 1e6, 1),
           integer("scale", "Scale 1:", 50, 1, 5000, { group: "Graphics" }), ref("baseLevel", "Base level", ["level"]), real("top", "Top", 6000, 1, 1e5, 1),
           ref("style", "View style", ["viewStyle"], { group: "Graphics" }), choice("detailLevel", "Detail level", ["Coarse", "Medium", "Fine"], 2, { group: "Graphics" }),
-          json("clip", "Crop region", { rect: null, visible: false, active: false }, { group: "Extents" }) ],
+          json("clip", "Crop region", { rect: null, visible: false, active: false }, { group: "Extents" }),
+          json("vg", "Visibility/Graphics", {}, { group: "Graphics" }) ],
   handles: viewLineHandles });
 BUILDERS.SectionView = { build: () => ({ data: {} }) };
 
 declare({ type: "View3D", guid: "wb-0503", category: "View", kind: "view", idPrefix: "V-3D",
   summary: "A camera. On a sheet it becomes exact hidden-line line-work, cached and never interactive (§6.4).",
   args: [ json("camera", "Camera", { azimuth: 225, elevation: 30, target: [6000, 4000, 1500] }), integer("scale", "Scale 1:", 200, 1, 5000, { group: "Graphics" }),
-          ref("style", "View style", ["viewStyle"], { group: "Graphics" }), json("render", "Render", { mode: "lines", hidden: false, rasterDPI: 300, silhouetteWeight: 0.35 }, { group: "Graphics" }),
+          ref("style", "View style", ["viewStyle"], { group: "Graphics" }),
+          choice("visualStyle", "Visual style", ["Wireframe", "Hidden Line", "Shaded", "Consistent Colors", "Sheet Line-work"], 2, { group: "Graphics" }),
+          choice("detailLevel", "Detail level", ["Coarse", "Medium", "Fine"], 2, { group: "Graphics" }), json("vg", "Visibility/Graphics", {}, { group: "Graphics" }),
+          json("render", "Render", { mode: "lines", hidden: false, rasterDPI: 300, silhouetteWeight: 0.35 }, { group: "Graphics" }),
           // Revit's Section Box: an axis-aligned box the view is clipped to; each face is pushed or pulled on its own
           json("sectionBox", "Section box", { on: false, min: null, max: null }, { group: "Extents" }) ] });
 BUILDERS.View3D = { build: () => ({ data: {} }) };
@@ -7037,14 +7086,17 @@ function resolveGraphics(doc, ctx, f, role, sub = "Common", material = null) {
   }
   // 4. category style
   const cs = style.byCategory && style.byCategory[cat];
-  if (cs) { if (cs.visible === false) g.visible = false; apply(cs[role === "cutPattern" ? "cut" : role], `style ${cat}`); if (role === "fill") apply({ fill: cs.fill }, `style ${cat}`); }
+  if (cs) { if (cs.visible === false) g.visible = false; if (cs.halftone) g.halftone = true; if (cs.detailLevel && cs.detailLevel !== "By View") g.detailLevel = cs.detailLevel; apply(cs[role === "cutPattern" ? "cut" : role], `style ${cat}`); if (role === "fill") apply({ fill: cs.fill }, `style ${cat}`); }
+  // Revit's Display Model: the whole model halftone (an underlay for a drawing of other things), or not drawn
+  if (style.displayModel === "Halftone" && !isAnnotationCategory(cat)) g.halftone = true;
+  if (style.displayModel === "Do not display" && !isAnnotationCategory(cat)) g.visible = false;
   // 3. family style, root first so the nearest ancestor wins
   const chain = familyChainOf(doc, f).slice().reverse();
   for (const fam of chain) { const fs = style.byFamily && style.byFamily[fam]; if (fs) apply(fs[role === "cutPattern" ? "cut" : role], `family ${fam}`); }
   // 2. filter rules, in order: first match wins with stop, otherwise accumulate
   // The style's own rules, then any filters the view adds by id (from any style's rule list).
   for (const rule of ctx.rules || style.rules || []) {
-    if (!matches(doc, f, rule.when)) continue;
+    if (rule.enabled === false || !matches(doc, f, rule.when)) continue;
     const t = rule.then || {};
     apply(t[role === "cutPattern" ? "cut" : role], `rule ${rule.id}`);
     if (role === "fill" && t.fill) apply({ fill: t.fill }, `rule ${rule.id}`);
@@ -7057,10 +7109,17 @@ function resolveGraphics(doc, ctx, f, role, sub = "Common", material = null) {
   if (ov) { apply(ov[role === "cutPattern" ? "cut" : role] || (role === "any" ? ov : null), "view override"); if (ov.visible === false) g.visible = false; if (ov.halftone) g.halftone = true; }
   // The cut-pattern role draws the hatch lines, never the outline weight.
   if (role === "cutPattern" && g.pen === "heavy") g.pen = "hairline";
-  const weight = penWeight(doc, g.pen, ctx.scale);
+  // 0. the graphic scheme: a whole drawing's ink, poché, weight and halftone, as a designer sets a palette
+  const sch = ctx.scheme || null, paper = (sch && sch.background) || "#ffffff", ht = sch && sch.halftone !== undefined ? sch.halftone : HALFTONE;
+  if (sch) {
+    if (sch.ink && (!g.colour || g.colour.toLowerCase() === "#000000")) g.colour = sch.ink;
+    if (sch.poche && role === "cut" && g.fill && g.fill !== "none" && !/^#(fff|ffffff)$/i.test(g.fill)) g.fill = sch.poche;
+    if (sch.accent && g.halftone === false && g.trace.some(t => t.startsWith("rule "))) g.colour = sch.accent;
+  }
+  const pw = penWeight(doc, g.pen, ctx.scale), weight = typeof pw === "number" && sch && sch.weight ? pw * sch.weight : pw;   // "none" stays "none"
   return {
-    weight, colour: g.halftone ? mix(g.colour, "#ffffff", HALFTONE) : g.colour,
-    dash: LINE_TYPES[g.lineType] || null, fill: g.fill === "none" ? null : (g.halftone && g.fill ? mix(g.fill, "#ffffff", HALFTONE) : g.fill ?? null),
+    weight, colour: g.halftone ? mix(g.colour, paper, ht) : g.colour,
+    dash: LINE_TYPES[g.lineType] || null, fill: g.fill === "none" ? null : (g.halftone && g.fill ? mix(g.fill, paper, ht) : g.fill ?? null),
     fillNone: g.fill === "none",
     pattern: g.pattern === "none" || g.pattern === "solid" ? (g.pattern === "solid" ? "solid" : null) : g.pattern, visible: g.visible,
     detailLevel: g.detailLevel, pen: g.pen, trace: g.trace, halftone: g.halftone,
@@ -7086,6 +7145,80 @@ function rulesFor(doc, style, filterIds = []) {
   return out;
 }
 
+// ---------------------------------------------------------------- view styles as Revit's view templates
+//! A view style is a view template: it holds graphics, and it can hold a view's settings too. Each
+//! setting it INCLUDES is the style's to say - pushed to every view using the style and locked there, in
+//! Properties and in Visibility/Graphics. What it does not include stays each view's own.
+const STYLE_SETTINGS = [
+  ["scale", "View scale"], ["detailLevel", "Detail level"], ["viewRange", "View range (plans)"], ["visualStyle", "Visual style (3D)"],
+  ["modelVG", "V/G overrides: model categories"], ["annotationVG", "V/G overrides: annotation categories"], ["filters", "V/G overrides: filters"],
+  ["displayModel", "Display model"], ["farClip", "Far clipping (sections, elevations)"], ["sketchy", "Sketchy lines"], ["scheme", "Graphic scheme"],
+];
+/** Categories that are drawing rather than building: Revit's annotation (2D / symbolic) categories. */
+const isAnnotationCategory = cat => /^(Annotation|Detail|IfcGrid|IfcBuildingStorey)/.test(cat);
+/** The style a view's `setting` is locked by, or null when the view owns it. */
+function lockedBy(doc, v, setting) {
+  const id = F.refId(v, "style"), st = id && doc.lib.viewStyles[id];
+  return st && st.include && st.include[setting] ? (st.name || id) : null;
+}
+/** Graphic schemes: a whole drawing's palette in one choice, as a designer would set it in Illustrator
+ *  or InDesign - the ink lines take, poché for what is cut, line-weight scale, how far halftone fades,
+ *  the paper, and an accent for what filters pick out. */
+const SCHEMES = {
+  "Technical": { name: "Technical (black on white)" },
+  "Blueprint": { name: "Blueprint", background: "#16345f", ink: "#e8f0ff", poche: "#9fb8e0", halftone: 0.55, weight: 0.9, accent: "#ffd166" },
+  "Warm Presentation": { name: "Warm presentation", background: "#faf6ef", ink: "#3b3027", poche: "#3b3027", halftone: 0.6, weight: 0.8, accent: "#c0573e" },
+  "Illustrator Fine": { name: "Illustrator fine line", ink: "#1f1f1f", poche: "#2b2b2b", weight: 0.6, halftone: 0.65, accent: "#e4572e" },
+  "InDesign Grey": { name: "InDesign cool grey", ink: "#4a4f57", poche: "#c9ced6", weight: 0.7, halftone: 0.6, accent: "#2f6fd6" },
+  "Graphite Sketch": { name: "Graphite sketch", background: "#f4f3ef", ink: "#555555", poche: "#8a8a8a", weight: 1.15, halftone: 0.5 },
+  "Night": { name: "Night (dark paper)", background: "#1b1d22", ink: "#d6dbe3", poche: "#586070", halftone: 0.55, weight: 0.85, accent: "#7cc4ff" },
+};
+/** The style a view actually draws with: the style's graphics, with the view's own V/G overrides laid
+ *  over whatever the style does not include; the view's own filters after the style's when filters are
+ *  the view's; and the scheme the style or the view chose. */
+function effectiveStyle(doc, style, v) {
+  const inc = style.include || {}, vg = (v && doc.argValue(v, "vg")) || {};
+  const out = Object.assign({}, style, { byCategory: Object.assign({}, style.byCategory || {}) });
+  for (const [cat, over] of Object.entries(vg.byCategory || {})) {
+    if ((isAnnotationCategory(cat) ? inc.annotationVG : inc.modelVG)) continue;          // locked by the style
+    const base = out.byCategory[cat] || {}, merged = Object.assign({}, base);
+    for (const [k, val] of Object.entries(over)) merged[k] = val && typeof val === "object" && !Array.isArray(val) ? Object.assign({}, base[k] || {}, val) : val;
+    out.byCategory[cat] = merged;
+  }
+  out.rules = (style.rules || []).slice();
+  if (!inc.filters) for (const fl of vg.filters || []) if (fl.enabled !== false) out.rules.push(Object.assign({}, fl, { then: Object.assign({}, fl.then || {}, fl.visible === false ? { visible: false } : {}) }));
+  const sc = inc.scheme ? style.scheme : (vg.scheme || style.scheme);
+  // a scheme is a preset's name, or a preset customised in place (the object carries its own colours)
+  out.schemeObj = sc && typeof sc === "object" ? Object.assign({}, SCHEMES[sc.base] || {}, sc) : sc && SCHEMES[sc] ? SCHEMES[sc] : null;
+  for (const k of ["displayModel", "sketchy"]) out[k] = inc[k] ? style[k] : (vg[k] !== undefined ? vg[k] : style[k]);
+  return out;
+}
+/** The view settings a style can carry, and the view argument each one is. */
+const STYLE_VIEW_KEYS = { scale: "scale", detailLevel: "detailLevel", viewRange: "viewRange", visualStyle: "visualStyle", farClip: "depth" };
+/** Is the view argument `key` held by the view's style? Its name when it is. */
+function lockedKey(doc, v, key) {
+  const setting = Object.keys(STYLE_VIEW_KEYS).find(s => STYLE_VIEW_KEYS[s] === key);
+  return setting ? lockedBy(doc, v, setting) : null;
+}
+/** Push what a style includes into a view that uses it: the view then shows the style's values,
+ *  as Revit applies a template's included parameters. Returns the keys it changed. */
+function pushStyleSettings(doc, v) {
+  const id = F.refId(v, "style"), st = id && doc.lib.viewStyles[id], changed = [];
+  if (!st || !st.include) return changed;
+  const decl = doc.declOf(v), has = k => decl && decl.args.some(a => a.key === k);
+  for (const [setting, key] of Object.entries(STYLE_VIEW_KEYS)) {
+    if (!st.include[setting] || !st.settings || st.settings[setting] === undefined || !has(key)) continue;
+    const val = st.settings[setting];
+    if (JSON.stringify(doc.argValue(v, key)) === JSON.stringify(val)) continue;
+    doc.setArg(v, key, typeof val === "object" ? JSON.parse(JSON.stringify(val)) : val); changed.push(key);
+  }
+  return changed;
+}
+/** A new, empty style: graphics as the construction default, nothing included. */
+function blankStyle(name) {
+  return { name, byCategory: {}, byFamily: {}, rules: [], include: {}, settings: { scale: 100, detailLevel: "Fine", viewRange: { top: 2300, cut: 1200, bottom: 0, depth: 0 }, visualStyle: "Shaded", farClip: 15000 }, scheme: "Technical", displayModel: "Normal", sketchy: null };
+}
+
 // ===== ops.js =====
 //! Every edit goes through one pipeline with a JSON op vocabulary (§1.8):
 //!   add · delete · set · connect · disconnect · rename · appearance · draw ·
@@ -7093,6 +7226,7 @@ function rulesFor(doc, style, filterIds = []) {
 //! A model file and an edit script are the same kind of thing, so a test
 //! fixture, a sample and an assistant all use this path. Consecutive edits with
 //! the same coalescing key collapse into one undo step.
+
 
 
 
@@ -7262,7 +7396,11 @@ const HANDLERS = {
         if (arg && (arg.kind === "Real" || arg.kind === "Integer")) value = valueFromText(doc, f, arg, o.text, ed);
         else value = o.text;
       }
+      // a view setting its style includes is the style's: locked here, changed in the style
+      const lk = doc.declOf(f) && doc.declOf(f).kind === "view" && lockedKey(doc, f, o.key.split(".")[0]);
+      if (lk) throw new Error(`${o.key} is set by the view style ${lk} - change it there, or untick it in the style`);
       setPath(doc, f, o.key, value);
+      if (o.key === "style") pushStyleSettings(doc, f);
       // a door or window sizes its opening: changing its type resizes the hole to the new type
       if ((o.key === "doorType" || o.key === "windowType") && value && value.ref) sizeOpeningsToType(doc, [f]);
       // ticking a grid's Orthogonal straightens it onto the nearest axis, about its start
@@ -7373,7 +7511,15 @@ const HANDLERS = {
     if (o.lib === "types") sizeOpeningsToType(doc, doc.elements().filter(g => (doc.typeOf(g) === "Door" || doc.typeOf(g) === "Window") && (F.refId(g, "doorType") === o.id || F.refId(g, "windowType") === o.id)));
     return {};
   },
-  style(doc, o) { return HANDLERS.type(doc, Object.assign({}, o, { lib: "viewStyles" })); },
+  /** A view style edited: every view using it takes what it includes (a view template applied). */
+  style(doc, o) {
+    const r = HANDLERS.type(doc, Object.assign({}, o, { lib: "viewStyles" }));
+    for (const v of doc.elements()) if (doc.declOf(v) && doc.declOf(v).kind === "view" && F.refId(v, "style") === o.id) {
+      if (o.remove) doc.setArg(v, "style", null); else pushStyleSettings(doc, v);
+    }
+    doc.bumpView && doc.bumpView();
+    return r;
+  },
   filter(doc, o) { return HANDLERS.type(doc, Object.assign({}, o, { lib: "viewStyles" })); },
   relate(doc, o) {
     // join and constraint rows: the two relationship stores (§1.5)
@@ -7927,12 +8073,14 @@ function applyCrop(doc, v, clip, scene, S) {
 function viewContext(doc, v) {
   const type = doc.typeOf(v);
   const styleId = F.refId(v, "style") || (type === "View3D" ? "VS-CONSTRUCTION" : "VS-CONSTRUCTION");
-  const style = doc.lib.viewStyles[styleId] || Object.values(doc.lib.viewStyles)[0] || {};
+  const base = doc.lib.viewStyles[styleId] || Object.values(doc.lib.viewStyles)[0] || {};
+  // the style as this view draws it: the view's own V/G overrides and filters over what the style leaves open
+  const style = effectiveStyle(doc, base, v);
   const scale = F.int(v, "scale") || 100;
   const filters = doc.argValue(v, "filters") || [];
   const detailArg = doc.argValue(v, "detailLevel");
   return { view: v, style, styleId, scale, overrides: doc.argValue(v, "overrides") || {}, rules: rulesFor(doc, style, filters),
-    detail: detailArg || style.detailLevel || "Fine", hidden: [] };
+    detail: detailArg || style.detailLevel || "Fine", hidden: [], scheme: style.schemeObj };
 }
 
 /** Where every view sits: sheet number and viewport number, for markers (§11). */
@@ -7955,8 +8103,46 @@ function deriveView(doc, v, opts = {}) {
   const scene = t === "PlanView" ? planScene(doc, v, opts) : t === "ElevationView" ? elevationScene(doc, v, opts) : t === "SectionView" ? sectionScene(doc, v, opts)
     : t === "Sheet" ? sheetScene(doc, v, opts) : t === "View3D" ? view3dScene(doc, v, opts) : t === "Schedule" ? scheduleScene(doc, v, opts) : emptyScene();
   scene.watermark = doc.modelRevision;
+  // the graphic scheme's paper: Blueprint and Night draw on their own ground, on screen, on sheets, in the PDF
+  if (["PlanView", "ElevationView", "SectionView", "View3D"].includes(t)) {
+    const sch = viewContext(doc, v).scheme || {};
+    scene.background = sch.background || null;
+    // what is drawn in plain black (tags, dimensions, text) takes the scheme's ink; paper-white masks take its paper
+    if (sch.ink || sch.background) inkScene(scene.prims, sch.ink || "#000000", sch.background || "#ffffff");
+    const sk = viewContext(doc, v).style.sketchy;
+    if (sk && (sk.extension > 0 || sk.jitter > 0)) sketchScene(scene.prims, sk);
+  }
   c.set(doc.idOf(v), { key, scene });
   return scene;
+}
+const BLACK = /^#(000|000000)$/i, WHITE = /^#(fff|ffffff)$/i;
+function inkScene(prims, ink, paper) {
+  for (const p of prims) {
+    if (p.t === "group") { inkScene(p.prims, ink, paper); continue; }
+    if (!p.colour || p.colour === undefined) { if (p.t === "text" || p.t === "stroke") p.colour = ink; continue; }
+    if (BLACK.test(p.colour)) p.colour = ink;
+    else if (p.t === "fill" && WHITE.test(p.colour)) p.colour = paper;
+  }
+}
+/** Revit's Sketchy Lines, as a hand would draw them: every straight stroke overshoots its ends by the
+ *  extension and bows by up to the jitter (paper mm) - the same bow each time, so a redraw never shimmers. */
+function sketchScene(prims, sk) {
+  const ext = sk.extension || 0, jit = sk.jitter || 0;
+  const hash = (a, b) => { const x = Math.sin(a[0] * 12.9898 + a[1] * 78.233 + b[0] * 37.719 + b[1] * 4.581) * 43758.5453; return (x - Math.floor(x)) * 2 - 1; };
+  for (const p of prims) {
+    if (p.t === "group") { sketchScene(p.prims, sk); continue; }
+    if (p.t !== "stroke" || !p.path) continue;
+    const out = [];
+    for (const g of p.path) {
+      if (g.k !== "L") { out.push(g); continue; }
+      const d = sub(g.b, g.a), L = Math.hypot(d[0], d[1]); if (L < 1e-6) continue;
+      const u = [d[0] / L, d[1] / L], n = [-u[1], u[0]], e = Math.min(ext, L * 0.5);
+      const a = [g.a[0] - u[0] * e, g.a[1] - u[1] * e], b = [g.b[0] + u[0] * e, g.b[1] + u[1] * e];
+      const w1 = hash(g.a, g.b) * jit, w2 = hash(g.b, g.a) * jit;
+      out.push(jit ? { k: "C", a, c1: [a[0] + d[0] / 3 + n[0] * w1, a[1] + d[1] / 3 + n[1] * w1], c2: [a[0] + d[0] * 2 / 3 + n[0] * w2, a[1] + d[1] * 2 / 3 + n[1] * w2], b } : { k: "L", a, b });
+    }
+    p.path = out;
+  }
 }
 const emptyScene = () => ({ prims: [], hits: [], links: [], bbox: [0, 0, 100, 100] });
 function sceneBBox(prims) {
@@ -8712,6 +8898,7 @@ function sheetScene(doc, sh, opts = {}) {
     const inner = sc.annoClip ? [
       { t: "group", clip, clipPath: sc.clipPath ? sc.clipPath.map(c => [c[0] + off[0], c[1] + off[1]]) : null, prims: moved.filter(p => !isAnnotationLayer(p.layer)) },
       { t: "group", clip: [sc.annoClip[0] + off[0], sc.annoClip[1] + off[1], sc.annoClip[2] + off[0], sc.annoClip[3] + off[1]], prims: moved.filter(p => isAnnotationLayer(p.layer)) }] : moved;
+    if (sc.background) { const r = clip || [bb[0] + off[0] - 3, bb[1] + off[1] - 3, bb[2] + off[0] + 3, bb[3] + off[1] + 3]; prims.push({ t: "fill", path: rectPath(...r), colour: sc.background, layer: "Viewport" }); }
     prims.push({ t: "group", clip: sc.annoClip ? null : clip, prims: inner, layer: "Viewport", vp: vp.id, view: vp.view.ref, stale: sc.stale || null });
     for (const l of sc.links || []) links.push(translatePrim(l, off));
     if (vp.clipVisible && clip) put(rectPath(...clip), 0.18);
@@ -13604,6 +13791,74 @@ testCase("M32", "Fillet keeps the side of the crossing that was clicked - beyond
   return R(ok, "all three clicks keep the spline above the crossing and the line left of it, with the same R1000 arc", `crossing ${X.map(Math.round)}; far: line end ${far.l.b.map(Math.round)}, spline mid ${far.sMid.map(Math.round)}; inside-R click same ${same(far, inside)}; line-inside-R click same ${same(far, lineInside)}`);
 });
 
+testCase("M33", "View style as a view template: included settings are pushed to its views and locked there; what it leaves open stays each view's", () => {
+  const doc = buildSample(), ed = new Editor(doc);
+  const st = clone(doc.lib.viewStyles["VS-CONSTRUCTION"]);
+  st.include = { scale: true, detailLevel: false }; st.settings = { scale: 50 };
+  ed.apply({ op: "style", id: "VS-CONSTRUCTION", value: st });
+  const users = doc.elements().filter(f => doc.typeOf(f) === "PlanView" && F.refId(f, "style") === "VS-CONSTRUCTION");
+  const pushed = users.length > 0 && users.every(f => F.int(f, "scale") === 50);
+  const id = doc.idOf(users[0]);
+  const locked = ed.apply({ op: "set", id, key: "scale", value: 200 });
+  const free = ed.apply({ op: "set", id, key: "detailLevel", value: "Coarse" });
+  // untick: the view owns its scale again
+  st.include.scale = false; ed.apply({ op: "style", id: "VS-CONSTRUCTION", value: st });
+  const again = ed.apply({ op: "set", id, key: "scale", value: 200 });
+  const ok = pushed && !locked.ok && /view style/.test(locked.error || "") && free.ok && again.ok && F.int(doc.element(id), "scale") === 200;
+  return R(ok, "every plan on the style at 1:50; scale refused while included, detail level free; unticked, scale is the view's again",
+    `${users.length} plans pushed ${pushed}; locked set ok=${locked.ok} (${locked.error}); detail ok=${free.ok}; after untick ok=${again.ok}`);
+});
+
+testCase("M34", "Per-view V/G: a view's own category override and filter apply over its style unless the style includes them; halftone mixes toward the paper", () => {
+  const doc = buildSample(), ed = new Editor(doc);
+  const v = doc.elements().find(f => doc.typeOf(f) === "PlanView" && F.refId(f, "style") === "VS-CONSTRUCTION"), id = doc.idOf(v);
+  const wallStroke = () => deriveView(doc, doc.element(id)).prims.find(p => p.id === "W1" && p.t === "stroke");
+  { const s0 = clone(doc.lib.viewStyles["VS-CONSTRUCTION"]); s0.rules = []; ed.apply({ op: "style", id: "VS-CONSTRUCTION", value: s0 }); }   // filters outrank categories: start without the style's
+  const c0 = wallStroke().colour;
+  ed.apply({ op: "set", id, key: "vg", value: { byCategory: { IfcWall: { cut: { colour: "#ff0000" }, projection: { colour: "#ff0000" }, beyond: { colour: "#ff0000" } } } } });
+  const red = wallStroke().colour;
+  ed.apply({ op: "set", id, key: "vg", value: { filters: [{ id: "FL-X", name: "walls halftone", when: { all: [{ param: "Category", is: "IfcWall" }] }, then: { halftone: true } }] } });
+  const ht = wallStroke().colour;
+  const st = clone(doc.lib.viewStyles["VS-CONSTRUCTION"]); st.include = { filters: true };
+  ed.apply({ op: "style", id: "VS-CONSTRUCTION", value: st });
+  const lockedBack = wallStroke().colour;
+  const ok = red === "#ff0000" && ht !== c0 && parseInt(ht.slice(1, 3), 16) > 0x60 && lockedBack === c0;
+  return R(ok, "cut colour red by the view override; grey by the view's halftone filter; back to the style's once it includes filters",
+    `style ${c0}; override ${red}; halftone ${ht}; filters included ${lockedBack}`);
+});
+
+testCase("M35", "Graphic scheme: Blueprint gives the view its paper, turns black ink to its ink, and survives onto a sheet and into the PDF", () => {
+  const doc = buildSample(), ed = new Editor(doc);
+  const v = doc.elements().find(f => doc.typeOf(f) === "PlanView"), id = doc.idOf(v);
+  ed.apply({ op: "set", id, key: "vg", value: { scheme: "Blueprint" } });
+  const sc = deriveView(doc, doc.element(id));
+  const blacks = [];
+  const walk = ps => ps.forEach(p => p.t === "group" ? walk(p.prims) : (p.colour && /^#(000|000000)$/i.test(p.colour) && blacks.push(p)));
+  walk(sc.prims);
+  const sh = doc.elements().find(f => doc.typeOf(f) === "Sheet" && (doc.argValue(f, "viewports") || []).some(vp => vp.view.ref === id));
+  const shs = sh ? deriveView(doc, sh) : null;
+  const bg = shs ? shs.prims.some(p => p.t === "fill" && p.layer === "Viewport" && p.colour === "#16345f") : true;
+  const pdf = shs ? writePDF([{ size: shs.size, prims: shs.prims, links: [] }], { title: "t" }) : "";
+  const ok = sc.background === "#16345f" && blacks.length === 0 && bg && (!shs || pdf.bytes.length > 0);
+  return R(ok, "background #16345f; no pure-black prim left; the sheet viewport sits on the blueprint ground", `background ${sc.background}; ${blacks.length} black prims; sheet ${sh ? doc.idOf(sh) : "none"} ground ${bg}`);
+});
+
+testCase("M36", "Filters by measured attribute: walls shorter than 2 m pick up the filter's colour, longer ones do not; sketchy lines bow the strokes", () => {
+  const doc = buildSample(), ed = new Editor(doc);
+  const v = doc.elements().find(f => doc.typeOf(f) === "PlanView"), id = doc.idOf(v);
+  const walls = doc.elements().filter(f => doc.typeOf(f) === "Wall" && doc.data(f) && doc.data(f).props && doc.data(f).props.Length);
+  const L = f => doc.data(f).props.Length.v;
+  const cut = Math.min(...walls.map(L)) + 1;
+  ed.apply({ op: "set", id, key: "vg", value: { filters: [{ id: "FL-S", when: { all: [{ param: "Category", is: "IfcWall" }, { param: "Length", lt: cut }] }, then: { cut: { colour: "#2f6fd6" } } }] } });
+  const sc = deriveView(doc, doc.element(id));
+  const col = w => (sc.prims.find(p => p.id === doc.idOf(w) && p.t === "stroke") || {}).colour;
+  const short = walls.filter(w => L(w) < cut && col(w)), long = walls.filter(w => L(w) >= cut && col(w));
+  ed.apply({ op: "set", id, key: "vg", value: { sketchy: { extension: 1, jitter: 0.5 } } });
+  const sk = deriveView(doc, doc.element(id)).prims.filter(p => p.t === "stroke" && p.path.some(s => s.k === "C")).length;
+  const ok = short.length > 0 && short.every(w => col(w) === "#2f6fd6") && long.every(w => col(w) !== "#2f6fd6") && sk > 0;
+  return R(ok, "short walls blue, long walls not; sketchy strokes present", `${short.length} short (${short.map(col).join(",")}), ${long.length} long; ${sk} sketchy strokes`);
+});
+
 // ===== ui_util.js =====
 //! Small DOM vocabulary shared by the interface modules. The interface only
 //! mirrors the document: nothing here owns model state.
@@ -13850,7 +14105,7 @@ function renderPanel(app, root) {
     for (const r of rows) det.append(rowEditor(app, ids, f0, r));
     pp.append(det);
   }
-  if (viewMode && ["PlanView", "ElevationView", "View3D"].includes(doc.typeOf(f0))) pp.append(h("div", { style: { padding: "12px 14px" } }, h("button", { class: "btn", onclick: () => vvDialog(app, ids[0]) }, "Visibility / Graphics…")));
+  if (viewMode && ["PlanView", "ElevationView", "SectionView", "View3D"].includes(doc.typeOf(f0))) pp.append(h("div", { style: { padding: "12px 14px" } }, h("button", { class: "btn", onclick: () => vvDialog(app, ids[0]) }, "Visibility / Graphics…")));
   root.append(pp);
   if (ids.length === 1 && doc.typeOf(doc.element(ids[0])) === "CADImport") root.append(importLayers(app, doc.element(ids[0])));
 }
@@ -13864,6 +14119,30 @@ function rowEditor(app, ids, f, r) {
   const under = h("div", { class: "under" });
   const setKey = r.source === "param" ? "params." + r.key : r.key;
   const commit = (op) => { const res = app.apply(Object.assign({ op: "set", ids, key: setKey }, op)); if (!res.ok) { under.textContent = res.error; under.classList.add("err"); } return res; };
+  const isView = ids.length === 1 && doc.declOf(f) && doc.declOf(f).kind === "view" && r.source === "arg";
+  // the view's style: the file's styles, and Edit (the View Style editor)
+  if (isView && r.key === "style") {
+    val.append(h("div", { class: "line" }, app.styleSelect ? app.styleSelect(ids[0], "") : null,
+      h("button", { class: "btn small", onclick: () => viewStyleEditor(app, F.refId(f, "style"), ids[0]) }, "Edit…")));
+    const st = doc.lib.viewStyles[F.refId(f, "style")], n = st && st.include ? Object.values(st.include).filter(Boolean).length : 0;
+    val.append(h("div", { class: "under" }, st ? (n ? `holds ${n} setting${n === 1 ? "" : "s"} of this view (🔒 below)` : "holds graphics only: every setting stays this view's") : "no style: default graphics"));
+    return h("div", { class: "prow" }, label, val);
+  }
+  // this view's own V/G, filters and element overrides: edited in Visibility/Graphics, not as JSON
+  if (isView && (r.key === "vg" || r.key === "filters" || r.key === "overrides")) {
+    if (r.key !== "vg") return h("div", { hidden: true });
+    const vg = r.value || {}, n = Object.keys(vg.byCategory || {}).length, nf = (vg.filters || []).length;
+    val.append(h("button", { class: "btn small", onclick: () => vvDialog(app, ids[0]) }, "Edit… (VV)"),
+      h("div", { class: "under" }, n || nf || vg.scheme ? `${n} categor${n === 1 ? "y" : "ies"} · ${nf} filter${nf === 1 ? "" : "s"}${vg.scheme ? " · own scheme" : ""}` : "no overrides: as the style"));
+    return h("div", { class: "prow" }, h("label", {}, "Visibility/Graphics"), val);
+  }
+  // a setting the view's style includes: shown, locked, changed in the style
+  const lk = isView && lockedKey(doc, f, r.key);
+  if (lk) {
+    const shownL = r.value && typeof r.value === "object" ? Object.entries(r.value).map(([k, x]) => `${k} ${typeof x === "number" ? fmtLen(x) : x}`).join(" · ") : r.key === "scale" ? `1 : ${r.value}` : r.key === "depth" ? fmtLen(r.value) : String(r.value ?? "—");
+    val.append(h("div", { class: "ro locked" }, "🔒 ", shownL), h("div", { class: "under" }, `set by the view style ${lk} · `, h("a", { href: "#", onclick: e => { e.preventDefault(); viewStyleEditor(app, F.refId(f, "style"), ids[0]); } }, "edit style")));
+    return h("div", { class: "prow locked" }, label, val);
+  }
   // a plan's View Range, as Revit's dialog has it: four planes measured from the level, any unit
   if (r.key === "viewRange" && r.source === "arg") {
     const cur = Object.assign({ top: 2300, cut: 1200, bottom: 0 }, r.value || {}); if (cur.depth === undefined) cur.depth = cur.bottom;
@@ -14095,59 +14374,408 @@ function drawSection(doc, t, cv) {
 }
 
 // ---------------------------------------------------------------- Visibility / Graphics (§7)
-function vvDialog(app, viewId) {
-  const doc = app.doc, v = doc.element(viewId);
-  const styleId = F.refId(v, "style") || "VS-CONSTRUCTION";
-  const st = clone(doc.lib.viewStyles[styleId]);
-  st.byCategory = st.byCategory || {}; st.rules = st.rules || [];
-  const body = h("div", {});
-  const cats = Object.entries(doc.lib.categories);
-  const catTable = h("tbody");
-  for (const [k, c] of cats) {
-    const cs = st.byCategory[k] = st.byCategory[k] || {};
-    const subs = Object.entries(c.subcategories || {});
-    catTable.append(h("tr", {}, h("td", {}, h("input", { type: "checkbox", checked: cs.visible !== false, "aria-label": `${c.name} visible`, onchange: e => { cs.visible = e.target.checked; } })),
-      h("td", {}, c.name, h("div", { class: "mono muted" }, k)),
-      h("td", {}, subs.map(([sn, pens]) => h("div", { class: "mono", style: { fontSize: "11px" } }, `${sn}: ${Object.entries(pens).map(([role, p]) => `${role} ${p}`).join(", ")}`)))));
-  }
-  const pens = clone(doc.lib.pens["PEN-ISO"]);
-  const penRows = h("tbody", {}, Object.entries(pens.pens).map(([n, p]) => h("tr", {}, h("td", {}, n), h("td", {}, h("input", { type: "number", step: "0.01", min: "0", value: p.weight, style: { width: "80px" }, "aria-label": `${n} weight`, oninput: e => { p.weight = Number(e.target.value); } })), h("td", { class: "muted" }, "mm on paper"))));
-  const specs = Object.assign({ Category: { kind: "Enum", values: Object.keys(doc.lib.categories) } }, doc.lib.paramSpecs);
-  const rulesBox = h("div", { style: { display: "grid", gap: "8px" } });
-  const drawRules = () => {
-    clear(rulesBox);
-    st.rules.forEach((rule, i) => {
-      const w = rule.when && rule.when.param ? rule.when : { param: "Phase", is: "Demolished" };
-      rule.when = w;
-      const op = Object.keys(w).find(k => k !== "param") || "is";
-      const kind = (specs[w.param] || { kind: "Text" }).kind;
-      const opSel = h("select", { "aria-label": "Operator", onchange: e => { const val = w[op]; delete w[op]; w[e.target.value] = val; drawRules(); } }, (OPERATORS[kind] || OPERATORS.Text).map(o => h("option", { selected: o === op }, o)));
-      const pSel = h("select", { "aria-label": "Parameter", onchange: e => { rule.when = { param: e.target.value, is: "" }; drawRules(); } }, Object.keys(specs).map(p => h("option", { selected: p === w.param }, p)));
-      const valIn = (specs[w.param] && specs[w.param].values) ? h("select", { "aria-label": "Value", onchange: e => { w[op] = e.target.value; } }, specs[w.param].values.map(x => h("option", { selected: String(x) === String(w[op]) }, x))) : h("input", { type: "text", value: w[op] ?? "", "aria-label": "Value", oninput: e => { w[op] = e.target.value; } });
-      rule.then = rule.then || {}; rule.then.cut = rule.then.cut || {};
-      rulesBox.append(h("div", { style: { border: "1px solid var(--rule)", borderRadius: "6px", padding: "8px", display: "grid", gap: "6px" } },
-        h("div", { style: { display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" } }, h("span", { class: "mono" }, rule.id || "rule"), "when", pSel, opSel, valIn,
-          h("label", {}, h("input", { type: "checkbox", checked: !!rule.stop, onchange: e => { rule.stop = e.target.checked; } }), " stop"),
-          h("button", { class: "btn small", onclick: () => { st.rules.splice(i, 1); drawRules(); } }, "Remove")),
-        h("div", { style: { display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" } }, "then cut",
-          h("input", { type: "text", value: rule.then.cut.colour || "", placeholder: "colour", style: { width: "90px" }, "aria-label": "Cut colour", oninput: e => { rule.then.cut.colour = e.target.value || undefined; } }),
-          h("select", { "aria-label": "Line type", onchange: e => { rule.then.cut.lineType = e.target.value || undefined; } }, ["", "solid", "dashed1", "dashed2", "dotted"].map(x => h("option", { selected: x === (rule.then.cut.lineType || "") }, x || "line type"))),
-          h("input", { type: "text", value: rule.then.cut.fill || "", placeholder: "fill", style: { width: "90px" }, "aria-label": "Cut fill", oninput: e => { rule.then.cut.fill = e.target.value || undefined; } }),
-          h("label", {}, h("input", { type: "checkbox", checked: !!rule.then.halftone, onchange: e => { rule.then.halftone = e.target.checked; } }), " halftone"))));
-    });
+//! Revit's VV, per view. What the view's style INCLUDES is the style's: shown, greyed and locked here,
+//! changed only in the style. Everything else is this view's own, kept in its `vg` argument and laid
+//! over the style when the view draws. Opened on a style (from the View Style editor) it edits the style.
+const VV_TABS = [["model", "Model Categories"], ["annotation", "Annotation (2D / Symbolic)"], ["filters", "Filters"], ["view", "View"], ["scheme", "Graphic Scheme"], ["pens", "Pens"]];
+const VIEW_TYPES_VV = ["PlanView", "ElevationView", "SectionView", "View3D"];
+const RES_UNIT = () => /'|ft|in/.test(fmtLen(1000)) ? { area: 92903.04, vol: 28316846.6, a: "ft²", v: "ft³" } : { area: 1e6, vol: 1e9, a: "m²", v: "m³" };
+/** The parameters a filter can test: category, type and family, every shared parameter, and whatever
+ *  the model measures of itself (Length, Area, Volume, …) with the kind it measures in. */
+function filterParams(doc) {
+  const out = { Category: { kind: "Enum", values: Object.keys(doc.lib.categories) }, Type: { kind: "Text" }, Family: { kind: "Text" }, Name: { kind: "Text" } };
+  for (const [k, sp] of Object.entries(doc.lib.paramSpecs)) out[k] = sp;
+  for (const f of doc.elements()) { const d = doc.data(f); if (d && d.props) for (const [k, v] of Object.entries(d.props)) if (!out[k] && v && v.kind) out[k] = { kind: v.kind === "Integer" ? "Number" : v.kind }; }
+  return out;
+}
+const OPS_OF = kind => OPERATORS[kind] || (kind === "Area" || kind === "Volume" || kind === "Angle" ? OPERATORS.Number : OPERATORS.Text);
+const OP_LABEL = { is: "equals", not: "does not equal", gt: "is greater than", lt: "is less than", gte: "is ≥", lte: "is ≤", between: "is between", contains: "contains", beginsWith: "begins with", endsWith: "ends with", defined: "has a value", undefined: "has no value" };
+/** A filter value as typed: lengths in any unit, areas and volumes in the project's, numbers as numbers. */
+function readFilterValue(kind, text) {
+  const U = RES_UNIT();
+  if (kind === "Length") return parseLength(text);
+  if (kind === "Area") return parseNumber(String(text).replace(/(m²|m2|ft²|ft2|sf|sq\s*ft)\s*$/i, "")) * U.area;
+  if (kind === "Volume") return parseNumber(String(text).replace(/(m³|m3|ft³|ft3|cf)\s*$/i, "")) * U.vol;
+  if (kind === "Number" || kind === "Integer" || kind === "Angle") return parseNumber(text);
+  return text;
+}
+function showFilterValue(kind, v) {
+  if (v === undefined || v === null || v === "") return "";
+  if (kind === "Length" && typeof v === "number") return fmtLen(v);
+  if (kind === "Area" && typeof v === "number") return fmtArea(v);
+  if (kind === "Volume" && typeof v === "number") return fmtVolume(v);
+  return String(v);
+}
+/** A rule's condition as a list: { all: [...] } or { any: [...] }, each item { param, <op>: value }. */
+function conditionsOf(rule) {
+  const w = rule.when || {};
+  if (w.all) return { mode: "all", list: w.all };
+  if (w.any) return { mode: "any", list: w.any };
+  if (w.param) { rule.when = { all: [w] }; return { mode: "all", list: rule.when.all }; }
+  rule.when = { all: [] }; return { mode: "all", list: rule.when.all };
+}
+const lockNote = (why, onEdit) => h("div", { class: "banner lock" }, h("span", {}, "🔒 ", why), onEdit ? h("button", { class: "btn small", onclick: onEdit }, "Edit style…") : null);
+
+function vvDialog(app, viewId, opts = {}) {
+  const doc = app.doc, v = viewId ? doc.element(viewId) : null;
+  const styleMode = !!opts.styleId;
+  const styleId = opts.styleId || (v && F.refId(v, "style")) || null;
+  const baseStyle = (styleId && doc.lib.viewStyles[styleId]) || {};
+  const inc = styleMode ? {} : (baseStyle.include || {});
+  const styleName = baseStyle.name || styleId || "";
+  // what this dialog edits: the style itself, or this view's own overrides
+  const target = styleMode ? clone(baseStyle) : clone((v && doc.argValue(v, "vg")) || {});
+  target.byCategory = target.byCategory || {};
+  const ownRules = styleMode ? (target.rules = target.rules || []) : (target.filters = target.filters || []);
+  const touched = new Set();
+  const editStyle = () => viewStyleEditor(app, styleId, viewId);
+  const penNames = Object.keys((doc.lib.pens["PEN-ISO"] || {}).pens || {});
+  const patNames = Object.keys(doc.lib.patterns || {});
+  const vt = v ? doc.typeOf(v) : null;
+  let tab = opts.tab || "model";
+
+  const body = h("div", { class: "vv" });
+  const tabsBar = h("div", { class: "vvtabs", role: "tablist" });
+  const pane = h("div", { class: "vvpane" });
+  const head = h("div", { class: "muted", style: { fontSize: "12px", marginBottom: "6px" } },
+    styleMode ? `Editing the view style ${styleName}: every view using it changes.`
+      : styleId ? h("span", {}, `View style: `, h("b", {}, styleName), Object.values(inc).some(Boolean) ? ` · greyed items are set by the style` : ` · nothing is locked by it`, " ", h("button", { class: "btn small ghost", onclick: editStyle }, "Edit style…"))
+        : "No view style: everything here is this view's own.");
+  const drawTabs = () => {
+    clear(tabsBar);
+    for (const [k, label] of VV_TABS) {
+      const locked = !styleMode && ((k === "model" && inc.modelVG) || (k === "annotation" && inc.annotationVG) || (k === "filters" && inc.filters) || (k === "scheme" && inc.scheme));
+      tabsBar.append(h("button", { role: "tab", class: "vvtab" + (k === tab ? " on" : ""), "aria-selected": String(k === tab), onclick: () => { tab = k; drawTabs(); drawPane(); } }, locked ? "🔒 " : "", label));
+    }
   };
-  drawRules();
-  body.append(h("h3", {}, `Style · ${st.name || styleId}`), h("div", { class: "muted" }, "Changes apply to every view using this style. Nothing here rebuilds geometry: it bumps the view revision only."),
-    h("h3", {}, "Categories"), h("div", { class: "tablewrap" }, h("table", {}, h("thead", {}, h("tr", {}, ["", "Category", "Subcategory pens"].map(x => h("th", {}, x)))), catTable)),
-    h("h3", {}, "Filter rules (first match with stop wins)"), rulesBox, h("div", {}, h("button", { class: "btn small", onclick: () => { st.rules.push({ id: "FL-" + (st.rules.length + 1), when: { param: "Phase", is: "Existing" }, then: { cut: { colour: "#888888" }, halftone: true } }); drawRules(); } }, "+ Rule")),
-    h("h3", {}, "Pens — ISO 128 (weight is what a pen is)"), h("table", {}, penRows));
-  const orig = [{ op: "style", id: styleId, value: clone(doc.lib.viewStyles[styleId]) }, { op: "type", lib: "pens", id: "PEN-ISO", value: clone(doc.lib.pens["PEN-ISO"]) }];
-  const live = liveEdit(app, body, () => [{ op: "style", id: styleId, value: st }, { op: "type", lib: "pens", id: "PEN-ISO", value: pens }]);
+  // ---------------- categories
+  const catRows = (annotation) => {
+    const locked = !styleMode && (annotation ? inc.annotationVG : inc.modelVG);
+    const wrap = h("div", {});
+    if (locked) wrap.append(lockNote(`${annotation ? "Annotation" : "Model"} category overrides are set by the view style ${styleName}.`, editStyle));
+    else if (!styleMode) wrap.append(h("div", { class: "muted small" }, "Blank cells follow the view style (", styleName || "defaults", "); a set cell overrides it in this view only. ✕ clears a row's overrides."));
+    const base = cat => styleMode ? {} : ((baseStyle.byCategory || {})[cat] || {});
+    const ov = cat => target.byCategory[cat] || (target.byCategory[cat] = {});
+    const val = (cat, role, key) => { const o = target.byCategory[cat] || {}, b = base(cat); return role ? ((o[role] || {})[key] ?? (b[role] || {})[key]) : (o[key] ?? b[key]); };
+    const own = (cat, role, key) => { const o = target.byCategory[cat] || {}; return role ? (o[role] || {})[key] !== undefined : o[key] !== undefined; };
+    const put = (cat, role, key, x) => {
+      const o = ov(cat);
+      if (role) { o[role] = o[role] || {}; if (x === "" || x === undefined) delete o[role][key]; else o[role][key] = x; if (!Object.keys(o[role]).length) delete o[role]; }
+      else if (x === "" || x === undefined) delete o[key]; else o[key] = x;
+    };
+    const dis = !!locked;
+    const colourCell = (cat, role, key, label) => {
+      const cur = val(cat, role, key), mine = own(cat, role, key);
+      const inp = h("input", { type: "color", value: /^#[0-9a-f]{6}$/i.test(cur || "") ? cur : "#000000", disabled: dis, class: mine ? "set" : "inherit", title: `${label}${mine ? "" : " (from the style)"}`, "aria-label": `${cat} ${label}`, oninput: e => { put(cat, role, key, e.target.value); e.target.className = "set"; } });
+      return inp;
+    };
+    const selCell = (cat, role, key, options, label) => {
+      const cur = val(cat, role, key), mine = own(cat, role, key);
+      return h("select", { disabled: dis, class: mine ? "set" : "inherit", "aria-label": `${cat} ${label}`, title: label, onchange: e => { put(cat, role, key, e.target.value); e.target.className = e.target.value ? "set" : "inherit"; } },
+        h("option", { value: "" }, mine || cur === undefined ? "—" : `(${cur})`), options.map(o => h("option", { value: o, selected: mine && o === cur }, o)));
+    };
+    const tb = h("tbody");
+    const cats = Object.entries(doc.lib.categories).filter(([k]) => isAnnotationCategory(k) === annotation);
+    for (const [k, c] of cats) {
+      const visible = val(k, null, "visible") !== false;
+      tb.append(h("tr", { class: own(k, null, "visible") || Object.keys(target.byCategory[k] || {}).length ? "ovr" : "" },
+        h("td", {}, h("input", { type: "checkbox", checked: visible, disabled: dis, "aria-label": `${c.name} visible`, onchange: e => put(k, null, "visible", e.target.checked ? (base(k).visible === false ? true : undefined) : false) })),
+        h("td", { class: "catname" }, c.name, h("div", { class: "mono muted" }, k)),
+        h("td", {}, h("div", { class: "cellrow" }, colourCell(k, "projection", "colour", "projection colour"), selCell(k, "projection", "pen", penNames, "projection pen"), selCell(k, "projection", "lineType", Object.keys(LINE_TYPES), "projection line type"))),
+        annotation ? null : h("td", {}, h("div", { class: "cellrow" }, colourCell(k, "cut", "colour", "cut colour"), selCell(k, "cut", "pen", penNames, "cut pen"), selCell(k, "cut", "lineType", Object.keys(LINE_TYPES), "cut line type"))),
+        annotation ? null : h("td", {}, h("div", { class: "cellrow" }, colourCell(k, "cut", "fill", "cut fill"), selCell(k, "cut", "pattern", ["solid", "none", ...patNames], "cut pattern"))),
+        h("td", {}, h("input", { type: "checkbox", checked: !!val(k, null, "halftone"), disabled: dis, "aria-label": `${c.name} halftone`, onchange: e => put(k, null, "halftone", e.target.checked || (base(k).halftone ? false : undefined)) })),
+        annotation ? null : h("td", {}, selCell(k, null, "detailLevel", ["By View", "Coarse", "Medium", "Fine"], "detail level")),
+        h("td", {}, h("button", { class: "iconbtn", disabled: dis, title: "Clear this row's overrides", "aria-label": `Clear ${c.name} overrides`, onclick: () => { delete target.byCategory[k]; drawPane(); } }, "✕"))));
+    }
+    const heads = annotation ? ["Visible", "Category", "Lines (colour · pen · type)", "Halftone", ""] : ["Visible", "Category", "Projection / surface lines", "Cut lines", "Cut pattern (fill · hatch)", "Halftone", "Detail level", ""];
+    wrap.append(h("div", { class: "tablewrap" }, h("table", { class: "vvtable" + (dis ? " locked" : "") }, h("thead", {}, h("tr", {}, heads.map(x => h("th", {}, x)))), tb)));
+    if (!cats.length) wrap.append(h("div", { class: "muted" }, "No categories of this kind in the file."));
+    return wrap;
+  };
+  // ---------------- filters
+  const specs = filterParams(doc);
+  const ruleCard = (rule, list, i, locked, from) => {
+    const c = conditionsOf(rule);
+    rule.then = rule.then || {};
+    const t = rule.then; t.projection = t.projection || {}; t.cut = t.cut || {};
+    const dis = !!locked;
+    const card = h("div", { class: "rulecard" + (dis ? " locked" : "") + (rule.enabled === false ? " off" : "") });
+    const condBox = h("div", { class: "conds" });
+    c.list.forEach((w, j) => {
+      const param = w.param || "Category", kind = (specs[param] || { kind: "Text" }).kind;
+      const op = Object.keys(w).find(k => k !== "param") || "is";
+      const needsVal = op !== "defined" && op !== "undefined";
+      const pSel = h("select", { disabled: dis, "aria-label": "Parameter", onchange: e => { c.list[j] = { param: e.target.value, is: "" }; drawPane(); } }, Object.keys(specs).map(p => h("option", { selected: p === param }, p)));
+      const oSel = h("select", { disabled: dis, "aria-label": "Operator", onchange: e => { const x = w[op]; delete w[op]; const n = e.target.value; w[n] = n === "between" ? [x ?? 0, x ?? 0] : n === "defined" || n === "undefined" ? true : (Array.isArray(x) ? x[0] : x ?? ""); drawPane(); } },
+        OPS_OF(kind).map(o => h("option", { value: o, selected: o === op }, OP_LABEL[o] || o)));
+      const valIn = (idx) => {
+        const cur = idx === undefined ? w[op] : (w[op] || [])[idx];
+        if (specs[param] && specs[param].values) return h("select", { disabled: dis, "aria-label": "Value", onchange: e => { w[op] = e.target.value; } }, h("option", { value: "" }, "—"), specs[param].values.map(x => h("option", { selected: String(x) === String(cur) }, x)));
+        const inp = h("input", { type: "text", disabled: dis, value: showFilterValue(kind, cur), "aria-label": "Value", style: { width: "110px" } });
+        inp.addEventListener("change", () => { let x; try { x = readFilterValue(kind, inp.value); inp.classList.remove("bad"); } catch (e) { inp.classList.add("bad"); inp.title = e.message; return; } if (idx === undefined) w[op] = x; else { w[op] = (w[op] || [0, 0]).slice(); w[op][idx] = x; } });
+        return inp;
+      };
+      condBox.append(h("div", { class: "cellrow" }, j === 0 ? h("span", { class: "muted" }, "where") : h("span", { class: "muted" }, c.mode === "all" ? "and" : "or"), pSel, oSel,
+        needsVal ? (op === "between" ? [valIn(0), h("span", { class: "muted" }, "and"), valIn(1)] : valIn()) : null,
+        h("button", { class: "iconbtn", disabled: dis, "aria-label": "Remove condition", onclick: () => { c.list.splice(j, 1); drawPane(); } }, "✕")));
+    });
+    const gfx = (role, label) => h("div", { class: "cellrow" }, h("span", { class: "lbl" }, label),
+      h("input", { type: "color", disabled: dis, class: t[role].colour ? "set" : "inherit", value: t[role].colour || "#000000", "aria-label": `${label} colour`, oninput: e => { t[role].colour = e.target.value; e.target.className = "set"; } }),
+      h("select", { disabled: dis, "aria-label": `${label} pen`, onchange: e => { t[role].pen = e.target.value || undefined; } }, h("option", { value: "" }, "pen"), penNames.map(p => h("option", { selected: p === t[role].pen }, p))),
+      h("select", { disabled: dis, "aria-label": `${label} line type`, onchange: e => { t[role].lineType = e.target.value || undefined; } }, h("option", { value: "" }, "line type"), Object.keys(LINE_TYPES).map(p => h("option", { selected: p === t[role].lineType }, p))),
+      t[role].colour ? h("button", { class: "iconbtn", disabled: dis, title: "No colour override", "aria-label": `Clear ${label} colour`, onclick: () => { delete t[role].colour; drawPane(); } }, "✕") : null);
+    card.append(
+      h("div", { class: "cellrow" },
+        h("input", { type: "checkbox", disabled: dis, checked: rule.enabled !== false, title: "Enable filter", "aria-label": "Enable filter", onchange: e => { rule.enabled = e.target.checked; card.classList.toggle("off", !e.target.checked); } }),
+        h("input", { type: "text", disabled: dis, value: rule.name || rule.id || "Filter", class: "rulename", "aria-label": "Filter name", oninput: e => { rule.name = e.target.value; } }),
+        from ? h("span", { class: "chip" }, from) : null,
+        h("label", {}, h("input", { type: "checkbox", disabled: dis, checked: t.visible !== false, onchange: e => { t.visible = e.target.checked ? undefined : false; } }), " visible"),
+        h("label", {}, h("input", { type: "checkbox", disabled: dis, checked: !!t.halftone, onchange: e => { t.halftone = e.target.checked || undefined; } }), " halftone"),
+        h("label", { title: "Later filters are not tested for what this one catches" }, h("input", { type: "checkbox", disabled: dis, checked: !!rule.stop, onchange: e => { rule.stop = e.target.checked || undefined; } }), " stop"),
+        h("span", { class: "grow" }),
+        h("button", { class: "iconbtn", disabled: dis || i === 0, "aria-label": "Move filter up", title: "Higher priority", onclick: () => { list.splice(i - 1, 0, list.splice(i, 1)[0]); drawPane(); } }, "↑"),
+        h("button", { class: "iconbtn", disabled: dis, "aria-label": "Delete filter", onclick: () => { list.splice(i, 1); drawPane(); } }, "✕")),
+      h("div", { class: "cellrow" }, h("span", { class: "muted" }, "Elements matching"),
+        h("select", { disabled: dis, "aria-label": "Match all or any", onchange: e => { const l = c.list; rule.when = e.target.value === "all" ? { all: l } : { any: l }; drawPane(); } }, h("option", { value: "all", selected: c.mode === "all" }, "all (AND)"), h("option", { value: "any", selected: c.mode === "any" }, "any (OR)")),
+        h("span", { class: "muted" }, "of:")),
+      condBox,
+      h("div", {}, h("button", { class: "btn small", disabled: dis, onclick: () => { c.list.push({ param: "Category", is: Object.keys(doc.lib.categories)[0] }); drawPane(); } }, "+ Condition")),
+      h("div", { class: "gfx" }, gfx("projection", "Projection lines"), gfx("cut", "Cut lines"),
+        h("div", { class: "cellrow" }, h("span", { class: "lbl" }, "Cut pattern"),
+          h("input", { type: "color", disabled: dis, class: t.cut.fill ? "set" : "inherit", value: t.cut.fill || "#cccccc", "aria-label": "Cut fill colour", oninput: e => { t.cut.fill = e.target.value; t.fill = e.target.value; e.target.className = "set"; } }),
+          h("select", { disabled: dis, "aria-label": "Cut hatch pattern", onchange: e => { t.cut.pattern = e.target.value || undefined; } }, h("option", { value: "" }, "hatch"), ["solid", "none", ...patNames].map(p => h("option", { selected: p === t.cut.pattern }, p))),
+          t.cut.fill ? h("button", { class: "iconbtn", disabled: dis, "aria-label": "Clear cut fill", onclick: () => { delete t.cut.fill; delete t.fill; drawPane(); } }, "✕") : null)));
+    return card;
+  };
+  const filtersPane = () => {
+    const wrap = h("div", {});
+    wrap.append(h("div", { class: "muted small" }, "A filter picks elements by their attributes (category, type, any parameter, what they measure) and changes how they draw. Filters are tested top to bottom; each adds its graphics over the last unless one is set to stop."));
+    if (!styleMode && (baseStyle.rules || []).length) {
+      wrap.append(h("h4", {}, `From the view style ${styleName}`));
+      // the style's filters, one line each: they are the style's to change
+      for (const r of baseStyle.rules) {
+        const c = conditionsOf(clone(r)), t = r.then || {};
+        const cond = c.list.map(w => { const op = Object.keys(w).find(k => k !== "param"); return `${w.param} ${OP_LABEL[op] || op}${op === "defined" || op === "undefined" ? "" : " " + showFilterValue((specs[w.param] || {}).kind, w[op])}`; }).join(c.mode === "all" ? " and " : " or ");
+        const fx = [t.visible === false ? "hidden" : null, t.halftone ? "halftone" : null, ...["projection", "cut"].filter(k => t[k] && Object.keys(t[k]).length).map(k => `${k} ${Object.values(t[k]).join(" ")}`), t.fill ? `fill ${t.fill}` : null].filter(Boolean).join(", ");
+        wrap.append(h("div", { class: "rulesum" + (r.enabled === false ? " off" : "") }, h("b", {}, r.name || r.id), h("span", {}, ` where ${cond || "anything"}`), h("span", { class: "muted" }, ` → ${fx || "no change"}`)));
+      }
+    }
+    const locked = !styleMode && inc.filters;
+    wrap.append(h("h4", {}, styleMode ? "The style's filters" : "This view's filters"));
+    if (locked) wrap.append(lockNote(`Filters are set by the view style ${styleName}.`, editStyle));
+    ownRules.forEach((r, i) => wrap.append(ruleCard(r, ownRules, i, locked, null)));
+    if (!locked) {
+      const add = (rule) => { ownRules.push(rule); drawPane(); };
+      let n = ownRules.length + 1; while (ownRules.some(r => r.id === "FL-" + n)) n++;
+      wrap.append(h("div", { class: "cellrow" },
+        h("button", { class: "btn small", onclick: () => add({ id: "FL-" + n, name: "New filter", when: { all: [{ param: "Category", is: "IfcWall" }] }, then: { projection: {}, cut: {} } }) }, "+ Filter"),
+        h("button", { class: "btn small ghost", onclick: () => add({ id: "FL-" + n, name: "Existing halftone", when: { all: [{ param: "Phase", is: "Existing" }] }, then: { halftone: true } }) }, "+ Halftone existing"),
+        h("button", { class: "btn small ghost", onclick: () => add({ id: "FL-" + n, name: "Fire walls red", when: { all: [{ param: "Category", is: "IfcWall" }, { param: "FireRating", defined: true }] }, then: { cut: { colour: "#d0312d", pen: "heavy" }, projection: { colour: "#d0312d" } } }) }, "+ Fire rating"),
+        h("button", { class: "btn small ghost", onclick: () => add({ id: "FL-" + n, name: "Short walls", when: { all: [{ param: "Category", is: "IfcWall" }, { param: "Length", lt: 2000 }] }, then: { cut: { colour: "#2f6fd6" }, projection: { colour: "#2f6fd6" } } }) }, "+ Length less than")));
+    }
+    return wrap;
+  };
+  // ---------------- view settings
+  const viewPane = () => {
+    const wrap = h("div", { class: "vsettings" });
+    const row = (label, setting, ctl) => {
+      const lk = !styleMode && v && setting && lockedBy(doc, v, setting);
+      if (lk) [ctl, ...ctl.querySelectorAll("input,select,button")].forEach(x => { if ("disabled" in x) x.disabled = true; });
+      wrap.append(h("div", { class: "prow" + (lk ? " locked" : "") }, h("label", {}, lk ? "🔒 " : "", label), h("div", { class: "val" }, ctl, lk ? h("div", { class: "under" }, `set by the view style ${lk}`) : null)));
+    };
+    if (styleMode) { wrap.append(h("div", { class: "muted small" }, "The style's view settings, and whether each is included (pushed to and locked in every view using it), are in the View Style editor."), h("button", { class: "btn small", onclick: editStyle }, "Open View Style editor…")); }
+    if (!styleMode && v) {
+      const setV = (key, value) => app.apply({ op: "set", id: viewId, key, value });
+      row("View style", null, app.styleSelect ? app.styleSelect(viewId, "") : h("span", {}, styleName));
+      row("View scale", "scale", h("select", { "aria-label": "View scale", onchange: e => setV("scale", Number(e.target.value)) }, [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 1250, 2500].map(sc => h("option", { value: sc, selected: F.int(v, "scale") === sc }, "1 : " + sc))));
+      if (doc.declOf(v).args.some(a => a.key === "detailLevel")) row("Detail level", "detailLevel", h("select", { "aria-label": "Detail level", onchange: e => setV("detailLevel", e.target.value) }, ["Coarse", "Medium", "Fine"].map(d => h("option", { selected: F.choice(v, "detailLevel") === d }, d))));
+      if (vt === "PlanView") {
+        const vr = Object.assign({ top: 2300, cut: 1200, bottom: 0 }, doc.argValue(v, "viewRange") || {}); if (vr.depth === undefined) vr.depth = vr.bottom;
+        const g = h("div", { class: "vrange", style: { display: "grid", gridTemplateColumns: "auto 1fr", gap: "2px 6px" } });
+        for (const [k, lab] of [["top", "Top"], ["cut", "Cut plane"], ["bottom", "Bottom"], ["depth", "View depth"]]) {
+          const inp = h("input", { type: "text", value: fmtLen(vr[k]), "aria-label": `View range ${lab}` });
+          inp.addEventListener("change", () => { let x; try { x = parseLength(inp.value); } catch (e) { inp.classList.add("bad"); return; } const nx = Object.assign({}, vr, { [k]: x }); if (!(nx.top >= nx.cut && nx.cut >= nx.bottom && nx.bottom >= nx.depth)) { inp.classList.add("bad"); inp.title = "keep top ≥ cut ≥ bottom ≥ depth"; return; } setV("viewRange", nx); });
+          g.append(h("span", { class: "muted" }, lab), inp);
+        }
+        row("View range", "viewRange", g);
+      }
+      if (vt === "ElevationView" || vt === "SectionView") {
+        const inp = h("input", { type: "text", value: fmtLen(F.real(v, "depth")), "aria-label": "Far clip offset" });
+        inp.addEventListener("change", () => { try { setV("depth", parseLength(inp.value)); } catch (e) { inp.classList.add("bad"); } });
+        row("Far clip offset", "farClip", inp);
+      }
+      if (vt === "View3D") row("Visual style", "visualStyle", h("select", { "aria-label": "Visual style", onchange: e => setV("visualStyle", e.target.value) }, ["Wireframe", "Hidden Line", "Shaded", "Consistent Colors", "Sheet Line-work"].map(s => h("option", { selected: (F.choice(v, "visualStyle") || "Shaded") === s }, s))));
+    }
+    // display model and sketchy lines: the view's own (in vg) unless the style includes them
+    const eff = key => target[key] !== undefined ? target[key] : baseStyle[key];
+    const dm = h("select", { "aria-label": "Display model", onchange: e => { target.displayModel = e.target.value; touched.add("displayModel"); } }, ["Normal", "Halftone", "Do not display"].map(x => h("option", { selected: (eff("displayModel") || "Normal") === x }, x)));
+    if (!styleMode && inc.displayModel) dm.disabled = true;
+    wrap.append(h("div", { class: "prow" + (!styleMode && inc.displayModel ? " locked" : "") }, h("label", {}, !styleMode && inc.displayModel ? "🔒 " : "", "Display model"), h("div", { class: "val" }, dm, h("div", { class: "under" }, "Halftone: the model as an underlay, so what is drawn over it reads first"))));
+    const sk = Object.assign({ extension: 0, jitter: 0 }, eff("sketchy") || {}), skLock = !styleMode && inc.sketchy;
+    const skIn = (k, max, step) => h("input", { type: "range", min: 0, max, step, value: sk[k], disabled: skLock, "aria-label": `Sketchy ${k}`, oninput: e => { sk[k] = Number(e.target.value); target.sketchy = sk.extension || sk.jitter ? Object.assign({}, sk) : null; touched.add("sketchy"); e.target.nextSibling.textContent = `${sk[k]} mm`; } });
+    wrap.append(h("div", { class: "prow" + (skLock ? " locked" : "") }, h("label", {}, skLock ? "🔒 " : "", "Sketchy lines"), h("div", { class: "val" },
+      h("div", { class: "cellrow" }, h("span", { class: "lbl" }, "Extension"), skIn("extension", 4, 0.25), h("span", { class: "muted" }, `${sk.extension} mm`)),
+      h("div", { class: "cellrow" }, h("span", { class: "lbl" }, "Jitter"), skIn("jitter", 1.5, 0.05), h("span", { class: "muted" }, `${sk.jitter} mm`)),
+      h("div", { class: "under" }, "Hand-drawn line-work on screen, on sheets and in the PDF (paper mm)"))));
+    return wrap;
+  };
+  // ---------------- graphic scheme
+  const schemePane = () => {
+    const locked = !styleMode && inc.scheme;
+    const wrap = h("div", {});
+    if (locked) wrap.append(lockNote(`The graphic scheme is set by the view style ${styleName}.`, editStyle));
+    wrap.append(h("div", { class: "muted small" }, "A scheme sets a whole drawing's look at once, as a palette does in Illustrator or InDesign: the ink lines take, the poché of what is cut, the paper, how far halftone fades, a line-weight scale, and the accent colour filters pick things out in."));
+    const cur = target.scheme !== undefined ? target.scheme : styleMode ? baseStyle.scheme : null;
+    const inherited = !styleMode && target.scheme === undefined ? baseStyle.scheme : null;
+    const shown = cur !== null && cur !== undefined ? cur : inherited;
+    const curId = cur && typeof cur === "object" ? cur.base : cur;
+    const effId = shown && typeof shown === "object" ? shown.base : shown;
+    const choose = x => { if (locked) return; target.scheme = x; touched.add("scheme"); drawPane(); };
+    const cards = h("div", { class: "schemes" });
+    if (!styleMode) cards.append(h("button", { class: "scheme" + (target.scheme === undefined ? " on" : ""), disabled: locked, onclick: () => { delete target.scheme; touched.add("scheme"); drawPane(); } }, h("div", { class: "sw", style: { background: "repeating-linear-gradient(45deg,#eee 0 6px,#fff 6px 12px)" } }), h("b", {}, "By style"), h("span", { class: "muted" }, SCHEMES[inherited] ? SCHEMES[inherited].name : "Technical")));
+    for (const [id, sc] of Object.entries(SCHEMES)) {
+      const bg = sc.background || "#ffffff", ink = sc.ink || "#000000", po = sc.poche || "#000000", ac = sc.accent || ink;
+      cards.append(h("button", { class: "scheme" + (curId === id ? " on" : ""), disabled: locked, onclick: () => choose(id), "aria-label": `Scheme ${sc.name}` },
+        h("div", { class: "sw", style: { background: bg } },
+          h("i", { style: { background: po, left: "10%", top: "22%", width: "44%", height: "18%" } }),
+          h("i", { style: { background: ink, left: "10%", top: "58%", width: "80%", height: `${Math.max(1, 2 * (sc.weight || 1))}px` } }),
+          h("i", { style: { background: mixColour(ink, bg, sc.halftone ?? 0.5), left: "10%", top: "72%", width: "60%", height: "1px" } }),
+          h("i", { style: { background: ac, left: "64%", top: "22%", width: "26%", height: "18%", borderRadius: "50%" } })),
+        h("b", {}, sc.name)));
+    }
+    wrap.append(cards);
+    // customise: the preset becomes this style's (or view's) own palette
+    const obj = cur && typeof cur === "object" ? cur : null, shownObj = shown && typeof shown === "object" ? shown : null;
+    const eff = Object.assign({ background: "#ffffff", ink: "#000000", poche: "#000000", accent: "#000000", weight: 1, halftone: 0.5 }, SCHEMES[effId] || {}, shownObj || {});
+    const tweak = (k, x) => { if (locked) return; const o = obj ? obj : Object.assign({ base: effId || "Technical" }, shownObj || {}); o[k] = x; target.scheme = o; touched.add("scheme"); };
+    const col = (k, label) => h("label", { class: "cellrow" }, h("span", { class: "lbl" }, label), h("input", { type: "color", disabled: locked, value: eff[k], "aria-label": `Scheme ${label}`, oninput: e => tweak(k, e.target.value) }));
+    const rng = (k, label, min, max, step) => h("label", { class: "cellrow" }, h("span", { class: "lbl" }, label), h("input", { type: "range", disabled: locked, min, max, step, value: eff[k], "aria-label": `Scheme ${label}`, oninput: e => { tweak(k, Number(e.target.value)); e.target.nextSibling.textContent = e.target.value; } }), h("span", { class: "muted" }, String(eff[k])));
+    wrap.append(h("h4", {}, "Customise", obj ? h("span", { class: "chip" }, "custom") : ""),
+      h("div", { class: "schemeedit" }, col("background", "Paper"), col("ink", "Ink"), col("poche", "Poché"), col("accent", "Accent"),
+        rng("weight", "Line weight ×", 0.4, 1.8, 0.05), rng("halftone", "Halftone fade", 0.2, 0.9, 0.05)),
+      obj ? h("button", { class: "btn small ghost", disabled: locked, onclick: () => choose(obj.base || "Technical") }, "Back to the preset") : "");
+    return wrap;
+  };
+  // ---------------- pens
+  const pens = clone(doc.lib.pens["PEN-ISO"]);
+  let pensTouched = false;
+  const pensPane = () => h("div", {}, h("div", { class: "muted small" }, "The pen set is the file's: a weight here changes every view. Colour carries no plotting meaning."),
+    h("table", {}, h("tbody", {}, Object.entries(pens.pens).map(([n, p]) => h("tr", {}, h("td", {}, n), h("td", {}, h("input", { type: "number", step: "0.01", min: "0", value: p.weight, style: { width: "80px" }, "aria-label": `${n} weight`, oninput: e => { p.weight = Number(e.target.value); pensTouched = true; } })), h("td", { class: "muted" }, "mm on paper"))))));
+  const drawPane = () => {
+    clear(pane);
+    pane.append(tab === "model" ? catRows(false) : tab === "annotation" ? catRows(true) : tab === "filters" ? filtersPane() : tab === "view" ? viewPane() : tab === "scheme" ? schemePane() : pensPane());
+  };
+  drawTabs(); drawPane();
+  body.append(head, tabsBar, pane);
+  // what goes back: the style (only the parts this dialog owns, over the style as it now is) or the view's vg
+  const makeOps = () => {
+    const ops = [];
+    if (styleMode) {
+      const fresh = clone(doc.lib.viewStyles[styleId] || {});
+      fresh.byCategory = target.byCategory; fresh.rules = target.rules;
+      for (const k of touched) { if (target[k] === undefined) delete fresh[k]; else fresh[k] = target[k]; }
+      ops.push({ op: "style", id: styleId, value: fresh });
+    } else if (v) ops.push({ op: "set", id: viewId, key: "vg", value: prune(target) });
+    if (pensTouched) ops.push({ op: "type", lib: "pens", id: "PEN-ISO", value: pens });
+    return ops;
+  };
+  const orig = styleMode ? [{ op: "style", id: styleId, value: clone(baseStyle) }] : v ? [{ op: "set", id: viewId, key: "vg", value: clone(doc.argValue(v, "vg") || {}) }] : [];
+  orig.push({ op: "type", lib: "pens", id: "PEN-ISO", value: clone(doc.lib.pens["PEN-ISO"]) });
+  const live = liveEdit(app, body, makeOps);
   body.prepend(live.status);
-  const d = dialog("Visibility / Graphics", body, [
-    { label: "Revert", run: () => { live.revert(orig); vvDialog(app, viewId); } },
+  const title = styleMode ? `Visibility/Graphics — style ${styleName}` : `Visibility/Graphics — ${v ? v.get("Name") : ""}`;
+  const d = dialog(title, body, [
+    { label: "Revert", run: () => { live.revert(orig); vvDialog(app, viewId, Object.assign({}, opts, { tab })); } },
     { label: "Close", primary: true, run: () => true }], { modeless: true });
+  d.el.classList.add("wide");
   d.onClose = live.done;
+  return d;
+}
+/** A view's vg without empty leftovers, so "no override" stays no override. */
+function prune(vg) {
+  const out = clone(vg);
+  for (const [k, o] of Object.entries(out.byCategory || {})) { for (const r of ["projection", "cut"]) if (o[r] && !Object.keys(o[r]).length) delete o[r]; if (!Object.keys(o).length) delete out.byCategory[k]; }
+  if (out.byCategory && !Object.keys(out.byCategory).length) delete out.byCategory;
+  if (out.filters && !out.filters.length) delete out.filters;
+  return out;
+}
+function mixColour(a, b, t) { try { return mix(a, b, t); } catch (e) { return a; } }
+
+// ---------------------------------------------------------------- View Style editor (Revit's View Templates)
+//! The file's styles on the left; on the right each setting a style can hold, its value, and Include:
+//! an included setting is pushed to every view using the style and locked there. The V/G rows open
+//! Visibility/Graphics on the style itself.
+function viewStyleEditor(app, styleId, viewId) {
+  const doc = app.doc;
+  let cur = styleId && doc.lib.viewStyles[styleId] ? styleId : Object.keys(doc.lib.viewStyles)[0];
+  let patch = {};
+  const body = h("div", { class: "vstyle" });
+  const list = h("div", { class: "vslist", role: "listbox", "aria-label": "View styles" });
+  const right = h("div", { class: "vsright" });
+  const users = id => doc.elements().filter(f => doc.declOf(f) && doc.declOf(f).kind === "view" && F.refId(f, "style") === id);
+  const newId = base => { let n = 1; while (doc.lib.viewStyles[base + "-" + n]) n++; return base + "-" + n; };
+  const drawList = () => {
+    clear(list);
+    for (const [id, st] of Object.entries(doc.lib.viewStyles)) list.append(h("button", { role: "option", "aria-selected": String(id === cur), class: "vsitem" + (id === cur ? " on" : ""), onclick: () => { cur = id; patch = {}; drawList(); drawRight(); } }, st.name || id, h("span", { class: "muted" }, ` · ${users(id).length}`)));
+    list.append(h("div", { class: "cellrow", style: { marginTop: "8px", flexWrap: "wrap" } },
+      h("button", { class: "btn small", onclick: () => { const id = newId("VS"); app.apply({ op: "style", id, value: blankStyle("New style " + id.split("-").pop()) }); cur = id; patch = {}; drawList(); drawRight(); } }, "New"),
+      h("button", { class: "btn small", onclick: () => { const src = clone(doc.lib.viewStyles[cur]); const id = newId(cur); src.name = (src.name || cur) + " copy"; app.apply({ op: "style", id, value: src }); cur = id; patch = {}; drawList(); drawRight(); } }, "Duplicate"),
+      h("button", { class: "btn small", disabled: Object.keys(doc.lib.viewStyles).length < 2, onclick: e => {
+        // two presses, no browser prompt: the first says what will happen
+        const b = e.currentTarget, u = users(cur).length;
+        if (!b.dataset.armed) { b.dataset.armed = "1"; b.textContent = u ? `Delete? ${u} view(s) lose their style` : "Delete? press again"; b.classList.add("danger"); return; }
+        app.apply({ op: "style", id: cur, remove: true }); cur = Object.keys(doc.lib.viewStyles)[0]; patch = {}; drawList(); drawRight(); } }, "Delete")));
+  };
+  const drawRight = () => {
+    clear(right);
+    const st = doc.lib.viewStyles[cur]; if (!st) return;
+    const local = Object.assign(clone(st), clone(patch));
+    local.include = local.include || {}; local.settings = Object.assign({ scale: 100, detailLevel: "Fine", viewRange: { top: 2300, cut: 1200, bottom: 0, depth: 0 }, visualStyle: "Shaded", farClip: 15000 }, local.settings || {});
+    const set = (k, x) => { local[k] = x; patch[k] = clone(x); };
+    const setS = (k, x) => { local.settings[k] = x; set("settings", local.settings); };
+    const inc = (k) => h("input", { type: "checkbox", checked: !!local.include[k], "aria-label": `Include ${k}`, title: "Include: push this to every view using the style, and lock it there", onchange: e => { local.include[k] = e.target.checked; set("include", local.include); } });
+    const tb = h("tbody");
+    const row = (k, label, ctl) => tb.append(h("tr", { class: local.include[k] ? "incl" : "" }, h("td", {}, label), h("td", {}, ctl), h("td", { class: "c" }, inc(k))));
+    const len = (val, cb, lab) => { const i = h("input", { type: "text", value: fmtLen(val), "aria-label": lab, style: { width: "92px" } }); i.addEventListener("change", () => { try { cb(parseLength(i.value)); i.classList.remove("bad"); } catch (e) { i.classList.add("bad"); } }); return i; };
+    row("scale", "View scale", h("select", { "aria-label": "Style view scale", onchange: e => setS("scale", Number(e.target.value)) }, [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000].map(s => h("option", { value: s, selected: local.settings.scale === s }, "1 : " + s))));
+    row("detailLevel", "Detail level", h("select", { "aria-label": "Style detail level", onchange: e => setS("detailLevel", e.target.value) }, ["Coarse", "Medium", "Fine"].map(s => h("option", { selected: local.settings.detailLevel === s }, s))));
+    const vr = Object.assign({ depth: 0 }, local.settings.viewRange);
+    row("viewRange", "View range (plans)", h("div", { class: "vrange", style: { display: "grid", gridTemplateColumns: "auto auto", gap: "2px 6px" } },
+      [["top", "Top"], ["cut", "Cut plane"], ["bottom", "Bottom"], ["depth", "View depth"]].flatMap(([k, lab]) => [h("span", { class: "muted" }, lab), len(vr[k], x => { vr[k] = x; setS("viewRange", Object.assign({}, vr)); }, `Style view range ${lab}`)])));
+    row("farClip", "Far clipping (sections, elevations)", len(local.settings.farClip, x => setS("farClip", x), "Style far clip"));
+    row("visualStyle", "Visual style (3D)", h("select", { "aria-label": "Style visual style", onchange: e => setS("visualStyle", e.target.value) }, ["Wireframe", "Hidden Line", "Shaded", "Consistent Colors", "Sheet Line-work"].map(s => h("option", { selected: local.settings.visualStyle === s }, s))));
+    row("displayModel", "Display model", h("select", { "aria-label": "Style display model", onchange: e => set("displayModel", e.target.value) }, ["Normal", "Halftone", "Do not display"].map(s => h("option", { selected: (local.displayModel || "Normal") === s }, s))));
+    const sk = Object.assign({ extension: 0, jitter: 0 }, local.sketchy || {});
+    const skn = (k, max, step) => h("input", { type: "number", min: 0, max, step, value: sk[k], style: { width: "64px" }, "aria-label": `Style sketchy ${k}`, onchange: e => { sk[k] = Number(e.target.value) || 0; set("sketchy", sk.extension || sk.jitter ? Object.assign({}, sk) : null); } });
+    row("sketchy", "Sketchy lines", h("div", { class: "cellrow" }, "ext", skn("extension", 4, 0.25), "jitter", skn("jitter", 1.5, 0.05), h("span", { class: "muted" }, "paper mm")));
+    const openVV = t => () => { flush(); vvDialog(app, viewId, { styleId: cur, tab: t }); };
+    row("modelVG", "V/G overrides: model", h("button", { class: "btn small", onclick: openVV("model") }, `Edit… (${Object.keys(local.byCategory || {}).filter(k => !isAnnotationCategory(k)).length})`));
+    row("annotationVG", "V/G overrides: annotation", h("button", { class: "btn small", onclick: openVV("annotation") }, `Edit… (${Object.keys(local.byCategory || {}).filter(k => isAnnotationCategory(k)).length})`));
+    row("filters", "V/G overrides: filters", h("button", { class: "btn small", onclick: openVV("filters") }, `Edit… (${(local.rules || []).length})`));
+    const schId = local.scheme && typeof local.scheme === "object" ? local.scheme.base : local.scheme;
+    row("scheme", "Graphic scheme", h("div", { class: "cellrow" }, h("select", { "aria-label": "Style graphic scheme", onchange: e => set("scheme", e.target.value) }, Object.entries(SCHEMES).map(([k, s]) => h("option", { value: k, selected: schId === k }, s.name + (k === schId && typeof local.scheme === "object" ? " (custom)" : "")))), h("button", { class: "btn small", onclick: openVV("scheme") }, "Edit…")));
+    const u = users(cur);
+    right.append(
+      h("div", { class: "cellrow" }, h("input", { type: "text", class: "rulename", value: local.name || cur, "aria-label": "Style name", onchange: e => { set("name", e.target.value); } }), h("span", { class: "chip" }, cur)),
+      h("div", { class: "muted small" }, u.length ? `Used by ${u.length} view${u.length === 1 ? "" : "s"}: ${u.map(f => f.get("Name")).join(", ")}` : "Not used by any view yet."),
+      h("table", { class: "vstable" }, h("thead", {}, h("tr", {}, h("th", {}, "Parameter"), h("th", {}, "Value"), h("th", { class: "c" }, "Include"))), tb),
+      h("div", { class: "muted small" }, "Included settings are pushed to every view using this style and locked there (Properties, the view bar and Visibility/Graphics). What is not included stays each view's own."),
+      viewId && doc.element(viewId) ? h("div", { class: "cellrow" }, h("button", { class: "btn small", disabled: F.refId(doc.element(viewId), "style") === cur, onclick: () => { app.apply({ op: "set", id: viewId, key: "style", value: { ref: cur } }); drawList(); drawRight(); } }, `Assign to ${doc.element(viewId).get("Name")}`)) : null);
+  };
+  const makeOps = () => {
+    if (!doc.lib.viewStyles[cur] || !Object.keys(patch).length) return [];
+    const fresh = Object.assign(clone(doc.lib.viewStyles[cur]), clone(patch)); patch = {};
+    return [{ op: "style", id: cur, value: fresh }];
+  };
+  const live = liveEdit(app, right, makeOps);
+  const flush = () => { const ops = makeOps(); if (ops.length) app.apply(ops, { quiet: true }); };
+  drawList(); drawRight();
+  body.append(live.status, h("div", { class: "vsgrid" }, list, right));
+  const d = dialog("View Styles", body, [{ label: "Close", primary: true, run: () => { flush(); return true; } }], { modeless: true });
+  d.el.classList.add("wide");
+  d.onClose = () => { live.done(); };
+  return d;
 }
 /** Every click and keystroke in `body` applies at once (one undo step for the session), so the view shows the result while you edit. */
 function liveEdit(app, body, makeOps) {
@@ -14158,7 +14786,8 @@ function liveEdit(app, body, makeOps) {
     if (queued) return; queued = true;
     requestAnimationFrame(() => {
       queued = false;
-      const r = app.apply(makeOps(), { quiet: true, coalesce: key });
+      const ops = makeOps(); if (Array.isArray(ops) && !ops.length) return;
+      const r = app.apply(ops, { quiet: true, coalesce: key });
       status.textContent = r.ok ? "✓ Applied live · Ctrl+Z undoes the session" : "⚠ " + (r.error || "not applied");
       status.style.color = r.ok ? "" : "var(--error)";
     });
@@ -14892,9 +15521,9 @@ class View2D {
     const g = this.canvas.getContext("2d"), dpr = this.dpr;
     g.setTransform(1, 0, 0, 1, 0, 0);
     const sheet = this.kind === "Sheet";
-    g.fillStyle = sheet ? getComputedStyle(document.documentElement).getPropertyValue("--canvas").trim() || "#dde1e7" : "#ffffff";
-    g.fillRect(0, 0, this.canvas.width, this.canvas.height);
     const sc = this.scene();
+    g.fillStyle = sheet ? getComputedStyle(document.documentElement).getPropertyValue("--canvas").trim() || "#dde1e7" : sc.background || "#ffffff";
+    g.fillRect(0, 0, this.canvas.width, this.canvas.height);
     const view = { x: this.cam.x, y: this.cam.y, z: this.cam.z, W: this.W, H: this.H, dpr };
     if (sheet) {
       const [w, hh] = sc.size; g.save(); g.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -16063,7 +16692,7 @@ class View3D {
     if (!app.zoom3d || !app.zoom3d[viewId]) this.fit();
   }
   get doc() { return this.app.doc; }
-  get style() { return this.app.visualStyle3d[this.viewId] || "Shaded"; }
+  get style() { const v = this.doc.element(this.viewId); return (v && F.choice(v, "visualStyle")) || "Shaded"; }
   resize() { if (!this.renderer) return; const r = this.root.getBoundingClientRect(); this.W = r.width; this.H = r.height; this.renderer.setSize(r.width, r.height); this.render(); }
 
   // ---------------------------------------------------------------- model → scene (one group per element)
@@ -16734,6 +17363,8 @@ app.refresh = (opts = {}) => {
   renderQAT(); renderRibbon(); renderOptionsBar(); renderPalettes(); updateStatus();
   const v = app.views.get(app.activeView);
   if (!opts.keepMain || !v) renderMain();
+  // a 3D view switched to or from Sheet Line-work changes what draws it
+  else if (app.doc.element(app.activeView) && app.doc.typeOf(app.doc.element(app.activeView)) === "View3D" && (v instanceof View3D) === (visual3d(app.activeView) === "Sheet Line-work")) renderMain();
   else { if (v.draw) v.draw(); if (v.refresh && v.T) v.refresh(); renderViewControl(); }
   scheduleHiddenLine();
   if (opts.keepMain && (app.activeView === "__graph" || app.activeView === "__tree" || (app.activeView && app.doc.element(app.activeView) && app.doc.typeOf(app.doc.element(app.activeView)) === "Schedule"))) renderMain();
@@ -16889,7 +17520,8 @@ const COMMANDS = {
   region: { label: "Filled Region", icon: "skrect", key: "FR", hint: "Sketch a hatched region in this view: closed loops, holes inside; Finish ✓ makes it", run: () => startRegionSketch() },
   edittype: { label: "Edit Type", icon: "edittype", run: () => { const t = selectedType(); if (t) typeEditor(app, t); else app.say("select an element with a type", "note"); } },
   props: { label: "Properties", icon: "props", key: "PP", active: () => !document.body.classList.contains("hide-props"), run: () => document.body.classList.toggle("hide-props") },
-  pens: { label: "Object Styles & Pens", icon: "pens", run: () => { const v = app.activeView && app.doc.element(app.activeView); vvDialog(app, v && ["PlanView", "ElevationView", "SectionView", "View3D"].includes(app.doc.typeOf(v)) ? app.activeView : firstOf("PlanView")); } },
+  viewstyles: { label: "View Styles", icon: "vv", key: "VT", run: () => { const v = app.doc.element(app.activeView); const isV = v && ["PlanView", "ElevationView", "SectionView", "View3D"].includes(app.doc.typeOf(v)); viewStyleEditor(app, isV ? F.refId(v, "style") : null, isV ? app.activeView : null); } },
+  pens: { label: "Object Styles & Pens", icon: "pens", run: () => { const v = app.activeView && app.doc.element(app.activeView); vvDialog(app, v && ["PlanView", "ElevationView", "SectionView", "View3D"].includes(app.doc.typeOf(v)) ? app.activeView : firstOf("PlanView"), { tab: "pens" }); } },
   projectinfo: { label: "Project Information", icon: "info", run: () => projectInfo() },
   units: { label: "Project Units", icon: "dim", key: "UN", hint: "How lengths are shown: mm, cm, m, feet-inches or inches. Fields take any unit and maths whatever this says.", run: () => unitsDialog() },
   open: { label: "Open…", icon: "open", run: () => openFile() },
@@ -16939,7 +17571,7 @@ const RIBBON = [
     { title: "Symbol", items: [big("placesymbol")] },
   ] },
   { tab: "View", panels: [
-    { title: "Graphics", items: [big("vv"), small("thin"), small("zoomfit")] },
+    { title: "Graphics", items: [big("vv"), big("viewstyles"), small("thin"), small("zoomfit")] },
     { title: "Create", items: [big("planview"), big("default3d"), big("sectionbox"), big("section"), small("elev"), small("schedule"), big("sheet")] },
     { title: "Windows", items: [small("graph"), small("tree"), small("closehidden")] },
     { title: "Interface", items: [big("cadmode")] },
@@ -17360,7 +17992,7 @@ function renderMain() {
   const v = doc.element(id); if (!v) { app.closeTab(id); return; }
   const t = doc.typeOf(v);
   if (t === "Schedule") { renderSchedule(app, main, v); app.views.set(id, {}); renderViewControl(); return; }
-  if (t === "View3D" && (app.visualStyle3d[id] || "Shaded") !== "Sheet Line-work") { const view = new View3D(app, main, id); if (cams3d.has(id)) { view.cam = cams3d.get(id); view.render(); } app.views.set(id, view); renderViewControl(); return; }
+  if (t === "View3D" && visual3d(id) !== "Sheet Line-work") { const view = new View3D(app, main, id); if (cams3d.has(id)) { view.cam = cams3d.get(id); view.render(); } app.views.set(id, view); renderViewControl(); return; }
   const prev = app.views.get(id);
   const view = new View2D(app, main, id);
   if (prev && prev.cam) view.cam = prev.cam;
@@ -17370,17 +18002,31 @@ function renderMain() {
   renderViewControl();
 }
 /** The view control bar: scale, detail level, visual style, thin lines, crop, VV — at the foot of the view. */
+/** The view's style as a dropdown: the file's styles, "None", and "Edit…" (the View Style editor). */
+function styleSelect(id, cls) {
+  const doc = app.doc, v = doc.element(id), st = F.refId(v, "style") || "";
+  return h("select", { class: cls, title: "View style (view template)", "aria-label": "View style", onchange: e => {
+      const val = e.target.value;
+      if (val === "__edit") { e.target.value = st; return viewStyleEditor(app, st || Object.keys(doc.lib.viewStyles)[0], id); }
+      app.apply({ op: "set", id, key: "style", value: val ? { ref: val } : null });
+    } },
+    h("option", { value: "", selected: !st }, "<None>"),
+    Object.entries(doc.lib.viewStyles).map(([k, s]) => h("option", { value: k, selected: k === st }, s.name || k)),
+    h("option", { value: "__edit" }, "Edit view styles…"));
+}
+app.styleSelect = styleSelect;
+function visual3d(id) { const v = app.doc.element(id); return (v && F.choice(v, "visualStyle")) || "Shaded"; }
 function renderViewControl() {
   const bar = document.getElementById("vcb"); if (!bar) return; clear(bar);
   const doc = app.doc, id = app.activeView, v = doc.element(id); if (!v) return;
   const t = doc.typeOf(v);
   const ib = (ic, title, on, run) => h("button", { class: "vbtn", title, "aria-label": title, "aria-pressed": on === undefined ? null : String(!!on), onclick: run }, icon(ic, 16));
-  if (["PlanView", "ElevationView", "SectionView", "View3D"].includes(t)) bar.append(h("select", { class: "vscale", "aria-label": "View scale", title: "View scale", onchange: e => app.apply({ op: "set", id, key: "scale", value: Number(e.target.value) }) }, [10, 20, 50, 100, 200, 500].map(s => h("option", { value: s, selected: F.int(v, "scale") === s }, "1 : " + s))));
+  if (["PlanView", "ElevationView", "SectionView", "View3D"].includes(t)) bar.append(h("select", { class: "vscale", "aria-label": "View scale", title: lockedKey(doc, v, "scale") ? `View scale - set by the view style ${lockedKey(doc, v, "scale")}` : "View scale", disabled: !!lockedKey(doc, v, "scale"), onchange: e => app.apply({ op: "set", id, key: "scale", value: Number(e.target.value) }) }, [10, 20, 50, 100, 200, 500].map(s => h("option", { value: s, selected: F.int(v, "scale") === s }, "1 : " + s))));
   if (t === "PlanView" || t === "ElevationView" || t === "SectionView") {
     const dl = F.choice(v, "detailLevel");
-    bar.append(h("select", { class: "vsel", title: "Detail level", "aria-label": "Detail level", onchange: e => app.apply({ op: "set", id, key: "detailLevel", value: e.target.value }) }, ["Coarse", "Medium", "Fine"].map(d => h("option", { selected: dl === d }, d))));
+    bar.append(h("select", { class: "vsel", title: lockedKey(doc, v, "detailLevel") ? `Detail level - set by the view style ${lockedKey(doc, v, "detailLevel")}` : "Detail level", "aria-label": "Detail level", disabled: !!lockedKey(doc, v, "detailLevel"), onchange: e => app.apply({ op: "set", id, key: "detailLevel", value: e.target.value }) }, ["Coarse", "Medium", "Fine"].map(d => h("option", { selected: dl === d }, d))));
     const st = F.refId(v, "style");
-    bar.append(h("select", { class: "vsel", title: "View style", "aria-label": "View style", onchange: e => app.apply({ op: "set", id, key: "style", value: { ref: e.target.value } }) }, Object.entries(doc.lib.viewStyles).map(([k, s]) => h("option", { value: k, selected: k === st }, s.name))));
+    bar.append(styleSelect(id, "vsel"));
     if (t === "PlanView") {
       const clip = doc.argValue(v, "clip") || {};
       const withRect = c => Object.assign({}, clip, { rect: clip.rect || [-5000, -5000, 20000, 15000] }, c);
@@ -17393,8 +18039,9 @@ function renderViewControl() {
     }
   }
   if (t === "View3D") {
-    const cur = app.visualStyle3d[id] || "Shaded";
-    bar.append(h("select", { class: "vsel", title: "Visual style", "aria-label": "Visual style", onchange: e => { app.visualStyle3d[id] = e.target.value; renderMain(); } }, [...VISUAL_STYLES, "Sheet Line-work"].map(s => h("option", { selected: s === cur }, s))));
+    bar.append(styleSelect(id, "vsel"));
+    const cur = visual3d(id), lk = lockedKey(doc, v, "visualStyle");
+    bar.append(h("select", { class: "vsel", title: lk ? `Visual style - set by the view style ${lk}` : "Visual style", "aria-label": "Visual style", disabled: !!lk, onchange: e => app.apply({ op: "set", id, key: "visualStyle", value: e.target.value }) }, [...VISUAL_STYLES, "Sheet Line-work"].map(s => h("option", { selected: s === cur }, s))));
     const view = app.views.get(id);
     if (view && view.saveCamera) bar.append(h("button", { class: "btn small", title: "Store this camera in the view (and its sheets)", onclick: () => view.saveCamera() }, "Save camera"));
   }
@@ -17625,7 +18272,7 @@ function scheduleHiddenLine() {
   hiddenLineTimer = setTimeout(async () => {
     const f = app.activeView && app.doc.element(app.activeView); if (!f) return;
     const t = app.doc.typeOf(f);
-    const ids = t === "Sheet" ? staleHiddenLine([f]) : t === "View3D" && app.visualStyle3d[app.activeView] === "Sheet Line-work" && deriveView(app.doc, f).stale ? [app.activeView] : [];
+    const ids = t === "Sheet" ? staleHiddenLine([f]) : t === "View3D" && visual3d(app.activeView) === "Sheet Line-work" && deriveView(app.doc, f).stale ? [app.activeView] : [];
     if (!ids.length) return;
     await ensureHiddenLine(ids);
     app.say("Hidden-line drawing updated", "ok");

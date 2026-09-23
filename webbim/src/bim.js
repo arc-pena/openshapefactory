@@ -478,7 +478,7 @@ declare({ type: "PlanView", guid: "wb-0501", category: "View", kind: "view", idP
           json("viewRange", "View range", { top: 2300, cut: 1200, bottom: 0 }), choice("detailLevel", "Detail level", ["Coarse", "Medium", "Fine"], 2, { group: "Graphics" }),
           ref("style", "View style", ["viewStyle"], { group: "Graphics" }), json("filters", "Filters", [], { group: "Graphics" }),
           json("clip", "Crop region", { rect: [-3000, -3000, 20000, 14000], visible: false, active: false }, { group: "Extents" }),
-          json("overrides", "Element overrides", {}, { group: "Graphics" }) ] });
+          json("overrides", "Element overrides", {}, { group: "Graphics" }), json("vg", "Visibility/Graphics", {}, { group: "Graphics" }) ] });
 BUILDERS.PlanView = { precondition: (f) => F.reference(f, "level") ? null : "pick a level", build: () => ({ data: {} }) };
 
 /** What an elevation or section sees, in plan: the view line swept along its look direction to
@@ -503,7 +503,8 @@ declare({ type: "ElevationView", guid: "wb-0502", category: "View", kind: "view"
   args: [ curve2d("line", "View line", ["line"], { type: "line", start: [0, -3000], end: [12000, -3000] }), real("depth", "Depth", 15000, 1, 1e6, 1),
           integer("scale", "Scale 1:", 100, 1, 5000, { group: "Graphics" }), ref("baseLevel", "Base level", ["level"]), real("top", "Top", 6000, 1, 1e5, 1),
           ref("style", "View style", ["viewStyle"], { group: "Graphics" }), choice("detailLevel", "Detail level", ["Coarse", "Medium", "Fine"], 0, { group: "Graphics" }),
-          json("clip", "Crop region", { rect: null, visible: false, active: false }, { group: "Extents" }) ],
+          json("clip", "Crop region", { rect: null, visible: false, active: false }, { group: "Extents" }),
+          json("vg", "Visibility/Graphics", {}, { group: "Graphics" }) ],
   handles: viewLineHandles });
 BUILDERS.ElevationView = { build: () => ({ data: {} }) };
 declare({ type: "SectionView", guid: "wb-0505", category: "View", kind: "view", idPrefix: "V-S",
@@ -511,14 +512,18 @@ declare({ type: "SectionView", guid: "wb-0505", category: "View", kind: "view", 
   args: [ curve2d("line", "Section line", ["line"], { type: "line", start: [0, 4000], end: [12000, 4000] }), real("depth", "Far clip", 15000, 1, 1e6, 1),
           integer("scale", "Scale 1:", 50, 1, 5000, { group: "Graphics" }), ref("baseLevel", "Base level", ["level"]), real("top", "Top", 6000, 1, 1e5, 1),
           ref("style", "View style", ["viewStyle"], { group: "Graphics" }), choice("detailLevel", "Detail level", ["Coarse", "Medium", "Fine"], 2, { group: "Graphics" }),
-          json("clip", "Crop region", { rect: null, visible: false, active: false }, { group: "Extents" }) ],
+          json("clip", "Crop region", { rect: null, visible: false, active: false }, { group: "Extents" }),
+          json("vg", "Visibility/Graphics", {}, { group: "Graphics" }) ],
   handles: viewLineHandles });
 BUILDERS.SectionView = { build: () => ({ data: {} }) };
 
 declare({ type: "View3D", guid: "wb-0503", category: "View", kind: "view", idPrefix: "V-3D",
   summary: "A camera. On a sheet it becomes exact hidden-line line-work, cached and never interactive (§6.4).",
   args: [ json("camera", "Camera", { azimuth: 225, elevation: 30, target: [6000, 4000, 1500] }), integer("scale", "Scale 1:", 200, 1, 5000, { group: "Graphics" }),
-          ref("style", "View style", ["viewStyle"], { group: "Graphics" }), json("render", "Render", { mode: "lines", hidden: false, rasterDPI: 300, silhouetteWeight: 0.35 }, { group: "Graphics" }),
+          ref("style", "View style", ["viewStyle"], { group: "Graphics" }),
+          choice("visualStyle", "Visual style", ["Wireframe", "Hidden Line", "Shaded", "Consistent Colors", "Sheet Line-work"], 2, { group: "Graphics" }),
+          choice("detailLevel", "Detail level", ["Coarse", "Medium", "Fine"], 2, { group: "Graphics" }), json("vg", "Visibility/Graphics", {}, { group: "Graphics" }),
+          json("render", "Render", { mode: "lines", hidden: false, rasterDPI: 300, silhouetteWeight: 0.35 }, { group: "Graphics" }),
           // Revit's Section Box: an axis-aligned box the view is clipped to; each face is pushed or pulled on its own
           json("sectionBox", "Section box", { on: false, min: null, max: null }, { group: "Extents" }) ] });
 BUILDERS.View3D = { build: () => ({ data: {} }) };

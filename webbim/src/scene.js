@@ -19,7 +19,7 @@ import { formatValue, parse, evaluate } from "./expr.js";
 import { wallRegions, coarseMaterial, blocks } from "./joins.js";
 import { pointAt, uOf, wallSurfaces, cutAtHeight, plane, LAYER_PRIORITY } from "./walls.js";
 import { cropLoop, loopBBox, annotationRect, isAnnotationLayer } from "./crop.js";
-import { resolveGraphics, categoryOf, penWeight, rulesFor, categoryVisible, mix, LINE_TYPES, matches } from "./styles.js";
+import { resolveGraphics, categoryOf, penWeight, rulesFor, categoryVisible, mix, LINE_TYPES, matches, effectiveStyle } from "./styles.js";
 import { measureRefs, resolveReference, sheetSize, regionAreas, importPlacer, importLayerMap, sketchPath } from "./bim.js";
 import { FONT_WIDTHS, FONT_METRICS } from "./fontdata.js";
 import { readDXF } from "./dxf.js";
@@ -96,12 +96,14 @@ function applyCrop(doc, v, clip, scene, S) {
 export function viewContext(doc, v) {
   const type = doc.typeOf(v);
   const styleId = F.refId(v, "style") || (type === "View3D" ? "VS-CONSTRUCTION" : "VS-CONSTRUCTION");
-  const style = doc.lib.viewStyles[styleId] || Object.values(doc.lib.viewStyles)[0] || {};
+  const base = doc.lib.viewStyles[styleId] || Object.values(doc.lib.viewStyles)[0] || {};
+  // the style as this view draws it: the view's own V/G overrides and filters over what the style leaves open
+  const style = effectiveStyle(doc, base, v);
   const scale = F.int(v, "scale") || 100;
   const filters = doc.argValue(v, "filters") || [];
   const detailArg = doc.argValue(v, "detailLevel");
   return { view: v, style, styleId, scale, overrides: doc.argValue(v, "overrides") || {}, rules: rulesFor(doc, style, filters),
-    detail: detailArg || style.detailLevel || "Fine", hidden: [] };
+    detail: detailArg || style.detailLevel || "Fine", hidden: [], scheme: style.schemeObj };
 }
 
 /** Where every view sits: sheet number and viewport number, for markers (§11). */
@@ -124,8 +126,46 @@ export function deriveView(doc, v, opts = {}) {
   const scene = t === "PlanView" ? planScene(doc, v, opts) : t === "ElevationView" ? elevationScene(doc, v, opts) : t === "SectionView" ? sectionScene(doc, v, opts)
     : t === "Sheet" ? sheetScene(doc, v, opts) : t === "View3D" ? view3dScene(doc, v, opts) : t === "Schedule" ? scheduleScene(doc, v, opts) : emptyScene();
   scene.watermark = doc.modelRevision;
+  // the graphic scheme's paper: Blueprint and Night draw on their own ground, on screen, on sheets, in the PDF
+  if (["PlanView", "ElevationView", "SectionView", "View3D"].includes(t)) {
+    const sch = viewContext(doc, v).scheme || {};
+    scene.background = sch.background || null;
+    // what is drawn in plain black (tags, dimensions, text) takes the scheme's ink; paper-white masks take its paper
+    if (sch.ink || sch.background) inkScene(scene.prims, sch.ink || "#000000", sch.background || "#ffffff");
+    const sk = viewContext(doc, v).style.sketchy;
+    if (sk && (sk.extension > 0 || sk.jitter > 0)) sketchScene(scene.prims, sk);
+  }
   c.set(doc.idOf(v), { key, scene });
   return scene;
+}
+const BLACK = /^#(000|000000)$/i, WHITE = /^#(fff|ffffff)$/i;
+function inkScene(prims, ink, paper) {
+  for (const p of prims) {
+    if (p.t === "group") { inkScene(p.prims, ink, paper); continue; }
+    if (!p.colour || p.colour === undefined) { if (p.t === "text" || p.t === "stroke") p.colour = ink; continue; }
+    if (BLACK.test(p.colour)) p.colour = ink;
+    else if (p.t === "fill" && WHITE.test(p.colour)) p.colour = paper;
+  }
+}
+/** Revit's Sketchy Lines, as a hand would draw them: every straight stroke overshoots its ends by the
+ *  extension and bows by up to the jitter (paper mm) - the same bow each time, so a redraw never shimmers. */
+function sketchScene(prims, sk) {
+  const ext = sk.extension || 0, jit = sk.jitter || 0;
+  const hash = (a, b) => { const x = Math.sin(a[0] * 12.9898 + a[1] * 78.233 + b[0] * 37.719 + b[1] * 4.581) * 43758.5453; return (x - Math.floor(x)) * 2 - 1; };
+  for (const p of prims) {
+    if (p.t === "group") { sketchScene(p.prims, sk); continue; }
+    if (p.t !== "stroke" || !p.path) continue;
+    const out = [];
+    for (const g of p.path) {
+      if (g.k !== "L") { out.push(g); continue; }
+      const d = sub(g.b, g.a), L = Math.hypot(d[0], d[1]); if (L < 1e-6) continue;
+      const u = [d[0] / L, d[1] / L], n = [-u[1], u[0]], e = Math.min(ext, L * 0.5);
+      const a = [g.a[0] - u[0] * e, g.a[1] - u[1] * e], b = [g.b[0] + u[0] * e, g.b[1] + u[1] * e];
+      const w1 = hash(g.a, g.b) * jit, w2 = hash(g.b, g.a) * jit;
+      out.push(jit ? { k: "C", a, c1: [a[0] + d[0] / 3 + n[0] * w1, a[1] + d[1] / 3 + n[1] * w1], c2: [a[0] + d[0] * 2 / 3 + n[0] * w2, a[1] + d[1] * 2 / 3 + n[1] * w2], b } : { k: "L", a, b });
+    }
+    p.path = out;
+  }
 }
 const emptyScene = () => ({ prims: [], hits: [], links: [], bbox: [0, 0, 100, 100] });
 export function sceneBBox(prims) {
@@ -881,6 +921,7 @@ export function sheetScene(doc, sh, opts = {}) {
     const inner = sc.annoClip ? [
       { t: "group", clip, clipPath: sc.clipPath ? sc.clipPath.map(c => [c[0] + off[0], c[1] + off[1]]) : null, prims: moved.filter(p => !isAnnotationLayer(p.layer)) },
       { t: "group", clip: [sc.annoClip[0] + off[0], sc.annoClip[1] + off[1], sc.annoClip[2] + off[0], sc.annoClip[3] + off[1]], prims: moved.filter(p => isAnnotationLayer(p.layer)) }] : moved;
+    if (sc.background) { const r = clip || [bb[0] + off[0] - 3, bb[1] + off[1] - 3, bb[2] + off[0] + 3, bb[3] + off[1] + 3]; prims.push({ t: "fill", path: rectPath(...r), colour: sc.background, layer: "Viewport" }); }
     prims.push({ t: "group", clip: sc.annoClip ? null : clip, prims: inner, layer: "Viewport", vp: vp.id, view: vp.view.ref, stale: sc.stale || null });
     for (const l of sc.links || []) links.push(translatePrim(l, off));
     if (vp.clipVisible && clip) put(rectPath(...clip), 0.18);

@@ -111,14 +111,17 @@ export function resolveGraphics(doc, ctx, f, role, sub = "Common", material = nu
   }
   // 4. category style
   const cs = style.byCategory && style.byCategory[cat];
-  if (cs) { if (cs.visible === false) g.visible = false; apply(cs[role === "cutPattern" ? "cut" : role], `style ${cat}`); if (role === "fill") apply({ fill: cs.fill }, `style ${cat}`); }
+  if (cs) { if (cs.visible === false) g.visible = false; if (cs.halftone) g.halftone = true; if (cs.detailLevel && cs.detailLevel !== "By View") g.detailLevel = cs.detailLevel; apply(cs[role === "cutPattern" ? "cut" : role], `style ${cat}`); if (role === "fill") apply({ fill: cs.fill }, `style ${cat}`); }
+  // Revit's Display Model: the whole model halftone (an underlay for a drawing of other things), or not drawn
+  if (style.displayModel === "Halftone" && !isAnnotationCategory(cat)) g.halftone = true;
+  if (style.displayModel === "Do not display" && !isAnnotationCategory(cat)) g.visible = false;
   // 3. family style, root first so the nearest ancestor wins
   const chain = familyChainOf(doc, f).slice().reverse();
   for (const fam of chain) { const fs = style.byFamily && style.byFamily[fam]; if (fs) apply(fs[role === "cutPattern" ? "cut" : role], `family ${fam}`); }
   // 2. filter rules, in order: first match wins with stop, otherwise accumulate
   // The style's own rules, then any filters the view adds by id (from any style's rule list).
   for (const rule of ctx.rules || style.rules || []) {
-    if (!matches(doc, f, rule.when)) continue;
+    if (rule.enabled === false || !matches(doc, f, rule.when)) continue;
     const t = rule.then || {};
     apply(t[role === "cutPattern" ? "cut" : role], `rule ${rule.id}`);
     if (role === "fill" && t.fill) apply({ fill: t.fill }, `rule ${rule.id}`);
@@ -131,10 +134,17 @@ export function resolveGraphics(doc, ctx, f, role, sub = "Common", material = nu
   if (ov) { apply(ov[role === "cutPattern" ? "cut" : role] || (role === "any" ? ov : null), "view override"); if (ov.visible === false) g.visible = false; if (ov.halftone) g.halftone = true; }
   // The cut-pattern role draws the hatch lines, never the outline weight.
   if (role === "cutPattern" && g.pen === "heavy") g.pen = "hairline";
-  const weight = penWeight(doc, g.pen, ctx.scale);
+  // 0. the graphic scheme: a whole drawing's ink, poché, weight and halftone, as a designer sets a palette
+  const sch = ctx.scheme || null, paper = (sch && sch.background) || "#ffffff", ht = sch && sch.halftone !== undefined ? sch.halftone : HALFTONE;
+  if (sch) {
+    if (sch.ink && (!g.colour || g.colour.toLowerCase() === "#000000")) g.colour = sch.ink;
+    if (sch.poche && role === "cut" && g.fill && g.fill !== "none" && !/^#(fff|ffffff)$/i.test(g.fill)) g.fill = sch.poche;
+    if (sch.accent && g.halftone === false && g.trace.some(t => t.startsWith("rule "))) g.colour = sch.accent;
+  }
+  const pw = penWeight(doc, g.pen, ctx.scale), weight = typeof pw === "number" && sch && sch.weight ? pw * sch.weight : pw;   // "none" stays "none"
   return {
-    weight, colour: g.halftone ? mix(g.colour, "#ffffff", HALFTONE) : g.colour,
-    dash: LINE_TYPES[g.lineType] || null, fill: g.fill === "none" ? null : (g.halftone && g.fill ? mix(g.fill, "#ffffff", HALFTONE) : g.fill ?? null),
+    weight, colour: g.halftone ? mix(g.colour, paper, ht) : g.colour,
+    dash: LINE_TYPES[g.lineType] || null, fill: g.fill === "none" ? null : (g.halftone && g.fill ? mix(g.fill, paper, ht) : g.fill ?? null),
     fillNone: g.fill === "none",
     pattern: g.pattern === "none" || g.pattern === "solid" ? (g.pattern === "solid" ? "solid" : null) : g.pattern, visible: g.visible,
     detailLevel: g.detailLevel, pen: g.pen, trace: g.trace, halftone: g.halftone,
@@ -158,4 +168,78 @@ export function rulesFor(doc, style, filterIds = []) {
   const all = Object.values(doc.lib.viewStyles).flatMap(s => s.rules || []);
   for (const id of filterIds || []) if (!out.some(r => r.id === id)) { const r = all.find(x => x.id === id); if (r) out.push(r); }
   return out;
+}
+
+// ---------------------------------------------------------------- view styles as Revit's view templates
+//! A view style is a view template: it holds graphics, and it can hold a view's settings too. Each
+//! setting it INCLUDES is the style's to say - pushed to every view using the style and locked there, in
+//! Properties and in Visibility/Graphics. What it does not include stays each view's own.
+export const STYLE_SETTINGS = [
+  ["scale", "View scale"], ["detailLevel", "Detail level"], ["viewRange", "View range (plans)"], ["visualStyle", "Visual style (3D)"],
+  ["modelVG", "V/G overrides: model categories"], ["annotationVG", "V/G overrides: annotation categories"], ["filters", "V/G overrides: filters"],
+  ["displayModel", "Display model"], ["farClip", "Far clipping (sections, elevations)"], ["sketchy", "Sketchy lines"], ["scheme", "Graphic scheme"],
+];
+/** Categories that are drawing rather than building: Revit's annotation (2D / symbolic) categories. */
+export const isAnnotationCategory = cat => /^(Annotation|Detail|IfcGrid|IfcBuildingStorey)/.test(cat);
+/** The style a view's `setting` is locked by, or null when the view owns it. */
+export function lockedBy(doc, v, setting) {
+  const id = F.refId(v, "style"), st = id && doc.lib.viewStyles[id];
+  return st && st.include && st.include[setting] ? (st.name || id) : null;
+}
+/** Graphic schemes: a whole drawing's palette in one choice, as a designer would set it in Illustrator
+ *  or InDesign - the ink lines take, poché for what is cut, line-weight scale, how far halftone fades,
+ *  the paper, and an accent for what filters pick out. */
+export const SCHEMES = {
+  "Technical": { name: "Technical (black on white)" },
+  "Blueprint": { name: "Blueprint", background: "#16345f", ink: "#e8f0ff", poche: "#9fb8e0", halftone: 0.55, weight: 0.9, accent: "#ffd166" },
+  "Warm Presentation": { name: "Warm presentation", background: "#faf6ef", ink: "#3b3027", poche: "#3b3027", halftone: 0.6, weight: 0.8, accent: "#c0573e" },
+  "Illustrator Fine": { name: "Illustrator fine line", ink: "#1f1f1f", poche: "#2b2b2b", weight: 0.6, halftone: 0.65, accent: "#e4572e" },
+  "InDesign Grey": { name: "InDesign cool grey", ink: "#4a4f57", poche: "#c9ced6", weight: 0.7, halftone: 0.6, accent: "#2f6fd6" },
+  "Graphite Sketch": { name: "Graphite sketch", background: "#f4f3ef", ink: "#555555", poche: "#8a8a8a", weight: 1.15, halftone: 0.5 },
+  "Night": { name: "Night (dark paper)", background: "#1b1d22", ink: "#d6dbe3", poche: "#586070", halftone: 0.55, weight: 0.85, accent: "#7cc4ff" },
+};
+/** The style a view actually draws with: the style's graphics, with the view's own V/G overrides laid
+ *  over whatever the style does not include; the view's own filters after the style's when filters are
+ *  the view's; and the scheme the style or the view chose. */
+export function effectiveStyle(doc, style, v) {
+  const inc = style.include || {}, vg = (v && doc.argValue(v, "vg")) || {};
+  const out = Object.assign({}, style, { byCategory: Object.assign({}, style.byCategory || {}) });
+  for (const [cat, over] of Object.entries(vg.byCategory || {})) {
+    if ((isAnnotationCategory(cat) ? inc.annotationVG : inc.modelVG)) continue;          // locked by the style
+    const base = out.byCategory[cat] || {}, merged = Object.assign({}, base);
+    for (const [k, val] of Object.entries(over)) merged[k] = val && typeof val === "object" && !Array.isArray(val) ? Object.assign({}, base[k] || {}, val) : val;
+    out.byCategory[cat] = merged;
+  }
+  out.rules = (style.rules || []).slice();
+  if (!inc.filters) for (const fl of vg.filters || []) if (fl.enabled !== false) out.rules.push(Object.assign({}, fl, { then: Object.assign({}, fl.then || {}, fl.visible === false ? { visible: false } : {}) }));
+  const sc = inc.scheme ? style.scheme : (vg.scheme || style.scheme);
+  // a scheme is a preset's name, or a preset customised in place (the object carries its own colours)
+  out.schemeObj = sc && typeof sc === "object" ? Object.assign({}, SCHEMES[sc.base] || {}, sc) : sc && SCHEMES[sc] ? SCHEMES[sc] : null;
+  for (const k of ["displayModel", "sketchy"]) out[k] = inc[k] ? style[k] : (vg[k] !== undefined ? vg[k] : style[k]);
+  return out;
+}
+/** The view settings a style can carry, and the view argument each one is. */
+export const STYLE_VIEW_KEYS = { scale: "scale", detailLevel: "detailLevel", viewRange: "viewRange", visualStyle: "visualStyle", farClip: "depth" };
+/** Is the view argument `key` held by the view's style? Its name when it is. */
+export function lockedKey(doc, v, key) {
+  const setting = Object.keys(STYLE_VIEW_KEYS).find(s => STYLE_VIEW_KEYS[s] === key);
+  return setting ? lockedBy(doc, v, setting) : null;
+}
+/** Push what a style includes into a view that uses it: the view then shows the style's values,
+ *  as Revit applies a template's included parameters. Returns the keys it changed. */
+export function pushStyleSettings(doc, v) {
+  const id = F.refId(v, "style"), st = id && doc.lib.viewStyles[id], changed = [];
+  if (!st || !st.include) return changed;
+  const decl = doc.declOf(v), has = k => decl && decl.args.some(a => a.key === k);
+  for (const [setting, key] of Object.entries(STYLE_VIEW_KEYS)) {
+    if (!st.include[setting] || !st.settings || st.settings[setting] === undefined || !has(key)) continue;
+    const val = st.settings[setting];
+    if (JSON.stringify(doc.argValue(v, key)) === JSON.stringify(val)) continue;
+    doc.setArg(v, key, typeof val === "object" ? JSON.parse(JSON.stringify(val)) : val); changed.push(key);
+  }
+  return changed;
+}
+/** A new, empty style: graphics as the construction default, nothing included. */
+export function blankStyle(name) {
+  return { name, byCategory: {}, byFamily: {}, rules: [], include: {}, settings: { scale: 100, detailLevel: "Fine", viewRange: { top: 2300, cut: 1200, bottom: 0, depth: 0 }, visualStyle: "Shaded", farClip: 15000 }, scheme: "Technical", displayModel: "Normal", sketchy: null };
 }

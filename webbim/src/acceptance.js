@@ -1284,3 +1284,71 @@ testCase("M32", "Fillet keeps the side of the crossing that was clicked - beyond
   const ok = far.sMid[1] > 0 && far.l.b[0] < X[0] && Math.abs(Math.abs(far.arc.c[1]) - 1000) < 1e-3 && same(far, inside) && same(far, lineInside);
   return R(ok, "all three clicks keep the spline above the crossing and the line left of it, with the same R1000 arc", `crossing ${X.map(Math.round)}; far: line end ${far.l.b.map(Math.round)}, spline mid ${far.sMid.map(Math.round)}; inside-R click same ${same(far, inside)}; line-inside-R click same ${same(far, lineInside)}`);
 });
+
+testCase("M33", "View style as a view template: included settings are pushed to its views and locked there; what it leaves open stays each view's", () => {
+  const doc = buildSample(), ed = new Editor(doc);
+  const st = clone(doc.lib.viewStyles["VS-CONSTRUCTION"]);
+  st.include = { scale: true, detailLevel: false }; st.settings = { scale: 50 };
+  ed.apply({ op: "style", id: "VS-CONSTRUCTION", value: st });
+  const users = doc.elements().filter(f => doc.typeOf(f) === "PlanView" && F.refId(f, "style") === "VS-CONSTRUCTION");
+  const pushed = users.length > 0 && users.every(f => F.int(f, "scale") === 50);
+  const id = doc.idOf(users[0]);
+  const locked = ed.apply({ op: "set", id, key: "scale", value: 200 });
+  const free = ed.apply({ op: "set", id, key: "detailLevel", value: "Coarse" });
+  // untick: the view owns its scale again
+  st.include.scale = false; ed.apply({ op: "style", id: "VS-CONSTRUCTION", value: st });
+  const again = ed.apply({ op: "set", id, key: "scale", value: 200 });
+  const ok = pushed && !locked.ok && /view style/.test(locked.error || "") && free.ok && again.ok && F.int(doc.element(id), "scale") === 200;
+  return R(ok, "every plan on the style at 1:50; scale refused while included, detail level free; unticked, scale is the view's again",
+    `${users.length} plans pushed ${pushed}; locked set ok=${locked.ok} (${locked.error}); detail ok=${free.ok}; after untick ok=${again.ok}`);
+});
+
+testCase("M34", "Per-view V/G: a view's own category override and filter apply over its style unless the style includes them; halftone mixes toward the paper", () => {
+  const doc = buildSample(), ed = new Editor(doc);
+  const v = doc.elements().find(f => doc.typeOf(f) === "PlanView" && F.refId(f, "style") === "VS-CONSTRUCTION"), id = doc.idOf(v);
+  const wallStroke = () => deriveView(doc, doc.element(id)).prims.find(p => p.id === "W1" && p.t === "stroke");
+  { const s0 = clone(doc.lib.viewStyles["VS-CONSTRUCTION"]); s0.rules = []; ed.apply({ op: "style", id: "VS-CONSTRUCTION", value: s0 }); }   // filters outrank categories: start without the style's
+  const c0 = wallStroke().colour;
+  ed.apply({ op: "set", id, key: "vg", value: { byCategory: { IfcWall: { cut: { colour: "#ff0000" }, projection: { colour: "#ff0000" }, beyond: { colour: "#ff0000" } } } } });
+  const red = wallStroke().colour;
+  ed.apply({ op: "set", id, key: "vg", value: { filters: [{ id: "FL-X", name: "walls halftone", when: { all: [{ param: "Category", is: "IfcWall" }] }, then: { halftone: true } }] } });
+  const ht = wallStroke().colour;
+  const st = clone(doc.lib.viewStyles["VS-CONSTRUCTION"]); st.include = { filters: true };
+  ed.apply({ op: "style", id: "VS-CONSTRUCTION", value: st });
+  const lockedBack = wallStroke().colour;
+  const ok = red === "#ff0000" && ht !== c0 && parseInt(ht.slice(1, 3), 16) > 0x60 && lockedBack === c0;
+  return R(ok, "cut colour red by the view override; grey by the view's halftone filter; back to the style's once it includes filters",
+    `style ${c0}; override ${red}; halftone ${ht}; filters included ${lockedBack}`);
+});
+
+testCase("M35", "Graphic scheme: Blueprint gives the view its paper, turns black ink to its ink, and survives onto a sheet and into the PDF", () => {
+  const doc = buildSample(), ed = new Editor(doc);
+  const v = doc.elements().find(f => doc.typeOf(f) === "PlanView"), id = doc.idOf(v);
+  ed.apply({ op: "set", id, key: "vg", value: { scheme: "Blueprint" } });
+  const sc = deriveView(doc, doc.element(id));
+  const blacks = [];
+  const walk = ps => ps.forEach(p => p.t === "group" ? walk(p.prims) : (p.colour && /^#(000|000000)$/i.test(p.colour) && blacks.push(p)));
+  walk(sc.prims);
+  const sh = doc.elements().find(f => doc.typeOf(f) === "Sheet" && (doc.argValue(f, "viewports") || []).some(vp => vp.view.ref === id));
+  const shs = sh ? deriveView(doc, sh) : null;
+  const bg = shs ? shs.prims.some(p => p.t === "fill" && p.layer === "Viewport" && p.colour === "#16345f") : true;
+  const pdf = shs ? writePDF([{ size: shs.size, prims: shs.prims, links: [] }], { title: "t" }) : "";
+  const ok = sc.background === "#16345f" && blacks.length === 0 && bg && (!shs || pdf.bytes.length > 0);
+  return R(ok, "background #16345f; no pure-black prim left; the sheet viewport sits on the blueprint ground", `background ${sc.background}; ${blacks.length} black prims; sheet ${sh ? doc.idOf(sh) : "none"} ground ${bg}`);
+});
+
+testCase("M36", "Filters by measured attribute: walls shorter than 2 m pick up the filter's colour, longer ones do not; sketchy lines bow the strokes", () => {
+  const doc = buildSample(), ed = new Editor(doc);
+  const v = doc.elements().find(f => doc.typeOf(f) === "PlanView"), id = doc.idOf(v);
+  const walls = doc.elements().filter(f => doc.typeOf(f) === "Wall" && doc.data(f) && doc.data(f).props && doc.data(f).props.Length);
+  const L = f => doc.data(f).props.Length.v;
+  const cut = Math.min(...walls.map(L)) + 1;
+  ed.apply({ op: "set", id, key: "vg", value: { filters: [{ id: "FL-S", when: { all: [{ param: "Category", is: "IfcWall" }, { param: "Length", lt: cut }] }, then: { cut: { colour: "#2f6fd6" } } }] } });
+  const sc = deriveView(doc, doc.element(id));
+  const col = w => (sc.prims.find(p => p.id === doc.idOf(w) && p.t === "stroke") || {}).colour;
+  const short = walls.filter(w => L(w) < cut && col(w)), long = walls.filter(w => L(w) >= cut && col(w));
+  ed.apply({ op: "set", id, key: "vg", value: { sketchy: { extension: 1, jitter: 0.5 } } });
+  const sk = deriveView(doc, doc.element(id)).prims.filter(p => p.t === "stroke" && p.path.some(s => s.k === "C")).length;
+  const ok = short.length > 0 && short.every(w => col(w) === "#2f6fd6") && long.every(w => col(w) !== "#2f6fd6") && sk > 0;
+  return R(ok, "short walls blue, long walls not; sketchy strokes present", `${short.length} short (${short.map(col).join(",")}), ${long.length} long; ${sk} sketchy strokes`);
+});

@@ -11,6 +11,7 @@ import { parse, namesIn, evaluate, saysFormula, readValue, ExprError, formatValu
 import { CATALOGUE, F, clone, documentLookup, MODEL_LIBS } from "./ocaf.js";
 import { resolveReference, orthoLine, importPlacer, importLayerMap } from "./bim.js";
 import { outline } from "./bimsketch.js";
+import { lockedKey, pushStyleSettings } from "./styles.js";
 
 export class Editor {
   constructor(doc) {
@@ -173,7 +174,11 @@ const HANDLERS = {
         if (arg && (arg.kind === "Real" || arg.kind === "Integer")) value = valueFromText(doc, f, arg, o.text, ed);
         else value = o.text;
       }
+      // a view setting its style includes is the style's: locked here, changed in the style
+      const lk = doc.declOf(f) && doc.declOf(f).kind === "view" && lockedKey(doc, f, o.key.split(".")[0]);
+      if (lk) throw new Error(`${o.key} is set by the view style ${lk} - change it there, or untick it in the style`);
       setPath(doc, f, o.key, value);
+      if (o.key === "style") pushStyleSettings(doc, f);
       // a door or window sizes its opening: changing its type resizes the hole to the new type
       if ((o.key === "doorType" || o.key === "windowType") && value && value.ref) sizeOpeningsToType(doc, [f]);
       // ticking a grid's Orthogonal straightens it onto the nearest axis, about its start
@@ -284,7 +289,15 @@ const HANDLERS = {
     if (o.lib === "types") sizeOpeningsToType(doc, doc.elements().filter(g => (doc.typeOf(g) === "Door" || doc.typeOf(g) === "Window") && (F.refId(g, "doorType") === o.id || F.refId(g, "windowType") === o.id)));
     return {};
   },
-  style(doc, o) { return HANDLERS.type(doc, Object.assign({}, o, { lib: "viewStyles" })); },
+  /** A view style edited: every view using it takes what it includes (a view template applied). */
+  style(doc, o) {
+    const r = HANDLERS.type(doc, Object.assign({}, o, { lib: "viewStyles" }));
+    for (const v of doc.elements()) if (doc.declOf(v) && doc.declOf(v).kind === "view" && F.refId(v, "style") === o.id) {
+      if (o.remove) doc.setArg(v, "style", null); else pushStyleSettings(doc, v);
+    }
+    doc.bumpView && doc.bumpView();
+    return r;
+  },
   filter(doc, o) { return HANDLERS.type(doc, Object.assign({}, o, { lib: "viewStyles" })); },
   relate(doc, o) {
     // join and constraint rows: the two relationship stores (§1.5)

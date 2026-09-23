@@ -76,7 +76,7 @@ export class View3D {
     if (!app.zoom3d || !app.zoom3d[viewId]) this.fit();
   }
   get doc() { return this.app.doc; }
-  get style() { return this.app.visualStyle3d[this.viewId] || "Shaded"; }
+  get style() { const v = this.doc.element(this.viewId); return (v && F.choice(v, "visualStyle")) || "Shaded"; }
   resize() { if (!this.renderer) return; const r = this.root.getBoundingClientRect(); this.W = r.width; this.H = r.height; this.renderer.setSize(r.width, r.height); this.render(); }
 
   // ---------------------------------------------------------------- model → scene (one group per element)

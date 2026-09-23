@@ -76,9 +76,9 @@ export class View2D {
     const g = this.canvas.getContext("2d"), dpr = this.dpr;
     g.setTransform(1, 0, 0, 1, 0, 0);
     const sheet = this.kind === "Sheet";
-    g.fillStyle = sheet ? getComputedStyle(document.documentElement).getPropertyValue("--canvas").trim() || "#dde1e7" : "#ffffff";
-    g.fillRect(0, 0, this.canvas.width, this.canvas.height);
     const sc = this.scene();
+    g.fillStyle = sheet ? getComputedStyle(document.documentElement).getPropertyValue("--canvas").trim() || "#dde1e7" : sc.background || "#ffffff";
+    g.fillRect(0, 0, this.canvas.width, this.canvas.height);
     const view = { x: this.cam.x, y: this.cam.y, z: this.cam.z, W: this.W, H: this.H, dpr };
     if (sheet) {
       const [w, hh] = sc.size; g.save(); g.setTransform(dpr, 0, 0, dpr, 0, 0);

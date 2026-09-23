@@ -19,11 +19,11 @@ import { elementsBox } from "./hlr.js";
 import { writePDF } from "./pdf.js";
 import { writeDXF, readDXF, dxfDrawing, makeZip } from "./dxf.js";
 import { runAll, CASES } from "./acceptance.js";
-import { renderPanel, renderSchedule, typeEditor, vvDialog } from "./panel.js";
+import { renderPanel, renderSchedule, typeEditor, vvDialog, viewStyleEditor } from "./panel.js";
 import { renderGraph } from "./graph.js";
 import { View2D, SNAP_KINDS, MODIFY_TOOLS } from "./canvas2d.js";
 import { View3D, VISUAL_STYLES, hiddenLineFor } from "./view3d.js";
-import { categoryOf } from "./styles.js";
+import { categoryOf, lockedKey, SCHEMES, STYLE_SETTINGS, blankStyle } from "./styles.js";
 import { bimToCad, cadEditsToOps, cadDiff, mergeModel } from "./cadbridge.js";
 import { importIfc } from "./ifcimport.js";
 
@@ -71,6 +71,8 @@ app.refresh = (opts = {}) => {
   renderQAT(); renderRibbon(); renderOptionsBar(); renderPalettes(); updateStatus();
   const v = app.views.get(app.activeView);
   if (!opts.keepMain || !v) renderMain();
+  // a 3D view switched to or from Sheet Line-work changes what draws it
+  else if (app.doc.element(app.activeView) && app.doc.typeOf(app.doc.element(app.activeView)) === "View3D" && (v instanceof View3D) === (visual3d(app.activeView) === "Sheet Line-work")) renderMain();
   else { if (v.draw) v.draw(); if (v.refresh && v.T) v.refresh(); renderViewControl(); }
   scheduleHiddenLine();
   if (opts.keepMain && (app.activeView === "__graph" || app.activeView === "__tree" || (app.activeView && app.doc.element(app.activeView) && app.doc.typeOf(app.doc.element(app.activeView)) === "Schedule"))) renderMain();
@@ -226,7 +228,8 @@ const COMMANDS = {
   region: { label: "Filled Region", icon: "skrect", key: "FR", hint: "Sketch a hatched region in this view: closed loops, holes inside; Finish ✓ makes it", run: () => startRegionSketch() },
   edittype: { label: "Edit Type", icon: "edittype", run: () => { const t = selectedType(); if (t) typeEditor(app, t); else app.say("select an element with a type", "note"); } },
   props: { label: "Properties", icon: "props", key: "PP", active: () => !document.body.classList.contains("hide-props"), run: () => document.body.classList.toggle("hide-props") },
-  pens: { label: "Object Styles & Pens", icon: "pens", run: () => { const v = app.activeView && app.doc.element(app.activeView); vvDialog(app, v && ["PlanView", "ElevationView", "SectionView", "View3D"].includes(app.doc.typeOf(v)) ? app.activeView : firstOf("PlanView")); } },
+  viewstyles: { label: "View Styles", icon: "vv", key: "VT", run: () => { const v = app.doc.element(app.activeView); const isV = v && ["PlanView", "ElevationView", "SectionView", "View3D"].includes(app.doc.typeOf(v)); viewStyleEditor(app, isV ? F.refId(v, "style") : null, isV ? app.activeView : null); } },
+  pens: { label: "Object Styles & Pens", icon: "pens", run: () => { const v = app.activeView && app.doc.element(app.activeView); vvDialog(app, v && ["PlanView", "ElevationView", "SectionView", "View3D"].includes(app.doc.typeOf(v)) ? app.activeView : firstOf("PlanView"), { tab: "pens" }); } },
   projectinfo: { label: "Project Information", icon: "info", run: () => projectInfo() },
   units: { label: "Project Units", icon: "dim", key: "UN", hint: "How lengths are shown: mm, cm, m, feet-inches or inches. Fields take any unit and maths whatever this says.", run: () => unitsDialog() },
   open: { label: "Open…", icon: "open", run: () => openFile() },
@@ -276,7 +279,7 @@ const RIBBON = [
     { title: "Symbol", items: [big("placesymbol")] },
   ] },
   { tab: "View", panels: [
-    { title: "Graphics", items: [big("vv"), small("thin"), small("zoomfit")] },
+    { title: "Graphics", items: [big("vv"), big("viewstyles"), small("thin"), small("zoomfit")] },
     { title: "Create", items: [big("planview"), big("default3d"), big("sectionbox"), big("section"), small("elev"), small("schedule"), big("sheet")] },
     { title: "Windows", items: [small("graph"), small("tree"), small("closehidden")] },
     { title: "Interface", items: [big("cadmode")] },
@@ -697,7 +700,7 @@ function renderMain() {
   const v = doc.element(id); if (!v) { app.closeTab(id); return; }
   const t = doc.typeOf(v);
   if (t === "Schedule") { renderSchedule(app, main, v); app.views.set(id, {}); renderViewControl(); return; }
-  if (t === "View3D" && (app.visualStyle3d[id] || "Shaded") !== "Sheet Line-work") { const view = new View3D(app, main, id); if (cams3d.has(id)) { view.cam = cams3d.get(id); view.render(); } app.views.set(id, view); renderViewControl(); return; }
+  if (t === "View3D" && visual3d(id) !== "Sheet Line-work") { const view = new View3D(app, main, id); if (cams3d.has(id)) { view.cam = cams3d.get(id); view.render(); } app.views.set(id, view); renderViewControl(); return; }
   const prev = app.views.get(id);
   const view = new View2D(app, main, id);
   if (prev && prev.cam) view.cam = prev.cam;
@@ -707,17 +710,31 @@ function renderMain() {
   renderViewControl();
 }
 /** The view control bar: scale, detail level, visual style, thin lines, crop, VV — at the foot of the view. */
+/** The view's style as a dropdown: the file's styles, "None", and "Edit…" (the View Style editor). */
+function styleSelect(id, cls) {
+  const doc = app.doc, v = doc.element(id), st = F.refId(v, "style") || "";
+  return h("select", { class: cls, title: "View style (view template)", "aria-label": "View style", onchange: e => {
+      const val = e.target.value;
+      if (val === "__edit") { e.target.value = st; return viewStyleEditor(app, st || Object.keys(doc.lib.viewStyles)[0], id); }
+      app.apply({ op: "set", id, key: "style", value: val ? { ref: val } : null });
+    } },
+    h("option", { value: "", selected: !st }, "<None>"),
+    Object.entries(doc.lib.viewStyles).map(([k, s]) => h("option", { value: k, selected: k === st }, s.name || k)),
+    h("option", { value: "__edit" }, "Edit view styles…"));
+}
+app.styleSelect = styleSelect;
+function visual3d(id) { const v = app.doc.element(id); return (v && F.choice(v, "visualStyle")) || "Shaded"; }
 function renderViewControl() {
   const bar = document.getElementById("vcb"); if (!bar) return; clear(bar);
   const doc = app.doc, id = app.activeView, v = doc.element(id); if (!v) return;
   const t = doc.typeOf(v);
   const ib = (ic, title, on, run) => h("button", { class: "vbtn", title, "aria-label": title, "aria-pressed": on === undefined ? null : String(!!on), onclick: run }, icon(ic, 16));
-  if (["PlanView", "ElevationView", "SectionView", "View3D"].includes(t)) bar.append(h("select", { class: "vscale", "aria-label": "View scale", title: "View scale", onchange: e => app.apply({ op: "set", id, key: "scale", value: Number(e.target.value) }) }, [10, 20, 50, 100, 200, 500].map(s => h("option", { value: s, selected: F.int(v, "scale") === s }, "1 : " + s))));
+  if (["PlanView", "ElevationView", "SectionView", "View3D"].includes(t)) bar.append(h("select", { class: "vscale", "aria-label": "View scale", title: lockedKey(doc, v, "scale") ? `View scale - set by the view style ${lockedKey(doc, v, "scale")}` : "View scale", disabled: !!lockedKey(doc, v, "scale"), onchange: e => app.apply({ op: "set", id, key: "scale", value: Number(e.target.value) }) }, [10, 20, 50, 100, 200, 500].map(s => h("option", { value: s, selected: F.int(v, "scale") === s }, "1 : " + s))));
   if (t === "PlanView" || t === "ElevationView" || t === "SectionView") {
     const dl = F.choice(v, "detailLevel");
-    bar.append(h("select", { class: "vsel", title: "Detail level", "aria-label": "Detail level", onchange: e => app.apply({ op: "set", id, key: "detailLevel", value: e.target.value }) }, ["Coarse", "Medium", "Fine"].map(d => h("option", { selected: dl === d }, d))));
+    bar.append(h("select", { class: "vsel", title: lockedKey(doc, v, "detailLevel") ? `Detail level - set by the view style ${lockedKey(doc, v, "detailLevel")}` : "Detail level", "aria-label": "Detail level", disabled: !!lockedKey(doc, v, "detailLevel"), onchange: e => app.apply({ op: "set", id, key: "detailLevel", value: e.target.value }) }, ["Coarse", "Medium", "Fine"].map(d => h("option", { selected: dl === d }, d))));
     const st = F.refId(v, "style");
-    bar.append(h("select", { class: "vsel", title: "View style", "aria-label": "View style", onchange: e => app.apply({ op: "set", id, key: "style", value: { ref: e.target.value } }) }, Object.entries(doc.lib.viewStyles).map(([k, s]) => h("option", { value: k, selected: k === st }, s.name))));
+    bar.append(styleSelect(id, "vsel"));
     if (t === "PlanView") {
       const clip = doc.argValue(v, "clip") || {};
       const withRect = c => Object.assign({}, clip, { rect: clip.rect || [-5000, -5000, 20000, 15000] }, c);
@@ -730,8 +747,9 @@ function renderViewControl() {
     }
   }
   if (t === "View3D") {
-    const cur = app.visualStyle3d[id] || "Shaded";
-    bar.append(h("select", { class: "vsel", title: "Visual style", "aria-label": "Visual style", onchange: e => { app.visualStyle3d[id] = e.target.value; renderMain(); } }, [...VISUAL_STYLES, "Sheet Line-work"].map(s => h("option", { selected: s === cur }, s))));
+    bar.append(styleSelect(id, "vsel"));
+    const cur = visual3d(id), lk = lockedKey(doc, v, "visualStyle");
+    bar.append(h("select", { class: "vsel", title: lk ? `Visual style - set by the view style ${lk}` : "Visual style", "aria-label": "Visual style", disabled: !!lk, onchange: e => app.apply({ op: "set", id, key: "visualStyle", value: e.target.value }) }, [...VISUAL_STYLES, "Sheet Line-work"].map(s => h("option", { selected: s === cur }, s))));
     const view = app.views.get(id);
     if (view && view.saveCamera) bar.append(h("button", { class: "btn small", title: "Store this camera in the view (and its sheets)", onclick: () => view.saveCamera() }, "Save camera"));
   }
@@ -962,7 +980,7 @@ function scheduleHiddenLine() {
   hiddenLineTimer = setTimeout(async () => {
     const f = app.activeView && app.doc.element(app.activeView); if (!f) return;
     const t = app.doc.typeOf(f);
-    const ids = t === "Sheet" ? staleHiddenLine([f]) : t === "View3D" && app.visualStyle3d[app.activeView] === "Sheet Line-work" && deriveView(app.doc, f).stale ? [app.activeView] : [];
+    const ids = t === "Sheet" ? staleHiddenLine([f]) : t === "View3D" && visual3d(app.activeView) === "Sheet Line-work" && deriveView(app.doc, f).stale ? [app.activeView] : [];
     if (!ids.length) return;
     await ensureHiddenLine(ids);
     app.say("Hidden-line drawing updated", "ok");
