@@ -498,7 +498,9 @@ BUILDERS.SectionView = { build: () => ({ data: {} }) };
 declare({ type: "View3D", guid: "wb-0503", category: "View", kind: "view", idPrefix: "V-3D",
   summary: "A camera. On a sheet it becomes exact hidden-line line-work, cached and never interactive (§6.4).",
   args: [ json("camera", "Camera", { azimuth: 225, elevation: 30, target: [6000, 4000, 1500] }), integer("scale", "Scale 1:", 200, 1, 5000, { group: "Graphics" }),
-          ref("style", "View style", ["viewStyle"], { group: "Graphics" }), json("render", "Render", { mode: "lines", hidden: false, rasterDPI: 300, silhouetteWeight: 0.35 }, { group: "Graphics" }) ] });
+          ref("style", "View style", ["viewStyle"], { group: "Graphics" }), json("render", "Render", { mode: "lines", hidden: false, rasterDPI: 300, silhouetteWeight: 0.35 }, { group: "Graphics" }),
+          // Revit's Section Box: an axis-aligned box the view is clipped to; each face is pushed or pulled on its own
+          json("sectionBox", "Section box", { on: false, min: null, max: null }, { group: "Extents" }) ] });
 BUILDERS.View3D = { build: () => ({ data: {} }) };
 
 declare({ type: "Schedule", guid: "wb-0504", category: "View", kind: "schedule", idPrefix: "SC",

@@ -10,12 +10,12 @@ import { wallRegions, solidSpans } from "./joins.js";
 import { pointAt, uOf, boundary, wallPieces } from "./walls.js";
 import { newDocument, openDocument, measureRefs, resolveReference } from "./bim.js";
 import { Editor, propagate } from "./ops.js";
-import { dimText, deriveView, planScene, elevationScene, placements, textWidth, sheetScene, visibilityKey, sectionCut, cutOutline } from "./scene.js";
+import { sectionBoxKey, dimText, deriveView, planScene, elevationScene, placements, textWidth, sheetScene, visibilityKey, sectionCut, cutOutline } from "./scene.js";
 import { chainLoop } from "./crop.js";
 import { importIfc } from "./ifcimport.js";
 import { writePDF, pathOps, PT_PER_MM } from "./pdf.js";
 import { writeDXF, readDXF, dxfLineweight } from "./dxf.js";
-import { buildHLRModel, runHLR } from "./hlr.js";
+import { buildHLRModel, runHLR, elementsBox } from "./hlr.js";
 import { drawScene } from "./render.js";
 import { resolveGraphics, penWeight } from "./styles.js";
 import { propertyModel, pickCandidates, graphModel, listeningDimensions, dimensionMove, editorFor } from "./props.js";
@@ -1119,4 +1119,18 @@ testCase("M23", "Units: the model is mm; display is mm/m/ft-in; fields take any 
   const ok = okParse && h1 === 3200 && Math.abs(h2 - 3700) < 1e-6 && Math.abs(h2b - 3700) < 1e-6 && txt === "12' - 0\"" && fv === "3' - 6\"" && back === "m";
   return R(ok, "all parse right; 3.2 in metres is 3200; W1.Height + 0.5 is 3700 and stays 3700 after switching to ft-in; dims read 12' - 0\"; undo restores metres",
     `parse ${parsed.map(([t, u, g]) => `${t}@${u}=${Math.round(g * 10) / 10}`).join(" ")}; h1 ${h1}; h2 ${h2}→${h2b}; dim "${txt}"; fv "${fv}"; after undo ${back}`);
+});
+
+testCase("M24", "Show in 3D / Selection Box: an element's 3D extent; a section box cuts the hidden-line and marks the sheet stale", () => {
+  const doc = buildSample(), ed = new Editor(doc);
+  const b = elementsBox(doc, ["W1"]), p = doc.plan(doc.element("W1"));
+  const box = { on: true, min: [b.min[0] - 300, b.min[1] - 300, b.min[2] - 300], max: [b.max[0] + 300, b.max[1] + 300, 1500] };
+  const all = buildHLRModel(doc), cut = buildHLRModel(doc, { box });
+  const inside = e => [e.a, e.b].every(q => [0, 1, 2].every(i => q[i] >= box.min[i] - 1e-6 && q[i] <= box.max[i] + 1e-6));
+  const v = doc.element("V-3D01"), k0 = sectionBoxKey(doc, v);
+  ed.apply({ op: "set", id: "V-3D01", key: "sectionBox", value: box });
+  const k1 = sectionBoxKey(doc, v);
+  const ok = b && Math.abs(b.max[2] - p.z1) < 1 && Math.abs(b.min[2] - p.z0) < 1 && cut.edges.length > 0 && cut.edges.length < all.edges.length && cut.edges.every(inside) && k0 === "" && k1 !== "";
+  return R(ok, "W1's box spans its height; clipped edges all lie in the box and are fewer; the view's box key changes when the box is set",
+    `box z ${b && b.min[2]}→${b && b.max[2]} (wall ${p.z0}→${p.z1}); edges ${all.edges.length}→${cut.edges.length}, all inside ${cut.edges.every(inside)}; key "${k0}"→"${k1.slice(0, 30)}…"`);
 });

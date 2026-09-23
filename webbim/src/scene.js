@@ -795,6 +795,7 @@ export function view3dScene(doc, v, opts = {}) {
   const cam = JSON.stringify(doc.argValue(v, "camera"));
   const scene = { prims: B.prims, hits: [], links: [], scale: S, kind: "3d" };
   if (cache && cache.camera === cam && (cache.vis || "") !== visibilityKey(doc, v)) scene.stale = "Visibility/Graphics changed since generation";
+  if (cache && cache.camera === cam && (cache.box || "") !== sectionBoxKey(doc, v)) scene.stale = "the section box changed since generation";
   if (!cache || cache.camera !== cam) { scene.stale = "never generated"; B.text([0, 0], "Hidden-line view not generated yet", 3, {}); scene.bbox = [-5, -5, 120, 10]; return scene; }
   if (cache.revision !== doc.modelRevision) scene.stale = `model changed since generation (rev ${cache.revision} → ${doc.modelRevision})`;
   const render = doc.argValue(v, "render") || {};
@@ -915,3 +916,6 @@ export function translatePrim(p, o) {
 /** A dimension's string in the project's units, as Revit writes it: metric bare (7000, 7.000),
  *  imperial with its marks (22' - 11 9/16"). */
 export function dimText(doc, v) { const u = (doc.meta && doc.meta.displayUnits) || "mm"; return fmtLength(v, { unit: u, suffix: false, fixed: u === "m" || u === "cm" }); }
+
+/** A 3D view's section box as a cache key: "" when it is off. */
+export function sectionBoxKey(doc, v) { const b = doc.typeOf(v) === "View3D" && doc.argValue(v, "sectionBox"); return b && b.on && b.min && b.max ? JSON.stringify([b.min, b.max]) : ""; }

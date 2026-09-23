@@ -14,7 +14,8 @@ import { Editor } from "./ops.js";
 import { buildSample } from "./sample.js";
 import { openDocument, newDocument, sheetSize } from "./bim.js";
 import { F, CATALOGUE } from "./ocaf.js";
-import { deriveView, sheetScene } from "./scene.js";
+import { deriveView, sheetScene, shownInView } from "./scene.js";
+import { elementsBox } from "./hlr.js";
 import { writePDF } from "./pdf.js";
 import { writeDXF, readDXF, makeZip } from "./dxf.js";
 import { runAll, CASES } from "./acceptance.js";
@@ -123,6 +124,31 @@ const canUseTool = k => { const t = activeType(); if (t === "PlanView") return t
 
 // ---------------------------------------------------------------- documents
 /** There is always a {3D} view: the house button must have somewhere to go. */
+/** Revit's "Show in 3D" and Selection Box (BX): the {3D} view, framed on what is selected - with a
+ *  section box around it, when asked. */
+function showIn3D(withBox) {
+  const ids = [...app.selection].filter(id => app.doc.element(id));
+  if (!ids.length) return app.say("select something first", "note");
+  const box = elementsBox(app.doc, ids); if (!box) return app.say("nothing selected has a body to show in 3D", "note");
+  ensureDefault3D(app.doc); const vid = default3D();
+  if (withBox) {
+    const pad = 300, b = { on: true, min: box.min.map(v => Math.floor((v - pad) / 10) * 10), max: box.max.map(v => Math.ceil((v + pad) / 10) * 10) };
+    app.apply({ op: "set", id: vid, key: "sectionBox", value: b });
+  }
+  app.openView(vid);
+  const v = app.views.get(vid); if (v && v.fitBox) { v.refresh(); v.fitBox(box.min, box.max); }
+  app.select(ids);
+  app.say(withBox ? `Section box around ${ids.length} element${ids.length > 1 ? "s" : ""}: drag its blue arrows to push or pull a face; Section Box on the View tab turns it off` : `Showing ${ids.join(", ")} in 3D`, "ok");
+}
+function toggleSectionBox() {
+  const v = app.doc.element(app.activeView);
+  if (!v || app.doc.typeOf(v) !== "View3D") return app.say("open a 3D view", "note");
+  const b = Object.assign({ on: false, min: null, max: null }, app.doc.argValue(v, "sectionBox") || {});
+  if (!b.on && !(b.min && b.max)) { const all = elementsBox(app.doc, app.doc.elements().filter(f => shownInView(app.doc, v, f)).map(f => app.doc.idOf(f))); if (!all) return; b.min = all.min.map(x => x - 300); b.max = all.max.map(x => x + 300); }
+  b.on = !b.on;
+  app.apply({ op: "set", id: app.activeView, key: "sectionBox", value: b });
+  app.say(b.on ? "Section box on: drag its arrows to push or pull each face" : "Section box off (its size is kept for next time)", "ok");
+}
 function ensureDefault3D(doc) {
   if (doc.elements().some(f => doc.typeOf(f) === "View3D" && f.get("Name") === "{3D}")) return;
   let id = "V-3D"; let n = 1; while (doc.element(id)) id = "V-3D" + (++n);
@@ -173,6 +199,9 @@ const COMMANDS = {
   undo: { label: "Undo", icon: "undo", run: () => { app.editor.undo(); app.refresh(); saveDraftSoon(); } },
   redo: { label: "Redo", icon: "redo", run: () => { app.editor.redo(); app.refresh(); saveDraftSoon(); } },
   default3d: { label: "Default 3D View", icon: "house", key: "3D", run: () => { ensureDefault3D(app.doc); app.openView(default3D()); } },
+  showin3d: { label: "Show in 3D", icon: "view3d", hint: "Open the 3D view centred on the selection", run: () => showIn3D(false) },
+  selectionbox: { label: "Selection Box", icon: "crop", key: "BX", hint: "Open the 3D view with a section box around the selection; push or pull its faces", run: () => showIn3D(true) },
+  sectionbox: { label: "Section Box", icon: "crop", hint: "Clip the 3D view to a box; drag its arrows to push or pull each face", active: () => { const v = app.doc.element(app.activeView); const b = v && app.doc.typeOf(v) === "View3D" && app.doc.argValue(v, "sectionBox"); return !!(b && b.on); }, run: () => toggleSectionBox() },
   planview: { label: "Floor Plan", icon: "plan", hint: "Pick a level without a floor plan: one plan per level", run: () => floorPlanDialog() },
   level: { label: "Level", icon: "level", key: "LL", run: () => newLevel() },
   schedule: { label: "Schedule", icon: "schedule", run: () => newSchedule() },
@@ -239,7 +268,7 @@ const RIBBON = [
   ] },
   { tab: "View", panels: [
     { title: "Graphics", items: [big("vv"), small("thin"), small("zoomfit")] },
-    { title: "Create", items: [big("planview"), big("default3d"), big("section"), small("elev"), small("schedule"), big("sheet")] },
+    { title: "Create", items: [big("planview"), big("default3d"), big("sectionbox"), big("section"), small("elev"), small("schedule"), big("sheet")] },
     { title: "Windows", items: [small("graph"), small("tree"), small("closehidden")] },
     { title: "Interface", items: [big("cadmode")] },
   ] },
@@ -265,6 +294,7 @@ function contextTab() {
     ...(hasWall ? [{ title: "Mode", items: [big("flip")] }] : []),
     ...(els.length === 1 && app.doc.typeOf(els[0]) === "Floor" ? [{ title: "Mode", items: [big("editboundary")] }] : []),
     ...(els.some(f => app.doc.typeOf(f) === "Door") ? [{ title: "Door", items: [big("dooranim"), big("swingnext"), small("fliphand"), small("flipfacing")] }] : []),
+    { title: "View", items: [small("showin3d"), small("selectionbox")] },
     { title: "Select", items: [small("selectall"), small("select")] },
   ] };
 }
@@ -411,7 +441,8 @@ app.contextMenu = (e) => {
   items.push({ label: "Cancel", run: () => { app.setTool("select"); app.select([]); } });
   if (app.lastCommand && COMMANDS[app.lastCommand]) items.push({ label: `Repeat [${COMMANDS[app.lastCommand].label}]`, icon: COMMANDS[app.lastCommand].icon, run: () => app.run(app.lastCommand) });
   items.push("-");
-  if (app.selection.size) items.push(c("selectall"), c("edittype"), c("move"), c("copy"), c("rotate"), c("mirror"), c("del"), "-");
+  if (app.selection.size) items.push(c("showin3d"), c("selectionbox"), "-", c("selectall"), c("edittype"), c("move"), c("copy"), c("rotate"), c("mirror"), c("del"), "-");
+  { const v = app.doc.element(app.activeView); if (v && app.doc.typeOf(v) === "View3D") items.push(c("sectionbox")); }
   items.push(c("zoomfit"), c("default3d"), c("props"));
   menuAt(e.clientX, e.clientY, items);
 };

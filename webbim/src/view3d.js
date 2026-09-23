@@ -6,8 +6,9 @@
 //! The ViewCube sits top-right; "Generate for sheet" runs hidden-line in slices.
 
 import { bridgeHoles } from "./bimsketch.js";
-import { h, clear, icon } from "./ui_util.js";
+import { h, clear, icon, fmtLen } from "./ui_util.js";
 import { buildHLRModel, hlrSteps, cameraBasis } from "./hlr.js";
+import { sectionBoxKey } from "./scene.js";
 import { F } from "./ocaf.js";
 import { add, sub, mul, dot, dist, normalise, lerp } from "./geom2d.js";
 import { rasterPixels } from "./acceptance.js";
@@ -154,6 +155,23 @@ export class View3D {
     requestAnimationFrame(step); return true;
   }
   basis() { return cameraBasis(this.cam); }
+  /** The view's section box when it is on: { min, max } in model mm. */
+  sectionBox() { const vw = this.doc.element(this.viewId), b = vw && this.doc.argValue(vw, "sectionBox"); return b && b.on && b.min && b.max ? b : null; }
+  /** Frame a box: its centre is the target, and it fills the view. */
+  fitBox(min, max) {
+    const c = [0, 1, 2].map(i => (min[i] + max[i]) / 2), B = this.basis(), pts = [];
+    for (const x of [min[0], max[0]]) for (const y of [min[1], max[1]]) for (const z of [min[2], max[2]]) pts.push([x, y, z]);
+    const xs = pts.map(p => vdot3(v3sub3(p, c), B.right)), ys = pts.map(p => vdot3(v3sub3(p, c), B.up));
+    const need = Math.max((Math.max(...ys) - Math.min(...ys)) * 1.3, (Math.max(...xs) - Math.min(...xs)) * 1.3 / (this.W / this.H || 1));
+    this.cam.target = c; this.zoom = 22000 / Math.max(need, 500); this.render();
+  }
+  /** Where the cursor's ray passes closest to a line through p0 along unit axis a: the parameter along a. */
+  onAxis(e, p0, a) {
+    const R = this.rayAt(e), o = [R.origin.x, R.origin.y, R.origin.z], d = [R.direction.x, R.direction.y, R.direction.z];
+    const w0 = v3sub3(o, p0), b = vdot3(d, a), dd = vdot3(d, d), dw = vdot3(d, w0), den = dd - b * b;
+    if (Math.abs(den) < 1e-9) return null;
+    return (dd * vdot3(w0, a) - b * dw) / den;
+  }
   span() { return 22000 / this.zoom; }
   render() {
     if (!this.renderer || !this.W) return;
@@ -175,8 +193,13 @@ export class View3D {
       });
     }
     this.buildOverlay();
+    // the section box clips the model, never the grips drawn over it
+    const box = this.sectionBox();
+    this.renderer.clippingPlanes = box ? [[1, 0, 0, -box.min[0]], [-1, 0, 0, box.max[0]], [0, 1, 0, -box.min[1]], [0, -1, 0, box.max[1]], [0, 0, 1, -box.min[2]], [0, 0, -1, box.max[2]]]
+      .map(([x, y, z, c]) => new T.Plane(new T.Vector3(x, y, z), c)) : [];
     this.renderer.autoClear = true;
     this.renderer.render(this.scene, this.camera);
+    this.renderer.clippingPlanes = [];
     this.renderer.autoClear = false; this.renderer.clearDepth();
     this.renderer.render(this.overlayScene, this.camera);
     if (this.cube) this.cube.sync(B);
@@ -224,7 +247,12 @@ export class View3D {
   picksAt(e) {
     this.rayAt(e);
     const out = [], seen = new Set();
-    for (const hit of this.ray.intersectObjects(this.meshes, false)) { const id = hit.object.userData.id; if (seen.has(id)) continue; seen.add(id); out.push({ id, point: [hit.point.x, hit.point.y, hit.point.z] }); }
+    const box = this.sectionBox(), inside = q => !box || [0, 1, 2].every(i => q[i] >= box.min[i] - 1 && q[i] <= box.max[i] + 1);
+    for (const hit of this.ray.intersectObjects(this.meshes, false)) {
+      const id = hit.object.userData.id, q = [hit.point.x, hit.point.y, hit.point.z];
+      if (seen.has(id) || !inside(q)) continue;              // what the section box cut away cannot be picked
+      seen.add(id); out.push({ id, point: q });
+    }
     return out;
   }
   /** Tab: step through what the cursor's ray passes through, front to back. */
@@ -251,8 +279,17 @@ export class View3D {
 
   // ---------------------------------------------------------------- grips (declared per element, drawn here in 3D)
   grips() {
+    const box = this.app.tool === "select" ? this.sectionBox() : null, faceGrips = [];
+    // the section box's six faces, each an arrow pushed or pulled along its own axis only: it stays a box
+    if (box) for (let i = 0; i < 3; i++) for (const side of [-1, 1]) {
+      const at = [0, 1, 2].map(k => k === i ? (side < 0 ? box.min[k] : box.max[k]) : (box.min[k] + box.max[k]) / 2);
+      faceGrips.push({ key: `box${i}${side}`, at, kind: "face", axis: i, side });
+    }
     const ids = [...this.app.selection].filter(id => this.doc.element(id));
-    if (ids.length !== 1 || this.app.tool !== "select") return [];
+    if (ids.length !== 1 || this.app.tool !== "select") return faceGrips;
+    return faceGrips.concat(this.elementGrips(ids));
+  }
+  elementGrips(ids) {
     const f = this.doc.element(ids[0]), t = this.doc.typeOf(f), p = this.doc.plan(f);
     if (t === "Wall" && p && p.curve.type === "line") {
       const c = F.json(f, "centreline"), mid = lerp(c.start, c.end, 0.5);
@@ -270,7 +307,22 @@ export class View3D {
   buildOverlay() {
     const T = this.T; clear3(this.overlayScene);
     const k = this.span() / this.H;          // model mm per screen px: grips keep their screen size
+    const box = this.sectionBox();
+    if (box) {
+      const c = [], a = box.min, b = box.max, P = (x, y, z) => [x ? b[0] : a[0], y ? b[1] : a[1], z ? b[2] : a[2]];
+      for (const [p, q] of [[[0,0,0],[1,0,0]],[[0,1,0],[1,1,0]],[[0,0,1],[1,0,1]],[[0,1,1],[1,1,1]],[[0,0,0],[0,1,0]],[[1,0,0],[1,1,0]],[[0,0,1],[0,1,1]],[[1,0,1],[1,1,1]],[[0,0,0],[0,0,1]],[[1,0,0],[1,0,1]],[[0,1,0],[0,1,1]],[[1,1,0],[1,1,1]]]) c.push(...P(...p), ...P(...q));
+      const geo = new T.BufferGeometry(); geo.setAttribute("position", new T.Float32BufferAttribute(c, 3));
+      const ln = new T.LineSegments(geo, new T.LineBasicMaterial({ color: 0x1d6fd8, depthTest: false, transparent: true, opacity: 0.85 })); ln.renderOrder = 9; this.overlayScene.add(ln);
+    }
     for (const g of this.grips()) {
+      if (g.kind === "face") {
+        // an arrow standing out of the face, pointing the way the face moves when pulled
+        const dir = [0, 0, 0]; dir[g.axis] = g.side;
+        const cone = new T.Mesh(new T.ConeGeometry(GRIP_PX * 0.9 * k, GRIP_PX * 2.4 * k, 16), new T.MeshBasicMaterial({ color: this.hoverGrip === g.key ? 0xe8591a : 0x1d6fd8, depthTest: false }));
+        cone.quaternion.setFromUnitVectors(new T.Vector3(0, 1, 0), new T.Vector3(...dir));
+        cone.position.set(...g.at.map((v, i) => v + dir[i] * GRIP_PX * 1.6 * k)); cone.renderOrder = 10; cone.userData.grip = g; this.overlayScene.add(cone);
+        continue;
+      }
       const col = g.kind === "height" ? 0x2e7d32 : g.kind === "move" ? 0x1d6fd8 : 0xffffff;
       const geo = g.kind === "height" ? new T.ConeGeometry(GRIP_PX * k, GRIP_PX * 2.2 * k, 16) : g.kind === "move" ? new T.OctahedronGeometry(GRIP_PX * 1.1 * k) : new T.SphereGeometry(GRIP_PX * 0.8 * k, 16, 12);
       const m = new T.Mesh(geo, new T.MeshBasicMaterial({ color: this.hoverGrip === g.key ? 0xe8591a : col, depthTest: false }));
@@ -295,7 +347,8 @@ export class View3D {
   pickGrip(e) {
     const r = this.renderer.domElement.getBoundingClientRect(), sx = e.clientX - r.left, sy = e.clientY - r.top;
     let best = null;
-    for (const g of this.grips()) { const s = this.screenOf(g.at), d = Math.hypot(s[0] - sx, s[1] - sy); if (d < GRIP_PX + 6 && (!best || d < best.d)) best = { g, d }; }
+    const k = this.span() / this.H;
+    for (const g of this.grips()) { const at = g.kind === "face" ? g.at.map((v, i) => v + (i === g.axis ? g.side * GRIP_PX * 1.6 * k : 0)) : g.at; const s = this.screenOf(at), d = Math.hypot(s[0] - sx, s[1] - sy); if (d < GRIP_PX + 6 && (!best || d < best.d)) best = { g, d }; }
     return best && best.g;
   }
   /** Snap a plane point to wall ends within 12 px, else quantise to 10 mm. */
@@ -436,6 +489,7 @@ export class View3D {
     }
   }
   startGrip(e, g) {
+    if (g.kind === "face") return this.startFace(e, g);
     const doc = this.doc, id = [...this.app.selection][0], f = doc.element(id);
     const z0 = g.at[2], grab = this.onPlane(e, g.kind === "height" ? g.at[2] : z0);
     const orig = JSON.parse(JSON.stringify(g.writes ? (g.writes.includes(".") ? F.json(f, g.writes.split(".")[0])[g.writes.split(".")[1]] : doc.argValue(f, g.writes)) : null));
@@ -473,6 +527,25 @@ export class View3D {
         this.app.editor.seal(); this.hud.hidden = true; this.app.refresh({ keepMain: true }); this.refresh(); if (drv) this.app.say(`Moved level ${drv.level}: every wall bound to it followed`, "ok"); else if (wasBound) this.app.say(`height was bound to ${orig.ref}; the grip set it to a literal — undo to restore the binding`, "note"); },
     };
   }
+  /** Push or pull one face of the section box along its axis; the opposite face stays put. */
+  startFace(e, g) {
+    const box0 = JSON.parse(JSON.stringify(this.sectionBox())), axis = [0, 0, 0]; axis[g.axis] = 1;
+    const p0 = g.at.slice(); p0[g.axis] = 0;
+    const t0 = this.onAxis(e, p0, axis), key = `sbox:${this.viewId}:${g.key}:${Date.now()}`;
+    const face = g.side < 0 ? box0.min[g.axis] : box0.max[g.axis];
+    return {
+      grip: true,
+      move: ev => {
+        const t = this.onAxis(ev, p0, axis); if (t === null || t0 === null) return;
+        const v = Math.round((face + t - t0) / 10) * 10, box = JSON.parse(JSON.stringify(box0));
+        if (g.side < 0) box.min[g.axis] = Math.min(v, box.max[g.axis] - 100); else box.max[g.axis] = Math.max(v, box.min[g.axis] + 100);
+        this.app.apply({ op: "set", id: this.viewId, key: "sectionBox", value: box }, { quiet: true, coalesce: key });
+        this.showHud(ev, `${"XYZ"[g.axis]} ${g.side < 0 ? "min" : "max"} ${fmtLen(g.side < 0 ? box.min[g.axis] : box.max[g.axis])} · box ${fmtLen(box.max[0] - box.min[0])} × ${fmtLen(box.max[1] - box.min[1])} × ${fmtLen(box.max[2] - box.min[2])}`);
+        this.render();
+      },
+      end: () => { this.app.editor.seal(); this.hud.hidden = true; this.app.refresh({ keepMain: true }); this.render(); },
+    };
+  }
   finishWall(closed) {
     const pts = this.tool.pts.slice(); this.tool.pts = []; this.tool.cursor = null;
     if (pts.length < 2) return;
@@ -496,11 +569,12 @@ export class View3D {
     const doc = this.doc, v = doc.element(this.viewId);
     if (this.T && !keepCamera) this.app.apply({ op: "set", id: this.viewId, key: "camera", value: roundCam(this.cam) }, { quiet: true });
     const cam = F.json(v, "camera");
-    const model = buildHLRModel(doc, { visible: f => shownInView(doc, v, f) });
+    const box = this.sectionBox();
+    const model = buildHLRModel(doc, { visible: f => shownInView(doc, v, f), box });
     const it = hlrSteps(model, cam); let r; const t0 = performance.now(); let last = t0;
     for (;;) { r = it.next(); if (r.done) break; if (onProgress) onProgress(r.value.done / r.value.total); if (performance.now() - last > 12) { await new Promise(res => setTimeout(res, 0)); last = performance.now(); } }
     const out = r.value;
-    const entry = { camera: JSON.stringify(cam), revision: doc.modelRevision, vis: visibilityKey(doc, v), lines: out.lines, bbox: out.bbox, counts: out.counts };
+    const entry = { camera: JSON.stringify(cam), revision: doc.modelRevision, vis: visibilityKey(doc, v), box: sectionBoxKey(doc, v), lines: out.lines, bbox: out.bbox, counts: out.counts };
     const render = F.json(v, "render") || {};
     if (render.mode === "linesOverShaded" && this.renderer) {
       const S = F.int(v, "scale") || 200, wmm = (out.bbox[2] - out.bbox[0]) / S, hmm = (out.bbox[3] - out.bbox[1]) / S;

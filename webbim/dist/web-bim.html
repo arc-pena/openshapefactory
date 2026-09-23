@@ -6229,7 +6229,9 @@ BUILDERS.SectionView = { build: () => ({ data: {} }) };
 declare({ type: "View3D", guid: "wb-0503", category: "View", kind: "view", idPrefix: "V-3D",
   summary: "A camera. On a sheet it becomes exact hidden-line line-work, cached and never interactive (§6.4).",
   args: [ json("camera", "Camera", { azimuth: 225, elevation: 30, target: [6000, 4000, 1500] }), integer("scale", "Scale 1:", 200, 1, 5000, { group: "Graphics" }),
-          ref("style", "View style", ["viewStyle"], { group: "Graphics" }), json("render", "Render", { mode: "lines", hidden: false, rasterDPI: 300, silhouetteWeight: 0.35 }, { group: "Graphics" }) ] });
+          ref("style", "View style", ["viewStyle"], { group: "Graphics" }), json("render", "Render", { mode: "lines", hidden: false, rasterDPI: 300, silhouetteWeight: 0.35 }, { group: "Graphics" }),
+          // Revit's Section Box: an axis-aligned box the view is clipped to; each face is pushed or pulled on its own
+          json("sectionBox", "Section box", { on: false, min: null, max: null }, { group: "Extents" }) ] });
 BUILDERS.View3D = { build: () => ({ data: {} }) };
 
 declare({ type: "Schedule", guid: "wb-0504", category: "View", kind: "schedule", idPrefix: "SC",
@@ -8140,6 +8142,7 @@ function view3dScene(doc, v, opts = {}) {
   const cam = JSON.stringify(doc.argValue(v, "camera"));
   const scene = { prims: B.prims, hits: [], links: [], scale: S, kind: "3d" };
   if (cache && cache.camera === cam && (cache.vis || "") !== visibilityKey(doc, v)) scene.stale = "Visibility/Graphics changed since generation";
+  if (cache && cache.camera === cam && (cache.box || "") !== sectionBoxKey(doc, v)) scene.stale = "the section box changed since generation";
   if (!cache || cache.camera !== cam) { scene.stale = "never generated"; B.text([0, 0], "Hidden-line view not generated yet", 3, {}); scene.bbox = [-5, -5, 120, 10]; return scene; }
   if (cache.revision !== doc.modelRevision) scene.stale = `model changed since generation (rev ${cache.revision} → ${doc.modelRevision})`;
   const render = doc.argValue(v, "render") || {};
@@ -8260,6 +8263,9 @@ function translatePrim(p, o) {
 /** A dimension's string in the project's units, as Revit writes it: metric bare (7000, 7.000),
  *  imperial with its marks (22' - 11 9/16"). */
 function dimText(doc, v) { const u = (doc.meta && doc.meta.displayUnits) || "mm"; return fmtLength(v, { unit: u, suffix: false, fixed: u === "m" || u === "cm" }); }
+
+/** A 3D view's section box as a cache key: "" when it is off. */
+function sectionBoxKey(doc, v) { const b = doc.typeOf(v) === "View3D" && doc.argValue(v, "sectionBox"); return b && b.on && b.min && b.max ? JSON.stringify([b.min, b.max]) : ""; }
 
 // ===== props.js =====
 //! Pure models the interface draws (§4.5, §4.2, §10.3). Kept free of the DOM so
@@ -8537,7 +8543,30 @@ function buildHLRModel(doc, opts = {}) {
     if (t === "Wall") { const w = doc.plan(f); if (!w || !w.pieces) continue; wallSolids(w, solids); wallEdges(w, edges, chord); }
     if (t === "Column") { const p = doc.plan(f); if (!p) continue; const foot = p.foot.length ? p.foot : samplePath(p.path).slice(0, -1); prism(foot, p.z0, p.z1, solids, edges, !!(p.foot.length === 16)); }
   }
+  if (opts.box) return clipToBox({ solids, edges }, opts.box);
   return { solids, edges };
+}
+/** A section box on hidden-line: edges are cut to the box and what lies wholly outside it is gone.
+ *  (A solid the box cuts still occludes whole: the drawing does not yet cap the cut.) */
+function clipToBox(m, box) {
+  const { min, max } = box, out = { solids: [], edges: [] };
+  for (const s of m.solids) {
+    const pts = s.faces.flatMap(fc => fc.poly);
+    if ([0, 1, 2].every(i => pts.some(p => p[i] >= min[i]) && pts.some(p => p[i] <= max[i]))) out.solids.push(s);
+  }
+  for (const e of m.edges) {
+    // Liang-Barsky against the six faces
+    let t0 = 0, t1 = 1; const d = [0, 1, 2].map(i => e.b[i] - e.a[i]);
+    let keep = true;
+    for (let i = 0; i < 3 && keep; i++) for (const [p, q] of [[-d[i], e.a[i] - min[i]], [d[i], max[i] - e.a[i]]]) {
+      if (Math.abs(p) < 1e-12) { if (q < 0) { keep = false; break; } continue; }
+      const t = q / p; if (p < 0) { if (t > t1) { keep = false; break; } if (t > t0) t0 = t; } else { if (t < t0) { keep = false; break; } if (t < t1) t1 = t; }
+    }
+    if (!keep || t1 - t0 < 1e-9) continue;
+    const at = t => [0, 1, 2].map(i => e.a[i] + d[i] * t);
+    out.edges.push(Object.assign({}, e, { a: at(t0), b: at(t1) }));
+  }
+  return out;
 }
 function top3(piece, p) { const zt = piece.topAt ? piece.topAt(p) : piece.z1; const lean = piece.lean ? mul(piece.n2, Math.tan(piece.lean) * (zt - piece.zRef)) : [0, 0]; return [p[0] + lean[0], p[1] + lean[1], zt]; }
 function bot3(piece, p) { const lean = piece.lean ? mul(piece.n2, Math.tan(piece.lean) * (piece.z0 - piece.zRef)) : [0, 0]; return [p[0] + lean[0], p[1] + lean[1], piece.z0]; }
@@ -8712,6 +8741,17 @@ function complement(iv) {
   for (const [a, b] of iv) { if (a > t) out.push([t, a]); t = Math.max(t, b); }
   if (t < 1) out.push([t, 1]);
   return out;
+}
+
+/** The 3D extent of some elements, from the same bodies the hidden-line and 3D views draw:
+ *  { min, max } in model mm, or null when none of them has a body (a grid, a room, a note). */
+function elementsBox(doc, ids) {
+  const set = new Set(ids), m = buildHLRModel(doc, { visible: f => set.has(doc.idOf(f)) });
+  const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+  const take = p => { for (let i = 0; i < 3; i++) { if (p[i] < min[i]) min[i] = p[i]; if (p[i] > max[i]) max[i] = p[i]; } };
+  for (const s_ of m.solids) for (const fc of s_.faces) for (const p of fc.poly) take(p);
+  for (const e of m.edges) { take(e.a); take(e.b); }
+  return Number.isFinite(min[0]) ? { min, max } : null;
 }
 
 // ===== pdf.js =====
@@ -12885,6 +12925,20 @@ testCase("M23", "Units: the model is mm; display is mm/m/ft-in; fields take any 
     `parse ${parsed.map(([t, u, g]) => `${t}@${u}=${Math.round(g * 10) / 10}`).join(" ")}; h1 ${h1}; h2 ${h2}→${h2b}; dim "${txt}"; fv "${fv}"; after undo ${back}`);
 });
 
+testCase("M24", "Show in 3D / Selection Box: an element's 3D extent; a section box cuts the hidden-line and marks the sheet stale", () => {
+  const doc = buildSample(), ed = new Editor(doc);
+  const b = elementsBox(doc, ["W1"]), p = doc.plan(doc.element("W1"));
+  const box = { on: true, min: [b.min[0] - 300, b.min[1] - 300, b.min[2] - 300], max: [b.max[0] + 300, b.max[1] + 300, 1500] };
+  const all = buildHLRModel(doc), cut = buildHLRModel(doc, { box });
+  const inside = e => [e.a, e.b].every(q => [0, 1, 2].every(i => q[i] >= box.min[i] - 1e-6 && q[i] <= box.max[i] + 1e-6));
+  const v = doc.element("V-3D01"), k0 = sectionBoxKey(doc, v);
+  ed.apply({ op: "set", id: "V-3D01", key: "sectionBox", value: box });
+  const k1 = sectionBoxKey(doc, v);
+  const ok = b && Math.abs(b.max[2] - p.z1) < 1 && Math.abs(b.min[2] - p.z0) < 1 && cut.edges.length > 0 && cut.edges.length < all.edges.length && cut.edges.every(inside) && k0 === "" && k1 !== "";
+  return R(ok, "W1's box spans its height; clipped edges all lie in the box and are fewer; the view's box key changes when the box is set",
+    `box z ${b && b.min[2]}→${b && b.max[2]} (wall ${p.z0}→${p.z1}); edges ${all.edges.length}→${cut.edges.length}, all inside ${cut.edges.every(inside)}; key "${k0}"→"${k1.slice(0, 30)}…"`);
+});
+
 // ===== ui_util.js =====
 //! Small DOM vocabulary shared by the interface modules. The interface only
 //! mirrors the document: nothing here owns model state.
@@ -15118,6 +15172,7 @@ class ViewCube {
 
 
 
+
 const VISUAL_STYLES = ["Wireframe", "Hidden Line", "Shaded", "Consistent Colors"];
 const GRIP_PX = 9;
 
@@ -15256,6 +15311,23 @@ class View3D {
     requestAnimationFrame(step); return true;
   }
   basis() { return cameraBasis(this.cam); }
+  /** The view's section box when it is on: { min, max } in model mm. */
+  sectionBox() { const vw = this.doc.element(this.viewId), b = vw && this.doc.argValue(vw, "sectionBox"); return b && b.on && b.min && b.max ? b : null; }
+  /** Frame a box: its centre is the target, and it fills the view. */
+  fitBox(min, max) {
+    const c = [0, 1, 2].map(i => (min[i] + max[i]) / 2), B = this.basis(), pts = [];
+    for (const x of [min[0], max[0]]) for (const y of [min[1], max[1]]) for (const z of [min[2], max[2]]) pts.push([x, y, z]);
+    const xs = pts.map(p => vdot3(v3sub3(p, c), B.right)), ys = pts.map(p => vdot3(v3sub3(p, c), B.up));
+    const need = Math.max((Math.max(...ys) - Math.min(...ys)) * 1.3, (Math.max(...xs) - Math.min(...xs)) * 1.3 / (this.W / this.H || 1));
+    this.cam.target = c; this.zoom = 22000 / Math.max(need, 500); this.render();
+  }
+  /** Where the cursor's ray passes closest to a line through p0 along unit axis a: the parameter along a. */
+  onAxis(e, p0, a) {
+    const R = this.rayAt(e), o = [R.origin.x, R.origin.y, R.origin.z], d = [R.direction.x, R.direction.y, R.direction.z];
+    const w0 = v3sub3(o, p0), b = vdot3(d, a), dd = vdot3(d, d), dw = vdot3(d, w0), den = dd - b * b;
+    if (Math.abs(den) < 1e-9) return null;
+    return (dd * vdot3(w0, a) - b * dw) / den;
+  }
   span() { return 22000 / this.zoom; }
   render() {
     if (!this.renderer || !this.W) return;
@@ -15277,8 +15349,13 @@ class View3D {
       });
     }
     this.buildOverlay();
+    // the section box clips the model, never the grips drawn over it
+    const box = this.sectionBox();
+    this.renderer.clippingPlanes = box ? [[1, 0, 0, -box.min[0]], [-1, 0, 0, box.max[0]], [0, 1, 0, -box.min[1]], [0, -1, 0, box.max[1]], [0, 0, 1, -box.min[2]], [0, 0, -1, box.max[2]]]
+      .map(([x, y, z, c]) => new T.Plane(new T.Vector3(x, y, z), c)) : [];
     this.renderer.autoClear = true;
     this.renderer.render(this.scene, this.camera);
+    this.renderer.clippingPlanes = [];
     this.renderer.autoClear = false; this.renderer.clearDepth();
     this.renderer.render(this.overlayScene, this.camera);
     if (this.cube) this.cube.sync(B);
@@ -15326,7 +15403,12 @@ class View3D {
   picksAt(e) {
     this.rayAt(e);
     const out = [], seen = new Set();
-    for (const hit of this.ray.intersectObjects(this.meshes, false)) { const id = hit.object.userData.id; if (seen.has(id)) continue; seen.add(id); out.push({ id, point: [hit.point.x, hit.point.y, hit.point.z] }); }
+    const box = this.sectionBox(), inside = q => !box || [0, 1, 2].every(i => q[i] >= box.min[i] - 1 && q[i] <= box.max[i] + 1);
+    for (const hit of this.ray.intersectObjects(this.meshes, false)) {
+      const id = hit.object.userData.id, q = [hit.point.x, hit.point.y, hit.point.z];
+      if (seen.has(id) || !inside(q)) continue;              // what the section box cut away cannot be picked
+      seen.add(id); out.push({ id, point: q });
+    }
     return out;
   }
   /** Tab: step through what the cursor's ray passes through, front to back. */
@@ -15353,8 +15435,17 @@ class View3D {
 
   // ---------------------------------------------------------------- grips (declared per element, drawn here in 3D)
   grips() {
+    const box = this.app.tool === "select" ? this.sectionBox() : null, faceGrips = [];
+    // the section box's six faces, each an arrow pushed or pulled along its own axis only: it stays a box
+    if (box) for (let i = 0; i < 3; i++) for (const side of [-1, 1]) {
+      const at = [0, 1, 2].map(k => k === i ? (side < 0 ? box.min[k] : box.max[k]) : (box.min[k] + box.max[k]) / 2);
+      faceGrips.push({ key: `box${i}${side}`, at, kind: "face", axis: i, side });
+    }
     const ids = [...this.app.selection].filter(id => this.doc.element(id));
-    if (ids.length !== 1 || this.app.tool !== "select") return [];
+    if (ids.length !== 1 || this.app.tool !== "select") return faceGrips;
+    return faceGrips.concat(this.elementGrips(ids));
+  }
+  elementGrips(ids) {
     const f = this.doc.element(ids[0]), t = this.doc.typeOf(f), p = this.doc.plan(f);
     if (t === "Wall" && p && p.curve.type === "line") {
       const c = F.json(f, "centreline"), mid = lerp(c.start, c.end, 0.5);
@@ -15372,7 +15463,22 @@ class View3D {
   buildOverlay() {
     const T = this.T; clear3(this.overlayScene);
     const k = this.span() / this.H;          // model mm per screen px: grips keep their screen size
+    const box = this.sectionBox();
+    if (box) {
+      const c = [], a = box.min, b = box.max, P = (x, y, z) => [x ? b[0] : a[0], y ? b[1] : a[1], z ? b[2] : a[2]];
+      for (const [p, q] of [[[0,0,0],[1,0,0]],[[0,1,0],[1,1,0]],[[0,0,1],[1,0,1]],[[0,1,1],[1,1,1]],[[0,0,0],[0,1,0]],[[1,0,0],[1,1,0]],[[0,0,1],[0,1,1]],[[1,0,1],[1,1,1]],[[0,0,0],[0,0,1]],[[1,0,0],[1,0,1]],[[0,1,0],[0,1,1]],[[1,1,0],[1,1,1]]]) c.push(...P(...p), ...P(...q));
+      const geo = new T.BufferGeometry(); geo.setAttribute("position", new T.Float32BufferAttribute(c, 3));
+      const ln = new T.LineSegments(geo, new T.LineBasicMaterial({ color: 0x1d6fd8, depthTest: false, transparent: true, opacity: 0.85 })); ln.renderOrder = 9; this.overlayScene.add(ln);
+    }
     for (const g of this.grips()) {
+      if (g.kind === "face") {
+        // an arrow standing out of the face, pointing the way the face moves when pulled
+        const dir = [0, 0, 0]; dir[g.axis] = g.side;
+        const cone = new T.Mesh(new T.ConeGeometry(GRIP_PX * 0.9 * k, GRIP_PX * 2.4 * k, 16), new T.MeshBasicMaterial({ color: this.hoverGrip === g.key ? 0xe8591a : 0x1d6fd8, depthTest: false }));
+        cone.quaternion.setFromUnitVectors(new T.Vector3(0, 1, 0), new T.Vector3(...dir));
+        cone.position.set(...g.at.map((v, i) => v + dir[i] * GRIP_PX * 1.6 * k)); cone.renderOrder = 10; cone.userData.grip = g; this.overlayScene.add(cone);
+        continue;
+      }
       const col = g.kind === "height" ? 0x2e7d32 : g.kind === "move" ? 0x1d6fd8 : 0xffffff;
       const geo = g.kind === "height" ? new T.ConeGeometry(GRIP_PX * k, GRIP_PX * 2.2 * k, 16) : g.kind === "move" ? new T.OctahedronGeometry(GRIP_PX * 1.1 * k) : new T.SphereGeometry(GRIP_PX * 0.8 * k, 16, 12);
       const m = new T.Mesh(geo, new T.MeshBasicMaterial({ color: this.hoverGrip === g.key ? 0xe8591a : col, depthTest: false }));
@@ -15397,7 +15503,8 @@ class View3D {
   pickGrip(e) {
     const r = this.renderer.domElement.getBoundingClientRect(), sx = e.clientX - r.left, sy = e.clientY - r.top;
     let best = null;
-    for (const g of this.grips()) { const s = this.screenOf(g.at), d = Math.hypot(s[0] - sx, s[1] - sy); if (d < GRIP_PX + 6 && (!best || d < best.d)) best = { g, d }; }
+    const k = this.span() / this.H;
+    for (const g of this.grips()) { const at = g.kind === "face" ? g.at.map((v, i) => v + (i === g.axis ? g.side * GRIP_PX * 1.6 * k : 0)) : g.at; const s = this.screenOf(at), d = Math.hypot(s[0] - sx, s[1] - sy); if (d < GRIP_PX + 6 && (!best || d < best.d)) best = { g, d }; }
     return best && best.g;
   }
   /** Snap a plane point to wall ends within 12 px, else quantise to 10 mm. */
@@ -15538,6 +15645,7 @@ class View3D {
     }
   }
   startGrip(e, g) {
+    if (g.kind === "face") return this.startFace(e, g);
     const doc = this.doc, id = [...this.app.selection][0], f = doc.element(id);
     const z0 = g.at[2], grab = this.onPlane(e, g.kind === "height" ? g.at[2] : z0);
     const orig = JSON.parse(JSON.stringify(g.writes ? (g.writes.includes(".") ? F.json(f, g.writes.split(".")[0])[g.writes.split(".")[1]] : doc.argValue(f, g.writes)) : null));
@@ -15575,6 +15683,25 @@ class View3D {
         this.app.editor.seal(); this.hud.hidden = true; this.app.refresh({ keepMain: true }); this.refresh(); if (drv) this.app.say(`Moved level ${drv.level}: every wall bound to it followed`, "ok"); else if (wasBound) this.app.say(`height was bound to ${orig.ref}; the grip set it to a literal — undo to restore the binding`, "note"); },
     };
   }
+  /** Push or pull one face of the section box along its axis; the opposite face stays put. */
+  startFace(e, g) {
+    const box0 = JSON.parse(JSON.stringify(this.sectionBox())), axis = [0, 0, 0]; axis[g.axis] = 1;
+    const p0 = g.at.slice(); p0[g.axis] = 0;
+    const t0 = this.onAxis(e, p0, axis), key = `sbox:${this.viewId}:${g.key}:${Date.now()}`;
+    const face = g.side < 0 ? box0.min[g.axis] : box0.max[g.axis];
+    return {
+      grip: true,
+      move: ev => {
+        const t = this.onAxis(ev, p0, axis); if (t === null || t0 === null) return;
+        const v = Math.round((face + t - t0) / 10) * 10, box = JSON.parse(JSON.stringify(box0));
+        if (g.side < 0) box.min[g.axis] = Math.min(v, box.max[g.axis] - 100); else box.max[g.axis] = Math.max(v, box.min[g.axis] + 100);
+        this.app.apply({ op: "set", id: this.viewId, key: "sectionBox", value: box }, { quiet: true, coalesce: key });
+        this.showHud(ev, `${"XYZ"[g.axis]} ${g.side < 0 ? "min" : "max"} ${fmtLen(g.side < 0 ? box.min[g.axis] : box.max[g.axis])} · box ${fmtLen(box.max[0] - box.min[0])} × ${fmtLen(box.max[1] - box.min[1])} × ${fmtLen(box.max[2] - box.min[2])}`);
+        this.render();
+      },
+      end: () => { this.app.editor.seal(); this.hud.hidden = true; this.app.refresh({ keepMain: true }); this.render(); },
+    };
+  }
   finishWall(closed) {
     const pts = this.tool.pts.slice(); this.tool.pts = []; this.tool.cursor = null;
     if (pts.length < 2) return;
@@ -15598,11 +15725,12 @@ class View3D {
     const doc = this.doc, v = doc.element(this.viewId);
     if (this.T && !keepCamera) this.app.apply({ op: "set", id: this.viewId, key: "camera", value: roundCam(this.cam) }, { quiet: true });
     const cam = F.json(v, "camera");
-    const model = buildHLRModel(doc, { visible: f => shownInView(doc, v, f) });
+    const box = this.sectionBox();
+    const model = buildHLRModel(doc, { visible: f => shownInView(doc, v, f), box });
     const it = hlrSteps(model, cam); let r; const t0 = performance.now(); let last = t0;
     for (;;) { r = it.next(); if (r.done) break; if (onProgress) onProgress(r.value.done / r.value.total); if (performance.now() - last > 12) { await new Promise(res => setTimeout(res, 0)); last = performance.now(); } }
     const out = r.value;
-    const entry = { camera: JSON.stringify(cam), revision: doc.modelRevision, vis: visibilityKey(doc, v), lines: out.lines, bbox: out.bbox, counts: out.counts };
+    const entry = { camera: JSON.stringify(cam), revision: doc.modelRevision, vis: visibilityKey(doc, v), box: sectionBoxKey(doc, v), lines: out.lines, bbox: out.bbox, counts: out.counts };
     const render = F.json(v, "render") || {};
     if (render.mode === "linesOverShaded" && this.renderer) {
       const S = F.int(v, "scale") || 200, wmm = (out.bbox[2] - out.bbox[0]) / S, hmm = (out.bbox[3] - out.bbox[1]) / S;
@@ -15688,6 +15816,7 @@ const roundCam = c => ({ azimuth: Math.round(((c.azimuth % 360) + 360) % 360 * 1
 //! left, document tabs over the view, a view control bar under it, and the
 //! status bar. The shell owns no model state: every command goes through one
 //! registry, and every edit through app.apply → the op pipeline → regenerate.
+
 
 
 
@@ -15807,6 +15936,31 @@ const canUseTool = k => { const t = activeType(); if (t === "PlanView") return t
 
 // ---------------------------------------------------------------- documents
 /** There is always a {3D} view: the house button must have somewhere to go. */
+/** Revit's "Show in 3D" and Selection Box (BX): the {3D} view, framed on what is selected - with a
+ *  section box around it, when asked. */
+function showIn3D(withBox) {
+  const ids = [...app.selection].filter(id => app.doc.element(id));
+  if (!ids.length) return app.say("select something first", "note");
+  const box = elementsBox(app.doc, ids); if (!box) return app.say("nothing selected has a body to show in 3D", "note");
+  ensureDefault3D(app.doc); const vid = default3D();
+  if (withBox) {
+    const pad = 300, b = { on: true, min: box.min.map(v => Math.floor((v - pad) / 10) * 10), max: box.max.map(v => Math.ceil((v + pad) / 10) * 10) };
+    app.apply({ op: "set", id: vid, key: "sectionBox", value: b });
+  }
+  app.openView(vid);
+  const v = app.views.get(vid); if (v && v.fitBox) { v.refresh(); v.fitBox(box.min, box.max); }
+  app.select(ids);
+  app.say(withBox ? `Section box around ${ids.length} element${ids.length > 1 ? "s" : ""}: drag its blue arrows to push or pull a face; Section Box on the View tab turns it off` : `Showing ${ids.join(", ")} in 3D`, "ok");
+}
+function toggleSectionBox() {
+  const v = app.doc.element(app.activeView);
+  if (!v || app.doc.typeOf(v) !== "View3D") return app.say("open a 3D view", "note");
+  const b = Object.assign({ on: false, min: null, max: null }, app.doc.argValue(v, "sectionBox") || {});
+  if (!b.on && !(b.min && b.max)) { const all = elementsBox(app.doc, app.doc.elements().filter(f => shownInView(app.doc, v, f)).map(f => app.doc.idOf(f))); if (!all) return; b.min = all.min.map(x => x - 300); b.max = all.max.map(x => x + 300); }
+  b.on = !b.on;
+  app.apply({ op: "set", id: app.activeView, key: "sectionBox", value: b });
+  app.say(b.on ? "Section box on: drag its arrows to push or pull each face" : "Section box off (its size is kept for next time)", "ok");
+}
 function ensureDefault3D(doc) {
   if (doc.elements().some(f => doc.typeOf(f) === "View3D" && f.get("Name") === "{3D}")) return;
   let id = "V-3D"; let n = 1; while (doc.element(id)) id = "V-3D" + (++n);
@@ -15857,6 +16011,9 @@ const COMMANDS = {
   undo: { label: "Undo", icon: "undo", run: () => { app.editor.undo(); app.refresh(); saveDraftSoon(); } },
   redo: { label: "Redo", icon: "redo", run: () => { app.editor.redo(); app.refresh(); saveDraftSoon(); } },
   default3d: { label: "Default 3D View", icon: "house", key: "3D", run: () => { ensureDefault3D(app.doc); app.openView(default3D()); } },
+  showin3d: { label: "Show in 3D", icon: "view3d", hint: "Open the 3D view centred on the selection", run: () => showIn3D(false) },
+  selectionbox: { label: "Selection Box", icon: "crop", key: "BX", hint: "Open the 3D view with a section box around the selection; push or pull its faces", run: () => showIn3D(true) },
+  sectionbox: { label: "Section Box", icon: "crop", hint: "Clip the 3D view to a box; drag its arrows to push or pull each face", active: () => { const v = app.doc.element(app.activeView); const b = v && app.doc.typeOf(v) === "View3D" && app.doc.argValue(v, "sectionBox"); return !!(b && b.on); }, run: () => toggleSectionBox() },
   planview: { label: "Floor Plan", icon: "plan", hint: "Pick a level without a floor plan: one plan per level", run: () => floorPlanDialog() },
   level: { label: "Level", icon: "level", key: "LL", run: () => newLevel() },
   schedule: { label: "Schedule", icon: "schedule", run: () => newSchedule() },
@@ -15923,7 +16080,7 @@ const RIBBON = [
   ] },
   { tab: "View", panels: [
     { title: "Graphics", items: [big("vv"), small("thin"), small("zoomfit")] },
-    { title: "Create", items: [big("planview"), big("default3d"), big("section"), small("elev"), small("schedule"), big("sheet")] },
+    { title: "Create", items: [big("planview"), big("default3d"), big("sectionbox"), big("section"), small("elev"), small("schedule"), big("sheet")] },
     { title: "Windows", items: [small("graph"), small("tree"), small("closehidden")] },
     { title: "Interface", items: [big("cadmode")] },
   ] },
@@ -15949,6 +16106,7 @@ function contextTab() {
     ...(hasWall ? [{ title: "Mode", items: [big("flip")] }] : []),
     ...(els.length === 1 && app.doc.typeOf(els[0]) === "Floor" ? [{ title: "Mode", items: [big("editboundary")] }] : []),
     ...(els.some(f => app.doc.typeOf(f) === "Door") ? [{ title: "Door", items: [big("dooranim"), big("swingnext"), small("fliphand"), small("flipfacing")] }] : []),
+    { title: "View", items: [small("showin3d"), small("selectionbox")] },
     { title: "Select", items: [small("selectall"), small("select")] },
   ] };
 }
@@ -16095,7 +16253,8 @@ app.contextMenu = (e) => {
   items.push({ label: "Cancel", run: () => { app.setTool("select"); app.select([]); } });
   if (app.lastCommand && COMMANDS[app.lastCommand]) items.push({ label: `Repeat [${COMMANDS[app.lastCommand].label}]`, icon: COMMANDS[app.lastCommand].icon, run: () => app.run(app.lastCommand) });
   items.push("-");
-  if (app.selection.size) items.push(c("selectall"), c("edittype"), c("move"), c("copy"), c("rotate"), c("mirror"), c("del"), "-");
+  if (app.selection.size) items.push(c("showin3d"), c("selectionbox"), "-", c("selectall"), c("edittype"), c("move"), c("copy"), c("rotate"), c("mirror"), c("del"), "-");
+  { const v = app.doc.element(app.activeView); if (v && app.doc.typeOf(v) === "View3D") items.push(c("sectionbox")); }
   items.push(c("zoomfit"), c("default3d"), c("props"));
   menuAt(e.clientX, e.clientY, items);
 };

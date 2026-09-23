@@ -44,7 +44,30 @@ export function buildHLRModel(doc, opts = {}) {
     if (t === "Wall") { const w = doc.plan(f); if (!w || !w.pieces) continue; wallSolids(w, solids); wallEdges(w, edges, chord); }
     if (t === "Column") { const p = doc.plan(f); if (!p) continue; const foot = p.foot.length ? p.foot : samplePath(p.path).slice(0, -1); prism(foot, p.z0, p.z1, solids, edges, !!(p.foot.length === 16)); }
   }
+  if (opts.box) return clipToBox({ solids, edges }, opts.box);
   return { solids, edges };
+}
+/** A section box on hidden-line: edges are cut to the box and what lies wholly outside it is gone.
+ *  (A solid the box cuts still occludes whole: the drawing does not yet cap the cut.) */
+function clipToBox(m, box) {
+  const { min, max } = box, out = { solids: [], edges: [] };
+  for (const s of m.solids) {
+    const pts = s.faces.flatMap(fc => fc.poly);
+    if ([0, 1, 2].every(i => pts.some(p => p[i] >= min[i]) && pts.some(p => p[i] <= max[i]))) out.solids.push(s);
+  }
+  for (const e of m.edges) {
+    // Liang-Barsky against the six faces
+    let t0 = 0, t1 = 1; const d = [0, 1, 2].map(i => e.b[i] - e.a[i]);
+    let keep = true;
+    for (let i = 0; i < 3 && keep; i++) for (const [p, q] of [[-d[i], e.a[i] - min[i]], [d[i], max[i] - e.a[i]]]) {
+      if (Math.abs(p) < 1e-12) { if (q < 0) { keep = false; break; } continue; }
+      const t = q / p; if (p < 0) { if (t > t1) { keep = false; break; } if (t > t0) t0 = t; } else { if (t < t0) { keep = false; break; } if (t < t1) t1 = t; }
+    }
+    if (!keep || t1 - t0 < 1e-9) continue;
+    const at = t => [0, 1, 2].map(i => e.a[i] + d[i] * t);
+    out.edges.push(Object.assign({}, e, { a: at(t0), b: at(t1) }));
+  }
+  return out;
 }
 function top3(piece, p) { const zt = piece.topAt ? piece.topAt(p) : piece.z1; const lean = piece.lean ? mul(piece.n2, Math.tan(piece.lean) * (zt - piece.zRef)) : [0, 0]; return [p[0] + lean[0], p[1] + lean[1], zt]; }
 function bot3(piece, p) { const lean = piece.lean ? mul(piece.n2, Math.tan(piece.lean) * (piece.z0 - piece.zRef)) : [0, 0]; return [p[0] + lean[0], p[1] + lean[1], piece.z0]; }
@@ -219,4 +242,15 @@ function complement(iv) {
   for (const [a, b] of iv) { if (a > t) out.push([t, a]); t = Math.max(t, b); }
   if (t < 1) out.push([t, 1]);
   return out;
+}
+
+/** The 3D extent of some elements, from the same bodies the hidden-line and 3D views draw:
+ *  { min, max } in model mm, or null when none of them has a body (a grid, a room, a note). */
+export function elementsBox(doc, ids) {
+  const set = new Set(ids), m = buildHLRModel(doc, { visible: f => set.has(doc.idOf(f)) });
+  const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+  const take = p => { for (let i = 0; i < 3; i++) { if (p[i] < min[i]) min[i] = p[i]; if (p[i] > max[i]) max[i] = p[i]; } };
+  for (const s_ of m.solids) for (const fc of s_.faces) for (const p of fc.poly) take(p);
+  for (const e of m.edges) { take(e.a); take(e.b); }
+  return Number.isFinite(min[0]) ? { min, max } : null;
 }
