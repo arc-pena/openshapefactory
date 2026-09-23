@@ -1,0 +1,728 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sketcher Bracket</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@112,500;112,700;125,800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<style>
+/* One look on purpose: a machined part under studio light. The page never
+   switches to a light theme, so every colour is painted explicitly. */
+:root {
+  color-scheme: dark;
+  --ground: #0d1013;
+  --ground-2: #151a1f;
+  --ink: #e8ecef;
+  --ink-2: #a3adb5;
+  --ink-3: #6c7780;
+  --line: rgba(232, 236, 239, .12);
+  /* Layout fluid: the blue a machinist paints on stock before scribing it.
+     Sketch lines and the active tree row use it. */
+  --scribe: #7b9dff;
+  /* The Feature Modeller's datum colour, kept so points and planes read the
+     same here as they do in the tool. */
+  --datum: #e0a33c;
+  --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --gutter: clamp(16px, 5vw, 64px);
+}
+* { box-sizing: border-box; }
+html { background: var(--ground); }
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font: 400 16px/1.6 var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--ink); text-decoration-color: var(--scribe); text-underline-offset: 3px; }
+a:focus-visible { outline: 2px solid var(--scribe); outline-offset: 3px; border-radius: 2px; }
+
+#stage { position: fixed; inset: 0; z-index: 0; }
+#stage canvas { display: block; width: 100%; height: 100%; }
+/* A vignette over the model so the copy on the left always has a darker
+   ground to sit on, without a box around it. */
+#stage::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background:
+    linear-gradient(90deg, rgba(13,16,19,.82) 0%, rgba(13,16,19,.35) 34%, rgba(13,16,19,0) 55%),
+    radial-gradient(ellipse at 60% 45%, rgba(13,16,19,0) 40%, rgba(13,16,19,.6) 100%);
+}
+
+main { position: relative; z-index: 1; padding-inline: var(--gutter); }
+.chapter {
+  min-height: 100svh;
+  display: flex; align-items: center;
+  padding-block: 12vh;
+}
+.copy { max-width: 31rem; display: grid; gap: 14px; }
+.kicker {
+  font: 500 11.5px/1.4 var(--mono); letter-spacing: .08em; text-transform: uppercase;
+  color: var(--scribe);
+}
+.kicker b { color: var(--ink-2); font-weight: 500; }
+h1, h2 {
+  margin: 0; font-family: var(--display); font-stretch: 112%; font-weight: 700;
+  letter-spacing: -.01em; text-wrap: balance; line-height: 1.02;
+}
+h1 { font-size: clamp(42px, 7.4vw, 92px); font-stretch: 125%; font-weight: 800; text-transform: uppercase; letter-spacing: -.02em; }
+h2 { font-size: clamp(28px, 3.6vw, 44px); }
+.copy p { margin: 0; color: var(--ink-2); max-width: 62ch; }
+.copy p strong { color: var(--ink); font-weight: 500; }
+.lede { font-size: 18px; }
+.figures {
+  display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 4px;
+  font: 400 12px/1.5 var(--mono); color: var(--ink-3); font-variant-numeric: tabular-nums;
+}
+.figures span b { color: var(--ink); font-weight: 500; }
+code { font: 500 .88em var(--mono); color: var(--ink); }
+
+/* The kernel's own boot and build messages, as a single line. */
+#status {
+  display: flex; align-items: center; gap: 10px;
+  font: 400 12px/1.4 var(--mono); color: var(--ink-2);
+}
+#status i {
+  width: 8px; height: 8px; border-radius: 50%; flex: none;
+  background: var(--datum); box-shadow: 0 0 0 4px rgba(224,163,60,.16);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+#status.ready i { background: #5fc38f; box-shadow: 0 0 0 4px rgba(95,195,143,.16); animation: none; }
+#status.failed i { background: #e2705f; box-shadow: 0 0 0 4px rgba(226,112,95,.16); animation: none; }
+@keyframes pulse { 50% { opacity: .35; } }
+.cue { font: 500 11px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); }
+
+/* The document's own feature tree, in document order, as the page's index.
+   The row being narrated lights up; nothing here can be clicked into an
+   editor. It is the table of contents, not the modeller's tree panel. */
+#tree {
+  position: fixed; z-index: 2; right: var(--gutter); top: 50%; transform: translateY(-50%);
+  margin: 0; padding: 0; list-style: none;
+  font: 400 11.5px/1 var(--mono); color: var(--ink-3);
+  display: grid; gap: 2px;
+}
+#tree li {
+  display: grid; grid-template-columns: 30px 1fr; gap: 10px; align-items: center;
+  padding: 5px 10px 5px 8px; border-left: 2px solid transparent;
+  transition: color .25s, border-color .25s, background .25s;
+}
+#tree li .id { color: var(--ink-3); }
+#tree li.on { color: var(--ink); border-left-color: var(--scribe); background: rgba(123,157,255,.08); }
+#tree li.on .id { color: var(--scribe); }
+#tree li.done { color: var(--ink-2); }
+#tree .head {
+  display: block; padding: 0 10px 8px; font-size: 10px; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--ink-3); border: 0; background: none;
+}
+
+/* What the kernel says about the feature on screen, in its own numbers. */
+#readout {
+  position: fixed; z-index: 2; left: var(--gutter); bottom: max(18px, env(safe-area-inset-bottom, 0px));
+  font: 400 11.5px/1.5 var(--mono); color: var(--ink-3); font-variant-numeric: tabular-nums;
+  display: flex; gap: 18px; flex-wrap: wrap; max-width: calc(100% - 2 * var(--gutter));
+  pointer-events: none;
+}
+#readout b { color: var(--ink-2); font-weight: 500; }
+
+.end-links { display: flex; flex-wrap: wrap; gap: 10px 22px; margin-top: 6px; }
+.end-links a { font: 500 13px var(--mono); }
+
+@media (max-width: 900px) {
+  #tree { display: none; }
+  #stage::after {
+    background: linear-gradient(0deg, rgba(13,16,19,.94) 0%, rgba(13,16,19,.6) 42%, rgba(13,16,19,0) 70%);
+  }
+  .chapter { align-items: flex-end; padding-block: 50vh 14vh; }
+  .chapter:first-child { padding-top: 48vh; }
+  body { font-size: 15px; }
+  .lede { font-size: 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #status i { animation: none; }
+}
+</style>
+</head>
+<body>
+<div id="stage" aria-hidden="true"></div>
+
+<ol id="tree" aria-label="Feature tree of sketcher.json">
+  <li class="head" aria-hidden="true">Sketcher · 13 features</li>
+</ol>
+
+<div id="readout" aria-live="polite"></div>
+
+<main>
+  <section class="chapter" data-features="FI1">
+    <div class="copy">
+      <div class="kicker">Feature Modeller <b>·</b> sketcher.json</div>
+      <h1>Thirteen features, one bracket</h1>
+      <p class="lede">The part behind this page is not a video or a baked mesh. The Feature Modeller's OpenCascade kernel is running in your browser, rebuilding the sketcher model one feature at a time. Each chapter below chooses how that step is shown.</p>
+      <div id="status"><i></i><span>starting the kernel</span></div>
+      <div class="cue">Scroll to rebuild it</div>
+    </div>
+  </section>
+
+  <section class="chapter" data-features="PT1 VE1 VE2 PL1 PT2 PL2">
+    <div class="copy">
+      <div class="kicker">PT1 · VE1 · VE2 · PL1 · PT2 · PL2</div>
+      <h2>It starts with a point and two directions</h2>
+      <p>An origin at <code>(0, 0, 0)</code>, <strong>Up</strong> along Z and <strong>Across</strong> along Y. Two planes hang off them: the plate plane through the origin, normal to Up, and the rib plane 16&nbsp;mm across, normal to Across.</p>
+      <p>Nothing solid exists yet. These are the references every later feature is measured from.</p>
+    </div>
+  </section>
+
+  <section class="chapter" data-features="SK1">
+    <div class="copy">
+      <div class="kicker">SK1 · Sketch · Plate outline</div>
+      <h2>A sketch that only knows its own plane</h2>
+      <p>The plate outline is drawn in the plate plane's own u and v. Three lines and a 50&nbsp;mm nose arc close the outline, and a 16&nbsp;mm bolt hole, a 22&nbsp;mm eye and a 70&nbsp;mm slot become holes.</p>
+      <p>Four relations hold it: front and back horizontal, the side vertical, front parallel to back. The solver closes the chain and nests the holes into a single face.</p>
+      <div class="figures"><span><b>7</b> elements</span><span><b>4</b> constraints</span><span><b>24</b> solver passes</span></div>
+    </div>
+  </section>
+
+  <section class="chapter" data-features="NU1 EX1">
+    <div class="copy">
+      <div class="kicker">NU1 · EX1 · Extrude · Plate</div>
+      <h2>Pushed up by a number, not a drag</h2>
+      <p>The extrude takes its distance from <strong>NU1, Plate thickness</strong>: 14&nbsp;mm. That link is a reference stored in the document, so when the number changes, the plate changes with it.</p>
+      <div class="figures"><span><b data-fig="EX1.triangles">…</b> triangles</span><span>finish <b>aluminium</b></span></div>
+    </div>
+  </section>
+
+  <section class="chapter" data-features="SK2">
+    <div class="copy">
+      <div class="kicker">PL2 · SK2 · Sketch · Rib section</div>
+      <h2>A second sketch, standing up</h2>
+      <p>The rib plane is vertical, so the same kind of drawing becomes a profile: a 210&nbsp;mm foot, a sloped back and a 70&nbsp;mm head. One relation keeps the foot parallel to the head.</p>
+      <div class="figures"><span><b>4</b> lines</span><span><b>1</b> constraint</span></div>
+    </div>
+  </section>
+
+  <section class="chapter" data-features="EX2">
+    <div class="copy">
+      <div class="kicker">EX2 · Extrude · Rib</div>
+      <h2>14&nbsp;mm across, normal to the profile</h2>
+      <p>This extrude has a plain 14&nbsp;mm typed into it rather than a link. That difference shows up later: when the plate thickness changes, the rib stays the same.</p>
+    </div>
+  </section>
+
+  <section class="chapter" data-features="BO1">
+    <div class="copy">
+      <div class="kicker">BO1 · Boolean · Union</div>
+      <h2>Two solids, one body</h2>
+      <p>A Boolean union fuses the plate and the rib where they meet. Two overlapping shells become one closed solid, with new edges where the rib lands on the plate.</p>
+      <div class="figures"><span><b data-fig="BO1.triangles">…</b> triangles</span><span><b data-fig="BO1.edgeCount">…</b> edge segments</span></div>
+    </div>
+  </section>
+
+  <section class="chapter" data-features="FI1">
+    <div class="copy">
+      <div class="kicker">FI1 · Fillet · Broken edges</div>
+      <h2>Every edge, broken at 2&nbsp;mm</h2>
+      <p>The last feature takes the whole body and rounds every edge at 2&nbsp;mm, the way a machinist deburrs a part. It's the most expensive step in the tree.</p>
+      <div class="figures"><span><b data-fig="FI1.triangles">…</b> triangles after</span><span><b data-fig="BO1.triangles">…</b> before</span></div>
+    </div>
+  </section>
+
+  <section class="chapter" data-features="NU1" id="variants">
+    <div class="copy">
+      <div class="kicker">NU1 · setParameter</div>
+      <h2>Change one number, rebuild four features</h2>
+      <p>As you scroll, the plate thickness steps through <span id="variant-list">6, 10, 14, 20 and 28</span>&nbsp;mm. Each value was sent to the kernel on this page, which re-executed only what depends on it: <strong>NU1 → EX1 → BO1 → FI1</strong>. The sketches, planes and rib were skipped.</p>
+      <div class="figures" id="variant-figures"><span>computing variants…</span></div>
+    </div>
+  </section>
+
+  <section class="chapter" data-features="">
+    <div class="copy">
+      <div class="kicker">ocaf-parametric-model · v1</div>
+      <h2>The file is the product</h2>
+      <p>Everything on this page comes from one small JSON document: <strong>13 features in 7.3&nbsp;KB</strong>. Open it in the Feature Modeller to edit it, or read the source to see how this page drives the kernel with no modelling interface on screen.</p>
+      <div class="end-links">
+        <a href="https://claude.ai/artifact/6RwchubErKSRTXve59pDHL" target="_blank" rel="noopener">Open the Feature Modeller ↗</a>
+        <a href="https://github.com/arc-pena/openshapefactory/tree/claude/gallant-curie-kn5iaf/web/sketcher-narrative" target="_blank" rel="noopener">Source ↗</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script src="kernel.js"></script>
+<script>
+"use strict";
+(function () {
+  const statusEl = document.getElementById("status");
+  const say = (text, cls) => {
+    statusEl.querySelector("span").textContent = text;
+    statusEl.className = cls || "";
+  };
+  if (typeof THREE === "undefined") { say("three.js did not load, so there is nothing to draw with", "failed"); return; }
+
+  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const sections = Array.from(document.querySelectorAll(".chapter"));
+  const LAST = sections.length - 1;
+
+  /* ------------------------------------------------------------- scene */
+  const stage = document.getElementById("stage");
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+  renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.05;
+  renderer.setClearColor(0x0d1013, 1);
+  stage.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  scene.fog = new THREE.Fog(0x0d1013, 700, 1500);
+  const camera = new THREE.PerspectiveCamera(32, 1, 1, 4000);
+  camera.up.set(0, 0, 1);
+
+  // Studio light for the aluminium: a few soft boxes, prefiltered once into an
+  // environment map. Built from primitives so the page fetches no HDR.
+  (function studio() {
+    const env = new THREE.Scene();
+    env.background = new THREE.Color(0x07090b);
+    const box = (w, h, x, y, z, c) => {
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ color: c, side: THREE.DoubleSide }));
+      m.position.set(x, y, z); m.lookAt(0, 0, 0); env.add(m);
+    };
+    box(6, 2, 0, 0, 6, 0xc8ced4);          // overhead strip
+    box(3, 6, -6, -3, 1, 0xdfe6ee);        // key, front left
+    box(2, 5, 6, 2, 1.5, 0x9fb4d8);        // cool rim
+    box(8, 1, 0, 7, -1, 0x404850);         // floor bounce
+    const pm = new THREE.PMREMGenerator(renderer);
+    scene.environment = pm.fromScene(env, 0.02).texture;
+    pm.dispose();
+  })();
+  const hemi = new THREE.HemisphereLight(0xdfe8f0, 0x1a1f24, 0.35);
+  scene.add(hemi);
+  const key = new THREE.DirectionalLight(0xffffff, 0.6);
+  key.position.set(-300, -400, 600);
+  scene.add(key);
+
+  // A soft pool of light under the part so it sits on something.
+  (function floor() {
+    const c = document.createElement("canvas"); c.width = c.height = 256;
+    const g = c.getContext("2d");
+    const grad = g.createRadialGradient(128, 128, 0, 128, 128, 128);
+    grad.addColorStop(0, "rgba(120,140,160,0.22)"); grad.addColorStop(1, "rgba(120,140,160,0)");
+    g.fillStyle = grad; g.fillRect(0, 0, 256, 256);
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(900, 700),
+      new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(c), transparent: true, depthWrite: false }));
+    m.position.set(10, -20, -0.6);
+    scene.add(m);
+  })();
+
+  // The sketch plane's 10 mm grid, shown while there is a sketch to draw on.
+  const grid = new THREE.GridHelper(400, 40, 0x7b9dff, 0x2a3440);
+  grid.rotation.x = Math.PI / 2;
+  grid.position.set(10, -20, 0);
+  grid.material.transparent = true; grid.material.depthWrite = false;
+  scene.add(grid);
+
+  /* ------------------------------------------------ materials by role */
+  const COLORS = { scribe: 0x7b9dff, datum: 0xe0a33c, edge: 0x0d1013, edgeLight: 0xcfd8e0 };
+  const aluminium = () => new THREE.MeshStandardMaterial({
+    color: 0xa9b0b7, metalness: 1, roughness: 0.4, envMapIntensity: 0.9,
+    transparent: true, side: THREE.DoubleSide,
+  });
+  const clay = tint => new THREE.MeshStandardMaterial({
+    color: tint || 0x8e979f, metalness: 0, roughness: 0.75,
+    transparent: true, side: THREE.DoubleSide,
+  });
+  const lines = (color, opacity) => new THREE.LineBasicMaterial({ color, transparent: true, opacity: opacity || 1, depthWrite: false });
+
+  function meshOf(f, material) {
+    if (!f || !f.positions) return null;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(f.positions, 3));
+    if (f.normals && f.normals.length === f.positions.length)
+      g.setAttribute("normal", new THREE.Float32BufferAttribute(f.normals, 3));
+    if (f.index) g.setIndex(Array.from(f.index));
+    if (!g.getAttribute("normal")) g.computeVertexNormals();
+    return new THREE.Mesh(g, material);
+  }
+  function edgesOf(f, material) {
+    if (!f || !f.edges || !f.edges.length) return null;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(f.edges, 3));
+    return new THREE.LineSegments(g, material);
+  }
+  // Each feature gets one group, so a chapter can move, scale or fade it as a whole.
+  const parts = {};
+  function part(id, build) {
+    const group = new THREE.Group();
+    group.visible = false;
+    build(group);
+    scene.add(group);
+    parts[id] = group;
+    return group;
+  }
+  function setOpacity(group, o) {
+    if (!group) return;
+    group.visible = o > 0.005;
+    group.traverse(n => {
+      if (!n.material) return;
+      const base = n.userData.opacity !== undefined ? n.userData.opacity : 1;
+      n.material.opacity = base * o;
+      // A fully opaque solid writes depth; a fading one must not hide what is
+      // fading in behind it.
+      if (n.isMesh) n.material.depthWrite = o > 0.98 && base >= 1;
+    });
+  }
+
+  /* ------------------------------------------------------- the story */
+  const smooth = x => x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x);
+  const ramp = (c, a, b) => smooth((c - a) / (b - a));
+  const band = (c, a, b, d, e) => ramp(c, a, b) * (1 - ramp(c, d, e));
+
+  // Where the camera stands for each chapter, and what it looks at. Z is up
+  // and the unit is the document's millimetre.
+  const SHOTS = [
+    { at: [-250, -320, 190], look: [10, -20, 22] },   // hero, finished part
+    { at: [-230, -290, 210], look: [0, 0, 18] },      // datums
+    { at: [10, -80, 470],   look: [10, -20, 0] },     // plate outline, in plan
+    { at: [-170, -310, 170], look: [10, -20, 6] },    // plate extrude
+    { at: [-15, -420, 45],  look: [-15, 16, 32] },    // rib section, side on
+    { at: [-310, -170, 190], look: [-15, 20, 28] },   // rib extrude
+    { at: [260, -250, 210], look: [10, -10, 24] },    // union
+    { at: [175, -165, 85],  look: [95, -62, 10] },    // fillet, close on the nose
+    { at: [-290, -270, 160], look: [10, -20, 20] },   // parametric
+    { at: [30, -470, 280],  look: [10, -20, 20] },    // end
+  ];
+  const v3 = a => new THREE.Vector3(a[0], a[1], a[2]);
+  // Pulled back from where the shots were composed so the part clears the copy
+  // on the left and the tree on the right at any desktop width.
+  const PULL = [1.45, 1.4, 1.2, 1.45, 1.3, 1.45, 1.45, 1.9, 1.45, 1.4];
+  const shotLook = SHOTS.map(s => v3(s.look));
+  const shotPos = SHOTS.map((s, k) => v3(s.at).sub(shotLook[k]).multiplyScalar(PULL[k]).add(shotLook[k]));
+
+  let chapter = 0;          // continuous: 2.5 is halfway between chapters 2 and 3
+  function measure() {
+    const mid = scrollY + innerHeight / 2;
+    const centres = sections.map(s => s.offsetTop + s.offsetHeight / 2);
+    if (mid <= centres[0]) { chapter = 0; return; }
+    for (let i = 0; i < LAST; i++) {
+      if (mid < centres[i + 1]) { chapter = i + (mid - centres[i]) / (centres[i + 1] - centres[i]); return; }
+    }
+    chapter = LAST;
+  }
+
+  /* --------------------------------------------------- the feature tree */
+  const treeEl = document.getElementById("tree");
+  const treeRows = {};
+  function fillTree(model) {
+    for (const f of model.features) {
+      const li = document.createElement("li");
+      li.innerHTML = '<span class="id"></span><span class="name"></span>';
+      li.querySelector(".id").textContent = f.id;
+      li.querySelector(".name").textContent = f.name;
+      treeEl.appendChild(li);
+      treeRows[f.id] = li;
+    }
+  }
+  const order = [];
+  let lastLit = -1;
+  function lightTree(i) {
+    if (i === lastLit) return;
+    lastLit = i;
+    const on = new Set((sections[i].dataset.features || "").split(/\s+/).filter(Boolean));
+    let seen = 0;
+    order.forEach((id, k) => { if (on.has(id)) seen = Math.max(seen, k); });
+    order.forEach((id, k) => {
+      const row = treeRows[id];
+      if (!row) return;
+      row.classList.toggle("on", on.has(id));
+      row.classList.toggle("done", !on.has(id) && (i === 0 || i === LAST || k < seen));
+    });
+  }
+
+  /* ------------------------------------------------------------ readout */
+  const readoutEl = document.getElementById("readout");
+  const byId = {};
+  let lastReadout = "";
+  function readout(text) {
+    if (text === lastReadout) return;
+    lastReadout = text;
+    readoutEl.innerHTML = text;
+  }
+  const fmt = n => n === undefined ? "…" : Number(n).toLocaleString("en-GB");
+
+  /* ----------------------------------------------------- the kernel */
+  let ready = false, variants = [], variantShown = -1;
+  const VARIANT_VALUES = [14, 20, 28, 10, 6, 14];    // the order the story walks through
+
+  function buildScene(meshes) {
+    for (const f of meshes) byId[f.id] = f;
+
+    // Datums: points as small beads, vectors as scribed arrows, planes as
+    // translucent sheets with their outline.
+    part("datums", g => {
+      for (const id of ["PT1", "PT2"]) {
+        const p = byId[id] && byId[id].point;
+        if (!p) continue;
+        const bead = new THREE.Mesh(new THREE.SphereGeometry(3.2, 16, 12), new THREE.MeshBasicMaterial({ color: COLORS.datum, transparent: true }));
+        bead.position.set(p[0], p[1], p[2]);
+        g.add(bead);
+      }
+      for (const id of ["VE1", "VE2"]) {
+        const e = byId[id] && byId[id].edges;
+        if (!e) continue;
+        const from = v3(e.slice(0, 3)), to = v3(e.slice(3, 6));
+        const dir = to.clone().sub(from);
+        const arrow = new THREE.ArrowHelper(dir.clone().normalize(), from, dir.length(), COLORS.datum, 12, 6);
+        arrow.traverse(n => { if (n.material) n.material.transparent = true; });
+        g.add(arrow);
+      }
+      for (const id of ["PL1", "PL2"]) {
+        const sheet = meshOf(byId[id], new THREE.MeshBasicMaterial({ color: COLORS.datum, transparent: true, side: THREE.DoubleSide, depthWrite: false }));
+        if (sheet) { sheet.userData.opacity = 0.07; g.add(sheet); }
+        const rim = edgesOf(byId[id], lines(COLORS.datum, 0.7));
+        if (rim) { rim.userData.opacity = 0.7; g.add(rim); }
+      }
+    });
+
+    // Sketches: the kernel's own edges of the finished profile, drawn on in
+    // the order the kernel returns them, over a faint fill of the face.
+    for (const id of ["SK1", "SK2"]) {
+      part(id, g => {
+        const fill = meshOf(byId[id], new THREE.MeshBasicMaterial({ color: COLORS.scribe, transparent: true, side: THREE.DoubleSide, depthWrite: false }));
+        if (fill) { fill.userData.opacity = 0.1; fill.name = "fill"; g.add(fill); }
+        const ink = edgesOf(byId[id], lines(COLORS.scribe, 1));
+        if (ink) { ink.name = "ink"; g.add(ink); }
+      });
+    }
+
+    // The two extrudes grow out of their sketch planes: EX1 up from z = 0,
+    // EX2 across from the rib plane at y = 16.
+    part("EX1", g => {
+      const m = meshOf(byId.EX1, clay(0x8e979f)); if (m) g.add(m);
+      const e = edgesOf(byId.EX1, lines(COLORS.edge, 0.55)); if (e) { e.userData.opacity = 0.55; g.add(e); }
+    });
+    part("EX2", g => {
+      const inner = new THREE.Group();
+      const ribY = (byId.PT2 && byId.PT2.point) ? byId.PT2.point[1] : 16;
+      inner.position.y = -ribY; g.position.y = ribY;
+      const m = meshOf(byId.EX2, clay(0x9a9384)); if (m) inner.add(m);
+      const e = edgesOf(byId.EX2, lines(COLORS.edge, 0.55)); if (e) { e.userData.opacity = 0.55; inner.add(e); }
+      g.add(inner);
+    });
+    part("BO1", g => {
+      const m = meshOf(byId.BO1, aluminium()); if (m) g.add(m);
+      const e = edgesOf(byId.BO1, lines(COLORS.edgeLight, 0.5)); if (e) { e.userData.opacity = 0.5; g.add(e); }
+    });
+    part("FI1", g => {
+      const m = meshOf(byId.FI1, aluminium()); if (m) { m.name = "body"; g.add(m); }
+      const e = edgesOf(byId.FI1, lines(COLORS.edgeLight, 0.18)); if (e) { e.name = "edges"; e.userData.opacity = 0.18; g.add(e); }
+    });
+
+    // Figures quoted in the copy come from the kernel, not from the text.
+    const figs = {
+      "EX1.triangles": byId.EX1 && byId.EX1.triangles,
+      "BO1.triangles": byId.BO1 && byId.BO1.triangles,
+      "BO1.edgeCount": byId.BO1 && byId.BO1.edges && byId.BO1.edges.length / 6,
+      "FI1.triangles": byId.FI1 && byId.FI1.triangles,
+    };
+    document.querySelectorAll("[data-fig]").forEach(el => { el.textContent = fmt(figs[el.dataset.fig]); });
+  }
+
+  function swapVariant(k) {
+    const v = variants[k];
+    if (!v || k === variantShown) return;
+    variantShown = k;
+    const g = parts.FI1;
+    const body = g.getObjectByName("body"), edges = g.getObjectByName("edges");
+    const fresh = meshOf(v.mesh, body.material);
+    const freshEdges = edgesOf(v.mesh, edges.material);
+    body.geometry.dispose(); body.geometry = fresh.geometry;
+    edges.geometry.dispose(); edges.geometry = freshEdges.geometry;
+  }
+
+  async function boot() {
+    let model;
+    try {
+      model = await (await fetch("sketcher.json")).json();
+    } catch (err) {
+      say("could not read sketcher.json: " + err.message, "failed"); return;
+    }
+    fillTree(model);
+    for (const f of model.features) order.push(f.id);
+    lightTree(0);
+
+    let kernel;
+    try {
+      say("unpacking the OpenCascade kernel · 7.2 MB");
+      kernel = await startKernel({
+        onProgress: text => say(text === "ready" ? "kernel ready · reading sketcher.json" : text),
+        onBuild: step => {
+          if (step && step.total) say(step.stage + " · " + step.done + " of " + step.total + " features");
+        },
+      });
+    } catch (err) {
+      say("the kernel could not start here: " + err.message, "failed"); return;
+    }
+    try {
+      const t0 = performance.now();
+      const loaded = await kernel.loadModel(model);
+      const loadMs = performance.now() - t0;
+      const meshed = await kernel.mesh();
+      buildScene(meshed.features);
+      ready = true;
+      const n = loaded.report && loaded.report.executed ? loaded.report.executed.length : model.features.length;
+      say(n + " features regenerated in " + (loadMs / 1000).toFixed(2) + " s, in this tab", "ready");
+
+      // The parametric chapter: each distinct thickness is a real rebuild,
+      // asked for now so the chapter can show it the moment it is reached.
+      const cache = new Map();
+      cache.set(14, { value: 14, mesh: byId.FI1, ms: loadMs, executed: n });
+      for (const value of VARIANT_VALUES) {
+        if (!cache.has(value)) {
+          const t = performance.now();
+          const r = await kernel.setParameter("NU1", "value", value);
+          const ms = performance.now() - t;
+          const m = await kernel.mesh(["FI1"]);
+          cache.set(value, { value, mesh: m.features[0], ms,
+            executed: r.report && r.report.executed ? r.report.executed.map(e => e.id) : [] });
+        }
+      }
+      await kernel.setParameter("NU1", "value", 14);
+      variants = VARIANT_VALUES.map(v => cache.get(v));
+      const rebuilds = Array.from(cache.values()).filter(v => Array.isArray(v.executed));
+      const avg = rebuilds.reduce((s, v) => s + v.ms, 0) / Math.max(1, rebuilds.length);
+      const ids = rebuilds.length ? rebuilds[0].executed.join(" → ") : "";
+      document.getElementById("variant-figures").innerHTML =
+        "<span><b>" + rebuilds.length + "</b> rebuilds</span>" +
+        "<span>avg <b>" + Math.round(avg) + "</b> ms each</span>" +
+        (ids ? "<span>re-executed <b>" + ids + "</b></span>" : "");
+      variantShown = 0;
+    } catch (err) {
+      say("the kernel refused the model: " + err.message, "failed");
+    }
+  }
+
+  /* ------------------------------------------------------------ frame */
+  const pointer = { x: 0, y: 0, sx: 0, sy: 0 };
+  addEventListener("pointermove", e => {
+    pointer.x = e.clientX / innerWidth - 0.5;
+    pointer.y = e.clientY / innerHeight - 0.5;
+  }, { passive: true });
+
+  function resize() {
+    const w = innerWidth, h = innerHeight;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    // On a narrow screen the copy sits under the model, so pull back and lift
+    // the model into the top half.
+    camera.fov = w < 900 ? 44 : 32;
+    camera.setViewOffset(w, h, w < 900 ? 0 : -w * 0.07, w < 900 ? h * 0.16 : 0, w, h);
+    camera.updateProjectionMatrix();
+    measure();
+  }
+  addEventListener("resize", resize);
+  addEventListener("scroll", measure, { passive: true });
+  resize();
+
+  const pos = new THREE.Vector3(), look = new THREE.Vector3(), tmp = new THREE.Vector3();
+  const clock = new THREE.Clock();
+
+  function frame() {
+    const time = clock.getElapsedTime();
+    const c = chapter;
+    const i = Math.min(LAST - 1, Math.floor(c)), f = smooth(c - i);
+
+    // Camera: between the two nearest shots, with a slow sway at the ends of
+    // the story and a little parallax from the pointer everywhere.
+    pos.lerpVectors(shotPos[i], shotPos[i + 1], f);
+    look.lerpVectors(shotLook[i], shotLook[i + 1], f);
+    if (!reduced) {
+      const sway = (1 - ramp(c, 0, 0.8)) + ramp(c, LAST - 0.8, LAST) + band(c, 7.3, 7.8, 8.3, 8.8) * 0.6;
+      const a = sway * 0.32 * Math.sin(time * 0.18);
+      tmp.copy(pos).sub(look).applyAxisAngle(camera.up, a);
+      pos.copy(look).add(tmp);
+      pointer.sx += (pointer.x - pointer.sx) * 0.05;
+      pointer.sy += (pointer.y - pointer.sy) * 0.05;
+      const d = pos.distanceTo(look);
+      tmp.set(-pointer.sx, 0, 0).applyQuaternion(camera.quaternion).multiplyScalar(d * 0.06);
+      pos.add(tmp);
+      pos.z += pointer.sy * d * 0.05;
+    }
+    camera.position.copy(pos);
+    camera.lookAt(look);
+
+    lightTree(Math.round(c));
+
+    if (ready) {
+      // Hero and end: the finished part. Chapters 1-6: its history, feature
+      // by feature. 7-8: the finished part again, then rebuilt.
+      setOpacity(parts.datums, band(c, 0.45, 0.95, 2.4, 2.9) + band(c, 3.3, 3.7, 4.5, 5.0) * 0.6);
+
+      const sk1 = parts.SK1;
+      setOpacity(sk1, band(c, 1.4, 1.6, 3.4, 4.0));
+      const ink1 = sk1.getObjectByName("ink");
+      if (ink1) ink1.geometry.setDrawRange(0, Math.floor(ink1.geometry.getAttribute("position").count * ramp(c, 1.5, 2.05) / 2) * 2);
+      const fill1 = sk1.getObjectByName("fill");
+      if (fill1) fill1.material.opacity = 0.12 * ramp(c, 1.95, 2.2) * (1 - ramp(c, 2.6, 3));
+
+      const sk2 = parts.SK2;
+      setOpacity(sk2, band(c, 3.4, 3.6, 4.7, 5.3));
+      const ink2 = sk2.getObjectByName("ink");
+      if (ink2) ink2.geometry.setDrawRange(0, Math.floor(ink2.geometry.getAttribute("position").count * ramp(c, 3.5, 4.05) / 2) * 2);
+
+      grid.visible = c > 1.2 && c < 5.2;
+      grid.material.opacity = 0.35 * (band(c, 1.2, 1.7, 2.6, 3.2) + band(c, 3.4, 3.8, 4.6, 5.1) * 0.5);
+      grid.rotation.x = c < 3.2 ? Math.PI / 2 : 0;
+      grid.position.y = c < 3.2 ? -20 : 16;
+
+      const up = ramp(c, 2.45, 3.05);
+      parts.EX1.scale.z = Math.max(0.001, up);
+      setOpacity(parts.EX1, band(c, 2.45, 2.55, 5.7, 6.1));
+      const across = ramp(c, 4.45, 5.05);
+      parts.EX2.scale.y = Math.max(0.001, across);
+      setOpacity(parts.EX2, band(c, 4.45, 4.55, 5.7, 6.1));
+
+      setOpacity(parts.BO1, band(c, 5.55, 6.05, 6.6, 7.05));
+      setOpacity(parts.FI1, (1 - ramp(c, 0.3, 0.8)) + ramp(c, 6.6, 7.05));
+
+      // Parametric chapter: walk the rebuilt thicknesses across the chapter.
+      if (variants.length) {
+        const t = ramp(c, 7.55, 8.45);
+        const k = Math.min(variants.length - 1, Math.round(t * (variants.length - 1)));
+        swapVariant(c < 7.5 ? 0 : k);
+      }
+      // Edges brighten on the close-up so the rounds read.
+      const fe = parts.FI1.getObjectByName("edges");
+      if (fe) fe.userData.opacity = 0.14 + 0.3 * band(c, 6.6, 7, 7.4, 7.8);
+
+      // Readout: the kernel's own description of what is on screen.
+      const r = Math.round(c);
+      const row = (id, extra) => {
+        const m = byId[id];
+        return m ? "<span><b>" + id + "</b> " + m.type + " · " + m.name + "</span>" + (extra || "") : "";
+      };
+      let text;
+      if (r === 1) text = row("PL1") + row("PL2");
+      else if (r === 2) text = row("SK1", "<span>edges <b>" + fmt(byId.SK1 && byId.SK1.edges.length / 6) + "</b></span>");
+      else if (r === 3) text = row("EX1", "<span>NU1 <b>14 mm</b></span><span><b>" + fmt(byId.EX1 && byId.EX1.triangles) + "</b> tris</span>");
+      else if (r === 4) text = row("SK2");
+      else if (r === 5) text = row("EX2", "<span><b>" + fmt(byId.EX2 && byId.EX2.triangles) + "</b> tris</span>");
+      else if (r === 6) text = row("BO1", "<span><b>" + fmt(byId.BO1 && byId.BO1.triangles) + "</b> tris</span>");
+      else if (r === 8 && variants[variantShown]) {
+        const v = variants[variantShown];
+        text = "<span><b>NU1</b> Plate thickness <b>" + v.value + " mm</b></span><span>FI1 <b>" + fmt(v.mesh.triangles) + "</b> tris</span>";
+      }
+      else text = row("FI1", "<span>r <b>2 mm</b></span><span><b>" + fmt(byId.FI1 && byId.FI1.triangles) + "</b> tris</span>");
+      readout(text);
+    }
+
+    renderer.render(scene, camera);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+  boot();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,382 @@
+{
+  "format": "ocaf-parametric-model",
+  "version": 1,
+  "name": "Sketcher",
+  "units": "mm",
+  "features": [
+    {
+      "id": "PT1",
+      "type": "Point",
+      "name": "Origin",
+      "args": {
+        "kind": "Coordinates",
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "at": 0.5,
+        "end": "Furthest along",
+        "way": "Nearest point",
+        "h": 0,
+        "v": 0
+      }
+    },
+    {
+      "id": "VE1",
+      "type": "Vector",
+      "name": "Up",
+      "args": {
+        "kind": "Components",
+        "dx": 0,
+        "dy": 0,
+        "dz": 1
+      }
+    },
+    {
+      "id": "VE2",
+      "type": "Vector",
+      "name": "Across",
+      "args": {
+        "kind": "Components",
+        "dx": 0,
+        "dy": 1,
+        "dz": 0
+      }
+    },
+    {
+      "id": "PL1",
+      "type": "Plane",
+      "name": "Plate plane",
+      "args": {
+        "kind": "Origin and normal",
+        "origin": {
+          "ref": "PT1"
+        },
+        "normal": {
+          "ref": "VE1"
+        },
+        "at": 0.5,
+        "offset": 100,
+        "angle": 45,
+        "size": 160
+      }
+    },
+    {
+      "id": "PT2",
+      "type": "Point",
+      "name": "Rib base",
+      "args": {
+        "kind": "Coordinates",
+        "x": 0,
+        "y": 16,
+        "z": 0,
+        "at": 0.5,
+        "end": "Furthest along",
+        "way": "Nearest point",
+        "h": 0,
+        "v": 0
+      }
+    },
+    {
+      "id": "PL2",
+      "type": "Plane",
+      "name": "Rib plane",
+      "args": {
+        "kind": "Origin and normal",
+        "origin": {
+          "ref": "PT2"
+        },
+        "normal": {
+          "ref": "VE2"
+        },
+        "at": 0.5,
+        "offset": 100,
+        "angle": 45,
+        "size": 160
+      }
+    },
+    {
+      "id": "NU1",
+      "type": "Number",
+      "name": "Plate thickness",
+      "args": {
+        "value": 14
+      }
+    },
+    {
+      "id": "SK1",
+      "type": "Sketch",
+      "name": "Plate outline",
+      "args": {
+        "plane": {
+          "ref": "PL1"
+        },
+        "origin": {
+          "ref": "PT1"
+        },
+        "drawing": {
+          "elements": [
+            {
+              "id": "front",
+              "type": "line",
+              "a": [
+                -120,
+                -70
+              ],
+              "b": [
+                90,
+                -70
+              ]
+            },
+            {
+              "id": "nose",
+              "type": "arc",
+              "c": [
+                90,
+                -20
+              ],
+              "r": 50,
+              "a0": -1.5707963,
+              "a1": 1.5707963
+            },
+            {
+              "id": "back",
+              "type": "line",
+              "a": [
+                90,
+                30
+              ],
+              "b": [
+                -120,
+                30
+              ]
+            },
+            {
+              "id": "side",
+              "type": "line",
+              "a": [
+                -120,
+                30
+              ],
+              "b": [
+                -120,
+                -70
+              ]
+            },
+            {
+              "id": "bolt",
+              "type": "circle",
+              "c": [
+                -90,
+                -20
+              ],
+              "r": 16
+            },
+            {
+              "id": "eye",
+              "type": "circle",
+              "c": [
+                90,
+                -20
+              ],
+              "r": 22
+            },
+            {
+              "id": "slot",
+              "type": "oblong",
+              "a": [
+                -40,
+                -20
+              ],
+              "b": [
+                30,
+                -20
+              ],
+              "r": 14
+            }
+          ],
+          "constraints": [
+            {
+              "type": "horizontal",
+              "of": [
+                "front"
+              ]
+            },
+            {
+              "type": "horizontal",
+              "of": [
+                "back"
+              ]
+            },
+            {
+              "type": "vertical",
+              "of": [
+                "side"
+              ]
+            },
+            {
+              "type": "parallel",
+              "of": [
+                "front",
+                "back"
+              ]
+            }
+          ]
+        },
+        "faces": "Make faces",
+        "solve": "Solve",
+        "passes": 24
+      }
+    },
+    {
+      "id": "EX1",
+      "type": "Extrude",
+      "name": "Plate",
+      "args": {
+        "profile": {
+          "ref": "SK1"
+        },
+        "direction": {
+          "ref": "VE1"
+        },
+        "limit": "Distance",
+        "distance": {
+          "value": 14,
+          "from": "NU1"
+        },
+        "cap": "Solid",
+        "way": "Normal to the profile"
+      },
+      "appearance": {
+        "finish": "aluminium"
+      }
+    },
+    {
+      "id": "SK2",
+      "type": "Sketch",
+      "name": "Rib section",
+      "args": {
+        "plane": {
+          "ref": "PL2"
+        },
+        "origin": {
+          "ref": "PT2"
+        },
+        "drawing": {
+          "elements": [
+            {
+              "id": "foot",
+              "type": "line",
+              "a": [
+                0,
+                -120
+              ],
+              "b": [
+                0,
+                90
+              ]
+            },
+            {
+              "id": "slope",
+              "type": "line",
+              "a": [
+                0,
+                90
+              ],
+              "b": [
+                70,
+                20
+              ]
+            },
+            {
+              "id": "head",
+              "type": "line",
+              "a": [
+                70,
+                20
+              ],
+              "b": [
+                70,
+                -120
+              ]
+            },
+            {
+              "id": "spine",
+              "type": "line",
+              "a": [
+                70,
+                -120
+              ],
+              "b": [
+                0,
+                -120
+              ]
+            }
+          ],
+          "constraints": [
+            {
+              "type": "parallel",
+              "of": [
+                "foot",
+                "head"
+              ]
+            }
+          ]
+        },
+        "faces": "Make faces",
+        "solve": "Solve",
+        "passes": 24
+      }
+    },
+    {
+      "id": "EX2",
+      "type": "Extrude",
+      "name": "Rib",
+      "args": {
+        "profile": {
+          "ref": "SK2"
+        },
+        "direction": {
+          "ref": "VE2"
+        },
+        "limit": "Distance",
+        "distance": 14,
+        "cap": "Solid",
+        "way": "Normal to the profile"
+      },
+      "appearance": {
+        "finish": "aluminium"
+      }
+    },
+    {
+      "id": "BO1",
+      "type": "Boolean",
+      "name": "Plate and rib",
+      "args": {
+        "a": {
+          "ref": "EX1"
+        },
+        "b": {
+          "ref": "EX2"
+        },
+        "op": "Union"
+      },
+      "appearance": {
+        "finish": "aluminium"
+      }
+    },
+    {
+      "id": "FI1",
+      "type": "Fillet",
+      "name": "Broken edges",
+      "args": {
+        "body": {
+          "ref": "BO1"
+        },
+        "radius": 2
+      },
+      "appearance": {
+        "finish": "aluminium"
+      }
+    }
+  ]
+}
