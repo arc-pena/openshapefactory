@@ -20,6 +20,7 @@ import { View2D, SNAP_KINDS, MODIFY_TOOLS } from "./canvas2d.js";
 import { View3D, VISUAL_STYLES, hiddenLineFor } from "./view3d.js";
 import { categoryOf } from "./styles.js";
 import { bimToCad, cadEditsToOps, cadDiff, mergeModel } from "./cadbridge.js";
+import { importIfc } from "./ifcimport.js";
 
 const VIEW_TYPES = ["PlanView", "ElevationView", "View3D", "Schedule", "Sheet"];
 const PLACE_TOOLS = new Set(["floor", "beam", "wall", "opening", "door", "window", "column", "grid", "text", "dim", "space", "elev", "sep"]);
@@ -181,6 +182,7 @@ const COMMANDS = {
   open: { label: "Open…", icon: "open", run: () => openFile() },
   save: { label: "Save", icon: "save", key: "", run: () => saveModel() },
   importdxf: { label: "Import DXF Symbol", icon: "importI", run: () => importDXF() },
+  importifc: { label: "Import IFC", icon: "importI", hint: "IfcWall, IfcSlab, IfcColumn, IfcBeam, IfcDoor and IfcWindow come in as walls, floors, columns, beams, doors and windows", run: () => importIfcFile() },
   placesymbol: { label: "Symbol", icon: "symbol", run: () => placeSymbol(Object.keys(app.doc.lib.symbols).find(k => app.doc.lib.symbols[k].source) || "SY-NORTH") },
   export: { label: "Export", icon: "exportI", run: () => exportDialog() },
   selectall: { label: "Select All Instances", icon: "select", key: "SA", run: () => selectAllInstances() },
@@ -212,7 +214,7 @@ const RIBBON = [
     { title: "Datum", items: [big("grid"), big("level")] },
   ] },
   { tab: "Insert", panels: [
-    { title: "Import", items: [big("importdxf"), big("open")] },
+    { title: "Import", items: [big("importifc"), big("importdxf"), big("open")] },
     { title: "Load from Library", items: [big("placesymbol")] },
   ] },
   { tab: "Annotate", panels: [
@@ -361,7 +363,7 @@ function fileMenu(anchor) {
   const r = anchor.getBoundingClientRect();
   menuAt(r.left, r.bottom, [
     { label: "New", icon: "sheet", run: () => newEmpty() }, { label: "Open…", icon: "open", run: () => openFile() }, { label: "Save", icon: "save", run: () => saveModel() },
-    "-", { label: "Export…", icon: "exportI", run: () => exportDialog() }, { label: "Import DXF Symbol…", icon: "importI", run: () => importDXF() },
+    "-", { label: "Export…", icon: "exportI", run: () => exportDialog() }, { label: "Import IFC…", icon: "importI", run: () => importIfcFile() }, { label: "Import DXF Symbol…", icon: "importI", run: () => importDXF() },
     "-", { label: "Project Information…", icon: "info", run: () => projectInfo() }, { label: "Reset to Sample Project", icon: "house", run: () => { forget("draft-v4"); forget("tabs"); setDocument(buildSample(), { msg: "Sample project loaded", kind: "ok" }); } },
   ]);
 }
@@ -612,6 +614,25 @@ function newEmpty() {
   doc.addElement({ id: "V-P01", type: "PlanView", name: "Level 2", args: { level: { ref: "L1" }, scale: 100, style: { ref: "VS-CONSTRUCTION" } } });
   doc.regenerate();
   setDocument(doc, { msg: "New model: press WA to draw walls, or 3D to model in the {3D} view", kind: "ok" });
+}
+/** IFC in as the building: classes mapped to Web BIM classes, one undo step, and a report of what did not map. */
+function importIfcFile() {
+  const inp = h("input", { type: "file", accept: ".ifc", hidden: true }); document.body.append(inp);
+  inp.addEventListener("change", async () => {
+    const file = inp.files[0]; inp.remove(); if (!file) return;
+    let r;
+    try { r = importIfc(app.doc, await file.text()); } catch (e) { return app.say(`Could not read ${file.name}: ${e.message}`, "error"); }
+    const res = app.apply(r.ops);
+    if (!res.ok) return app.say(`${file.name}: ${res.error}`, "error");
+    const made = Object.entries(r.report.made).map(([k, n]) => `${n} ${k}${n > 1 ? "s" : ""}`).join(", ") || "nothing";
+    const missed = Object.entries(r.report.missed).map(([k, n]) => `${n} × ${k}`).join(", ");
+    dialog(`Imported ${file.name}`, h("div", { style: { display: "grid", gap: "8px" } },
+      h("div", {}, `Made: ${made}${r.types ? ` · ${r.types} new type${r.types > 1 ? "s" : ""}` : ""}.`),
+      missed ? h("div", { class: "banner note" }, `Not mapped (kept out, counted here): ${missed}. The Parametric CAD interface's IFC package can bring these in as geometry.`) : null,
+      ...r.report.notes.map(n => h("div", { class: "muted" }, n))), [{ label: "OK", primary: true, run: () => true }]);
+    app.say(`${file.name}: ${made}`, "ok");
+  });
+  inp.click();
 }
 function importDXF() {
   const inp = h("input", { type: "file", accept: ".dxf", hidden: true });

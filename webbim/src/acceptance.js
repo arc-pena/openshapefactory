@@ -12,6 +12,7 @@ import { newDocument, openDocument, measureRefs, resolveReference } from "./bim.
 import { Editor, propagate } from "./ops.js";
 import { deriveView, planScene, elevationScene, placements, textWidth, sheetScene, visibilityKey } from "./scene.js";
 import { chainLoop } from "./crop.js";
+import { importIfc } from "./ifcimport.js";
 import { writePDF, pathOps, PT_PER_MM } from "./pdf.js";
 import { writeDXF, readDXF, dxfLineweight } from "./dxf.js";
 import { buildHLRModel, runHLR } from "./hlr.js";
@@ -182,13 +183,13 @@ testCase("14", "Heuristic plan vs an independent section", () => {
   for (const id of ["A", "B"]) {
     const w = W(doc, id);
     const fast = wallRegions(w, "Coarse", 1200, []).reduce((a, r) => a + Math.abs(pathArea(r.path)), 0);
-    const sec = sectionArea(w, 1200, doc.stats);
+    const sec = ifc_sectionArea(w, 1200, doc.stats);
     worst = Math.max(worst, Math.abs(fast - sec) / fast); counts.push(wallRegions(w, "Coarse", 1200, []).length + "/" + 1);
   }
   return R(worst < 0.001, "area difference < 0.1 %, same region count", `worst ${(worst * 100).toFixed(5)} %, regions ${counts.join(", ")}`, "Section is the surface-set cut, not BRepAlgoAPI_Section: this build has no OCCT.");
 });
 import { wallSurfaces, cutAtHeight, plane } from "./walls.js";
-function sectionArea(w, h, stats) {
+function ifc_sectionArea(w, h, stats) {
   let A = 0;
   for (const pc of w.pieces) {
     const S = wallSurfaces(w, w.stack.s[0], w.stack.s[w.stack.s.length - 1], plane([...perpv(sub(pc.foot[3], pc.foot[0])).map(x => -x), 0], [...pc.foot[0], 0]), plane([...perpv(sub(pc.foot[2], pc.foot[1])), 0], [...pc.foot[1], 0]));
@@ -872,4 +873,42 @@ testCase("M9", "Edit Crop: a sketched boundary chains into a loop and clips the 
   const vp = sh.prims.find(p => p.t === "group" && p.view === "V-P00"), inner = vp && vp.prims.find(p => p.t === "group" && p.clipPath);
   return R(ok && ok.length === 4 && /open|close/.test(open || "") && sc.clipPath && sc.clipPath.length > 40 && !!inner,
     "square chains in any order; open sketch refused; circle becomes the view's clip path and the viewport's", `loop ${ok && ok.length}, open "${open}", path ${sc.clipPath && sc.clipPath.length}, viewport ${!!inner}`);
+});
+// A small IFC4 file, written by hand so every number is known: a wall 5000×200×3000, a door
+// 1000×2100 in its opening, a floor slab, and a steel I-beam spanning along x at 2800 mm.
+const IFC_SMALL = `ISO-10303-21;
+HEADER;FILE_DESCRIPTION((''),'2;1');FILE_NAME('t.ifc','',(''),(''),'','','');FILE_SCHEMA(('IFC4'));ENDSEC;
+DATA;
+#1=IFCSIUNIT(*,.LENGTHUNIT.,.MILLI.,.METRE.);#2=IFCUNITASSIGNMENT((#1));
+#10=IFCCARTESIANPOINT((0.,0.,0.));#11=IFCDIRECTION((0.,0.,1.));#12=IFCDIRECTION((1.,0.,0.));#13=IFCAXIS2PLACEMENT3D(#10,#11,#12);#14=IFCLOCALPLACEMENT($,#13);
+#20=IFCPROJECT('p',$,'T',$,$,$,$,$,#2);#23=IFCBUILDINGSTOREY('s',$,'Level 1',$,$,#14,$,$,.ELEMENT.,0.);
+#33=IFCCARTESIANPOINT((2500.,0.));#34=IFCAXIS2PLACEMENT2D(#33,$);#35=IFCRECTANGLEPROFILEDEF(.AREA.,'W',#34,5000.,200.);
+#36=IFCEXTRUDEDAREASOLID(#35,#13,#11,3000.);#37=IFCSHAPEREPRESENTATION($,'Body','SweptSolid',(#36));#38=IFCPRODUCTDEFINITIONSHAPE($,$,(#37));
+#39=IFCWALL('w',$,'Wall',$,$,#14,#38,$,$);
+#40=IFCCARTESIANPOINT((1500.,0.));#41=IFCAXIS2PLACEMENT2D(#40,$);#42=IFCRECTANGLEPROFILEDEF(.AREA.,'H',#41,1000.,400.);
+#43=IFCEXTRUDEDAREASOLID(#42,#13,#11,2100.);#44=IFCSHAPEREPRESENTATION($,'Body','SweptSolid',(#43));#45=IFCPRODUCTDEFINITIONSHAPE($,$,(#44));
+#46=IFCOPENINGELEMENT('o',$,'Opening',$,$,#14,#45,$,$);#47=IFCRELVOIDSELEMENT('v',$,$,$,#39,#46);
+#48=IFCDOOR('d',$,'Door',$,$,#14,$,$,2100.,1000.,$,$,$);#49=IFCRELFILLSELEMENT('f',$,$,$,#46,#48);
+#50=IFCCARTESIANPOINT((0.,0.));#51=IFCAXIS2PLACEMENT2D(#50,$);#52=IFCRECTANGLEPROFILEDEF(.AREA.,'S',#51,10000.,8000.);
+#53=IFCCARTESIANPOINT((5000.,4000.,-250.));#54=IFCAXIS2PLACEMENT3D(#53,#11,#12);#55=IFCEXTRUDEDAREASOLID(#52,#54,#11,250.);
+#56=IFCSHAPEREPRESENTATION($,'Body','SweptSolid',(#55));#57=IFCPRODUCTDEFINITIONSHAPE($,$,(#56));#58=IFCSLAB('sl',$,'Slab',$,$,#14,#57,$,$);
+#60=IFCCARTESIANPOINT((0.,3000.,2597.));#61=IFCDIRECTION((0.,1.,0.));#62=IFCAXIS2PLACEMENT3D(#60,#12,#61);
+#63=IFCISHAPEPROFILEDEF(.AREA.,'UB',#51,178.,406.,7.9,12.8,10.2);#64=IFCEXTRUDEDAREASOLID(#63,#62,#11,5000.);
+#65=IFCSHAPEREPRESENTATION($,'Body','SweptSolid',(#64));#66=IFCPRODUCTDEFINITIONSHAPE($,$,(#65));#67=IFCBEAM('b',$,'Beam',$,$,#14,#66,$,$);
+#70=IFCRELCONTAINEDINSPATIALSTRUCTURE('c',$,$,$,(#39,#48,#58,#67),#23);
+ENDSEC;END-ISO-10303-21;`;
+testCase("M10", "IFC classes arrive as BIM classes: IfcWall→Wall, IfcDoor→Door in its opening, IfcSlab→Floor, IfcBeam→Beam", () => {
+  const doc = newDocument("ifc"), ed = new Editor(doc);
+  const r = importIfc(doc, IFC_SMALL), res = ed.apply(r.ops);
+  const byType = t => doc.elements().filter(f => doc.typeOf(f) === t);
+  const wall = byType("Wall")[0], door = byType("Door")[0], floor = byType("Floor")[0], beam = byType("Beam")[0];
+  const c = wall && doc.argValue(wall, "centreline"), wt = wall && F.type(wall, "wallType");
+  const op = door && F.reference(door, "fills"), prof = op && doc.argValue(op, "profile");
+  const fl = floor && doc.plan(floor), bm = beam && doc.plan(beam), ax = beam && doc.argValue(beam, "axis");
+  const ok = res.ok && c && Math.abs(Math.hypot(c.end[0] - c.start[0], c.end[1] - c.start[1]) - 5000) < 1e-6 && wt.layers[0].thickness === 200
+    && prof && Math.abs(prof.at - 1500) < 1e-6 && prof.w === 1000 && prof.h === 2100 && !doc.error(door)
+    && fl && Math.abs(fl.z1 - 0) < 1e-6 && Math.abs(fl.z0 + 250) < 1e-6
+    && bm && Math.abs(bm.z1 - 2800) < 1e-6 && Math.abs(bm.z0 - 2394) < 1e-6 && ax && Math.abs(ax.end[0] - 5000) < 1e-6 && F.type(beam, "beamType").shape === "I";
+  return R(ok, "wall 5000 long, 200 type; door 1000×2100 at u=1500; slab top 0, 250 thick; UB406 top 2800 spanning x 0→5000",
+    `ok ${res.ok} ${res.error || ""}; wall ${c && JSON.stringify(c)}; door ${prof && JSON.stringify(prof)}; floor ${fl && [fl.z0, fl.z1]}; beam ${bm && [bm.z0, bm.z1]} ${ax && JSON.stringify(ax)}; report ${JSON.stringify(r.report)}`);
 });
