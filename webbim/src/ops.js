@@ -5,6 +5,7 @@
 //! fixture, a sample and an assistant all use this path. Consecutive edits with
 //! the same coalescing key collapse into one undo step.
 
+import { bareFactor, LENGTH_UNITS, setLengthUnit } from "./units.js";
 import { TOL, add, sub, mul, dot, dist, perp, normalise, lineThrough, signedDistance, offsetLine, rot, len, cross, intersectLines } from "./geom2d.js";
 import { parse, namesIn, evaluate, saysFormula, readValue, ExprError, formatValue } from "./expr.js";
 import { CATALOGUE, F, clone, documentLookup, MODEL_LIBS } from "./ocaf.js";
@@ -54,7 +55,7 @@ export class Editor {
 export function snapshot(doc) {
   const els = new Map();
   for (const f of doc.elements()) els.set(doc.idOf(f), JSON.stringify(doc.elementJSON(f)));
-  return { els, lib: JSON.stringify(doc.lib), libObj: null, joins: JSON.stringify(doc.joins), constraints: JSON.stringify(doc.constraints), graph: JSON.stringify(doc.graph), browser: JSON.stringify(doc.browser), name: doc.meta.name };
+  return { els, lib: JSON.stringify(doc.lib), libObj: null, joins: JSON.stringify(doc.joins), constraints: JSON.stringify(doc.constraints), graph: JSON.stringify(doc.graph), browser: JSON.stringify(doc.browser), name: doc.meta.name, units: doc.meta.displayUnits };
 }
 /** Restore by difference, so labels keep their tags and only what changed is touched. */
 export function restore(doc, snap) {
@@ -81,7 +82,7 @@ export function restore(doc, snap) {
   }
   if (JSON.stringify(doc.joins) !== snap.joins || JSON.stringify(doc.constraints) !== snap.constraints) doc.relationRevision++;
   doc.joins = JSON.parse(snap.joins); doc.constraints = JSON.parse(snap.constraints);
-  doc.graph = JSON.parse(snap.graph); doc.browser = JSON.parse(snap.browser); doc.meta.name = snap.name;
+  doc.graph = JSON.parse(snap.graph); doc.browser = JSON.parse(snap.browser); doc.meta.name = snap.name; if (snap.units === undefined) delete doc.meta.displayUnits; else doc.meta.displayUnits = snap.units; setLengthUnit(doc.meta.displayUnits || "mm");
   doc.bumpView();
 }
 
@@ -115,19 +116,20 @@ export function valueFromText(doc, f, arg, textIn, editor) {
   try { tree = parse(src); } catch (e) { throw e; }
   const names = namesIn(tree);
   if (!names.length) {
-    const v = evaluate(tree, { into: q });
+    const v = evaluate(tree, { into: q, bare: bareFactor(doc.meta.displayUnits || "mm") });
     if (q === "Length" && v.kind !== "Length" && v.kind !== "Number") throw new ExprError(`this field wants a length; that is ${v.kind === "Angle" ? "an angle" : "a " + v.kind.toLowerCase()}`);
     const num = arg.kind === "Integer" ? Math.round(v.v) : v.v;
     return saysFormula(src) ? { v: num, expr: src } : num;
   }
   // References something: check it evaluates now (and say which name is wrong if not) …
   const self = f;
-  evaluate(tree, { lookup: documentLookup(doc, self), into: q });
+  const bareUnit = doc.meta.displayUnits || "mm";
+  evaluate(tree, { lookup: documentLookup(doc, self), into: q, bare: bareFactor(bareUnit) });
   // … and promote it. An existing expression with the same text is shared.
-  const same = doc.elements().find(g => doc.typeOf(g) === "Expression" && doc.argValue(g, "formula") === src && doc.argValue(g, "quantity") === (q || "Number"));
+  const same = doc.elements().find(g => doc.typeOf(g) === "Expression" && doc.argValue(g, "formula") === src && doc.argValue(g, "quantity") === (q || "Number") && (doc.argValue(g, "bareUnit") || "mm") === bareUnit);
   if (same) return { ref: doc.idOf(same) };
   const id = doc.freshId("Expression");
-  doc.addElement({ id, type: "Expression", name: `${doc.idOf(f)}.${arg.key}`, args: { formula: src, quantity: q === "Integer" ? "Number" : (q || "Number") } });
+  doc.addElement({ id, type: "Expression", name: `${doc.idOf(f)}.${arg.key}`, args: { formula: src, quantity: q === "Integer" ? "Number" : (q || "Number"), bareUnit } });
   return { ref: id };
 }
 
@@ -185,6 +187,12 @@ const HANDLERS = {
     const formula = ex ? doc.argValue(ex, "formula") : v.ref;
     doc.setArg(f, o.key, typeof val === "number" ? val : 0);
     return { said: `${o.key} was bound to ${v.ref} (${formula}); it is now the literal ${typeof val === "number" ? Math.round(val * 1000) / 1000 : 0}` };
+  },
+  /** The project's display unit: how lengths are written, never what they are (the model is mm). */
+  units(doc, o) {
+    if (!LENGTH_UNITS[o.value]) throw new Error(`there is no unit setting "${o.value}" - try ${Object.keys(LENGTH_UNITS).join(", ")}`);
+    doc.meta.displayUnits = o.value; setLengthUnit(o.value); doc.bumpView();
+    return {};
   },
   rename(doc, o) {
     const f = doc.element(o.id); if (!f) throw new Error(`there is no element ${o.id}`);

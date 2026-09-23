@@ -388,7 +388,7 @@ export function loadDocument(input) {
   const doc = new Document();
   const report = doc.loadReport;
   if (src.format && src.format !== "web-bim-document") report.push(`format "${src.format}" read as web-bim-document`);
-  for (const k of ["format", "version", "units", "name"]) if (src[k] !== undefined) doc.meta[k] = src[k];
+  for (const k of ["format", "version", "units", "name", "displayUnits"]) if (src[k] !== undefined) doc.meta[k] = src[k];
   let factor = 1;
   if (doc.meta.units && doc.meta.units !== "mm") {
     factor = { m: 1000, cm: 10, in: 25.4, ft: 304.8 }[doc.meta.units];

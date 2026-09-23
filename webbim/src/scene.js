@@ -8,6 +8,7 @@
 //!       {t:"text", at, text, height, rot, align, valign, colour} · {t:"raster", rect, url}
 //!       {t:"link", rect, sheet}   — all carry {layer, id} for OCGs and picking.
 
+import { fmtLength, fmtArea } from "./units.js";
 import {
   TOL, add, sub, mul, dot, dist, perp, normalise, lerp, samplePath, pathArea, polyPath, bboxOf, segStart, segEnd, segMinusConvex,
   ensureCCW, convexHull, TAU, pointInPoly, reversePath,
@@ -330,7 +331,7 @@ function drawSpace(doc, ctx, B, f) {
 function ruleMatch(doc, f, rule) { try { return matches(doc, f, rule.when); } catch (e) { return false; } }
 export function paramText(doc, f, k) {
   if (k === "Name") return f.get("Name");
-  if (k === "Area") { const d = doc.data(f); return d && d.props && d.props.Area ? (d.props.Area.v / 1e6).toFixed(1) + " m²" : "—"; }
+  if (k === "Area") { const d = doc.data(f); return d && d.props && d.props.Area ? fmtArea(d.props.Area.v, (doc.meta && doc.meta.displayUnits) || "mm") : "—"; }
   const p = doc.getParam(f, k); if (p !== undefined) return displayParam(doc, f, p);
   const v = propertyOf(doc, f, k); return v && !v.error ? formatValue(v) : "";
 }
@@ -458,7 +459,7 @@ function drawDimension(doc, ctx, B, f) {
   for (const p of [A, Bp]) { const pp = B.P(p), t = mul(normalise(add(dir, along)), 1.2); B.stroke([lineSeg(sub(pp, t), add(pp, t))], { weight: penWeight(doc, "medium", ctx.scale), colour: "#000" }, "Annotation-Dimension", id, true); }
   const mid = B.P(lerp(A, Bp, 0.5)), ang = Math.atan2(dir[1], dir[0]) * 180 / Math.PI;
   const rot = ang > 90 || ang <= -90 ? ang + 180 : ang;
-  const txt = String(Math.round(m.value * 10) / 10);
+  const txt = dimText(doc, m.value);
   const up = [-Math.sin(rot * Math.PI / 180), Math.cos(rot * Math.PI / 180)];
   B.text(add(mid, mul(up, 0.8)), txt, 2.5, { align: "centre", rot, layer: "Annotation-Dimension", id });
   if (F.bool(f, "locked")) drawPadlock(B, add(mid, add(mul(up, 1), mul([Math.cos(rot * Math.PI / 180), Math.sin(rot * Math.PI / 180)], textWidth(txt, 2.5) / 2 + 2.5))), id);
@@ -553,8 +554,8 @@ function drawDatums(doc, ctx, B, v, G) {
     B.stroke([lineSeg([sx, za], [sx, zb])], g, "Annotation-Dimension", id);
     for (const z of [za, zb]) { const pp = B.P([sx, z]); B.stroke([lineSeg(add(pp, [-1.2, -1.2]), add(pp, [1.2, 1.2]))], { weight: penWeight(doc, "medium", S), colour: "#000" }, "Annotation-Dimension", id, true); B.stroke([lineSeg([sx - 250, z], [sx + 250, z])], g, "Annotation-Dimension", id); }
     const mid = B.P([sx, (za + zb) / 2]);
-    B.text(add(mid, [-0.9, 0]), String(Math.round(m.value)), 2.5, { align: "centre", rot: 90, layer: "Annotation-Dimension", id });
-    if (F.bool(f, "locked")) drawPadlock(B, add(mid, [-2.2, textWidth(String(Math.round(m.value)), 2.5) / 2 + 3]), id);
+    B.text(add(mid, [-0.9, 0]), dimText(doc, m.value), 2.5, { align: "centre", rot: 90, layer: "Annotation-Dimension", id });
+    if (F.bool(f, "locked")) drawPadlock(B, add(mid, [-2.2, textWidth(dimText(doc, m.value), 2.5) / 2 + 3]), id);
     B.hit(id, [[sx - 300, Math.min(za, zb)], [sx + 300, Math.min(za, zb)], [sx + 300, Math.max(za, zb)], [sx - 300, Math.max(za, zb)]]);
   }
   for (const f of doc.elements()) if (doc.typeOf(f) === "Grid" && categoryVisible(ctx, "IfcGrid")) {
@@ -910,3 +911,7 @@ export function translatePrim(p, o) {
   if (p.t === "hatch") q.origin = T(p.origin || [0, 0]);
   return q;
 }
+
+/** A dimension's string in the project's units, as Revit writes it: metric bare (7000, 7.000),
+ *  imperial with its marks (22' - 11 9/16"). */
+export function dimText(doc, v) { const u = (doc.meta && doc.meta.displayUnits) || "mm"; return fmtLength(v, { unit: u, suffix: false, fixed: u === "m" || u === "cm" }); }

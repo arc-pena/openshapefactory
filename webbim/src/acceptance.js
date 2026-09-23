@@ -4,13 +4,13 @@
 //! code would prove only that the code is deterministic (measured-truth).
 
 import { TOL, dist, sub, add, mul, pathArea, samplePath, intersectLines, lineThrough, bez, polyArea, segEnd, segStart, distToSeg } from "./geom2d.js";
-import { parse, evaluate } from "./expr.js";
+import { parse, evaluate, formatValue } from "./expr.js";
 import { CATALOGUE, F, loadDocument, danglingRefs, clone } from "./ocaf.js";
 import { wallRegions, solidSpans } from "./joins.js";
 import { pointAt, uOf, boundary, wallPieces } from "./walls.js";
 import { newDocument, openDocument, measureRefs, resolveReference } from "./bim.js";
 import { Editor, propagate } from "./ops.js";
-import { deriveView, planScene, elevationScene, placements, textWidth, sheetScene, visibilityKey, sectionCut, cutOutline } from "./scene.js";
+import { dimText, deriveView, planScene, elevationScene, placements, textWidth, sheetScene, visibilityKey, sectionCut, cutOutline } from "./scene.js";
 import { chainLoop } from "./crop.js";
 import { importIfc } from "./ifcimport.js";
 import { writePDF, pathOps, PT_PER_MM } from "./pdf.js";
@@ -20,6 +20,7 @@ import { drawScene } from "./render.js";
 import { resolveGraphics, penWeight } from "./styles.js";
 import { propertyModel, pickCandidates, graphModel, listeningDimensions, dimensionMove, editorFor } from "./props.js";
 import { buildSample } from "./sample.js";
+import { parseLength, setLengthUnit } from "./units.js";
 import { bimToCad, cadEditsToOps } from "./cadbridge.js";
 import { fromPolygon, addElements, fillet, toggleLock, measureDim, dragHandle, regionsOf } from "./bimsketch.js";
 
@@ -1096,4 +1097,26 @@ testCase("M22", "A floor is a sketch: welded loops with holes, fillet and offset
     && back && back.value.elements.find(e => e.type === "circle").r === 800 && back.value.dims.length === 1;
   return R(ok, "one area with one hole; the locked top edge keeps its length when a corner is dragged; the CAD gets arcs/circle/lines with coincidences and the fillet's tangencies (no BIM dims); a CAD edit comes back with the dims kept",
     `ok ${res.ok} err ${err}; regions ${p && p.regions.length} holes ${p && p.regions[0] && p.regions[0].holes.length}; top ${lockedLen}→${held}; closed ${closedAfterDrag}; CAD types ${types}; back ${back ? JSON.stringify(back.value.elements.find(e => e.type === "circle")) : "none"}`);
+});
+
+testCase("M23", "Units: the model is mm; display is mm/m/ft-in; fields take any unit and maths; a stored formula keeps the unit it was typed in", () => {
+  const doc = buildSample(), ed = new Editor(doc);
+  const cases = [["10m", "mm", 10000], ["3'-6\"", "mm", 1066.8], ["3' 6 1/2\"", "m", 1079.5], ["2*1.2m + 300mm", "ft-in", 2700], ["2.5", "m", 2500], ["10", "ft-in", 3048], ["1/2\"", "mm", 12.7]];
+  const parsed = cases.map(([t, u, want]) => [t, u, parseLength(t, { unit: u }), want]);
+  const okParse = parsed.every(([, , got, want]) => Math.abs(got - want) < 1e-6);
+  ed.apply({ op: "units", value: "m" });
+  ed.apply({ op: "set", id: "W1", key: "height", text: "3.2" });                 // a bare number, in metres
+  const h1 = doc.argValue(doc.element("W1"), "height");
+  ed.apply({ op: "set", id: "W2", key: "height", text: "W1.Height + 0.5" });     // a formula with a bare 0.5 (metres)
+  const h2 = doc.plan(doc.element("W2")).z1 - doc.plan(doc.element("W2")).z0;
+  ed.apply({ op: "units", value: "ft-in" });                                     // switching the display changes no size
+  doc.regenerate();
+  const h2b = doc.plan(doc.element("W2")).z1 - doc.plan(doc.element("W2")).z0;
+  const txt = dimText(doc, 3657.6), fv = formatValue({ kind: "Length", v: 1066.8 });
+  ed.undo();
+  const back = doc.meta.displayUnits;
+  setLengthUnit("mm");
+  const ok = okParse && h1 === 3200 && Math.abs(h2 - 3700) < 1e-6 && Math.abs(h2b - 3700) < 1e-6 && txt === "12' - 0\"" && fv === "3' - 6\"" && back === "m";
+  return R(ok, "all parse right; 3.2 in metres is 3200; W1.Height + 0.5 is 3700 and stays 3700 after switching to ft-in; dims read 12' - 0\"; undo restores metres",
+    `parse ${parsed.map(([t, u, g]) => `${t}@${u}=${Math.round(g * 10) / 10}`).join(" ")}; h1 ${h1}; h2 ${h2}→${h2b}; dim "${txt}"; fv "${fv}"; after undo ${back}`);
 });

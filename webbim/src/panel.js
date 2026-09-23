@@ -3,6 +3,7 @@
 //! declarations and specs, and every edit goes through the one op pipeline —
 //! so a cell edited in a schedule is validated exactly as the panel would.
 
+import { parseLength, parseNumber, bareFactor, fmtArea } from "./units.js";
 import { h, clear, icon, dialog, fmtLen } from "./ui_util.js";
 import { propertyModel, referenceOptions, specsFor, TYPE_KEYS } from "./props.js";
 import { readValue, formatValue, parse, evaluate, ExprError } from "./expr.js";
@@ -16,7 +17,7 @@ import { LAYER_PRIORITY, layerStack } from "./walls.js";
 function preview(app, f, row, text) {
   const q = row.arg ? row.arg.quantity : (row.kind === "Integer" ? "Number" : row.kind);
   try {
-    const r = readValue(text, { kind: q === "Integer" ? "Number" : q, lookup: documentLookup(app.doc, f) });
+    const r = readValue(text, { kind: q === "Integer" ? "Number" : q, lookup: documentLookup(app.doc, f), bare: q === "Length" ? bareFactor() : 1 });
     return { ok: true, text: `= ${formatValue(r.val)}${r.names.length ? `  · binds ${r.names.join(", ")}` : ""}` };
   } catch (e) {
     const at = e.at !== undefined ? ` (at character ${e.at + 1})` : "";
@@ -87,13 +88,16 @@ function rowEditor(app, ids, f, r) {
   switch (r.editor) {
     case "value": {
       const bound = r.bound;
-      const shown = r.varies ? "" : bound ? bound.expr : (r.value && typeof r.value === "object" && r.value.expr) ? r.value.expr : r.value ?? "";
+      let shown = r.varies ? "" : bound ? bound.expr : (r.value && typeof r.value === "object" && r.value.expr) ? r.value.expr : r.value ?? "";
+      // a length is shown in the project's unit; what is typed back may be in any unit
+      const isLen = (r.arg && r.arg.quantity === "Length") || (r.spec && r.spec.kind === "Length");
+      if (isLen && typeof shown === "number") shown = fmtLen(shown);
       const inp = h("input", { type: "text", id, class: bound ? "bound" : "", value: String(shown), placeholder: r.varies ? "<varies>" : (r.placeholder ?? ""), inputmode: "decimal", spellcheck: false, autocomplete: "off" });
-      const base = bound ? (bound.error ? `⚠ ${bound.expr}: ${bound.error}` : `= ${bound.result} · ${bound.id}`) : r.arg && r.arg.unit ? `${r.arg.unit === "mm" ? "length, mm" : r.arg.unit}` : "";
+      const base = bound ? (bound.error ? `⚠ ${bound.expr}: ${bound.error}` : `= ${bound.result} · ${bound.id}`) : r.arg && r.arg.unit ? `${r.arg.unit === "mm" ? "length · any unit or formula (10m, 3'-6\", span/2)" : r.arg.unit}` : "";
       under.textContent = base; if (bound && bound.error) under.classList.add("err");
       inp.addEventListener("input", () => { if (!inp.value.trim()) { under.textContent = base; return; } const p = preview(app, f, r, inp.value); under.textContent = p.text; under.classList.toggle("err", !p.ok); });
       let committed = false; // Enter commits, then the re-render blurs the field: never commit twice
-      const done = () => { if (committed || inp.value.trim() === String(shown).trim() || !inp.value.trim()) return; committed = true; if (r.source === "param") commit({ value: Number(inp.value) }); else commit({ text: inp.value }); };
+      const done = () => { if (committed || inp.value.trim() === String(shown).trim() || !inp.value.trim()) return; committed = true; if (r.source === "param") { let v; try { v = isLen ? parseLength(inp.value) : parseNumber(inp.value); } catch (e) { under.textContent = e.message; under.classList.add("err"); committed = false; return; } commit({ value: v }); } else commit({ text: inp.value }); };
       inp.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); done(); inp.blur(); } if (e.key === "Escape") { inp.value = shown; under.textContent = base; inp.blur(); } });
       inp.addEventListener("change", done);
       const line = h("div", { class: "line" }, inp);
@@ -141,8 +145,8 @@ function rowEditor(app, ids, f, r) {
       break;
     }
     case "readonly": {
-      const shownRO = r.varies ? "<varies>" : r.value === undefined ? "—" : typeof r.value === "object" ? JSON.stringify(r.value) : String(r.value);
-      val.append(h("div", { class: "ro" }, shownRO));
+      const shownRO = r.varies ? "<varies>" : r.value === undefined ? "—" : typeof r.value === "object" ? JSON.stringify(r.value) : typeof r.value === "number" && r.spec && r.spec.kind === "Length" ? fmtLen(r.value) : String(r.value);
+      val.append(h("div", { class: "ro", "data-qty": r.live ? r.key : null }, shownRO));
       if (r.origin) val.append(h("div", { class: "origin" }, `from ${r.origin}`));
       break;
     }
@@ -185,7 +189,7 @@ export function renderSchedule(app, root, v) {
       else if (k === "Name") td = h("td", {}, h("input", { type: "text", value: f.get("Name"), "aria-label": `${r.id} name`, onchange: e => app.apply({ op: "rename", id: r.id, name: e.target.value }) }));
       else if (arg && (arg.kind === "Real" || arg.kind === "Integer") && !(doc.argValue(f, k) && doc.argValue(f, k).ref)) td = h("td", {}, h("input", { type: "text", value: r.cells[i], "aria-label": `${r.id} ${k}`, onchange: e => { const res = app.apply({ op: "set", id: r.id, key: k, text: e.target.value }); if (!res.ok) { e.target.value = r.cells[i]; app.say(res.error, "error"); } } }));
       else if (spec && spec.binding !== "type" && spec.kind === "Enum") { const cur = doc.getParam(f, k) ?? spec.default; td = h("td", {}, h("select", { "aria-label": `${r.id} ${k}`, onchange: e => app.apply({ op: "set", id: r.id, key: "params." + k, value: e.target.value }) }, spec.values.map(o => h("option", { selected: o === cur }, o)))); }
-      else if (spec && spec.binding !== "type" && spec.kind !== "Material") td = h("td", {}, h("input", { type: "text", value: doc.getParam(f, k) ?? "", "aria-label": `${r.id} ${k}`, onchange: e => app.apply({ op: "set", id: r.id, key: "params." + k, value: spec.kind === "Integer" || spec.kind === "Number" ? Number(e.target.value) : e.target.value }) }));
+      else if (spec && spec.binding !== "type" && spec.kind !== "Material") td = h("td", {}, h("input", { type: "text", value: doc.getParam(f, k) ?? "", "aria-label": `${r.id} ${k}`, onchange: e => app.apply({ op: "set", id: r.id, key: "params." + k, value: spec.kind === "Length" ? parseLength(e.target.value) : spec.kind === "Integer" || spec.kind === "Number" ? parseNumber(e.target.value) : e.target.value }) }));
       else td = h("td", {}, r.cells[i]);
       tr.append(td);
     });
@@ -194,7 +198,7 @@ export function renderSchedule(app, root, v) {
   table.append(tb);
   if (F.choice(v, "of") === "IfcSpace") {
     const total = rows.reduce((a, r) => a + ((doc.data(r.f) || {}).value || 0), 0);
-    table.append(h("tfoot", {}, h("tr", {}, fields.map((k, i) => h("td", { style: { fontWeight: 600, borderTop: "1px solid var(--rule)" } }, k === "Area" ? (total / 1e6).toFixed(1) + " m²" : i === 0 ? "Total" : "")))));
+    table.append(h("tfoot", {}, h("tr", {}, fields.map((k, i) => h("td", { style: { fontWeight: 600, borderTop: "1px solid var(--rule)" } }, k === "Area" ? fmtArea(total) : i === 0 ? "Total" : "")))));
   }
   card.append(h("div", { class: "tablewrap" }, table));
   pane.append(card);
@@ -221,14 +225,14 @@ export function typeEditor(app, typeId) {
       t.layers.forEach((L, i) => tbody.append(h("tr", {},
         h("td", { class: "mono" }, String(i + 1)),
         h("td", {}, h("select", { "aria-label": `Layer ${i + 1} function`, onchange: e => { L.function = e.target.value; redraw(); } }, funcs.map(fn => h("option", { selected: fn === L.function }, fn)))),
-        h("td", {}, h("input", { type: "number", step: "0.5", min: "0", value: L.thickness, style: { width: "80px" }, "aria-label": `Layer ${i + 1} thickness`, oninput: e => { L.thickness = Number(e.target.value) || 0; redraw(); totalEl.textContent = total(); } })),
+        h("td", {}, h("input", { type: "text", value: fmtLen(L.thickness), style: { width: "88px" }, "aria-label": `Layer ${i + 1} thickness`, onchange: e => { try { L.thickness = Math.max(0, parseLength(e.target.value)); } catch (err) { e.target.value = fmtLen(L.thickness); return; } e.target.value = fmtLen(L.thickness); redraw(); totalEl.textContent = total(); } })),
         h("td", {}, h("select", { "aria-label": `Layer ${i + 1} material`, onchange: e => { L.material = e.target.value; redraw(); } }, Object.entries(doc.lib.materials).map(([k, m]) => h("option", { value: k, selected: k === L.material }, m.name)))),
         h("td", {}, h("span", { class: "chip" }, `p${LAYER_PRIORITY[L.function] ?? 4}`)),
         h("td", { style: { whiteSpace: "nowrap" } },
           h("button", { class: "iconbtn", "aria-label": "Move up", disabled: i === 0, onclick: () => { t.layers.splice(i - 1, 0, t.layers.splice(i, 1)[0]); rowsUI(); redraw(); } }, "↑"), " ",
           h("button", { class: "iconbtn", "aria-label": "Remove layer", onclick: () => { t.layers.splice(i, 1); rowsUI(); redraw(); } }, "✕")))));
     };
-    const total = () => `${t.layers.reduce((a, l) => a + l.thickness, 0)} mm total`;
+    const total = () => `${fmtLen(t.layers.reduce((a, l) => a + l.thickness, 0))} total`;
     const totalEl = h("span", { class: "muted" }, total());
     rowsUI();
     const core = h("div", { style: { display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" } }, "Core between boundaries",
@@ -247,7 +251,7 @@ export function typeEditor(app, typeId) {
     const cur = t.params[k] ?? "";
     const inherited = r.params[k] !== undefined && t.params[k] === undefined ? `inherits ${r.params[k]} from ${r.origin[k]}` : "";
     const ed = s.kind === "Enum" ? h("select", { "aria-label": k, onchange: e => { t.params[k] = e.target.value; } }, h("option", { value: "" }, "—"), s.values.map(o => h("option", { selected: String(o) === String(cur) }, o)))
-      : h("input", { type: "text", value: cur, placeholder: inherited, "aria-label": k, onchange: e => { t.params[k] = s.kind === "Number" || s.kind === "Length" || s.kind === "Integer" ? Number(e.target.value) : e.target.value; } });
+      : h("input", { type: "text", value: cur, placeholder: inherited, "aria-label": k, onchange: e => { t.params[k] = s.kind === "Length" ? parseLength(e.target.value) : s.kind === "Number" || s.kind === "Integer" ? parseNumber(e.target.value) : e.target.value; } });
     ptab.append(h("tr", {}, h("td", {}, k), h("td", {}, ed), h("td", { class: "muted" }, inherited ? `from ${r.origin[k]}` : s.kind)));
   }
   if (specs.length) body.append(h("h3", {}, "Type parameters"), h("table", {}, ptab));

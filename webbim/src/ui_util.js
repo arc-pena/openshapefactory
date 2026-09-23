@@ -1,6 +1,7 @@
 //! Small DOM vocabulary shared by the interface modules. The interface only
 //! mirrors the document: nothing here owns model state.
 
+import { fmtLength } from "./units.js";
 import { FONT_TTF_B64 } from "./fontdata.js";
 
 export function h(tag, attrs = {}, ...kids) {
@@ -159,4 +160,5 @@ export function dialog(title, body, actions = [], { modeless = false } = {}) {
   const first = dlg.querySelector("input, select, button.primary"); if (first) first.focus({ preventScroll: true });
   return { close, el: dlg, set onClose(f) { onClose = f; } };
 }
-export const fmtLen = v => (Math.abs(v - Math.round(v)) < 1e-6 ? String(Math.round(v)) : v.toFixed(1));
+/** A length (mm) in the project's display unit, with its unit: "7000 mm", "7 m", "22' - 11 9/16\"". */
+export const fmtLen = v => fmtLength(v);

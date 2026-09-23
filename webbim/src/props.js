@@ -86,7 +86,9 @@ export function propertyModel(doc, ids) {
   // computed values: read-only (length, area, volume)
   if (els.length === 1) {
     const d = doc.data(els[0]);
-    for (const [k, v] of Object.entries((d && d.props) || {})) push({ source: "computed", key: k, label: k, editor: "readonly", readonly: true, group: "Computed", value: formatValue(v) });
+    // what the element measures of itself - length, area, volume, heights - live, in the project's units,
+    // where Revit shows them: read-only rows in Dimensions (text facts in Identity Data)
+    for (const [k, v] of Object.entries((d && d.props) || {})) push({ source: "computed", key: k, label: k, editor: "readonly", readonly: true, group: v && v.kind === "Text" ? "Identity Data" : "Dimensions", value: formatValue(v), live: true });
   }
   rows.sort((a, b) => (GROUP_ORDER.indexOf(a.group) + 1 || 99) - (GROUP_ORDER.indexOf(b.group) + 1 || 99));
   const tk = types.length === 1 ? TYPE_KEYS.find(k => CATALOGUE.get(types[0]).args.some(a => a.key === k)) : null;

@@ -30,8 +30,10 @@ export function tokenise(src) {
       if (!Number.isFinite(n)) throw new ExprError(`"${src.slice(i, j)}" is not a number`, i);
       out.push({ t: "num", v: n, at: i }); i = j; continue;
     }
-    if (c === '"' && out.length && out[out.length - 1].t === "num") { out.push({ t: "unit", v: '"', at: i }); i++; continue; }
-    if (c === "'" && out.length && out[out.length - 1].t === "num") { out.push({ t: "unit", v: "'", at: i }); i++; continue; }
+    // inch and foot marks after a number, or after a bracket: (6 + 1/2)"
+    const afterValue = out.length && (out[out.length - 1].t === "num" || (out[out.length - 1].t === "op" && out[out.length - 1].v === ")"));
+    if (c === '"' && afterValue) { out.push({ t: "unit", v: '"', at: i }); i++; continue; }
+    if (c === "'" && afterValue) { out.push({ t: "unit", v: "'", at: i }); i++; continue; }
     if (c === '"') {
       let j = i + 1; while (j < src.length && src[j] !== '"') j++;
       if (j >= src.length) throw new ExprError("this text is missing its closing quote", i);
@@ -66,8 +68,16 @@ export function tokenise(src) {
 // unary  := '-' unary | power
 // power  := atom ('^' unary)?
 // atom   := (num | name | call | '(' expr ')' | str) unit?
+/** Architectural imperial as people write it: 3'-6", 3' 6", 3'6", 6 1/2", 3'-6 1/2" - feet then
+ *  inches is a sum, not a subtraction, and a space before a fraction is a plus. */
+export function imperialSugar(src) {
+  return String(src)
+    .replace(/(\d+(?:\.\d+)?)\s*'\s*-?\s*(\d+(?:\.\d+)?)(?:\s+(\d+)\s*\/\s*(\d+))?\s*"/g, (_, ft, inch, n, d) => `(${ft}' + ${n ? `(${inch} + ${n}/${d})` : inch}")`)
+    .replace(/(\d+(?:\.\d+)?)\s+(\d+)\s*\/\s*(\d+)\s*"/g, (_, w, n, d) => `((${w} + ${n}/${d})")`)
+    .replace(/(^|[^\d.)])(\d+)\s*\/\s*(\d+)\s*"/g, (_, pre, n, d) => `${pre}((${n}/${d})")`);
+}
 export function parse(src) {
-  const toks = tokenise(String(src));
+  const toks = tokenise(imperialSugar(String(src)));
   let k = 0;
   const peek = () => toks[k], next = () => toks[k++];
   const isOp = v => peek() && peek().t === "op" && peek().v === v;
@@ -127,12 +137,16 @@ const FUNCS = {
 };
 
 const num = (kind, v) => ({ kind, v });
+//! How quantities are written back is the project's choice (units.js sets it): mm, m, ft-in...
+const display = { length: null, area: null, volume: null };
+export const setQuantityDisplay = d => Object.assign(display, d);
 export function formatValue(val, unit = DOC_UNIT) {
   if (val == null) return "";
   if (val.kind === "Text") return val.v;
   if (val.kind === "Boolean") return val.v ? "Yes" : "No";
-  if (val.kind === "Length") return `${fmt(val.v / UNITS[unit].f)} ${unit}`;
-  if (val.kind === "Area") return `${fmt(val.v / 1e6)} m²`;
+  if (val.kind === "Length") return display.length && unit === DOC_UNIT ? display.length(val.v) : `${fmt(val.v / UNITS[unit].f)} ${unit}`;
+  if (val.kind === "Area") return display.area ? display.area(val.v) : `${fmt(val.v / 1e6)} m²`;
+  if (val.kind === "Volume") return display.volume ? display.volume(val.v) : `${fmt(val.v / 1e9)} m³`;
   if (val.kind === "Angle") return `${fmt(val.v)}°`;
   return fmt(val.v);
 }
@@ -140,7 +154,7 @@ const fmt = x => (Math.abs(x - Math.round(x)) < 1e-9 ? String(Math.round(x)) : S
 
 /** Evaluate with `lookup(name) → value | undefined`. `into` is the quantity
  *  wanted: a bare number typed into a Length field is millimetres. */
-export function evaluate(tree, { lookup = () => undefined, into = "Number" } = {}) {
+export function evaluate(tree, { lookup = () => undefined, into = "Number", bare = 1 } = {}) {
   const ev = n => {
     switch (n.k) {
       // A bare literal is dimensionless until the end: "2 * span" must stay a
@@ -174,8 +188,10 @@ export function evaluate(tree, { lookup = () => undefined, into = "Number" } = {
         if (a.kind === "Text" || b.kind === "Text") throw new ExprError(`"${n.op}" needs numbers; use & to join text`);
         switch (n.op) {
           case "+": case "-": {
+            // a bare number added to a length is a length in the bare unit (the display unit it was typed in)
             const kind = a.kind === "Number" ? b.kind : a.kind;
-            return num(kind, n.op === "+" ? a.v + b.v : a.v - b.v);
+            const av = a.kind === "Number" && b.kind === "Length" ? a.v * bare : a.v, bv = b.kind === "Number" && a.kind === "Length" ? b.v * bare : b.v;
+            return num(kind, n.op === "+" ? av + bv : av - bv);
           }
           case "*": {
             const kind = a.kind === "Length" && b.kind === "Length" ? "Area" : a.kind === "Number" ? b.kind : a.kind;
@@ -193,6 +209,8 @@ export function evaluate(tree, { lookup = () => undefined, into = "Number" } = {
     throw new ExprError("cannot evaluate this");
   };
   const out = ev(tree);
+  // what is still a bare number in a length field is a length in the bare unit
+  if (into === "Length" && out.kind === "Number") return num("Length", out.v * bare);
   return out;
 }
 
@@ -206,10 +224,10 @@ export function saysFormula(text) {
 
 /** Read what a person typed into a typed field. Returns
  *  { value, expr, names } — `expr` kept for round-tripping when it is a formula. */
-export function readValue(text, { kind = "Length", lookup } = {}) {
+export function readValue(text, { kind = "Length", lookup, bare = 1 } = {}) {
   const tree = parse(text);
   const names = namesIn(tree);
-  const val = evaluate(tree, { lookup, into: kind === "Integer" ? "Number" : kind });
+  const val = evaluate(tree, { lookup, into: kind === "Integer" ? "Number" : kind, bare });
   if ((kind === "Length" || kind === "Angle") && val.kind === "Number") val.kind = kind;
   if (kind === "Length" && val.kind !== "Length") throw new ExprError(`this field wants a length; that is ${val.kind === "Angle" ? "an angle" : "a " + val.kind.toLowerCase()}`);
   if (kind === "Angle" && val.kind !== "Angle") throw new ExprError(`this field wants an angle; that is a ${val.kind.toLowerCase()}`);

@@ -10,6 +10,7 @@
 //! leaves the model as it was.
 
 import { h, fmtLen, icon } from "./ui_util.js";
+import { parseLength, parseAngle, fmtArea } from "./units.js";
 import { F } from "./ocaf.js";
 import { add, sub, mul, dot, dist, perp, normalise, lerp } from "./geom2d.js";
 import { weld, sketchOf, regionsOf, outline, distanceTo, endsOf, addElements, remove, transform, scale1d, dragHandle, offsetChain,
@@ -61,6 +62,9 @@ export class SketchSession {
     this.app.refresh({ keepMain: true });
   }
   el(id) { return this.d.elements.find(e => e.id === id); }
+  /** A typed length (any unit, any maths) in mm, or null having said why. */
+  len(text) { try { return parseLength(text); } catch (e) { this.say(`${String(text).trim()}: ${e.message}`, "error"); return null; } }
+  ang(text) { try { return parseAngle(text); } catch (e) { this.say(`${String(text).trim()}: ${e.message}`, "error"); return null; } }
   tol() { return 8 * this.view.modelPerPx(); }
   /** The element under a model point, nearest first. */
   hitEl(p) {
@@ -135,7 +139,7 @@ export class SketchSession {
   /** Enter: end a chain (and a spline there). */
   enter() {
     if (this.typed && this.tool === "line" && this.pts.length) {
-      const last = this.pts[this.pts.length - 1], dir = normalise(sub(this.cursor || add(last, [1, 0]), last)), n = Number(this.typed); this.typed = "";
+      const last = this.pts[this.pts.length - 1], dir = normalise(sub(this.cursor || add(last, [1, 0]), last)), n = this.len(this.typed); this.typed = "";
       if (n > 0) { this.pts.push(add(last, mul(dir, n))); this.commit(addElements(this.d, [{ type: "line", a: last, b: this.pts[this.pts.length - 1] }])); }
       return true;
     }
@@ -155,9 +159,9 @@ export class SketchSession {
     this.say("Sketch mode: Finish ✓ or Cancel ✕ on the ribbon ends it", "note");
   }
   key(e) {
-    if (this.tool === "line" && this.pts.length && (/^[0-9.]$/.test(e.key) || (e.key === "Backspace" && this.typed))) {
+    if (this.tool === "line" && this.pts.length && (/^[0-9.'"\/]$/.test(e.key) || (this.typed && /^[a-z+*()\-]$/i.test(e.key)) || (e.key === "Backspace" && this.typed))) {
       this.typed = e.key === "Backspace" ? this.typed.slice(0, -1) : this.typed + e.key;
-      const s = this.view.toScreen(this.cursor || this.pts[this.pts.length - 1]); this.view.hudInput = true; this.view.hud.hidden = false; this.view.hud.style.left = s[0] + "px"; this.view.hud.style.top = s[1] + "px"; this.view.hud.textContent = `length ${this.typed} mm ⏎`;
+      const s = this.view.toScreen(this.cursor || this.pts[this.pts.length - 1]); this.view.hudInput = true; this.view.hud.hidden = false; this.view.hud.style.left = s[0] + "px"; this.view.hud.style.top = s[1] + "px"; this.view.hud.textContent = `length ${this.typed} ⏎`;
       return true;
     }
     if (e.key === "Enter") { this.view.hudInput = null; this.view.hideHud(); return this.enter(); }
@@ -184,7 +188,7 @@ export class SketchSession {
     const move = ev => {
       const [x, y] = this.view.evPos(ev); if (!moved && Math.abs(x - sx) + Math.abs(y - sy) < 4) return; moved = true;
       const q = this.point(this.view.toModel(x, y), ev), dv = sub(q, grab);
-      last = transform(d0, ids, pt => add(pt, dv)); this.d = last; this.view.showHud(x, y, `move ${fmtLen(dv[0])}, ${fmtLen(dv[1])} mm`); this.view.draw();
+      last = transform(d0, ids, pt => add(pt, dv)); this.d = last; this.view.showHud(x, y, `move ${fmtLen(dv[0])}, ${fmtLen(dv[1])}`); this.view.draw();
     };
     const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); this.view.hideHud(); this.view.showSnap(null);
       if (moved) { this.d = d0; this.commit(weld(last)); } else this.refresh(); };
@@ -221,7 +225,7 @@ export class SketchSession {
     const d0 = this.d; let last = d0, moved = false;
     const move = ev => {
       moved = true; const [x, y] = this.view.evPos(ev), q = this.point(this.view.toModel(x, y), ev);
-      if (gp.radius) { const w = JSON.parse(JSON.stringify(d0)), c = w.elements.find(el => el.id === gp.ref.split(".")[0]); c.r = Math.max(1, dist(c.c, q)); last = solve(w); this.view.showHud(x, y, `R ${fmtLen(c.r)} mm`); }
+      if (gp.radius) { const w = JSON.parse(JSON.stringify(d0)), c = w.elements.find(el => el.id === gp.ref.split(".")[0]); c.r = Math.max(1, dist(c.c, q)); last = solve(w); this.view.showHud(x, y, `R ${fmtLen(c.r)}`); }
       else { last = dragHandle(d0, gp.ref, q); this.view.showHud(x, y, `${fmtLen(q[0])}, ${fmtLen(q[1])}`); }
       this.d = last; this.view.draw();
     };
@@ -242,7 +246,7 @@ export class SketchSession {
     const done = (next, msg) => { this.pts = []; this.commit(weld(next), msg); };
     if ((t === "move" || t === "copy") && n === 2) {
       const dv = sub(P[1], P[0]);
-      if (t === "move") done(transform(this.d, ids, pt => add(pt, dv)), `moved ${fmtLen(Math.hypot(dv[0], dv[1]))} mm`);
+      if (t === "move") done(transform(this.d, ids, pt => add(pt, dv)), `moved ${fmtLen(Math.hypot(dv[0], dv[1]))}`);
       else { const copies = ids.map(id => JSON.parse(JSON.stringify(this.el(id)))).map(x => { const w = { elements: [x] }; const moved = transform(Object.assign({ constraints: [], dims: [] }, w), [x.id], pt => add(pt, dv)).elements[0]; delete moved.id; return moved; }); done(addElements(this.d, copies), `${copies.length} copied`); }
     } else if (t === "rotate" && n === 3) {
       const c = P[0], a = Math.atan2(P[2][1] - c[1], P[2][0] - c[0]) - Math.atan2(P[1][1] - c[1], P[1][0] - c[0]);
@@ -269,20 +273,20 @@ export class SketchSession {
   }
   offsetClick(raw) {
     const id = this.hitEl(raw); if (!id) return this.say("click an element, on the side to offset toward");
-    const v = Number(this.opts.offset); if (!(v > 0)) return this.say("type an offset distance in the options bar", "error");
+    const v = this.opts.offset; if (!(v > 0)) return this.say("type an offset distance in the options bar", "error");
     const r = offsetChain(this.d, id, raw, v, !!this.opts.copy);
-    this.commit(r.drawing, `offset ${fmtLen(v)} mm${this.opts.copy ? " (a copy)" : ""}`);
+    this.commit(r.drawing, `offset ${fmtLen(v)}${this.opts.copy ? " (a copy)" : ""}`);
   }
   offsetPreview() {
     if (this.tool !== "offset" || !this.hoverEl || !this.cursor) return null;
-    try { const r = offsetChain(this.d, this.hoverEl, this.cursorRaw || this.cursor, Number(this.opts.offset) || 0, true); return r.made.map(id => r.drawing.elements.find(x => x.id === id)); } catch (e) { return null; }
+    try { const r = offsetChain(this.d, this.hoverEl, this.cursorRaw || this.cursor, this.opts.offset || 0, true); return r.made.map(id => r.drawing.elements.find(x => x.id === id)); } catch (e) { return null; }
   }
   filletClick(raw) {
     const id = this.hitEl(raw); if (!id) return this.say("click an element: the part you click is kept");
-    if (!this.pending) { this.pending = { id, at: raw }; this.sel.clear(); this.sel.add(id); this.say(`Fillet R ${fmtLen(Number(this.opts.radius) || 0)}: now the second element`); this.view.draw(); return; }
+    if (!this.pending) { this.pending = { id, at: raw }; this.sel.clear(); this.sel.add(id); this.say(`Fillet R ${fmtLen(this.opts.radius || 0)}: now the second element`); this.view.draw(); return; }
     try {
-      const next = fillet(this.d, this.pending.id, this.pending.at, id, raw, Number(this.opts.radius) || 0);
-      this.pending = null; this.sel.clear(); this.commit(next, Number(this.opts.radius) > 0 ? `rounded, R ${fmtLen(Number(this.opts.radius))}` : "corner made: trimmed/extended to meet");
+      const next = fillet(this.d, this.pending.id, this.pending.at, id, raw, this.opts.radius || 0);
+      this.pending = null; this.sel.clear(); this.commit(next, this.opts.radius > 0 ? `rounded, R ${fmtLen(this.opts.radius)}` : "corner made: trimmed/extended to meet");
     } catch (err) { this.pending = null; this.sel.clear(); this.say(err.message, "error"); this.view.draw(); }
   }
   dimClick(raw) {
@@ -363,7 +367,7 @@ export class SketchSession {
     const id = this.target.id || res.id;
     this.app.endSketch();
     this.app.select([id]);
-    this.say(`Floor ${id}: ${fmtLen(areaM2)} m²${r.regions.length > 1 ? ` in ${r.regions.length} areas` : ""}${holes ? `, ${holes} hole${holes > 1 ? "s" : ""}` : ""}`, "ok");
+    this.say(`Floor ${id}: ${fmtArea(areaM2 * 1e6)}${r.regions.length > 1 ? ` in ${r.regions.length} areas` : ""}${holes ? `, ${holes} hole${holes > 1 ? "s" : ""}` : ""}`, "ok");
     return true;
   }
   cancel() { this.app.endSketch(); this.say(`${this.title} cancelled - nothing changed`, "note"); }
@@ -438,10 +442,10 @@ export class SketchSession {
       const box = h("div", { class: "tdim", style: { left: pl.at[0] + "px", top: pl.at[1] + "px" } });
       const val = h("button", { title: "Click to type: what it measures moves to it", "aria-label": `Sketch dimension ${txt}` }, txt);
       val.addEventListener("click", () => {
-        const inp = h("input", { type: "text", value: String(Math.round(m.value * 100) / 100), "aria-label": "New value" }); val.replaceWith(inp); inp.focus(); inp.select();
+        const inp = h("input", { type: "text", value: dim.type === "angle" ? String(Math.round(m.value * 100) / 100) : fmtLen(m.value), "aria-label": "New value" }); val.replaceWith(inp); inp.focus(); inp.select();
         inp.addEventListener("keydown", e => { e.stopPropagation(); if (e.key === "Escape") return this.refresh(); if (e.key !== "Enter") return;
-          const v = Number(inp.value); if (!(v > 0)) return this.say("type a positive number", "error");
-          this.commit(setDimValue(this.d, dim, v), `${dim.type} ${dim.type === "angle" ? v + "°" : fmtLen(v) + " mm"}`); });
+          const v = dim.type === "angle" ? this.ang(inp.value) : this.len(inp.value); if (v === null) return; if (!(v > 0)) return this.say("type a positive value", "error");
+          this.commit(setDimValue(this.d, dim, v), `${dim.type} ${dim.type === "angle" ? v + "°" : fmtLen(v)}`); });
       });
       const lock = h("button", { class: "lock", title: dim.locked ? "Unlock: stop holding this value" : "Padlock: hold this value while you edit", "aria-pressed": String(!!dim.locked), "aria-label": dim.locked ? "Unlock sketch dimension" : "Lock sketch dimension" }, icon(dim.locked ? "lock" : "unlock"));
       lock.addEventListener("click", () => this.commit(toggleLock(this.d, dim), dim.locked ? "unlocked" : "locked: it holds while you edit"));
@@ -463,16 +467,17 @@ export class SketchSession {
     ];
   }
   optionsBar(bar) {
-    const o = this.opts, num = (key, label, width = 64) => h("label", {}, label + " ", h("input", { type: "text", value: o[key], "aria-label": label, style: { width: width + "px" }, onchange: e => { o[key] = Number(e.target.value) || 0; this.view.draw(); }, onkeydown: e => e.stopPropagation() }));
+    // lengths in the options bar take any unit and any maths, shown back in the project's unit
+    const o = this.opts, num = (key, label, width = 72, count = false) => h("label", {}, label + " ", h("input", { type: "text", value: count ? o[key] : fmtLen(o[key]), "aria-label": label, style: { width: width + "px" }, onchange: e => { const v = count ? Math.round(Number(e.target.value)) : this.len(e.target.value); if (v !== null && Number.isFinite(v)) o[key] = v; e.target.value = count ? o[key] : fmtLen(o[key]); this.view.draw(); }, onkeydown: e => e.stopPropagation() }));
     const kids = [h("span", { class: "otitle" }, `Modify | ${this.title}`)];
     const t = this.tool;
     if (t === "offset") kids.push(num("offset", "Offset"), h("label", {}, h("input", { type: "checkbox", checked: !!o.copy, onchange: e => { o.copy = e.target.checked; } }), " Copy"));
     if (t === "fillet") kids.push(num("radius", "Radius"), h("span", { class: "muted" }, "0 = a sharp corner (trim / extend)"));
-    if (t === "polygon") kids.push(num("sides", "Sides", 40));
+    if (t === "polygon") kids.push(num("sides", "Sides", 40, true));
     if (this.target.kind === "floor" && !this.target.id) {
       const doc = this.app.doc, ts = Object.entries(doc.lib.types).filter(([id]) => (doc.resolveType(id) || {}).category === "IfcSlab");
       kids.push(h("label", {}, "Type ", h("select", { onchange: e => { this.app.toolOpts.floorType = e.target.value; } }, ts.map(([id, ty]) => h("option", { value: id, selected: this.app.toolOpts.floorType === id }, ty.name)))),
-        h("label", {}, "Height offset ", h("input", { type: "text", value: this.app.toolOpts.floorOffset ?? 0, style: { width: "56px" }, onchange: e => { this.app.toolOpts.floorOffset = Number(e.target.value) || 0; }, onkeydown: e => e.stopPropagation() })));
+        h("label", {}, "Height offset ", h("input", { type: "text", value: fmtLen(this.app.toolOpts.floorOffset ?? 0), style: { width: "72px" }, onchange: e => { const v = this.len(e.target.value); if (v !== null) this.app.toolOpts.floorOffset = v; e.target.value = fmtLen(this.app.toolOpts.floorOffset ?? 0); }, onkeydown: e => e.stopPropagation() })));
     }
     const r = regionsOf(this.d);
     kids.push(h("span", { class: "grow" }), h("span", { class: r.error ? "muted warn" : "muted" }, r.error ? (this.d.elements.length ? "open: " + r.error.replace(/^the boundary is /, "") : "draw a closed boundary") : `${r.regions.length} closed area${r.regions.length > 1 ? "s" : ""}${r.regions.some(x => x.holes.length) ? " with holes" : ""}`),

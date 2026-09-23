@@ -7,6 +7,7 @@ import {
   lineThrough, intersectLines, signedDistance, projectPoint, segStart, segEnd, bboxOf, TAU,
 } from "./geom2d.js";
 import { parse, evaluate, namesIn, formatValue, ExprError } from "./expr.js";
+import { bareFactor } from "./units.js";
 import {
   Document, declare, BUILDERS, CATALOGUE, F, real, integer, bool, text, choice, ref, curve2d, point2d, json, when,
   documentLookup, propertyOf, PLAN_TAG, DATA_TAG, NOTE_TAG, RESULT_TAG, REVISION_TAG, loadDocument, danglingRefs, clone,
@@ -53,7 +54,9 @@ BUILDERS.Number = { build: (f) => ({ data: { value: F.real(f, "value"), kind: F.
 
 declare({ type: "Expression", guid: "wb-0004", category: "Parameter", kind: "number", idPrefix: "EX",
   summary: "An inline value that acquired dependencies, promoted to a first-class element (§4.1).",
-  args: [ text("formula", "Formula", "0"), choice("quantity", "Quantity", ["Length", "Number", "Angle", "Text"], 0) ],
+  args: [ text("formula", "Formula", "0"), choice("quantity", "Quantity", ["Length", "Number", "Angle", "Text"], 0),
+          // the unit a bare number in the formula was typed in: it stays that unit when the display changes
+          text("bareUnit", "Bare numbers in", "mm") ],
   // The graph falls out of the names in the formula: they are references.
   dependsOn: (f, doc) => {
     try { return namesIn(parse(doc.argValue(f, "formula"))).map(n => resolveName(doc, n)).filter(Boolean); }
@@ -68,7 +71,7 @@ function resolveName(doc, n) {
 BUILDERS.Expression = {
   build: (f, doc) => {
     const q = F.choice(f, "quantity");
-    const v = evaluate(parse(F.text(f, "formula")), { lookup: documentLookup(doc, f), into: q });
+    const v = evaluate(parse(F.text(f, "formula")), { lookup: documentLookup(doc, f), into: q, bare: bareFactor(F.text(f, "bareUnit") || "mm") });
     if (v.kind === "Number" && (q === "Length" || q === "Angle")) v.kind = q;
     return { data: { value: v.v, kind: v.kind, text: formatValue(v) } };
   },
@@ -120,7 +123,7 @@ BUILDERS.Wall = {
       plan: w,
       data: { value: len, kind: "Length", refs: wallReferences(w), props: {
         Length: L(len), Width: L(thick), Height: L(height), "Base elevation": L(z0),
-        Area: { kind: "Area", v: len * height }, Volume: { kind: "Number", v: len * height * thick / 1e9 } } },
+        Area: { kind: "Area", v: len * height }, Volume: { kind: "Volume", v: len * height * thick } } },
       note: lv ? null : (F.refId(f, "baseLevel") ? null : "no base level: built from z = 0"),
     };
   },
@@ -176,7 +179,7 @@ BUILDERS.Opening = {
     const frame = { host: doc.idOf(host), u0, u1, at: p.at, sill: p.sill, h: p.h, w: p.w, far, recess, flagged, voidVolume };
     return {
       data: { value: p.w, kind: "Length", frame, props: { Width: L(p.w), Height: L(p.h), "Sill height": L(p.sill), "Along host": L(p.at),
-        "Void volume": { kind: "Number", v: voidVolume / 1e9 } } },
+        "Void volume": { kind: "Volume", v: voidVolume }, Area: { kind: "Area", v: p.w * p.h } } },
       note,
     };
   },
@@ -337,7 +340,7 @@ BUILDERS.Column = {
     if (t.round) { path = [{ k: "A", c, r: t.width / 2, a0: 0, a1: TAU }]; foot = []; for (let i = 0; i < 16; i++) foot.push(add(c, [Math.cos(i / 16 * TAU) * t.width / 2, Math.sin(i / 16 * TAU) * t.width / 2])); }
     else { foot = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([x, y]) => { const p = [x * t.width / 2, y * t.depth / 2]; return add(c, [p[0] * Math.cos(rot) - p[1] * Math.sin(rot), p[0] * Math.sin(rot) + p[1] * Math.cos(rot)]); }); path = polyPath(foot); }
     return { plan: { path, foot, material: t.material, z0, z1: z0 + h }, data: { value: h, kind: "Length",
-      refs: [{ key: "centre", kind: "point", geom: c }], props: { Height: L(h), Width: L(t.width), TypeMark: T(t.mark || t.id) } } };
+      refs: [{ key: "centre", kind: "point", geom: c }], props: { Height: L(h), Width: L(t.width), Depth: L(t.round ? t.width : t.depth), "Base elevation": L(z0), "Top elevation": L(z0 + h), Volume: { kind: "Volume", v: Math.abs(polyArea(foot)) * h }, TypeMark: T(t.mark || t.id) } } };
   },
 };
 
@@ -379,7 +382,7 @@ BUILDERS.Floor = {
     const main = regions.reduce((b, rg) => (ringArea(rg.outer) > ringArea(b.outer) ? rg : b), regions[0]), b = main.outer;
     const path = regions.flatMap(rg => [...polyPath(rg.outer), ...rg.holes.flatMap(h => polyPath(h))]);
     return { plan: { path, foot: b, regions, z0: z, z1: top, material: layers[layers.length > 1 ? 1 : 0].material, parts },
-      data: { value: area, kind: "Area", parts, props: { Area: { kind: "Area", v: area / 1e6 }, Thickness: L(T_), Perimeter: L(per), "Top elevation": L(top), TypeMark: T(t.mark || t.id) } } };
+      data: { value: area, kind: "Area", parts, props: { Area: { kind: "Area", v: area }, Thickness: L(T_), Perimeter: L(per), Volume: { kind: "Volume", v: area * T_ }, "Top elevation": L(top), "Bottom elevation": L(z), Holes: { kind: "Number", v: regions.reduce((s, rg) => s + rg.holes.length, 0) }, TypeMark: T(t.mark || t.id) } } };
   },
 };
 declare({ type: "Beam", guid: "wb-0402", category: "IfcBeam", kind: "beam", idPrefix: "B",
@@ -397,7 +400,7 @@ BUILDERS.Beam = {
     const parts = t.shape === "I" ? [band(W, top - (t.flange || 12), top, "Flange"), band(t.web || 8, top - D + (t.flange || 12), top - (t.flange || 12), "Web"), band(W, top - D, top - D + (t.flange || 12), "Flange")] : [band(W, top - D, top, "Beam")];
     const foot = band(W, 0, 0).foot, len = dist(c.start, c.end);
     return { plan: { path: polyPath(foot), foot, axis: c, z0: top - D, z1: top, parts },
-      data: { value: len, kind: "Length", parts, refs: [{ key: "axis", kind: "line", geom: lineThrough(c.start, c.end) }], props: { Length: L(len), Depth: L(D), Width: L(W), "Top elevation": L(top), TypeMark: T(t.mark || t.id) } } };
+      data: { value: len, kind: "Length", parts, refs: [{ key: "axis", kind: "line", geom: lineThrough(c.start, c.end) }], props: { Length: L(len), Depth: L(D), Width: L(W), "Top elevation": L(top), "Bottom elevation": L(top - D), Volume: { kind: "Volume", v: parts.reduce((s, q) => s + Math.abs(polyArea(q.foot)) * (q.z1 - q.z0), 0) }, TypeMark: T(t.mark || t.id) } } };
   },
 };
 
@@ -416,7 +419,7 @@ BUILDERS.Generic = {
     const parts = [{ foot: b.map(p => p.slice()), z0, z1: z0 + h, sub: "Body", material }];
     const area = Math.abs(polyArea(b));
     return { plan: { path: polyPath(b), foot: b, z0, z1: z0 + h, material, parts },
-      data: { value: area * h / 1e9, kind: "Number", parts, props: { Volume: { kind: "Number", v: area * h / 1e9 }, Height: L(h), "Base elevation": L(z0), "IFC class": T(F.text(f, "ifcClass")) } } };
+      data: { value: area * h, kind: "Volume", parts, props: { Volume: { kind: "Volume", v: area * h }, Area: { kind: "Area", v: area }, Height: L(h), "Base elevation": L(z0), "IFC class": T(F.text(f, "ifcClass")) } } };
   },
 };
 
@@ -676,7 +679,7 @@ function computeSpaces(doc, walls) {
       const perim = c.loop ? c.loop.pts.reduce((acc, p, i, a) => acc + dist(p, a[(i + 1) % a.length]), 0) : 0;
       const plan = { loop: c.loop, status: c.status, mode, z0, z1: upper };
       f.child(PLAN_TAG).set("Json", plan);
-      const props = { Area: { kind: "Area", v: area }, Perimeter: L(perim), Volume: { kind: "Number", v: area * (upper - z0) / 1e9 },
+      const props = { Area: { kind: "Area", v: area }, Perimeter: L(perim), Volume: { kind: "Volume", v: area * (upper - z0) }, Height: L(upper - z0),
         Name: T(f.get("Name")), "Boundary basis": T(mode) };
       f.child(DATA_TAG).set("Json", { value: area, kind: "Area", props });
       const note = c.status === "ok" ? null : c.status === "redundant" ? "another space already claims this room — pick which one keeps it" : "not enclosed: kept with its name and number, waiting for its room";

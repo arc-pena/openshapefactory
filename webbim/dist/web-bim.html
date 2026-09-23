@@ -761,8 +761,10 @@ function tokenise(src) {
       if (!Number.isFinite(n)) throw new ExprError(`"${src.slice(i, j)}" is not a number`, i);
       out.push({ t: "num", v: n, at: i }); i = j; continue;
     }
-    if (c === '"' && out.length && out[out.length - 1].t === "num") { out.push({ t: "unit", v: '"', at: i }); i++; continue; }
-    if (c === "'" && out.length && out[out.length - 1].t === "num") { out.push({ t: "unit", v: "'", at: i }); i++; continue; }
+    // inch and foot marks after a number, or after a bracket: (6 + 1/2)"
+    const afterValue = out.length && (out[out.length - 1].t === "num" || (out[out.length - 1].t === "op" && out[out.length - 1].v === ")"));
+    if (c === '"' && afterValue) { out.push({ t: "unit", v: '"', at: i }); i++; continue; }
+    if (c === "'" && afterValue) { out.push({ t: "unit", v: "'", at: i }); i++; continue; }
     if (c === '"') {
       let j = i + 1; while (j < src.length && src[j] !== '"') j++;
       if (j >= src.length) throw new ExprError("this text is missing its closing quote", i);
@@ -797,8 +799,16 @@ function tokenise(src) {
 // unary  := '-' unary | power
 // power  := atom ('^' unary)?
 // atom   := (num | name | call | '(' expr ')' | str) unit?
+/** Architectural imperial as people write it: 3'-6", 3' 6", 3'6", 6 1/2", 3'-6 1/2" - feet then
+ *  inches is a sum, not a subtraction, and a space before a fraction is a plus. */
+function imperialSugar(src) {
+  return String(src)
+    .replace(/(\d+(?:\.\d+)?)\s*'\s*-?\s*(\d+(?:\.\d+)?)(?:\s+(\d+)\s*\/\s*(\d+))?\s*"/g, (_, ft, inch, n, d) => `(${ft}' + ${n ? `(${inch} + ${n}/${d})` : inch}")`)
+    .replace(/(\d+(?:\.\d+)?)\s+(\d+)\s*\/\s*(\d+)\s*"/g, (_, w, n, d) => `((${w} + ${n}/${d})")`)
+    .replace(/(^|[^\d.)])(\d+)\s*\/\s*(\d+)\s*"/g, (_, pre, n, d) => `${pre}((${n}/${d})")`);
+}
 function parse(src) {
-  const toks = tokenise(String(src));
+  const toks = tokenise(imperialSugar(String(src)));
   let k = 0;
   const peek = () => toks[k], next = () => toks[k++];
   const isOp = v => peek() && peek().t === "op" && peek().v === v;
@@ -858,12 +868,16 @@ const FUNCS = {
 };
 
 const num = (kind, v) => ({ kind, v });
+//! How quantities are written back is the project's choice (units.js sets it): mm, m, ft-in...
+const display = { length: null, area: null, volume: null };
+const setQuantityDisplay = d => Object.assign(display, d);
 function formatValue(val, unit = DOC_UNIT) {
   if (val == null) return "";
   if (val.kind === "Text") return val.v;
   if (val.kind === "Boolean") return val.v ? "Yes" : "No";
-  if (val.kind === "Length") return `${fmt(val.v / UNITS[unit].f)} ${unit}`;
-  if (val.kind === "Area") return `${fmt(val.v / 1e6)} m²`;
+  if (val.kind === "Length") return display.length && unit === DOC_UNIT ? display.length(val.v) : `${fmt(val.v / UNITS[unit].f)} ${unit}`;
+  if (val.kind === "Area") return display.area ? display.area(val.v) : `${fmt(val.v / 1e6)} m²`;
+  if (val.kind === "Volume") return display.volume ? display.volume(val.v) : `${fmt(val.v / 1e9)} m³`;
   if (val.kind === "Angle") return `${fmt(val.v)}°`;
   return fmt(val.v);
 }
@@ -871,7 +885,7 @@ const fmt = x => (Math.abs(x - Math.round(x)) < 1e-9 ? String(Math.round(x)) : S
 
 /** Evaluate with `lookup(name) → value | undefined`. `into` is the quantity
  *  wanted: a bare number typed into a Length field is millimetres. */
-function evaluate(tree, { lookup = () => undefined, into = "Number" } = {}) {
+function evaluate(tree, { lookup = () => undefined, into = "Number", bare = 1 } = {}) {
   const ev = n => {
     switch (n.k) {
       // A bare literal is dimensionless until the end: "2 * span" must stay a
@@ -905,8 +919,10 @@ function evaluate(tree, { lookup = () => undefined, into = "Number" } = {}) {
         if (a.kind === "Text" || b.kind === "Text") throw new ExprError(`"${n.op}" needs numbers; use & to join text`);
         switch (n.op) {
           case "+": case "-": {
+            // a bare number added to a length is a length in the bare unit (the display unit it was typed in)
             const kind = a.kind === "Number" ? b.kind : a.kind;
-            return num(kind, n.op === "+" ? a.v + b.v : a.v - b.v);
+            const av = a.kind === "Number" && b.kind === "Length" ? a.v * bare : a.v, bv = b.kind === "Number" && a.kind === "Length" ? b.v * bare : b.v;
+            return num(kind, n.op === "+" ? av + bv : av - bv);
           }
           case "*": {
             const kind = a.kind === "Length" && b.kind === "Length" ? "Area" : a.kind === "Number" ? b.kind : a.kind;
@@ -924,6 +940,8 @@ function evaluate(tree, { lookup = () => undefined, into = "Number" } = {}) {
     throw new ExprError("cannot evaluate this");
   };
   const out = ev(tree);
+  // what is still a bare number in a length field is a length in the bare unit
+  if (into === "Length" && out.kind === "Number") return num("Length", out.v * bare);
   return out;
 }
 
@@ -937,15 +955,89 @@ function saysFormula(text) {
 
 /** Read what a person typed into a typed field. Returns
  *  { value, expr, names } — `expr` kept for round-tripping when it is a formula. */
-function readValue(text, { kind = "Length", lookup } = {}) {
+function readValue(text, { kind = "Length", lookup, bare = 1 } = {}) {
   const tree = parse(text);
   const names = namesIn(tree);
-  const val = evaluate(tree, { lookup, into: kind === "Integer" ? "Number" : kind });
+  const val = evaluate(tree, { lookup, into: kind === "Integer" ? "Number" : kind, bare });
   if ((kind === "Length" || kind === "Angle") && val.kind === "Number") val.kind = kind;
   if (kind === "Length" && val.kind !== "Length") throw new ExprError(`this field wants a length; that is ${val.kind === "Angle" ? "an angle" : "a " + val.kind.toLowerCase()}`);
   if (kind === "Angle" && val.kind !== "Angle") throw new ExprError(`this field wants an angle; that is a ${val.kind.toLowerCase()}`);
   return { value: val.v, val, expr: saysFormula(text) ? String(text).trim() : null, names };
 }
+
+// ===== units.js =====
+//! Units: the model is millimetres, always; the project chooses how lengths are SHOWN.
+//!
+//! As in CATIA and OpenCascade, a quantity is a length whatever it is written in. A field takes any
+//! unit and any maths - `10m`, `3'-6"`, `2*1.2m + 300mm`, `span/2` - and the model stores the
+//! length. The project's display unit (meta.displayUnits, saved with the file) decides only how a
+//! length is written back: in Properties, in temporary dimensions, on the drawings. A number typed
+//! with no unit is read in the display unit, as Revit does (in feet-and-inches it is feet).
+
+
+
+const LENGTH_UNITS = {
+  mm: { label: "Millimetres (mm)", f: 1, dp: 0, suffix: "mm" },
+  cm: { label: "Centimetres (cm)", f: 10, dp: 1, suffix: "cm" },
+  m: { label: "Metres (m)", f: 1000, dp: 3, suffix: "m" },
+  "ft-in": { label: "Feet and fractional inches (ft-in)", f: 304.8, imperial: true },
+  in: { label: "Fractional inches (in)", f: 25.4, imperial: true },
+};
+let current = "mm";
+const setLengthUnit = u => { current = LENGTH_UNITS[u] ? u : "mm"; };
+const lengthUnit = () => current;
+/** Millimetres in one bare (unit-less) number, in a unit setting. */
+const bareFactor = (u = current) => (LENGTH_UNITS[u] || LENGTH_UNITS.mm).f;
+const isImperial = (u = current) => !!(LENGTH_UNITS[u] || {}).imperial;
+
+const unitTrim = s => (s.includes(".") ? s.replace(/0+$/, "").replace(/\.$/, "") : s);
+/** Inches as whole + a fraction to 1/den, reduced: 11.625 → "11 5/8". */
+function inchText(inches, den = 16) {
+  let whole = Math.floor(inches + 1e-9), n = Math.round((inches - whole) * den);
+  if (n === den) { whole += 1; n = 0; }
+  if (!n) return String(whole);
+  let d = den; while (n % 2 === 0 && d % 2 === 0) { n /= 2; d /= 2; }
+  return whole ? `${whole} ${n}/${d}` : `${n}/${d}`;
+}
+/** A length (mm) written in a unit setting. `suffix: false` is how dimension strings read (metric
+ *  bare, imperial always with its marks); `fixed` keeps a metric unit's decimals. */
+function fmtLength(v, { unit = current, suffix = true, fixed = false } = {}) {
+  if (!Number.isFinite(v)) return "—";
+  const U = LENGTH_UNITS[unit] || LENGTH_UNITS.mm, neg = v < 0 ? "-" : "", a = Math.abs(v);
+  if (unit === "ft-in") {
+    const inches = a / 25.4; let ft = Math.floor(inches / 12 + 1e-9), rest = inches - ft * 12;
+    let r = inchText(rest); if (r === "12") { ft += 1; r = "0"; }
+    return `${neg}${ft}' - ${r}"`;
+  }
+  if (unit === "in") return `${neg}${inchText(a / 25.4)}"`;
+  let s = (a / U.f).toFixed(U.dp === 0 ? (Math.abs(a - Math.round(a)) < 1e-6 ? 0 : 1) : U.dp);
+  if (!fixed) s = unitTrim(s);
+  return neg + s + (suffix ? " " + U.suffix : "");
+}
+/** Areas: m² in metric, ft² in imperial. Volumes likewise. */
+const fmtArea = (mm2, unit = current) => isImperial(unit) ? `${unitTrim((mm2 / 92903.04).toFixed(2))} ft²` : `${unitTrim((mm2 / 1e6).toFixed(2))} m²`;
+const fmtVolume = (mm3, unit = current) => isImperial(unit) ? `${unitTrim((mm3 / 28316846.6).toFixed(2))} ft³` : `${unitTrim((mm3 / 1e9).toFixed(3))} m³`;
+/** What a length field's text is worth, in mm: any unit, any maths, names through `lookup`. */
+function parseLength(text, { unit = current, lookup } = {}) {
+  const src = String(text).trim(); if (!src) throw new ExprError("type a length");
+  const v = evaluate(parse(src), { lookup, into: "Length", bare: bareFactor(unit) });
+  if (v.kind !== "Length" && v.kind !== "Number") throw new ExprError(`that is ${v.kind === "Angle" ? "an angle" : "a " + v.kind.toLowerCase()}, not a length`);
+  return v.kind === "Number" ? v.v * bareFactor(unit) : v.v;
+}
+/** Angles: degrees unless a unit says otherwise (`0.5rad`). */
+function parseAngle(text, { lookup } = {}) {
+  const v = evaluate(parse(String(text).trim()), { lookup, into: "Angle" });
+  if (v.kind !== "Angle" && v.kind !== "Number") throw new ExprError(`that is not an angle`);
+  return v.v;
+}
+/** Plain numbers (counts, factors): maths allowed, units not. */
+function parseNumber(text, { lookup } = {}) {
+  const v = evaluate(parse(String(text).trim()), { lookup, into: "Number" });
+  if (v.kind !== "Number") throw new ExprError(`that is a ${v.kind.toLowerCase()}; a plain number is wanted here`);
+  return v.v;
+}
+// every formatted quantity - Properties, schedules, tags - goes through the project's units
+setQuantityDisplay({ length: v => fmtLength(v), area: v => fmtArea(v), volume: v => fmtVolume(v) });
 
 // ===== ocaf.js =====
 //! The document: an OCAF-style label tree with typed attributes, a catalogue
@@ -1338,7 +1430,7 @@ function loadDocument(input) {
   const doc = new Document();
   const report = doc.loadReport;
   if (src.format && src.format !== "web-bim-document") report.push(`format "${src.format}" read as web-bim-document`);
-  for (const k of ["format", "version", "units", "name"]) if (src[k] !== undefined) doc.meta[k] = src[k];
+  for (const k of ["format", "version", "units", "name", "displayUnits"]) if (src[k] !== undefined) doc.meta[k] = src[k];
   let factor = 1;
   if (doc.meta.units && doc.meta.units !== "mm") {
     factor = { m: 1000, cm: 10, in: 25.4, ft: 304.8 }[doc.meta.units];
@@ -5658,6 +5750,7 @@ const handlesOf = el => cadSketchHandles(el);
 
 
 
+
 const L = (v) => ({ kind: "Length", v });
 const N = (v) => ({ kind: "Number", v });
 const T = (v) => ({ kind: "Text", v: String(v) });
@@ -5692,7 +5785,9 @@ BUILDERS.Number = { build: (f) => ({ data: { value: F.real(f, "value"), kind: F.
 
 declare({ type: "Expression", guid: "wb-0004", category: "Parameter", kind: "number", idPrefix: "EX",
   summary: "An inline value that acquired dependencies, promoted to a first-class element (§4.1).",
-  args: [ text("formula", "Formula", "0"), choice("quantity", "Quantity", ["Length", "Number", "Angle", "Text"], 0) ],
+  args: [ text("formula", "Formula", "0"), choice("quantity", "Quantity", ["Length", "Number", "Angle", "Text"], 0),
+          // the unit a bare number in the formula was typed in: it stays that unit when the display changes
+          text("bareUnit", "Bare numbers in", "mm") ],
   // The graph falls out of the names in the formula: they are references.
   dependsOn: (f, doc) => {
     try { return namesIn(parse(doc.argValue(f, "formula"))).map(n => resolveName(doc, n)).filter(Boolean); }
@@ -5707,7 +5802,7 @@ function resolveName(doc, n) {
 BUILDERS.Expression = {
   build: (f, doc) => {
     const q = F.choice(f, "quantity");
-    const v = evaluate(parse(F.text(f, "formula")), { lookup: documentLookup(doc, f), into: q });
+    const v = evaluate(parse(F.text(f, "formula")), { lookup: documentLookup(doc, f), into: q, bare: bareFactor(F.text(f, "bareUnit") || "mm") });
     if (v.kind === "Number" && (q === "Length" || q === "Angle")) v.kind = q;
     return { data: { value: v.v, kind: v.kind, text: formatValue(v) } };
   },
@@ -5759,7 +5854,7 @@ BUILDERS.Wall = {
       plan: w,
       data: { value: len, kind: "Length", refs: wallReferences(w), props: {
         Length: L(len), Width: L(thick), Height: L(height), "Base elevation": L(z0),
-        Area: { kind: "Area", v: len * height }, Volume: { kind: "Number", v: len * height * thick / 1e9 } } },
+        Area: { kind: "Area", v: len * height }, Volume: { kind: "Volume", v: len * height * thick } } },
       note: lv ? null : (F.refId(f, "baseLevel") ? null : "no base level: built from z = 0"),
     };
   },
@@ -5815,7 +5910,7 @@ BUILDERS.Opening = {
     const frame = { host: doc.idOf(host), u0, u1, at: p.at, sill: p.sill, h: p.h, w: p.w, far, recess, flagged, voidVolume };
     return {
       data: { value: p.w, kind: "Length", frame, props: { Width: L(p.w), Height: L(p.h), "Sill height": L(p.sill), "Along host": L(p.at),
-        "Void volume": { kind: "Number", v: voidVolume / 1e9 } } },
+        "Void volume": { kind: "Volume", v: voidVolume }, Area: { kind: "Area", v: p.w * p.h } } },
       note,
     };
   },
@@ -5976,7 +6071,7 @@ BUILDERS.Column = {
     if (t.round) { path = [{ k: "A", c, r: t.width / 2, a0: 0, a1: TAU }]; foot = []; for (let i = 0; i < 16; i++) foot.push(add(c, [Math.cos(i / 16 * TAU) * t.width / 2, Math.sin(i / 16 * TAU) * t.width / 2])); }
     else { foot = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([x, y]) => { const p = [x * t.width / 2, y * t.depth / 2]; return add(c, [p[0] * Math.cos(rot) - p[1] * Math.sin(rot), p[0] * Math.sin(rot) + p[1] * Math.cos(rot)]); }); path = polyPath(foot); }
     return { plan: { path, foot, material: t.material, z0, z1: z0 + h }, data: { value: h, kind: "Length",
-      refs: [{ key: "centre", kind: "point", geom: c }], props: { Height: L(h), Width: L(t.width), TypeMark: T(t.mark || t.id) } } };
+      refs: [{ key: "centre", kind: "point", geom: c }], props: { Height: L(h), Width: L(t.width), Depth: L(t.round ? t.width : t.depth), "Base elevation": L(z0), "Top elevation": L(z0 + h), Volume: { kind: "Volume", v: Math.abs(polyArea(foot)) * h }, TypeMark: T(t.mark || t.id) } } };
   },
 };
 
@@ -6018,7 +6113,7 @@ BUILDERS.Floor = {
     const main = regions.reduce((b, rg) => (ringArea(rg.outer) > ringArea(b.outer) ? rg : b), regions[0]), b = main.outer;
     const path = regions.flatMap(rg => [...polyPath(rg.outer), ...rg.holes.flatMap(h => polyPath(h))]);
     return { plan: { path, foot: b, regions, z0: z, z1: top, material: layers[layers.length > 1 ? 1 : 0].material, parts },
-      data: { value: area, kind: "Area", parts, props: { Area: { kind: "Area", v: area / 1e6 }, Thickness: L(T_), Perimeter: L(per), "Top elevation": L(top), TypeMark: T(t.mark || t.id) } } };
+      data: { value: area, kind: "Area", parts, props: { Area: { kind: "Area", v: area }, Thickness: L(T_), Perimeter: L(per), Volume: { kind: "Volume", v: area * T_ }, "Top elevation": L(top), "Bottom elevation": L(z), Holes: { kind: "Number", v: regions.reduce((s, rg) => s + rg.holes.length, 0) }, TypeMark: T(t.mark || t.id) } } };
   },
 };
 declare({ type: "Beam", guid: "wb-0402", category: "IfcBeam", kind: "beam", idPrefix: "B",
@@ -6036,7 +6131,7 @@ BUILDERS.Beam = {
     const parts = t.shape === "I" ? [band(W, top - (t.flange || 12), top, "Flange"), band(t.web || 8, top - D + (t.flange || 12), top - (t.flange || 12), "Web"), band(W, top - D, top - D + (t.flange || 12), "Flange")] : [band(W, top - D, top, "Beam")];
     const foot = band(W, 0, 0).foot, len = dist(c.start, c.end);
     return { plan: { path: polyPath(foot), foot, axis: c, z0: top - D, z1: top, parts },
-      data: { value: len, kind: "Length", parts, refs: [{ key: "axis", kind: "line", geom: lineThrough(c.start, c.end) }], props: { Length: L(len), Depth: L(D), Width: L(W), "Top elevation": L(top), TypeMark: T(t.mark || t.id) } } };
+      data: { value: len, kind: "Length", parts, refs: [{ key: "axis", kind: "line", geom: lineThrough(c.start, c.end) }], props: { Length: L(len), Depth: L(D), Width: L(W), "Top elevation": L(top), "Bottom elevation": L(top - D), Volume: { kind: "Volume", v: parts.reduce((s, q) => s + Math.abs(polyArea(q.foot)) * (q.z1 - q.z0), 0) }, TypeMark: T(t.mark || t.id) } } };
   },
 };
 
@@ -6055,7 +6150,7 @@ BUILDERS.Generic = {
     const parts = [{ foot: b.map(p => p.slice()), z0, z1: z0 + h, sub: "Body", material }];
     const area = Math.abs(polyArea(b));
     return { plan: { path: polyPath(b), foot: b, z0, z1: z0 + h, material, parts },
-      data: { value: area * h / 1e9, kind: "Number", parts, props: { Volume: { kind: "Number", v: area * h / 1e9 }, Height: L(h), "Base elevation": L(z0), "IFC class": T(F.text(f, "ifcClass")) } } };
+      data: { value: area * h, kind: "Volume", parts, props: { Volume: { kind: "Volume", v: area * h }, Area: { kind: "Area", v: area }, Height: L(h), "Base elevation": L(z0), "IFC class": T(F.text(f, "ifcClass")) } } };
   },
 };
 
@@ -6315,7 +6410,7 @@ function computeSpaces(doc, walls) {
       const perim = c.loop ? c.loop.pts.reduce((acc, p, i, a) => acc + dist(p, a[(i + 1) % a.length]), 0) : 0;
       const plan = { loop: c.loop, status: c.status, mode, z0, z1: upper };
       f.child(PLAN_TAG).set("Json", plan);
-      const props = { Area: { kind: "Area", v: area }, Perimeter: L(perim), Volume: { kind: "Number", v: area * (upper - z0) / 1e9 },
+      const props = { Area: { kind: "Area", v: area }, Perimeter: L(perim), Volume: { kind: "Volume", v: area * (upper - z0) }, Height: L(upper - z0),
         Name: T(f.get("Name")), "Boundary basis": T(mode) };
       f.child(DATA_TAG).set("Json", { value: area, kind: "Area", props });
       const note = c.status === "ok" ? null : c.status === "redundant" ? "another space already claims this room — pick which one keeps it" : "not enclosed: kept with its name and number, waiting for its room";
@@ -6603,6 +6698,7 @@ function rulesFor(doc, style, filterIds = []) {
 
 
 
+
 class Editor {
   constructor(doc) {
     this.doc = doc; this.undoStack = []; this.redoStack = []; this.lastKey = null; this.listeners = [];
@@ -6647,7 +6743,7 @@ class Editor {
 function snapshot(doc) {
   const els = new Map();
   for (const f of doc.elements()) els.set(doc.idOf(f), JSON.stringify(doc.elementJSON(f)));
-  return { els, lib: JSON.stringify(doc.lib), libObj: null, joins: JSON.stringify(doc.joins), constraints: JSON.stringify(doc.constraints), graph: JSON.stringify(doc.graph), browser: JSON.stringify(doc.browser), name: doc.meta.name };
+  return { els, lib: JSON.stringify(doc.lib), libObj: null, joins: JSON.stringify(doc.joins), constraints: JSON.stringify(doc.constraints), graph: JSON.stringify(doc.graph), browser: JSON.stringify(doc.browser), name: doc.meta.name, units: doc.meta.displayUnits };
 }
 /** Restore by difference, so labels keep their tags and only what changed is touched. */
 function restore(doc, snap) {
@@ -6674,7 +6770,7 @@ function restore(doc, snap) {
   }
   if (JSON.stringify(doc.joins) !== snap.joins || JSON.stringify(doc.constraints) !== snap.constraints) doc.relationRevision++;
   doc.joins = JSON.parse(snap.joins); doc.constraints = JSON.parse(snap.constraints);
-  doc.graph = JSON.parse(snap.graph); doc.browser = JSON.parse(snap.browser); doc.meta.name = snap.name;
+  doc.graph = JSON.parse(snap.graph); doc.browser = JSON.parse(snap.browser); doc.meta.name = snap.name; if (snap.units === undefined) delete doc.meta.displayUnits; else doc.meta.displayUnits = snap.units; setLengthUnit(doc.meta.displayUnits || "mm");
   doc.bumpView();
 }
 
@@ -6708,19 +6804,20 @@ function valueFromText(doc, f, arg, textIn, editor) {
   try { tree = parse(src); } catch (e) { throw e; }
   const names = namesIn(tree);
   if (!names.length) {
-    const v = evaluate(tree, { into: q });
+    const v = evaluate(tree, { into: q, bare: bareFactor(doc.meta.displayUnits || "mm") });
     if (q === "Length" && v.kind !== "Length" && v.kind !== "Number") throw new ExprError(`this field wants a length; that is ${v.kind === "Angle" ? "an angle" : "a " + v.kind.toLowerCase()}`);
     const num = arg.kind === "Integer" ? Math.round(v.v) : v.v;
     return saysFormula(src) ? { v: num, expr: src } : num;
   }
   // References something: check it evaluates now (and say which name is wrong if not) …
   const self = f;
-  evaluate(tree, { lookup: documentLookup(doc, self), into: q });
+  const bareUnit = doc.meta.displayUnits || "mm";
+  evaluate(tree, { lookup: documentLookup(doc, self), into: q, bare: bareFactor(bareUnit) });
   // … and promote it. An existing expression with the same text is shared.
-  const same = doc.elements().find(g => doc.typeOf(g) === "Expression" && doc.argValue(g, "formula") === src && doc.argValue(g, "quantity") === (q || "Number"));
+  const same = doc.elements().find(g => doc.typeOf(g) === "Expression" && doc.argValue(g, "formula") === src && doc.argValue(g, "quantity") === (q || "Number") && (doc.argValue(g, "bareUnit") || "mm") === bareUnit);
   if (same) return { ref: doc.idOf(same) };
   const id = doc.freshId("Expression");
-  doc.addElement({ id, type: "Expression", name: `${doc.idOf(f)}.${arg.key}`, args: { formula: src, quantity: q === "Integer" ? "Number" : (q || "Number") } });
+  doc.addElement({ id, type: "Expression", name: `${doc.idOf(f)}.${arg.key}`, args: { formula: src, quantity: q === "Integer" ? "Number" : (q || "Number"), bareUnit } });
   return { ref: id };
 }
 
@@ -6778,6 +6875,12 @@ const HANDLERS = {
     const formula = ex ? doc.argValue(ex, "formula") : v.ref;
     doc.setArg(f, o.key, typeof val === "number" ? val : 0);
     return { said: `${o.key} was bound to ${v.ref} (${formula}); it is now the literal ${typeof val === "number" ? Math.round(val * 1000) / 1000 : 0}` };
+  },
+  /** The project's display unit: how lengths are written, never what they are (the model is mm). */
+  units(doc, o) {
+    if (!LENGTH_UNITS[o.value]) throw new Error(`there is no unit setting "${o.value}" - try ${Object.keys(LENGTH_UNITS).join(", ")}`);
+    doc.meta.displayUnits = o.value; setLengthUnit(o.value); doc.bumpView();
+    return {};
   },
   rename(doc, o) {
     const f = doc.element(o.id); if (!f) throw new Error(`there is no element ${o.id}`);
@@ -7265,6 +7368,7 @@ function solveFor(doc, C, fm, mk, gm, fo, ok, go) {
 
 
 
+
 // ---------------------------------------------------------------- text metrics
 /** Text height is cap height in paper mm (the drafting convention); the em
  *  follows from the font's cap height, identically on canvas and in the PDF. */
@@ -7572,7 +7676,7 @@ function drawSpace(doc, ctx, B, f) {
 function ruleMatch(doc, f, rule) { try { return matches(doc, f, rule.when); } catch (e) { return false; } }
 function paramText(doc, f, k) {
   if (k === "Name") return f.get("Name");
-  if (k === "Area") { const d = doc.data(f); return d && d.props && d.props.Area ? (d.props.Area.v / 1e6).toFixed(1) + " m²" : "—"; }
+  if (k === "Area") { const d = doc.data(f); return d && d.props && d.props.Area ? fmtArea(d.props.Area.v, (doc.meta && doc.meta.displayUnits) || "mm") : "—"; }
   const p = doc.getParam(f, k); if (p !== undefined) return displayParam(doc, f, p);
   const v = propertyOf(doc, f, k); return v && !v.error ? formatValue(v) : "";
 }
@@ -7700,7 +7804,7 @@ function drawDimension(doc, ctx, B, f) {
   for (const p of [A, Bp]) { const pp = B.P(p), t = mul(normalise(add(dir, along)), 1.2); B.stroke([lineSeg(sub(pp, t), add(pp, t))], { weight: penWeight(doc, "medium", ctx.scale), colour: "#000" }, "Annotation-Dimension", id, true); }
   const mid = B.P(lerp(A, Bp, 0.5)), ang = Math.atan2(dir[1], dir[0]) * 180 / Math.PI;
   const rot = ang > 90 || ang <= -90 ? ang + 180 : ang;
-  const txt = String(Math.round(m.value * 10) / 10);
+  const txt = dimText(doc, m.value);
   const up = [-Math.sin(rot * Math.PI / 180), Math.cos(rot * Math.PI / 180)];
   B.text(add(mid, mul(up, 0.8)), txt, 2.5, { align: "centre", rot, layer: "Annotation-Dimension", id });
   if (F.bool(f, "locked")) drawPadlock(B, add(mid, add(mul(up, 1), mul([Math.cos(rot * Math.PI / 180), Math.sin(rot * Math.PI / 180)], textWidth(txt, 2.5) / 2 + 2.5))), id);
@@ -7795,8 +7899,8 @@ function drawDatums(doc, ctx, B, v, G) {
     B.stroke([lineSeg([sx, za], [sx, zb])], g, "Annotation-Dimension", id);
     for (const z of [za, zb]) { const pp = B.P([sx, z]); B.stroke([lineSeg(add(pp, [-1.2, -1.2]), add(pp, [1.2, 1.2]))], { weight: penWeight(doc, "medium", S), colour: "#000" }, "Annotation-Dimension", id, true); B.stroke([lineSeg([sx - 250, z], [sx + 250, z])], g, "Annotation-Dimension", id); }
     const mid = B.P([sx, (za + zb) / 2]);
-    B.text(add(mid, [-0.9, 0]), String(Math.round(m.value)), 2.5, { align: "centre", rot: 90, layer: "Annotation-Dimension", id });
-    if (F.bool(f, "locked")) drawPadlock(B, add(mid, [-2.2, textWidth(String(Math.round(m.value)), 2.5) / 2 + 3]), id);
+    B.text(add(mid, [-0.9, 0]), dimText(doc, m.value), 2.5, { align: "centre", rot: 90, layer: "Annotation-Dimension", id });
+    if (F.bool(f, "locked")) drawPadlock(B, add(mid, [-2.2, textWidth(dimText(doc, m.value), 2.5) / 2 + 3]), id);
     B.hit(id, [[sx - 300, Math.min(za, zb)], [sx + 300, Math.min(za, zb)], [sx + 300, Math.max(za, zb)], [sx - 300, Math.max(za, zb)]]);
   }
   for (const f of doc.elements()) if (doc.typeOf(f) === "Grid" && categoryVisible(ctx, "IfcGrid")) {
@@ -8153,6 +8257,10 @@ function translatePrim(p, o) {
   return q;
 }
 
+/** A dimension's string in the project's units, as Revit writes it: metric bare (7000, 7.000),
+ *  imperial with its marks (22' - 11 9/16"). */
+function dimText(doc, v) { const u = (doc.meta && doc.meta.displayUnits) || "mm"; return fmtLength(v, { unit: u, suffix: false, fixed: u === "m" || u === "cm" }); }
+
 // ===== props.js =====
 //! Pure models the interface draws (§4.5, §4.2, §10.3). Kept free of the DOM so
 //! the tests measure exactly what the panel shows.
@@ -8242,7 +8350,9 @@ function propertyModel(doc, ids) {
   // computed values: read-only (length, area, volume)
   if (els.length === 1) {
     const d = doc.data(els[0]);
-    for (const [k, v] of Object.entries((d && d.props) || {})) push({ source: "computed", key: k, label: k, editor: "readonly", readonly: true, group: "Computed", value: formatValue(v) });
+    // what the element measures of itself - length, area, volume, heights - live, in the project's units,
+    // where Revit shows them: read-only rows in Dimensions (text facts in Identity Data)
+    for (const [k, v] of Object.entries((d && d.props) || {})) push({ source: "computed", key: k, label: k, editor: "readonly", readonly: true, group: v && v.kind === "Text" ? "Identity Data" : "Dimensions", value: formatValue(v), live: true });
   }
   rows.sort((a, b) => (GROUP_ORDER.indexOf(a.group) + 1 || 99) - (GROUP_ORDER.indexOf(b.group) + 1 || 99));
   const tk = types.length === 1 ? TYPE_KEYS.find(k => CATALOGUE.get(types[0]).args.some(a => a.key === k)) : null;
@@ -11677,6 +11787,7 @@ function mergeModel(cur, next) {
 
 
 
+
 const CASES = [];
 const testCase = (id, name, fn, opts = {}) => CASES.push(Object.assign({ id, name, fn }, opts));
 const approx = (a, b, tol = 1e-6) => Math.abs(a - b) <= tol;
@@ -12752,9 +12863,32 @@ testCase("M22", "A floor is a sketch: welded loops with holes, fillet and offset
     `ok ${res.ok} err ${err}; regions ${p && p.regions.length} holes ${p && p.regions[0] && p.regions[0].holes.length}; top ${lockedLen}→${held}; closed ${closedAfterDrag}; CAD types ${types}; back ${back ? JSON.stringify(back.value.elements.find(e => e.type === "circle")) : "none"}`);
 });
 
+testCase("M23", "Units: the model is mm; display is mm/m/ft-in; fields take any unit and maths; a stored formula keeps the unit it was typed in", () => {
+  const doc = buildSample(), ed = new Editor(doc);
+  const cases = [["10m", "mm", 10000], ["3'-6\"", "mm", 1066.8], ["3' 6 1/2\"", "m", 1079.5], ["2*1.2m + 300mm", "ft-in", 2700], ["2.5", "m", 2500], ["10", "ft-in", 3048], ["1/2\"", "mm", 12.7]];
+  const parsed = cases.map(([t, u, want]) => [t, u, parseLength(t, { unit: u }), want]);
+  const okParse = parsed.every(([, , got, want]) => Math.abs(got - want) < 1e-6);
+  ed.apply({ op: "units", value: "m" });
+  ed.apply({ op: "set", id: "W1", key: "height", text: "3.2" });                 // a bare number, in metres
+  const h1 = doc.argValue(doc.element("W1"), "height");
+  ed.apply({ op: "set", id: "W2", key: "height", text: "W1.Height + 0.5" });     // a formula with a bare 0.5 (metres)
+  const h2 = doc.plan(doc.element("W2")).z1 - doc.plan(doc.element("W2")).z0;
+  ed.apply({ op: "units", value: "ft-in" });                                     // switching the display changes no size
+  doc.regenerate();
+  const h2b = doc.plan(doc.element("W2")).z1 - doc.plan(doc.element("W2")).z0;
+  const txt = dimText(doc, 3657.6), fv = formatValue({ kind: "Length", v: 1066.8 });
+  ed.undo();
+  const back = doc.meta.displayUnits;
+  setLengthUnit("mm");
+  const ok = okParse && h1 === 3200 && Math.abs(h2 - 3700) < 1e-6 && Math.abs(h2b - 3700) < 1e-6 && txt === "12' - 0\"" && fv === "3' - 6\"" && back === "m";
+  return R(ok, "all parse right; 3.2 in metres is 3200; W1.Height + 0.5 is 3700 and stays 3700 after switching to ft-in; dims read 12' - 0\"; undo restores metres",
+    `parse ${parsed.map(([t, u, g]) => `${t}@${u}=${Math.round(g * 10) / 10}`).join(" ")}; h1 ${h1}; h2 ${h2}→${h2b}; dim "${txt}"; fv "${fv}"; after undo ${back}`);
+});
+
 // ===== ui_util.js =====
 //! Small DOM vocabulary shared by the interface modules. The interface only
 //! mirrors the document: nothing here owns model state.
+
 
 
 
@@ -12914,7 +13048,8 @@ function dialog(title, body, actions = [], { modeless = false } = {}) {
   const first = dlg.querySelector("input, select, button.primary"); if (first) first.focus({ preventScroll: true });
   return { close, el: dlg, set onClose(f) { onClose = f; } };
 }
-const fmtLen = v => (Math.abs(v - Math.round(v)) < 1e-6 ? String(Math.round(v)) : v.toFixed(1));
+/** A length (mm) in the project's display unit, with its unit: "7000 mm", "7 m", "22' - 11 9/16\"". */
+const fmtLen = v => fmtLength(v);
 
 // ===== panel.js =====
 //! The property panel (§4.5), the schedule (§4.5: the panel transposed), the
@@ -12931,11 +13066,12 @@ const fmtLen = v => (Math.abs(v - Math.round(v)) < 1e-6 ? String(Math.round(v)) 
 
 
 
+
 /** Live preview of what a typed value will resolve to (type-ahead resolution). */
 function preview(app, f, row, text) {
   const q = row.arg ? row.arg.quantity : (row.kind === "Integer" ? "Number" : row.kind);
   try {
-    const r = readValue(text, { kind: q === "Integer" ? "Number" : q, lookup: documentLookup(app.doc, f) });
+    const r = readValue(text, { kind: q === "Integer" ? "Number" : q, lookup: documentLookup(app.doc, f), bare: q === "Length" ? bareFactor() : 1 });
     return { ok: true, text: `= ${formatValue(r.val)}${r.names.length ? `  · binds ${r.names.join(", ")}` : ""}` };
   } catch (e) {
     const at = e.at !== undefined ? ` (at character ${e.at + 1})` : "";
@@ -13006,13 +13142,16 @@ function rowEditor(app, ids, f, r) {
   switch (r.editor) {
     case "value": {
       const bound = r.bound;
-      const shown = r.varies ? "" : bound ? bound.expr : (r.value && typeof r.value === "object" && r.value.expr) ? r.value.expr : r.value ?? "";
+      let shown = r.varies ? "" : bound ? bound.expr : (r.value && typeof r.value === "object" && r.value.expr) ? r.value.expr : r.value ?? "";
+      // a length is shown in the project's unit; what is typed back may be in any unit
+      const isLen = (r.arg && r.arg.quantity === "Length") || (r.spec && r.spec.kind === "Length");
+      if (isLen && typeof shown === "number") shown = fmtLen(shown);
       const inp = h("input", { type: "text", id, class: bound ? "bound" : "", value: String(shown), placeholder: r.varies ? "<varies>" : (r.placeholder ?? ""), inputmode: "decimal", spellcheck: false, autocomplete: "off" });
-      const base = bound ? (bound.error ? `⚠ ${bound.expr}: ${bound.error}` : `= ${bound.result} · ${bound.id}`) : r.arg && r.arg.unit ? `${r.arg.unit === "mm" ? "length, mm" : r.arg.unit}` : "";
+      const base = bound ? (bound.error ? `⚠ ${bound.expr}: ${bound.error}` : `= ${bound.result} · ${bound.id}`) : r.arg && r.arg.unit ? `${r.arg.unit === "mm" ? "length · any unit or formula (10m, 3'-6\", span/2)" : r.arg.unit}` : "";
       under.textContent = base; if (bound && bound.error) under.classList.add("err");
       inp.addEventListener("input", () => { if (!inp.value.trim()) { under.textContent = base; return; } const p = preview(app, f, r, inp.value); under.textContent = p.text; under.classList.toggle("err", !p.ok); });
       let committed = false; // Enter commits, then the re-render blurs the field: never commit twice
-      const done = () => { if (committed || inp.value.trim() === String(shown).trim() || !inp.value.trim()) return; committed = true; if (r.source === "param") commit({ value: Number(inp.value) }); else commit({ text: inp.value }); };
+      const done = () => { if (committed || inp.value.trim() === String(shown).trim() || !inp.value.trim()) return; committed = true; if (r.source === "param") { let v; try { v = isLen ? parseLength(inp.value) : parseNumber(inp.value); } catch (e) { under.textContent = e.message; under.classList.add("err"); committed = false; return; } commit({ value: v }); } else commit({ text: inp.value }); };
       inp.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); done(); inp.blur(); } if (e.key === "Escape") { inp.value = shown; under.textContent = base; inp.blur(); } });
       inp.addEventListener("change", done);
       const line = h("div", { class: "line" }, inp);
@@ -13060,8 +13199,8 @@ function rowEditor(app, ids, f, r) {
       break;
     }
     case "readonly": {
-      const shownRO = r.varies ? "<varies>" : r.value === undefined ? "—" : typeof r.value === "object" ? JSON.stringify(r.value) : String(r.value);
-      val.append(h("div", { class: "ro" }, shownRO));
+      const shownRO = r.varies ? "<varies>" : r.value === undefined ? "—" : typeof r.value === "object" ? JSON.stringify(r.value) : typeof r.value === "number" && r.spec && r.spec.kind === "Length" ? fmtLen(r.value) : String(r.value);
+      val.append(h("div", { class: "ro", "data-qty": r.live ? r.key : null }, shownRO));
       if (r.origin) val.append(h("div", { class: "origin" }, `from ${r.origin}`));
       break;
     }
@@ -13104,7 +13243,7 @@ function renderSchedule(app, root, v) {
       else if (k === "Name") td = h("td", {}, h("input", { type: "text", value: f.get("Name"), "aria-label": `${r.id} name`, onchange: e => app.apply({ op: "rename", id: r.id, name: e.target.value }) }));
       else if (arg && (arg.kind === "Real" || arg.kind === "Integer") && !(doc.argValue(f, k) && doc.argValue(f, k).ref)) td = h("td", {}, h("input", { type: "text", value: r.cells[i], "aria-label": `${r.id} ${k}`, onchange: e => { const res = app.apply({ op: "set", id: r.id, key: k, text: e.target.value }); if (!res.ok) { e.target.value = r.cells[i]; app.say(res.error, "error"); } } }));
       else if (spec && spec.binding !== "type" && spec.kind === "Enum") { const cur = doc.getParam(f, k) ?? spec.default; td = h("td", {}, h("select", { "aria-label": `${r.id} ${k}`, onchange: e => app.apply({ op: "set", id: r.id, key: "params." + k, value: e.target.value }) }, spec.values.map(o => h("option", { selected: o === cur }, o)))); }
-      else if (spec && spec.binding !== "type" && spec.kind !== "Material") td = h("td", {}, h("input", { type: "text", value: doc.getParam(f, k) ?? "", "aria-label": `${r.id} ${k}`, onchange: e => app.apply({ op: "set", id: r.id, key: "params." + k, value: spec.kind === "Integer" || spec.kind === "Number" ? Number(e.target.value) : e.target.value }) }));
+      else if (spec && spec.binding !== "type" && spec.kind !== "Material") td = h("td", {}, h("input", { type: "text", value: doc.getParam(f, k) ?? "", "aria-label": `${r.id} ${k}`, onchange: e => app.apply({ op: "set", id: r.id, key: "params." + k, value: spec.kind === "Length" ? parseLength(e.target.value) : spec.kind === "Integer" || spec.kind === "Number" ? parseNumber(e.target.value) : e.target.value }) }));
       else td = h("td", {}, r.cells[i]);
       tr.append(td);
     });
@@ -13113,7 +13252,7 @@ function renderSchedule(app, root, v) {
   table.append(tb);
   if (F.choice(v, "of") === "IfcSpace") {
     const total = rows.reduce((a, r) => a + ((doc.data(r.f) || {}).value || 0), 0);
-    table.append(h("tfoot", {}, h("tr", {}, fields.map((k, i) => h("td", { style: { fontWeight: 600, borderTop: "1px solid var(--rule)" } }, k === "Area" ? (total / 1e6).toFixed(1) + " m²" : i === 0 ? "Total" : "")))));
+    table.append(h("tfoot", {}, h("tr", {}, fields.map((k, i) => h("td", { style: { fontWeight: 600, borderTop: "1px solid var(--rule)" } }, k === "Area" ? fmtArea(total) : i === 0 ? "Total" : "")))));
   }
   card.append(h("div", { class: "tablewrap" }, table));
   pane.append(card);
@@ -13140,14 +13279,14 @@ function typeEditor(app, typeId) {
       t.layers.forEach((L, i) => tbody.append(h("tr", {},
         h("td", { class: "mono" }, String(i + 1)),
         h("td", {}, h("select", { "aria-label": `Layer ${i + 1} function`, onchange: e => { L.function = e.target.value; redraw(); } }, funcs.map(fn => h("option", { selected: fn === L.function }, fn)))),
-        h("td", {}, h("input", { type: "number", step: "0.5", min: "0", value: L.thickness, style: { width: "80px" }, "aria-label": `Layer ${i + 1} thickness`, oninput: e => { L.thickness = Number(e.target.value) || 0; redraw(); totalEl.textContent = total(); } })),
+        h("td", {}, h("input", { type: "text", value: fmtLen(L.thickness), style: { width: "88px" }, "aria-label": `Layer ${i + 1} thickness`, onchange: e => { try { L.thickness = Math.max(0, parseLength(e.target.value)); } catch (err) { e.target.value = fmtLen(L.thickness); return; } e.target.value = fmtLen(L.thickness); redraw(); totalEl.textContent = total(); } })),
         h("td", {}, h("select", { "aria-label": `Layer ${i + 1} material`, onchange: e => { L.material = e.target.value; redraw(); } }, Object.entries(doc.lib.materials).map(([k, m]) => h("option", { value: k, selected: k === L.material }, m.name)))),
         h("td", {}, h("span", { class: "chip" }, `p${LAYER_PRIORITY[L.function] ?? 4}`)),
         h("td", { style: { whiteSpace: "nowrap" } },
           h("button", { class: "iconbtn", "aria-label": "Move up", disabled: i === 0, onclick: () => { t.layers.splice(i - 1, 0, t.layers.splice(i, 1)[0]); rowsUI(); redraw(); } }, "↑"), " ",
           h("button", { class: "iconbtn", "aria-label": "Remove layer", onclick: () => { t.layers.splice(i, 1); rowsUI(); redraw(); } }, "✕")))));
     };
-    const total = () => `${t.layers.reduce((a, l) => a + l.thickness, 0)} mm total`;
+    const total = () => `${fmtLen(t.layers.reduce((a, l) => a + l.thickness, 0))} total`;
     const totalEl = h("span", { class: "muted" }, total());
     rowsUI();
     const core = h("div", { style: { display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" } }, "Core between boundaries",
@@ -13166,7 +13305,7 @@ function typeEditor(app, typeId) {
     const cur = t.params[k] ?? "";
     const inherited = r.params[k] !== undefined && t.params[k] === undefined ? `inherits ${r.params[k]} from ${r.origin[k]}` : "";
     const ed = s.kind === "Enum" ? h("select", { "aria-label": k, onchange: e => { t.params[k] = e.target.value; } }, h("option", { value: "" }, "—"), s.values.map(o => h("option", { selected: String(o) === String(cur) }, o)))
-      : h("input", { type: "text", value: cur, placeholder: inherited, "aria-label": k, onchange: e => { t.params[k] = s.kind === "Number" || s.kind === "Length" || s.kind === "Integer" ? Number(e.target.value) : e.target.value; } });
+      : h("input", { type: "text", value: cur, placeholder: inherited, "aria-label": k, onchange: e => { t.params[k] = s.kind === "Length" ? parseLength(e.target.value) : s.kind === "Number" || s.kind === "Integer" ? parseNumber(e.target.value) : e.target.value; } });
     ptab.append(h("tr", {}, h("td", {}, k), h("td", {}, ed), h("td", { class: "muted" }, inherited ? `from ${r.origin[k]}` : s.kind)));
   }
   if (specs.length) body.append(h("h3", {}, "Type parameters"), h("table", {}, ptab));
@@ -13416,6 +13555,7 @@ const trim = (t, n) => t.length > n ? t.slice(0, n - 1) + "…" : t;
 
 
 
+
 const RED = "#8f0000", BLUE = "#1d6fd8";
 const SKETCH_DRAW = [
   ["line", "Line", "skline", "click points; each click continues the chain; click the start (or an end) to close; type a length + Enter"],
@@ -13462,6 +13602,9 @@ class SketchSession {
     this.app.refresh({ keepMain: true });
   }
   el(id) { return this.d.elements.find(e => e.id === id); }
+  /** A typed length (any unit, any maths) in mm, or null having said why. */
+  len(text) { try { return parseLength(text); } catch (e) { this.say(`${String(text).trim()}: ${e.message}`, "error"); return null; } }
+  ang(text) { try { return parseAngle(text); } catch (e) { this.say(`${String(text).trim()}: ${e.message}`, "error"); return null; } }
   tol() { return 8 * this.view.modelPerPx(); }
   /** The element under a model point, nearest first. */
   hitEl(p) {
@@ -13536,7 +13679,7 @@ class SketchSession {
   /** Enter: end a chain (and a spline there). */
   enter() {
     if (this.typed && this.tool === "line" && this.pts.length) {
-      const last = this.pts[this.pts.length - 1], dir = normalise(sub(this.cursor || add(last, [1, 0]), last)), n = Number(this.typed); this.typed = "";
+      const last = this.pts[this.pts.length - 1], dir = normalise(sub(this.cursor || add(last, [1, 0]), last)), n = this.len(this.typed); this.typed = "";
       if (n > 0) { this.pts.push(add(last, mul(dir, n))); this.commit(addElements(this.d, [{ type: "line", a: last, b: this.pts[this.pts.length - 1] }])); }
       return true;
     }
@@ -13556,9 +13699,9 @@ class SketchSession {
     this.say("Sketch mode: Finish ✓ or Cancel ✕ on the ribbon ends it", "note");
   }
   key(e) {
-    if (this.tool === "line" && this.pts.length && (/^[0-9.]$/.test(e.key) || (e.key === "Backspace" && this.typed))) {
+    if (this.tool === "line" && this.pts.length && (/^[0-9.'"\/]$/.test(e.key) || (this.typed && /^[a-z+*()\-]$/i.test(e.key)) || (e.key === "Backspace" && this.typed))) {
       this.typed = e.key === "Backspace" ? this.typed.slice(0, -1) : this.typed + e.key;
-      const s = this.view.toScreen(this.cursor || this.pts[this.pts.length - 1]); this.view.hudInput = true; this.view.hud.hidden = false; this.view.hud.style.left = s[0] + "px"; this.view.hud.style.top = s[1] + "px"; this.view.hud.textContent = `length ${this.typed} mm ⏎`;
+      const s = this.view.toScreen(this.cursor || this.pts[this.pts.length - 1]); this.view.hudInput = true; this.view.hud.hidden = false; this.view.hud.style.left = s[0] + "px"; this.view.hud.style.top = s[1] + "px"; this.view.hud.textContent = `length ${this.typed} ⏎`;
       return true;
     }
     if (e.key === "Enter") { this.view.hudInput = null; this.view.hideHud(); return this.enter(); }
@@ -13585,7 +13728,7 @@ class SketchSession {
     const move = ev => {
       const [x, y] = this.view.evPos(ev); if (!moved && Math.abs(x - sx) + Math.abs(y - sy) < 4) return; moved = true;
       const q = this.point(this.view.toModel(x, y), ev), dv = sub(q, grab);
-      last = transform(d0, ids, pt => add(pt, dv)); this.d = last; this.view.showHud(x, y, `move ${fmtLen(dv[0])}, ${fmtLen(dv[1])} mm`); this.view.draw();
+      last = transform(d0, ids, pt => add(pt, dv)); this.d = last; this.view.showHud(x, y, `move ${fmtLen(dv[0])}, ${fmtLen(dv[1])}`); this.view.draw();
     };
     const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); this.view.hideHud(); this.view.showSnap(null);
       if (moved) { this.d = d0; this.commit(weld(last)); } else this.refresh(); };
@@ -13622,7 +13765,7 @@ class SketchSession {
     const d0 = this.d; let last = d0, moved = false;
     const move = ev => {
       moved = true; const [x, y] = this.view.evPos(ev), q = this.point(this.view.toModel(x, y), ev);
-      if (gp.radius) { const w = JSON.parse(JSON.stringify(d0)), c = w.elements.find(el => el.id === gp.ref.split(".")[0]); c.r = Math.max(1, dist(c.c, q)); last = solve(w); this.view.showHud(x, y, `R ${fmtLen(c.r)} mm`); }
+      if (gp.radius) { const w = JSON.parse(JSON.stringify(d0)), c = w.elements.find(el => el.id === gp.ref.split(".")[0]); c.r = Math.max(1, dist(c.c, q)); last = solve(w); this.view.showHud(x, y, `R ${fmtLen(c.r)}`); }
       else { last = dragHandle(d0, gp.ref, q); this.view.showHud(x, y, `${fmtLen(q[0])}, ${fmtLen(q[1])}`); }
       this.d = last; this.view.draw();
     };
@@ -13643,7 +13786,7 @@ class SketchSession {
     const done = (next, msg) => { this.pts = []; this.commit(weld(next), msg); };
     if ((t === "move" || t === "copy") && n === 2) {
       const dv = sub(P[1], P[0]);
-      if (t === "move") done(transform(this.d, ids, pt => add(pt, dv)), `moved ${fmtLen(Math.hypot(dv[0], dv[1]))} mm`);
+      if (t === "move") done(transform(this.d, ids, pt => add(pt, dv)), `moved ${fmtLen(Math.hypot(dv[0], dv[1]))}`);
       else { const copies = ids.map(id => JSON.parse(JSON.stringify(this.el(id)))).map(x => { const w = { elements: [x] }; const moved = transform(Object.assign({ constraints: [], dims: [] }, w), [x.id], pt => add(pt, dv)).elements[0]; delete moved.id; return moved; }); done(addElements(this.d, copies), `${copies.length} copied`); }
     } else if (t === "rotate" && n === 3) {
       const c = P[0], a = Math.atan2(P[2][1] - c[1], P[2][0] - c[0]) - Math.atan2(P[1][1] - c[1], P[1][0] - c[0]);
@@ -13670,20 +13813,20 @@ class SketchSession {
   }
   offsetClick(raw) {
     const id = this.hitEl(raw); if (!id) return this.say("click an element, on the side to offset toward");
-    const v = Number(this.opts.offset); if (!(v > 0)) return this.say("type an offset distance in the options bar", "error");
+    const v = this.opts.offset; if (!(v > 0)) return this.say("type an offset distance in the options bar", "error");
     const r = offsetChain(this.d, id, raw, v, !!this.opts.copy);
-    this.commit(r.drawing, `offset ${fmtLen(v)} mm${this.opts.copy ? " (a copy)" : ""}`);
+    this.commit(r.drawing, `offset ${fmtLen(v)}${this.opts.copy ? " (a copy)" : ""}`);
   }
   offsetPreview() {
     if (this.tool !== "offset" || !this.hoverEl || !this.cursor) return null;
-    try { const r = offsetChain(this.d, this.hoverEl, this.cursorRaw || this.cursor, Number(this.opts.offset) || 0, true); return r.made.map(id => r.drawing.elements.find(x => x.id === id)); } catch (e) { return null; }
+    try { const r = offsetChain(this.d, this.hoverEl, this.cursorRaw || this.cursor, this.opts.offset || 0, true); return r.made.map(id => r.drawing.elements.find(x => x.id === id)); } catch (e) { return null; }
   }
   filletClick(raw) {
     const id = this.hitEl(raw); if (!id) return this.say("click an element: the part you click is kept");
-    if (!this.pending) { this.pending = { id, at: raw }; this.sel.clear(); this.sel.add(id); this.say(`Fillet R ${fmtLen(Number(this.opts.radius) || 0)}: now the second element`); this.view.draw(); return; }
+    if (!this.pending) { this.pending = { id, at: raw }; this.sel.clear(); this.sel.add(id); this.say(`Fillet R ${fmtLen(this.opts.radius || 0)}: now the second element`); this.view.draw(); return; }
     try {
-      const next = fillet(this.d, this.pending.id, this.pending.at, id, raw, Number(this.opts.radius) || 0);
-      this.pending = null; this.sel.clear(); this.commit(next, Number(this.opts.radius) > 0 ? `rounded, R ${fmtLen(Number(this.opts.radius))}` : "corner made: trimmed/extended to meet");
+      const next = fillet(this.d, this.pending.id, this.pending.at, id, raw, this.opts.radius || 0);
+      this.pending = null; this.sel.clear(); this.commit(next, this.opts.radius > 0 ? `rounded, R ${fmtLen(this.opts.radius)}` : "corner made: trimmed/extended to meet");
     } catch (err) { this.pending = null; this.sel.clear(); this.say(err.message, "error"); this.view.draw(); }
   }
   dimClick(raw) {
@@ -13764,7 +13907,7 @@ class SketchSession {
     const id = this.target.id || res.id;
     this.app.endSketch();
     this.app.select([id]);
-    this.say(`Floor ${id}: ${fmtLen(areaM2)} m²${r.regions.length > 1 ? ` in ${r.regions.length} areas` : ""}${holes ? `, ${holes} hole${holes > 1 ? "s" : ""}` : ""}`, "ok");
+    this.say(`Floor ${id}: ${fmtArea(areaM2 * 1e6)}${r.regions.length > 1 ? ` in ${r.regions.length} areas` : ""}${holes ? `, ${holes} hole${holes > 1 ? "s" : ""}` : ""}`, "ok");
     return true;
   }
   cancel() { this.app.endSketch(); this.say(`${this.title} cancelled - nothing changed`, "note"); }
@@ -13839,10 +13982,10 @@ class SketchSession {
       const box = h("div", { class: "tdim", style: { left: pl.at[0] + "px", top: pl.at[1] + "px" } });
       const val = h("button", { title: "Click to type: what it measures moves to it", "aria-label": `Sketch dimension ${txt}` }, txt);
       val.addEventListener("click", () => {
-        const inp = h("input", { type: "text", value: String(Math.round(m.value * 100) / 100), "aria-label": "New value" }); val.replaceWith(inp); inp.focus(); inp.select();
+        const inp = h("input", { type: "text", value: dim.type === "angle" ? String(Math.round(m.value * 100) / 100) : fmtLen(m.value), "aria-label": "New value" }); val.replaceWith(inp); inp.focus(); inp.select();
         inp.addEventListener("keydown", e => { e.stopPropagation(); if (e.key === "Escape") return this.refresh(); if (e.key !== "Enter") return;
-          const v = Number(inp.value); if (!(v > 0)) return this.say("type a positive number", "error");
-          this.commit(setDimValue(this.d, dim, v), `${dim.type} ${dim.type === "angle" ? v + "°" : fmtLen(v) + " mm"}`); });
+          const v = dim.type === "angle" ? this.ang(inp.value) : this.len(inp.value); if (v === null) return; if (!(v > 0)) return this.say("type a positive value", "error");
+          this.commit(setDimValue(this.d, dim, v), `${dim.type} ${dim.type === "angle" ? v + "°" : fmtLen(v)}`); });
       });
       const lock = h("button", { class: "lock", title: dim.locked ? "Unlock: stop holding this value" : "Padlock: hold this value while you edit", "aria-pressed": String(!!dim.locked), "aria-label": dim.locked ? "Unlock sketch dimension" : "Lock sketch dimension" }, icon(dim.locked ? "lock" : "unlock"));
       lock.addEventListener("click", () => this.commit(toggleLock(this.d, dim), dim.locked ? "unlocked" : "locked: it holds while you edit"));
@@ -13864,16 +14007,17 @@ class SketchSession {
     ];
   }
   optionsBar(bar) {
-    const o = this.opts, num = (key, label, width = 64) => h("label", {}, label + " ", h("input", { type: "text", value: o[key], "aria-label": label, style: { width: width + "px" }, onchange: e => { o[key] = Number(e.target.value) || 0; this.view.draw(); }, onkeydown: e => e.stopPropagation() }));
+    // lengths in the options bar take any unit and any maths, shown back in the project's unit
+    const o = this.opts, num = (key, label, width = 72, count = false) => h("label", {}, label + " ", h("input", { type: "text", value: count ? o[key] : fmtLen(o[key]), "aria-label": label, style: { width: width + "px" }, onchange: e => { const v = count ? Math.round(Number(e.target.value)) : this.len(e.target.value); if (v !== null && Number.isFinite(v)) o[key] = v; e.target.value = count ? o[key] : fmtLen(o[key]); this.view.draw(); }, onkeydown: e => e.stopPropagation() }));
     const kids = [h("span", { class: "otitle" }, `Modify | ${this.title}`)];
     const t = this.tool;
     if (t === "offset") kids.push(num("offset", "Offset"), h("label", {}, h("input", { type: "checkbox", checked: !!o.copy, onchange: e => { o.copy = e.target.checked; } }), " Copy"));
     if (t === "fillet") kids.push(num("radius", "Radius"), h("span", { class: "muted" }, "0 = a sharp corner (trim / extend)"));
-    if (t === "polygon") kids.push(num("sides", "Sides", 40));
+    if (t === "polygon") kids.push(num("sides", "Sides", 40, true));
     if (this.target.kind === "floor" && !this.target.id) {
       const doc = this.app.doc, ts = Object.entries(doc.lib.types).filter(([id]) => (doc.resolveType(id) || {}).category === "IfcSlab");
       kids.push(h("label", {}, "Type ", h("select", { onchange: e => { this.app.toolOpts.floorType = e.target.value; } }, ts.map(([id, ty]) => h("option", { value: id, selected: this.app.toolOpts.floorType === id }, ty.name)))),
-        h("label", {}, "Height offset ", h("input", { type: "text", value: this.app.toolOpts.floorOffset ?? 0, style: { width: "56px" }, onchange: e => { this.app.toolOpts.floorOffset = Number(e.target.value) || 0; }, onkeydown: e => e.stopPropagation() })));
+        h("label", {}, "Height offset ", h("input", { type: "text", value: fmtLen(this.app.toolOpts.floorOffset ?? 0), style: { width: "72px" }, onchange: e => { const v = this.len(e.target.value); if (v !== null) this.app.toolOpts.floorOffset = v; e.target.value = fmtLen(this.app.toolOpts.floorOffset ?? 0); }, onkeydown: e => e.stopPropagation() })));
     }
     const r = regionsOf(this.d);
     kids.push(h("span", { class: "grow" }), h("span", { class: r.error ? "muted warn" : "muted" }, r.error ? (this.d.elements.length ? "open: " + r.error.replace(/^the boundary is /, "") : "draw a closed boundary") : `${r.regions.length} closed area${r.regions.length > 1 ? "s" : ""}${r.regions.some(x => x.holes.length) ? " with holes" : ""}`),
@@ -13890,6 +14034,7 @@ const skArea = r => r.reduce((s, p, i) => { const q = r[(i + 1) % r.length]; ret
 //! A handle never moves geometry: it computes a value for a named argument and
 //! sends an ordinary edit (§10.1). In 2D that is pointer events and one affine
 //! transform — no ray casting.
+
 
 
 
@@ -14002,13 +14147,13 @@ class View2D {
   /** A selected level shows its height at its head, editable: type a height and the level moves there. */
   levelHeadEditor(f) {
     const id = this.doc.idOf(f), z = F.real(f, "elevation"), at = this.toScreen([this.viewLineLength() + 1500, z - this.viewZ0()]);
-    const inp = h("input", { type: "text", value: String(Math.round(z)), class: "levelinput", "aria-label": `${F.text(f, "name")} elevation in mm`, title: "Elevation in mm: type and press Enter", style: { left: (at[0] + 22) + "px", top: (at[1] - 30) + "px" } });
+    const inp = h("input", { type: "text", value: fmtLen(z), class: "levelinput", "aria-label": `${F.text(f, "name")} elevation`, title: "Elevation: type it in any unit (3.3m, 10'-6\", 3300mm, L1+300) and press Enter", style: { left: (at[0] + 22) + "px", top: (at[1] - 30) + "px" } });
     inp.addEventListener("keydown", e => {
       e.stopPropagation();
       if (e.key !== "Enter") return;
-      const v = Number(inp.value.replace(",", ".")); if (!Number.isFinite(v)) return this.app.say("type the level's height in mm", "error");
+      const v = readLen(inp.value, this.app); if (v === null) return;
       const r = this.app.apply({ op: "set", id, key: "elevation", value: v });
-      if (r.ok) this.app.say(`${F.text(f, "name")} at ${fmtLen(v)} mm`, "ok");
+      if (r.ok) this.app.say(`${F.text(f, "name")} at ${fmtLen(v)}`, "ok");
     });
     this.overlay.append(inp);
   }
@@ -14026,12 +14171,12 @@ class View2D {
         e.stopPropagation();
         if (e.key === "Escape") return this.draw();
         if (e.key !== "Enter") return;
-        const v = Number(inp.value); if (!(v >= 0)) return this.app.say("type a height in mm", "error");
+        const v = readLen(inp.value, this.app); if (v === null) return; if (!(v >= 0)) return this.app.say("a height is not negative", "error");
         const signed = Math.sign(m.signed || 1) * v, row = doc.constraints.find(c => c.kind === "levelGap" && JSON.stringify(c.of) === JSON.stringify(keys));
         const ops = [];
         if (row) ops.push({ op: "relate", store: "constraints", row: Object.assign({}, row, { value: signed }) });
         ops.push({ op: "set", id: b, key: "elevation", value: Math.round((m.a.z + signed) * 1000) / 1000 });
-        const r = this.app.apply(ops); if (r.ok) this.app.say(`${F.text(doc.element(b), "name")} is ${fmtLen(v)} mm from ${F.text(doc.element(a), "name")}`, "ok");
+        const r = this.app.apply(ops); if (r.ok) this.app.say(`${F.text(doc.element(b), "name")} is ${fmtLen(v)} from ${F.text(doc.element(a), "name")}`, "ok");
       });
     });
     const lock = h("button", { class: "lock", title: locked ? "Unlock: the levels move independently again" : "Padlock: moving either level moves the other", "aria-label": locked ? "Unlock height" : "Lock height", "aria-pressed": String(locked) }, icon(locked ? "lock" : "unlock"));
@@ -14039,7 +14184,7 @@ class View2D {
       const row = doc.constraints.find(c => c.kind === "levelGap" && JSON.stringify(c.of) === JSON.stringify(keys));
       const ops = [{ op: "set", id, key: "locked", value: !locked },
         { op: "relate", store: "constraints", row: Object.assign(row ? {} : { kind: "levelGap", of: keys }, row || {}, { value: m.signed, locked: !locked }) }];
-      const r = this.app.apply(ops); if (r.ok) this.app.say(locked ? "Levels unlocked" : `Locked: ${fmtLen(m.value)} mm between them`, "ok");
+      const r = this.app.apply(ops); if (r.ok) this.app.say(locked ? "Levels unlocked" : `Locked: ${fmtLen(m.value)} between them`, "ok");
     });
     box.append(val, lock); this.overlay.append(box);
   }
@@ -14198,7 +14343,7 @@ class View2D {
     grip.addEventListener("pointerdown", e => {
       e.preventDefault(); e.stopPropagation(); // the overlay re-renders while dragging, so listen on the window
       const r = this.canvas.getBoundingClientRect(), start = this.toModel(e.clientX - r.left, e.clientY - r.top), key = `dimoff:${id}:${e.timeStamp}`;
-      const move = ev => { const p = this.toModel(ev.clientX - r.left, ev.clientY - r.top); this.slideDimension(id, g, start, p, key); this.showHud(ev.clientX - r.left, ev.clientY - r.top, `offset ${fmtLen(F.real(doc.element(id), "offset"))} mm`); };
+      const move = ev => { const p = this.toModel(ev.clientX - r.left, ev.clientY - r.top); this.slideDimension(id, g, start, p, key); this.showHud(ev.clientX - r.left, ev.clientY - r.top, `offset ${fmtLen(F.real(doc.element(id), "offset"))}`); };
       const up = () => { window.removeEventListener("pointermove", move); this.app.editor.seal(); this.hideHud(); this.app.refresh({ keepMain: true }); };
       window.addEventListener("pointermove", move); window.addEventListener("pointerup", up, { once: true });
     });
@@ -14213,9 +14358,9 @@ class View2D {
         e.stopPropagation();
         if (e.key === "Escape") return this.draw();
         if (e.key !== "Enter") return;
-        const v = Number(inp.value); if (!(v >= 0)) return this.app.say("type a distance in mm", "error");
+        const v = readLen(inp.value, this.app); if (v === null) return; if (!(v >= 0)) return this.app.say("a distance is not negative", "error");
         const r = this.setDimensionValue(f, v);
-        this.app.say(r.ok ? `Distance set to ${fmtLen(v)} mm; ${r.moved} moved` : r.error, r.ok ? "ok" : "error");
+        this.app.say(r.ok ? `Distance set to ${fmtLen(v)}; ${r.moved} moved` : r.error, r.ok ? "ok" : "error");
       });
     });
     const lock = h("button", { class: "lock", title: locked ? "Unlock this distance" : "Padlock: keep this distance", "aria-label": locked ? "Unlock dimension" : "Lock dimension", "aria-pressed": String(locked) }, icon(locked ? "lock" : "unlock"));
@@ -14223,7 +14368,7 @@ class View2D {
       const keys = F.json(f, "of"), row = doc.constraints.find(c => JSON.stringify(c.of) === JSON.stringify(keys));
       const ops = [{ op: "set", id, key: "locked", value: !locked },
         { op: "relate", store: "constraints", row: Object.assign(row ? {} : { kind: "distance", of: keys }, row || {}, { value: Math.round(g.value * 1000) / 1000, locked: !locked }) }];
-      const r = this.app.apply(ops); if (r.ok) this.app.say(locked ? "Dimension unlocked: it follows the elements again" : `Padlocked at ${fmtLen(g.value)} mm`, "ok");
+      const r = this.app.apply(ops); if (r.ok) this.app.say(locked ? "Dimension unlocked: it follows the elements again" : `Padlocked at ${fmtLen(g.value)}`, "ok");
     });
     box.append(val, lock);
     this.overlay.append(grip, box);
@@ -14267,8 +14412,8 @@ class View2D {
         inp.addEventListener("keydown", e => {
           if (e.key === "Escape") this.draw();
           if (e.key !== "Enter") return;
-          const v = Number(inp.value);
-          if (!(v >= 0)) { this.app.say("type a distance in mm", "error"); return; }
+          const v = readLen(inp.value, this.app); if (v === null) return;
+          if (!(v >= 0)) { this.app.say("a distance is not negative", "error"); return; }
           const geom = dimensionMove(doc, d, v);
           const r = this.app.apply({ op: "drag", id, key: "centreline", value: geom });
           if (r.ok) this.app.say(`${id} moved: ${d.to} now ${fmtLen(v)} away`, "ok");
@@ -14358,8 +14503,8 @@ class View2D {
     };
     const readout = (v, snapped) => {
       const c = this.doc.argValue(f, "centreline");
-      if (hd.readout === "length" && c) return `L ${fmtLen(dist(c.start, Array.isArray(v) ? v : c.end))} mm${snapped ? " · " + SNAP_SHORT[snapped.kind] : ""}`;
-      if (typeof v === "number") return `${fmtLen(v)} mm`;
+      if (hd.readout === "length" && c) return `L ${fmtLen(dist(c.start, Array.isArray(v) ? v : c.end))}${snapped ? " · " + SNAP_SHORT[snapped.kind] : ""}`;
+      if (typeof v === "number") return `${fmtLen(v)}`;
       if (Array.isArray(v)) return `${fmtLen(v[0])}, ${fmtLen(v[1])}${snapped ? " · " + SNAP_SHORT[snapped.kind] : ""}`;
       return hd.key;
     };
@@ -14375,18 +14520,18 @@ class View2D {
     };
     // Numeric entry mid-drag: typing 3600 commits exactly 3600 (test 18).
     const key_ = ev => {
-      if (!/^[0-9.\-]$/.test(ev.key) && ev.key !== "Enter" && ev.key !== "Backspace") return;
+      if (!typeKey(ev.key, typed) && ev.key !== "Enter" && ev.key !== "Backspace") return;
       ev.preventDefault();
       if (ev.key === "Enter" && typed) {
-        const n = Number(typed); const c = this.doc.argValue(f, hd.writes.split(".")[0]);
+        const n = readLen(typed, this.app); if (n === null) { typed = ""; return; } const c = this.doc.argValue(f, hd.writes.split(".")[0]);
         let v = null;
         if (hd.readout === "length" && c && c.start) { const d = normalise(sub(c.end, c.start)); v = add(c.start, mul(d, n)); }
         else if (hd.constraint && (hd.constraint.onCurve || hd.constraint.scalar)) v = Math.max(hd.constraint.min || 0, n);
-        if (v !== null) { send(v); this.app.say(`${id}: exactly ${fmtLen(n)} mm`, "ok"); }
+        if (v !== null) { send(v); this.app.say(`${id}: exactly ${fmtLen(n)}`, "ok"); }
         finish(); return;
       }
       typed = ev.key === "Backspace" ? typed.slice(0, -1) : typed + ev.key;
-      this.hudInput = true; this.hud.textContent = `type: ${typed || "…"} mm ⏎`;
+      this.hudInput = true; this.hud.textContent = `type: ${typed || "…"} ⏎`;
     };
     const finish = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", finish); window.removeEventListener("keydown", key_, true);
       // the end let go of a wall or landed on one: joins follow the geometry, in the same undo step
@@ -14518,7 +14663,7 @@ class View2D {
       const r = this.app.apply({ op: "set", id: d.level.id, key: "elevation", value: z }, { quiet: true, coalesce: `level:${d.level.id}:${d.start.join(",")}` });
       if (r.ok) d.level.last = z;
     }
-    this.showHud(sx, sy, `${F.text(this.doc.element(d.level.id), "name")}: ${z >= 0 ? "+" : ""}${fmtLen(z)} mm`);
+    this.showHud(sx, sy, `${F.text(this.doc.element(d.level.id), "name")}: ${z >= 0 ? "+" : ""}${fmtLen(z)}`);
   }
   move(e) {
     const [sx, sy] = this.evPos(e);
@@ -14533,7 +14678,7 @@ class View2D {
       if (d.pan && d.moved) { this.cam.x = d.cam.x - (sx - d.start[0]) / this.cam.z; this.cam.y = d.cam.y + (sy - d.start[1]) / this.cam.z; this.draw(); return; }
       if (d.body && d.moved) return this.dragBody(d, sx, sy, e);
       if (d.level && d.moved) return this.dragLevel(d, sx, sy);
-      if (d.dim && d.moved) { this.slideDimension(d.dim.id, d.dim.g, d.dim.grab, this.toModel(sx, sy), `dimoff:${d.dim.id}:${d.start.join(",")}`); this.showHud(sx, sy, `offset ${fmtLen(F.real(this.doc.element(d.dim.id), "offset"))} mm`); return; }
+      if (d.dim && d.moved) { this.slideDimension(d.dim.id, d.dim.g, d.dim.grab, this.toModel(sx, sy), `dimoff:${d.dim.id}:${d.start.join(",")}`); this.showHud(sx, sy, `offset ${fmtLen(F.real(this.doc.element(d.dim.id), "offset"))}`); return; }
       if (d.box && d.moved) { this.box = [d.start, [sx, sy]]; this.draw(); return; }
     }
     const p = this.toModel(sx, sy);
@@ -14577,7 +14722,7 @@ class View2D {
       const r = this.app.apply({ op: "transform", ids: d.body.ids, move: step }, { quiet: true, coalesce: `move:${d.body.ids.join(",")}:${d.start.join(",")}` });
       if (r.ok) d.body.done = dv;
     }
-    this.showHud(sx, sy, `move ${fmtLen(dv[0])}, ${fmtLen(dv[1])} mm${sn ? " · " + SNAP_SHORT[sn.kind] : ""}`);
+    this.showHud(sx, sy, `move ${fmtLen(dv[0])}, ${fmtLen(dv[1])}${sn ? " · " + SNAP_SHORT[sn.kind] : ""}`);
   }
   /** Left→right: window (wholly inside). Right→left: crossing (any part inside). */
   finishBox(d, e) {
@@ -14655,7 +14800,7 @@ class View2D {
       else this.showHud(sx, sy, "hover a wall");
     } else if (T.pts.length) {
       const last = T.pts[T.pts.length - 1];
-      this.showHud(sx, sy, this.hudInput ? this.hud.textContent : `${fmtLen(dist(last, q))} mm · ${Math.round(Math.atan2(q[1] - last[1], q[0] - last[0]) * 180 / Math.PI)}°`);
+      this.showHud(sx, sy, this.hudInput ? this.hud.textContent : `${fmtLen(dist(last, q))} · ${Math.round(Math.atan2(q[1] - last[1], q[0] - last[0]) * 180 / Math.PI)}°`);
     } else this.showHud(sx, sy, `${fmtLen(q[0])}, ${fmtLen(q[1])}`);
     this.draw();
   }
@@ -14674,7 +14819,7 @@ class View2D {
     if (T.pts.length < 3) return this.app.say("a floor needs three points or more", "note");
     const boundary = T.pts.map(p => p.map(v => Math.round(v))); T.pts = [];
     const r = this.app.apply({ op: "add", element: { type: "Floor", args: { boundary, floorType: { ref: o.floorType }, level: level ? { ref: level } : null, heightOffset: o.floorOffset ?? 0 } } });
-    this.app.say(r.ok ? `Floor ${r.id}: ${fmtLen(Math.abs(polyArea(boundary)) / 1e6)} m²` : r.error, r.ok ? "ok" : "error"); if (r.ok) this.app.select([r.id]);
+    this.app.say(r.ok ? `Floor ${r.id}: ${fmtArea(Math.abs(polyArea(boundary)))} m²` : r.error, r.ok ? "ok" : "error"); if (r.ok) this.app.select([r.id]);
   }
   toolClick(p, e) {
     const T = this.tool, tool = this.app.tool, o = this.app.toolOpts, doc = this.doc;
@@ -14691,7 +14836,7 @@ class View2D {
     if (tool === "beam") {
       T.pts.push(q); if (T.pts.length < 2) { this.draw(); return; }
       const [a, b] = T.pts; T.pts = [];
-      return addEl({ type: "Beam", args: { axis: { type: "line", start: a, end: b }, beamType: { ref: o.beamType }, level: level ? { ref: level } : null, topOffset: o.beamTop ?? 3000 } }, `Beam ${fmtLen(dist(a, b))} mm`);
+      return addEl({ type: "Beam", args: { axis: { type: "line", start: a, end: b }, beamType: { ref: o.beamType }, level: level ? { ref: level } : null, topOffset: o.beamTop ?? 3000 } }, `Beam ${fmtLen(dist(a, b))}`);
     }
     if (["grid", "elev", "sep", "section"].includes(tool)) {
       T.pts.push(q);
@@ -14759,7 +14904,7 @@ class View2D {
         : (x => { const u = normalise(op.mirror.d), v = sub(x, op.mirror.p), t = dot(v, u); return add(op.mirror.p, sub(mul(u, 2 * t), v)); });
       for (const ht of this.scene().hits) if (this.app.selection.has(ht.id)) ghost.push(ht.pts.map(P));
       T.ghost = ghost;
-      const text = op.move ? `${fmtLen(Math.hypot(...op.move))} mm` : op.rotate ? `${fmtLen(op.rotate.a * 180 / Math.PI)}°` : "mirror axis";
+      const text = op.move ? `${fmtLen(Math.hypot(...op.move))}` : op.rotate ? `${Math.round(op.rotate.a * 1800 / Math.PI) / 10}°` : "mirror axis";
       this.showHud(sx, sy, this.hudInput ? this.hud.textContent : text);
     } else this.showHud(sx, sy, tool === "rotate" ? "click the start of the angle" : tool === "mirror" ? "click the first point of the axis" : "click the base point");
     this.draw();
@@ -14799,15 +14944,15 @@ class View2D {
   key(e) {
     if (this.app.sketch) return false;       // sketch mode's keys are the window's (it holds the session)
     const T = this.tool, tool = this.app.tool;
-    if (MODIFY_TOOLS.has(tool) && T.pts.length && (/^[0-9.\-]$/.test(e.key) || e.key === "Backspace" || (e.key === "Enter" && this.typed))) {
+    if (MODIFY_TOOLS.has(tool) && T.pts.length && (typeKey(e.key, this.typed) || e.key === "Backspace" || (e.key === "Enter" && this.typed))) {
       if (e.key === "Enter") {
-        const n = Number(this.typed); this.typed = ""; this.hudInput = null;
+        const n = tool === "rotate" ? readAngle(this.typed, this.app) : readLen(this.typed, this.app); this.typed = ""; this.hudInput = null; if (n === null) return true;
         if (tool === "rotate") { const c = T.centre, a0 = Math.atan2(T.pts[0][1] - c[1], T.pts[0][0] - c[0]) + n * Math.PI / 180; this.commitModify(add(c, [Math.cos(a0) * 1000, Math.sin(a0) * 1000])); }
         else { const dir = normalise(sub(T.cursor || add(T.pts[0], [1, 0]), T.pts[0])); this.commitModify(add(T.pts[0], mul(dir, n))); }
         return true;
       }
       this.typed = e.key === "Backspace" ? (this.typed || "").slice(0, -1) : (this.typed || "") + e.key;
-      this.hudInput = true; this.hud.hidden = false; this.hud.textContent = `${tool === "rotate" ? "angle" : "distance"} ${this.typed} ${tool === "rotate" ? "°" : "mm"} ⏎`;
+      this.hudInput = true; this.hud.hidden = false; this.hud.textContent = `${tool === "rotate" ? "angle" : "distance"} ${this.typed} ${tool === "rotate" ? "°" : ""} ⏎`;
       return true;
     }
     if (e.key === "Escape") { if (T.pts.length || T.refs || T.ghost) { T.pts = []; T.refs = []; T.ghost = null; T.centre = null; this.hideHud(); this.draw(); return true; } return false; }
@@ -14815,15 +14960,15 @@ class View2D {
     if (tool === "wall" && T.pts.length) {
       if (e.key === "Enter" && !this.typed) { this.finishWall(false); return true; }
       if (e.key.toLowerCase() === "c" && T.pts.length >= 3) { this.finishWall(true); return true; }
-      if (/^[0-9.]$/.test(e.key) || (e.key === "Backspace" && this.typed) || (e.key === "Enter" && this.typed)) {
+      if ((typeKey(e.key, this.typed) && (e.key !== "-" || this.typed)) || (e.key === "Backspace" && this.typed) || (e.key === "Enter" && this.typed)) {
         if (e.key === "Enter") {
           // walls are drawn by typing dimensions: the length along the current direction
-          const last = T.pts[T.pts.length - 1], dir = normalise(sub(T.cursor || add(last, [1, 0]), last)), n = Number(this.typed);
+          const last = T.pts[T.pts.length - 1], dir = normalise(sub(T.cursor || add(last, [1, 0]), last)), n = readLen(this.typed, this.app) || 0;
           if (n > 0) T.pts.push(add(last, mul(dir, n)));
           this.typed = ""; this.hudInput = null; this.draw(); return true;
         }
         this.typed = e.key === "Backspace" ? this.typed.slice(0, -1) : (this.typed || "") + e.key;
-        this.hudInput = true; this.hud.hidden = false; this.hud.textContent = `length ${this.typed} mm ⏎`;
+        this.hudInput = true; this.hud.hidden = false; this.hud.textContent = `length ${this.typed} ⏎`;
         return true;
       }
     }
@@ -14839,6 +14984,13 @@ function translateGeom(g, d) {
   return o;
 }
 
+
+/** Keys that belong to a typed value: digits and maths, feet and inch marks; letters (units: m, cm,
+ *  ft...) once a value has begun, so a bare letter is still a shortcut. */
+function typeKey(k, typed) { return /^[0-9.\-'"\/]$/.test(k) || (!!typed && /^[a-z+*()]$/i.test(k)); }
+/** What typed text is worth as a length, in mm (any unit, any maths), or null having said why. */
+function readLen(text, app) { try { return parseLength(text, { lookup: n => { const f = app.doc.element(n); const d = f && app.doc.data(f); return d && d.kind ? { kind: d.kind, v: d.value } : undefined; } }); } catch (e) { app.say(`${String(text).trim()}: ${e.message}`, "error"); return null; } }
+function readAngle(text, app) { try { return parseAngle(text); } catch (e) { app.say(`${String(text).trim()}: ${e.message}`, "error"); return null; } }
 
 // ===== viewcube.js =====
 //! An Autodesk-style ViewCube: faces, edges and corners are hot spots that turn
@@ -15556,6 +15708,8 @@ const roundCam = c => ({ azimuth: Math.round(((c.azimuth % 360) + 360) % 360 * 1
 
 
 
+
+
 const VIEW_TYPES = ["PlanView", "ElevationView", "SectionView", "View3D", "Schedule", "Sheet"];
 const PLACE_TOOLS = new Set(["section", "floor", "beam", "wall", "opening", "door", "window", "column", "grid", "text", "dim", "space", "elev", "sep"]);
 
@@ -15573,11 +15727,18 @@ app.apply = (op, opts = {}) => {
   const r = app.editor.apply(op, { coalesce: opts.coalesce || null });
   if (!r.ok && !opts.quiet) app.say(r.error || (r.conflicts || []).map(c => c.say).join("; "), "error");
   if (r.ok && r.said) app.say(r.said, "note");
-  if (opts.quiet) { const v = app.views.get(app.activeView); if (v && v.draw) v.draw(); if (v && v.refresh && v.T) v.refresh(); updateStatus(); if (!r.ok && r.conflicts) app.say(r.error, "error"); }
+  if (opts.quiet) { const v = app.views.get(app.activeView); if (v && v.draw) v.draw(); if (v && v.refresh && v.T) v.refresh(); updateStatus(); liveQuantities(); if (!r.ok && r.conflicts) app.say(r.error, "error"); }
   else app.refresh();
   saveDraftSoon();
   return r;
 };
+/** Mid-drag the palettes are not rebuilt (that would steal the drag), but what the selection
+ *  measures of itself is: its read-only quantities are rewritten in place as it changes. */
+function liveQuantities() {
+  const ids = [...app.selection].filter(id => app.doc.element(id)); if (ids.length !== 1) return;
+  const d = app.doc.data(app.doc.element(ids[0])); if (!d || !d.props) return;
+  for (const el of document.querySelectorAll("#left [data-qty]")) { const v = d.props[el.dataset.qty]; if (v) el.textContent = formatValue(v); }
+}
 app.say = (msg, kind = "") => { const m = document.getElementById("msg"); if (!m) return; m.textContent = msg; m.className = "msg " + kind; m.title = msg; };
 app.select = (ids, add = false) => {
   if (!add) app.selection.clear();
@@ -15589,6 +15750,7 @@ app.select = (ids, add = false) => {
   app.refresh({ keepMain: true });
 };
 app.refresh = (opts = {}) => {
+  setLengthUnit(app.doc.meta.displayUnits || "mm");
   renderQAT(); renderRibbon(); renderOptionsBar(); renderPalettes(); updateStatus();
   const v = app.views.get(app.activeView);
   if (!opts.keepMain || !v) renderMain();
@@ -15652,7 +15814,7 @@ function ensureDefault3D(doc) {
   doc.regenerate();
 }
 function setDocument(doc, note) {
-  ensureDefault3D(doc);
+  ensureDefault3D(doc); setLengthUnit(doc.meta.displayUnits || "mm");
   app.doc = doc; app.editor = new Editor(doc); app.selection.clear(); app.views.clear();
   const saved = store("tabs");
   app.tabs = (saved && saved.tabs || []).filter(t => t.startsWith("__") || doc.element(t));
@@ -15715,6 +15877,7 @@ const COMMANDS = {
   props: { label: "Properties", icon: "props", key: "PP", active: () => !document.body.classList.contains("hide-props"), run: () => document.body.classList.toggle("hide-props") },
   pens: { label: "Object Styles & Pens", icon: "pens", run: () => { const v = app.activeView && app.doc.element(app.activeView); vvDialog(app, v && ["PlanView", "ElevationView", "SectionView", "View3D"].includes(app.doc.typeOf(v)) ? app.activeView : firstOf("PlanView")); } },
   projectinfo: { label: "Project Information", icon: "info", run: () => projectInfo() },
+  units: { label: "Project Units", icon: "dim", key: "UN", hint: "How lengths are shown: mm, cm, m, feet-inches or inches. Fields take any unit and maths whatever this says.", run: () => unitsDialog() },
   open: { label: "Open…", icon: "open", run: () => openFile() },
   save: { label: "Save", icon: "save", key: "", run: () => saveModel() },
   importdxf: { label: "Import DXF Symbol", icon: "importI", run: () => importDXF() },
@@ -15765,7 +15928,7 @@ const RIBBON = [
     { title: "Interface", items: [big("cadmode")] },
   ] },
   { tab: "Manage", panels: [
-    { title: "Settings", items: [big("pens"), big("projectinfo")] },
+    { title: "Settings", items: [big("pens"), big("projectinfo"), big("units")] },
     { title: "Inquiry", items: [big("tests")] },
   ] },
   { tab: "Modify", panels: [
@@ -15887,7 +16050,8 @@ function renderOptionsBar() {
   const o = app.toolOpts, doc = app.doc, t = app.tool;
   const typesOf = cat => Object.entries(doc.lib.types).filter(([id]) => (doc.resolveType(id) || {}).category === cat);
   const sel = (key, opts, label) => h("label", {}, label + " ", h("select", { onchange: e => { o[key] = e.target.value; } }, opts.map(([v, l]) => h("option", { value: v, selected: o[key] === v }, l))));
-  const num = (key, label) => h("label", {}, label + " ", h("input", { type: "text", value: o[key], style: { width: "64px" }, onchange: e => { o[key] = Number(e.target.value); } }));
+  // lengths: any unit, any maths; shown back in the project's unit
+  const num = (key, label) => h("label", {}, label + " ", h("input", { type: "text", value: fmtLen(o[key] ?? 0), style: { width: "80px" }, onchange: e => { try { o[key] = parseLength(e.target.value); } catch (err) { app.say(`${e.target.value}: ${err.message}`, "error"); } e.target.value = fmtLen(o[key] ?? 0); } }));
   const chk = (key, label) => h("label", {}, h("input", { type: "checkbox", checked: !!o[key], onchange: e => { o[key] = e.target.checked; } }), " " + label);
   const els = [...app.selection].filter(id => doc.element(id));
   let title, kids = [];
@@ -16050,7 +16214,7 @@ function renderViewportPanel(body, key) {
   const view = doc.element(vp.view.ref);
   body.append(h("div", { class: "pp" }, h("div", { class: "pp-head" }, h("div", { style: { fontWeight: 600, fontSize: "14px" } }, `Viewport ${vpId}`), h("div", { class: "muted" }, "A frame holding a view, not a copy of it. Scale and crop live on the view.")),
     h("div", { class: "prow" }, h("label", {}, "View"), h("div", { class: "val" }, h("button", { class: "btn small", onclick: () => app.openView(vp.view.ref) }, view ? view.get("Name") : vp.view.ref))),
-    h("div", { class: "prow" }, h("label", {}, "Position"), h("div", { class: "ro mono" }, `${fmtLen(vp.at[0])}, ${fmtLen(vp.at[1])} mm on paper`)),
+    h("div", { class: "prow" }, h("label", {}, "Position"), h("div", { class: "ro mono" }, `${fmtLen(vp.at[0])}, ${fmtLen(vp.at[1])} on paper`)),
     h("div", { class: "prow" }, h("label", { for: "vp-clip" }, "Show crop"), h("div", { class: "ro" }, h("input", { id: "vp-clip", type: "checkbox", checked: !!vp.clipVisible, onchange: e => app.apply({ op: "sheet", id: shId, viewport: vpId, value: { clipVisible: e.target.checked } }) }))),
     view && F.int(view, "scale") ? h("div", { class: "prow" }, h("label", {}, "Scale"), h("div", { class: "ro" }, "1:" + F.int(view, "scale"))) : null,
     h("div", { style: { padding: "12px 14px" } }, h("button", { class: "btn", onclick: () => { app.apply({ op: "sheet", id: shId, viewport: vpId, remove: true }); app.select([]); app.say("Viewport removed; the view itself survives", "ok"); } }, "Remove from sheet"))));
@@ -16198,6 +16362,24 @@ function placeSymbol(symId) {
   const view = app.views.get(app.activeView), c = view.toModel(view.W / 2, view.H / 2);
   app.apply({ op: "add", element: { type: "SymbolInstance", args: { symbol: { ref: symId }, position: c.map(Math.round), rotation: 0, view: { ref: app.activeView } } } });
 }
+/** Revit's Project Units (UN). The model is millimetres whatever is chosen: this is how lengths are
+ *  written - in Properties, temporary dimensions, schedules and on the drawings - and what a number
+ *  typed with no unit means. Fields always take any unit: 10m, 3'-6", 250mm + 2*1.2m, L1 + 300. */
+function unitsDialog() {
+  const cur = app.doc.meta.displayUnits || "mm";
+  const sample = u => `${fmtLength(3657.6, { unit: u })} · ${fmtLength(215, { unit: u })}`;
+  const sel = h("select", { "aria-label": "Length unit" }, Object.entries(LENGTH_UNITS).map(([k, u]) => h("option", { value: k, selected: k === cur }, `${u.label} - e.g. ${sample(k)}`)));
+  const tryIn = h("input", { type: "text", placeholder: `try 10m, 3'-6", 2*1.2m + 300mm`, "aria-label": "Try a value" }), out = h("div", { class: "muted" }, " ");
+  const show = () => { try { out.textContent = tryIn.value.trim() ? `= ${fmtLength(parseLength(tryIn.value, { unit: sel.value }), { unit: sel.value })}  (${Math.round(parseLength(tryIn.value, { unit: sel.value }) * 1000) / 1000} mm in the model)` : " "; out.classList.remove("err"); } catch (e) { out.textContent = e.message; out.classList.add("err"); } };
+  tryIn.addEventListener("input", show); sel.addEventListener("change", show);
+  dialog("Project Units", h("div", { style: { display: "grid", gap: "10px", minWidth: "360px" } },
+    h("label", {}, "Length ", sel),
+    h("div", { class: "muted" }, "The model is always millimetres - switching changes how lengths are shown and what a bare number means, never a size. Any field takes any unit and maths."),
+    h("label", {}, "Try: ", tryIn), out), [
+    { label: "Cancel", run: () => true },
+    { label: "OK", primary: true, run: () => { const r = app.apply({ op: "units", value: sel.value }); if (r.ok) app.say(`Lengths now shown in ${LENGTH_UNITS[sel.value].label}`, "ok"); return true; } },
+  ]);
+}
 function projectInfo() {
   const inp = h("input", { type: "text", value: app.doc.meta.name, id: "pi-name" });
   dialog("Project Information", h("div", { style: { display: "grid", gap: "8px" } }, h("label", { for: "pi-name" }, "Project name"), inp), [{ label: "Cancel", run: () => true }, { label: "OK", primary: true, run: () => { app.doc.meta.name = inp.value; saveDraftSoon(); app.refresh({ keepMain: true }); } }]);
@@ -16252,7 +16434,7 @@ function importDXF() {
       const wIn = h("input", { type: "number", value: 18, min: 1, style: { width: "80px" }, "aria-label": "Nominal width" }), space = h("select", { "aria-label": "Space" }, h("option", { value: "paper" }, "paper (constant on the sheet)"), h("option", { value: "model" }, "model (scales with the drawing)"));
       dialog(`Import ${file.name}`, h("div", { style: { display: "grid", gap: "8px" } },
         h("div", {}, r.message, units ? ` · read as ${units}` : ""),
-        h("div", { class: "mono" }, `measured ${fmtLen(w)} × ${fmtLen(hh)} mm`),
+        h("div", { class: "mono" }, `measured ${fmtLen(w)} × ${fmtLen(hh)}`),
         h("label", {}, "Nominal width, mm ", wIn), h("label", {}, "Space ", space),
         h("div", { class: "muted" }, "Scale = nominal ÷ measured, smaller ratio under uniform. DXF layers become the symbol's subcategories.")),
         [{ label: "Cancel", run: () => true }, { label: "Add symbol", primary: true, run: () => {

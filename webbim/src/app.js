@@ -7,6 +7,8 @@
 
 import { h, clear, icon, dialog, saveFile, store, forget, loadDrawingFont, fmtLen } from "./ui_util.js";
 import { SketchSession } from "./sketchui.js";
+import { LENGTH_UNITS, setLengthUnit, fmtLength, parseLength } from "./units.js";
+import { formatValue } from "./expr.js";
 import { fromPolygon } from "./bimsketch.js";
 import { Editor } from "./ops.js";
 import { buildSample } from "./sample.js";
@@ -41,11 +43,18 @@ app.apply = (op, opts = {}) => {
   const r = app.editor.apply(op, { coalesce: opts.coalesce || null });
   if (!r.ok && !opts.quiet) app.say(r.error || (r.conflicts || []).map(c => c.say).join("; "), "error");
   if (r.ok && r.said) app.say(r.said, "note");
-  if (opts.quiet) { const v = app.views.get(app.activeView); if (v && v.draw) v.draw(); if (v && v.refresh && v.T) v.refresh(); updateStatus(); if (!r.ok && r.conflicts) app.say(r.error, "error"); }
+  if (opts.quiet) { const v = app.views.get(app.activeView); if (v && v.draw) v.draw(); if (v && v.refresh && v.T) v.refresh(); updateStatus(); liveQuantities(); if (!r.ok && r.conflicts) app.say(r.error, "error"); }
   else app.refresh();
   saveDraftSoon();
   return r;
 };
+/** Mid-drag the palettes are not rebuilt (that would steal the drag), but what the selection
+ *  measures of itself is: its read-only quantities are rewritten in place as it changes. */
+function liveQuantities() {
+  const ids = [...app.selection].filter(id => app.doc.element(id)); if (ids.length !== 1) return;
+  const d = app.doc.data(app.doc.element(ids[0])); if (!d || !d.props) return;
+  for (const el of document.querySelectorAll("#left [data-qty]")) { const v = d.props[el.dataset.qty]; if (v) el.textContent = formatValue(v); }
+}
 app.say = (msg, kind = "") => { const m = document.getElementById("msg"); if (!m) return; m.textContent = msg; m.className = "msg " + kind; m.title = msg; };
 app.select = (ids, add = false) => {
   if (!add) app.selection.clear();
@@ -57,6 +66,7 @@ app.select = (ids, add = false) => {
   app.refresh({ keepMain: true });
 };
 app.refresh = (opts = {}) => {
+  setLengthUnit(app.doc.meta.displayUnits || "mm");
   renderQAT(); renderRibbon(); renderOptionsBar(); renderPalettes(); updateStatus();
   const v = app.views.get(app.activeView);
   if (!opts.keepMain || !v) renderMain();
@@ -120,7 +130,7 @@ function ensureDefault3D(doc) {
   doc.regenerate();
 }
 function setDocument(doc, note) {
-  ensureDefault3D(doc);
+  ensureDefault3D(doc); setLengthUnit(doc.meta.displayUnits || "mm");
   app.doc = doc; app.editor = new Editor(doc); app.selection.clear(); app.views.clear();
   const saved = store("tabs");
   app.tabs = (saved && saved.tabs || []).filter(t => t.startsWith("__") || doc.element(t));
@@ -183,6 +193,7 @@ const COMMANDS = {
   props: { label: "Properties", icon: "props", key: "PP", active: () => !document.body.classList.contains("hide-props"), run: () => document.body.classList.toggle("hide-props") },
   pens: { label: "Object Styles & Pens", icon: "pens", run: () => { const v = app.activeView && app.doc.element(app.activeView); vvDialog(app, v && ["PlanView", "ElevationView", "SectionView", "View3D"].includes(app.doc.typeOf(v)) ? app.activeView : firstOf("PlanView")); } },
   projectinfo: { label: "Project Information", icon: "info", run: () => projectInfo() },
+  units: { label: "Project Units", icon: "dim", key: "UN", hint: "How lengths are shown: mm, cm, m, feet-inches or inches. Fields take any unit and maths whatever this says.", run: () => unitsDialog() },
   open: { label: "Open…", icon: "open", run: () => openFile() },
   save: { label: "Save", icon: "save", key: "", run: () => saveModel() },
   importdxf: { label: "Import DXF Symbol", icon: "importI", run: () => importDXF() },
@@ -233,7 +244,7 @@ const RIBBON = [
     { title: "Interface", items: [big("cadmode")] },
   ] },
   { tab: "Manage", panels: [
-    { title: "Settings", items: [big("pens"), big("projectinfo")] },
+    { title: "Settings", items: [big("pens"), big("projectinfo"), big("units")] },
     { title: "Inquiry", items: [big("tests")] },
   ] },
   { tab: "Modify", panels: [
@@ -355,7 +366,8 @@ function renderOptionsBar() {
   const o = app.toolOpts, doc = app.doc, t = app.tool;
   const typesOf = cat => Object.entries(doc.lib.types).filter(([id]) => (doc.resolveType(id) || {}).category === cat);
   const sel = (key, opts, label) => h("label", {}, label + " ", h("select", { onchange: e => { o[key] = e.target.value; } }, opts.map(([v, l]) => h("option", { value: v, selected: o[key] === v }, l))));
-  const num = (key, label) => h("label", {}, label + " ", h("input", { type: "text", value: o[key], style: { width: "64px" }, onchange: e => { o[key] = Number(e.target.value); } }));
+  // lengths: any unit, any maths; shown back in the project's unit
+  const num = (key, label) => h("label", {}, label + " ", h("input", { type: "text", value: fmtLen(o[key] ?? 0), style: { width: "80px" }, onchange: e => { try { o[key] = parseLength(e.target.value); } catch (err) { app.say(`${e.target.value}: ${err.message}`, "error"); } e.target.value = fmtLen(o[key] ?? 0); } }));
   const chk = (key, label) => h("label", {}, h("input", { type: "checkbox", checked: !!o[key], onchange: e => { o[key] = e.target.checked; } }), " " + label);
   const els = [...app.selection].filter(id => doc.element(id));
   let title, kids = [];
@@ -518,7 +530,7 @@ function renderViewportPanel(body, key) {
   const view = doc.element(vp.view.ref);
   body.append(h("div", { class: "pp" }, h("div", { class: "pp-head" }, h("div", { style: { fontWeight: 600, fontSize: "14px" } }, `Viewport ${vpId}`), h("div", { class: "muted" }, "A frame holding a view, not a copy of it. Scale and crop live on the view.")),
     h("div", { class: "prow" }, h("label", {}, "View"), h("div", { class: "val" }, h("button", { class: "btn small", onclick: () => app.openView(vp.view.ref) }, view ? view.get("Name") : vp.view.ref))),
-    h("div", { class: "prow" }, h("label", {}, "Position"), h("div", { class: "ro mono" }, `${fmtLen(vp.at[0])}, ${fmtLen(vp.at[1])} mm on paper`)),
+    h("div", { class: "prow" }, h("label", {}, "Position"), h("div", { class: "ro mono" }, `${fmtLen(vp.at[0])}, ${fmtLen(vp.at[1])} on paper`)),
     h("div", { class: "prow" }, h("label", { for: "vp-clip" }, "Show crop"), h("div", { class: "ro" }, h("input", { id: "vp-clip", type: "checkbox", checked: !!vp.clipVisible, onchange: e => app.apply({ op: "sheet", id: shId, viewport: vpId, value: { clipVisible: e.target.checked } }) }))),
     view && F.int(view, "scale") ? h("div", { class: "prow" }, h("label", {}, "Scale"), h("div", { class: "ro" }, "1:" + F.int(view, "scale"))) : null,
     h("div", { style: { padding: "12px 14px" } }, h("button", { class: "btn", onclick: () => { app.apply({ op: "sheet", id: shId, viewport: vpId, remove: true }); app.select([]); app.say("Viewport removed; the view itself survives", "ok"); } }, "Remove from sheet"))));
@@ -666,6 +678,24 @@ function placeSymbol(symId) {
   const view = app.views.get(app.activeView), c = view.toModel(view.W / 2, view.H / 2);
   app.apply({ op: "add", element: { type: "SymbolInstance", args: { symbol: { ref: symId }, position: c.map(Math.round), rotation: 0, view: { ref: app.activeView } } } });
 }
+/** Revit's Project Units (UN). The model is millimetres whatever is chosen: this is how lengths are
+ *  written - in Properties, temporary dimensions, schedules and on the drawings - and what a number
+ *  typed with no unit means. Fields always take any unit: 10m, 3'-6", 250mm + 2*1.2m, L1 + 300. */
+function unitsDialog() {
+  const cur = app.doc.meta.displayUnits || "mm";
+  const sample = u => `${fmtLength(3657.6, { unit: u })} · ${fmtLength(215, { unit: u })}`;
+  const sel = h("select", { "aria-label": "Length unit" }, Object.entries(LENGTH_UNITS).map(([k, u]) => h("option", { value: k, selected: k === cur }, `${u.label} - e.g. ${sample(k)}`)));
+  const tryIn = h("input", { type: "text", placeholder: `try 10m, 3'-6", 2*1.2m + 300mm`, "aria-label": "Try a value" }), out = h("div", { class: "muted" }, " ");
+  const show = () => { try { out.textContent = tryIn.value.trim() ? `= ${fmtLength(parseLength(tryIn.value, { unit: sel.value }), { unit: sel.value })}  (${Math.round(parseLength(tryIn.value, { unit: sel.value }) * 1000) / 1000} mm in the model)` : " "; out.classList.remove("err"); } catch (e) { out.textContent = e.message; out.classList.add("err"); } };
+  tryIn.addEventListener("input", show); sel.addEventListener("change", show);
+  dialog("Project Units", h("div", { style: { display: "grid", gap: "10px", minWidth: "360px" } },
+    h("label", {}, "Length ", sel),
+    h("div", { class: "muted" }, "The model is always millimetres - switching changes how lengths are shown and what a bare number means, never a size. Any field takes any unit and maths."),
+    h("label", {}, "Try: ", tryIn), out), [
+    { label: "Cancel", run: () => true },
+    { label: "OK", primary: true, run: () => { const r = app.apply({ op: "units", value: sel.value }); if (r.ok) app.say(`Lengths now shown in ${LENGTH_UNITS[sel.value].label}`, "ok"); return true; } },
+  ]);
+}
 function projectInfo() {
   const inp = h("input", { type: "text", value: app.doc.meta.name, id: "pi-name" });
   dialog("Project Information", h("div", { style: { display: "grid", gap: "8px" } }, h("label", { for: "pi-name" }, "Project name"), inp), [{ label: "Cancel", run: () => true }, { label: "OK", primary: true, run: () => { app.doc.meta.name = inp.value; saveDraftSoon(); app.refresh({ keepMain: true }); } }]);
@@ -720,7 +750,7 @@ function importDXF() {
       const wIn = h("input", { type: "number", value: 18, min: 1, style: { width: "80px" }, "aria-label": "Nominal width" }), space = h("select", { "aria-label": "Space" }, h("option", { value: "paper" }, "paper (constant on the sheet)"), h("option", { value: "model" }, "model (scales with the drawing)"));
       dialog(`Import ${file.name}`, h("div", { style: { display: "grid", gap: "8px" } },
         h("div", {}, r.message, units ? ` · read as ${units}` : ""),
-        h("div", { class: "mono" }, `measured ${fmtLen(w)} × ${fmtLen(hh)} mm`),
+        h("div", { class: "mono" }, `measured ${fmtLen(w)} × ${fmtLen(hh)}`),
         h("label", {}, "Nominal width, mm ", wIn), h("label", {}, "Space ", space),
         h("div", { class: "muted" }, "Scale = nominal ÷ measured, smaller ratio under uniform. DXF layers become the symbol's subcategories.")),
         [{ label: "Cancel", run: () => true }, { label: "Add symbol", primary: true, run: () => {

@@ -5,6 +5,7 @@
 //! transform — no ray casting.
 
 import { h, clear, fmtLen, icon } from "./ui_util.js";
+import { parseLength, parseAngle, fmtArea } from "./units.js";
 import { TOL, add, sub, mul, dot, dist, perp, normalise, lerp, intersectLines, lineThrough, projectPoint, pointInPoly, samplePath, polyArea, bboxOf } from "./geom2d.js";
 import { deriveView, placements, dimensionGeometry } from "./scene.js";
 import { drawScene, primsBBox } from "./render.js";
@@ -115,13 +116,13 @@ export class View2D {
   /** A selected level shows its height at its head, editable: type a height and the level moves there. */
   levelHeadEditor(f) {
     const id = this.doc.idOf(f), z = F.real(f, "elevation"), at = this.toScreen([this.viewLineLength() + 1500, z - this.viewZ0()]);
-    const inp = h("input", { type: "text", value: String(Math.round(z)), class: "levelinput", "aria-label": `${F.text(f, "name")} elevation in mm`, title: "Elevation in mm: type and press Enter", style: { left: (at[0] + 22) + "px", top: (at[1] - 30) + "px" } });
+    const inp = h("input", { type: "text", value: fmtLen(z), class: "levelinput", "aria-label": `${F.text(f, "name")} elevation`, title: "Elevation: type it in any unit (3.3m, 10'-6\", 3300mm, L1+300) and press Enter", style: { left: (at[0] + 22) + "px", top: (at[1] - 30) + "px" } });
     inp.addEventListener("keydown", e => {
       e.stopPropagation();
       if (e.key !== "Enter") return;
-      const v = Number(inp.value.replace(",", ".")); if (!Number.isFinite(v)) return this.app.say("type the level's height in mm", "error");
+      const v = readLen(inp.value, this.app); if (v === null) return;
       const r = this.app.apply({ op: "set", id, key: "elevation", value: v });
-      if (r.ok) this.app.say(`${F.text(f, "name")} at ${fmtLen(v)} mm`, "ok");
+      if (r.ok) this.app.say(`${F.text(f, "name")} at ${fmtLen(v)}`, "ok");
     });
     this.overlay.append(inp);
   }
@@ -139,12 +140,12 @@ export class View2D {
         e.stopPropagation();
         if (e.key === "Escape") return this.draw();
         if (e.key !== "Enter") return;
-        const v = Number(inp.value); if (!(v >= 0)) return this.app.say("type a height in mm", "error");
+        const v = readLen(inp.value, this.app); if (v === null) return; if (!(v >= 0)) return this.app.say("a height is not negative", "error");
         const signed = Math.sign(m.signed || 1) * v, row = doc.constraints.find(c => c.kind === "levelGap" && JSON.stringify(c.of) === JSON.stringify(keys));
         const ops = [];
         if (row) ops.push({ op: "relate", store: "constraints", row: Object.assign({}, row, { value: signed }) });
         ops.push({ op: "set", id: b, key: "elevation", value: Math.round((m.a.z + signed) * 1000) / 1000 });
-        const r = this.app.apply(ops); if (r.ok) this.app.say(`${F.text(doc.element(b), "name")} is ${fmtLen(v)} mm from ${F.text(doc.element(a), "name")}`, "ok");
+        const r = this.app.apply(ops); if (r.ok) this.app.say(`${F.text(doc.element(b), "name")} is ${fmtLen(v)} from ${F.text(doc.element(a), "name")}`, "ok");
       });
     });
     const lock = h("button", { class: "lock", title: locked ? "Unlock: the levels move independently again" : "Padlock: moving either level moves the other", "aria-label": locked ? "Unlock height" : "Lock height", "aria-pressed": String(locked) }, icon(locked ? "lock" : "unlock"));
@@ -152,7 +153,7 @@ export class View2D {
       const row = doc.constraints.find(c => c.kind === "levelGap" && JSON.stringify(c.of) === JSON.stringify(keys));
       const ops = [{ op: "set", id, key: "locked", value: !locked },
         { op: "relate", store: "constraints", row: Object.assign(row ? {} : { kind: "levelGap", of: keys }, row || {}, { value: m.signed, locked: !locked }) }];
-      const r = this.app.apply(ops); if (r.ok) this.app.say(locked ? "Levels unlocked" : `Locked: ${fmtLen(m.value)} mm between them`, "ok");
+      const r = this.app.apply(ops); if (r.ok) this.app.say(locked ? "Levels unlocked" : `Locked: ${fmtLen(m.value)} between them`, "ok");
     });
     box.append(val, lock); this.overlay.append(box);
   }
@@ -311,7 +312,7 @@ export class View2D {
     grip.addEventListener("pointerdown", e => {
       e.preventDefault(); e.stopPropagation(); // the overlay re-renders while dragging, so listen on the window
       const r = this.canvas.getBoundingClientRect(), start = this.toModel(e.clientX - r.left, e.clientY - r.top), key = `dimoff:${id}:${e.timeStamp}`;
-      const move = ev => { const p = this.toModel(ev.clientX - r.left, ev.clientY - r.top); this.slideDimension(id, g, start, p, key); this.showHud(ev.clientX - r.left, ev.clientY - r.top, `offset ${fmtLen(F.real(doc.element(id), "offset"))} mm`); };
+      const move = ev => { const p = this.toModel(ev.clientX - r.left, ev.clientY - r.top); this.slideDimension(id, g, start, p, key); this.showHud(ev.clientX - r.left, ev.clientY - r.top, `offset ${fmtLen(F.real(doc.element(id), "offset"))}`); };
       const up = () => { window.removeEventListener("pointermove", move); this.app.editor.seal(); this.hideHud(); this.app.refresh({ keepMain: true }); };
       window.addEventListener("pointermove", move); window.addEventListener("pointerup", up, { once: true });
     });
@@ -326,9 +327,9 @@ export class View2D {
         e.stopPropagation();
         if (e.key === "Escape") return this.draw();
         if (e.key !== "Enter") return;
-        const v = Number(inp.value); if (!(v >= 0)) return this.app.say("type a distance in mm", "error");
+        const v = readLen(inp.value, this.app); if (v === null) return; if (!(v >= 0)) return this.app.say("a distance is not negative", "error");
         const r = this.setDimensionValue(f, v);
-        this.app.say(r.ok ? `Distance set to ${fmtLen(v)} mm; ${r.moved} moved` : r.error, r.ok ? "ok" : "error");
+        this.app.say(r.ok ? `Distance set to ${fmtLen(v)}; ${r.moved} moved` : r.error, r.ok ? "ok" : "error");
       });
     });
     const lock = h("button", { class: "lock", title: locked ? "Unlock this distance" : "Padlock: keep this distance", "aria-label": locked ? "Unlock dimension" : "Lock dimension", "aria-pressed": String(locked) }, icon(locked ? "lock" : "unlock"));
@@ -336,7 +337,7 @@ export class View2D {
       const keys = F.json(f, "of"), row = doc.constraints.find(c => JSON.stringify(c.of) === JSON.stringify(keys));
       const ops = [{ op: "set", id, key: "locked", value: !locked },
         { op: "relate", store: "constraints", row: Object.assign(row ? {} : { kind: "distance", of: keys }, row || {}, { value: Math.round(g.value * 1000) / 1000, locked: !locked }) }];
-      const r = this.app.apply(ops); if (r.ok) this.app.say(locked ? "Dimension unlocked: it follows the elements again" : `Padlocked at ${fmtLen(g.value)} mm`, "ok");
+      const r = this.app.apply(ops); if (r.ok) this.app.say(locked ? "Dimension unlocked: it follows the elements again" : `Padlocked at ${fmtLen(g.value)}`, "ok");
     });
     box.append(val, lock);
     this.overlay.append(grip, box);
@@ -380,8 +381,8 @@ export class View2D {
         inp.addEventListener("keydown", e => {
           if (e.key === "Escape") this.draw();
           if (e.key !== "Enter") return;
-          const v = Number(inp.value);
-          if (!(v >= 0)) { this.app.say("type a distance in mm", "error"); return; }
+          const v = readLen(inp.value, this.app); if (v === null) return;
+          if (!(v >= 0)) { this.app.say("a distance is not negative", "error"); return; }
           const geom = dimensionMove(doc, d, v);
           const r = this.app.apply({ op: "drag", id, key: "centreline", value: geom });
           if (r.ok) this.app.say(`${id} moved: ${d.to} now ${fmtLen(v)} away`, "ok");
@@ -471,8 +472,8 @@ export class View2D {
     };
     const readout = (v, snapped) => {
       const c = this.doc.argValue(f, "centreline");
-      if (hd.readout === "length" && c) return `L ${fmtLen(dist(c.start, Array.isArray(v) ? v : c.end))} mm${snapped ? " · " + SNAP_SHORT[snapped.kind] : ""}`;
-      if (typeof v === "number") return `${fmtLen(v)} mm`;
+      if (hd.readout === "length" && c) return `L ${fmtLen(dist(c.start, Array.isArray(v) ? v : c.end))}${snapped ? " · " + SNAP_SHORT[snapped.kind] : ""}`;
+      if (typeof v === "number") return `${fmtLen(v)}`;
       if (Array.isArray(v)) return `${fmtLen(v[0])}, ${fmtLen(v[1])}${snapped ? " · " + SNAP_SHORT[snapped.kind] : ""}`;
       return hd.key;
     };
@@ -488,18 +489,18 @@ export class View2D {
     };
     // Numeric entry mid-drag: typing 3600 commits exactly 3600 (test 18).
     const key_ = ev => {
-      if (!/^[0-9.\-]$/.test(ev.key) && ev.key !== "Enter" && ev.key !== "Backspace") return;
+      if (!typeKey(ev.key, typed) && ev.key !== "Enter" && ev.key !== "Backspace") return;
       ev.preventDefault();
       if (ev.key === "Enter" && typed) {
-        const n = Number(typed); const c = this.doc.argValue(f, hd.writes.split(".")[0]);
+        const n = readLen(typed, this.app); if (n === null) { typed = ""; return; } const c = this.doc.argValue(f, hd.writes.split(".")[0]);
         let v = null;
         if (hd.readout === "length" && c && c.start) { const d = normalise(sub(c.end, c.start)); v = add(c.start, mul(d, n)); }
         else if (hd.constraint && (hd.constraint.onCurve || hd.constraint.scalar)) v = Math.max(hd.constraint.min || 0, n);
-        if (v !== null) { send(v); this.app.say(`${id}: exactly ${fmtLen(n)} mm`, "ok"); }
+        if (v !== null) { send(v); this.app.say(`${id}: exactly ${fmtLen(n)}`, "ok"); }
         finish(); return;
       }
       typed = ev.key === "Backspace" ? typed.slice(0, -1) : typed + ev.key;
-      this.hudInput = true; this.hud.textContent = `type: ${typed || "…"} mm ⏎`;
+      this.hudInput = true; this.hud.textContent = `type: ${typed || "…"} ⏎`;
     };
     const finish = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", finish); window.removeEventListener("keydown", key_, true);
       // the end let go of a wall or landed on one: joins follow the geometry, in the same undo step
@@ -631,7 +632,7 @@ export class View2D {
       const r = this.app.apply({ op: "set", id: d.level.id, key: "elevation", value: z }, { quiet: true, coalesce: `level:${d.level.id}:${d.start.join(",")}` });
       if (r.ok) d.level.last = z;
     }
-    this.showHud(sx, sy, `${F.text(this.doc.element(d.level.id), "name")}: ${z >= 0 ? "+" : ""}${fmtLen(z)} mm`);
+    this.showHud(sx, sy, `${F.text(this.doc.element(d.level.id), "name")}: ${z >= 0 ? "+" : ""}${fmtLen(z)}`);
   }
   move(e) {
     const [sx, sy] = this.evPos(e);
@@ -646,7 +647,7 @@ export class View2D {
       if (d.pan && d.moved) { this.cam.x = d.cam.x - (sx - d.start[0]) / this.cam.z; this.cam.y = d.cam.y + (sy - d.start[1]) / this.cam.z; this.draw(); return; }
       if (d.body && d.moved) return this.dragBody(d, sx, sy, e);
       if (d.level && d.moved) return this.dragLevel(d, sx, sy);
-      if (d.dim && d.moved) { this.slideDimension(d.dim.id, d.dim.g, d.dim.grab, this.toModel(sx, sy), `dimoff:${d.dim.id}:${d.start.join(",")}`); this.showHud(sx, sy, `offset ${fmtLen(F.real(this.doc.element(d.dim.id), "offset"))} mm`); return; }
+      if (d.dim && d.moved) { this.slideDimension(d.dim.id, d.dim.g, d.dim.grab, this.toModel(sx, sy), `dimoff:${d.dim.id}:${d.start.join(",")}`); this.showHud(sx, sy, `offset ${fmtLen(F.real(this.doc.element(d.dim.id), "offset"))}`); return; }
       if (d.box && d.moved) { this.box = [d.start, [sx, sy]]; this.draw(); return; }
     }
     const p = this.toModel(sx, sy);
@@ -690,7 +691,7 @@ export class View2D {
       const r = this.app.apply({ op: "transform", ids: d.body.ids, move: step }, { quiet: true, coalesce: `move:${d.body.ids.join(",")}:${d.start.join(",")}` });
       if (r.ok) d.body.done = dv;
     }
-    this.showHud(sx, sy, `move ${fmtLen(dv[0])}, ${fmtLen(dv[1])} mm${sn ? " · " + SNAP_SHORT[sn.kind] : ""}`);
+    this.showHud(sx, sy, `move ${fmtLen(dv[0])}, ${fmtLen(dv[1])}${sn ? " · " + SNAP_SHORT[sn.kind] : ""}`);
   }
   /** Left→right: window (wholly inside). Right→left: crossing (any part inside). */
   finishBox(d, e) {
@@ -768,7 +769,7 @@ export class View2D {
       else this.showHud(sx, sy, "hover a wall");
     } else if (T.pts.length) {
       const last = T.pts[T.pts.length - 1];
-      this.showHud(sx, sy, this.hudInput ? this.hud.textContent : `${fmtLen(dist(last, q))} mm · ${Math.round(Math.atan2(q[1] - last[1], q[0] - last[0]) * 180 / Math.PI)}°`);
+      this.showHud(sx, sy, this.hudInput ? this.hud.textContent : `${fmtLen(dist(last, q))} · ${Math.round(Math.atan2(q[1] - last[1], q[0] - last[0]) * 180 / Math.PI)}°`);
     } else this.showHud(sx, sy, `${fmtLen(q[0])}, ${fmtLen(q[1])}`);
     this.draw();
   }
@@ -787,7 +788,7 @@ export class View2D {
     if (T.pts.length < 3) return this.app.say("a floor needs three points or more", "note");
     const boundary = T.pts.map(p => p.map(v => Math.round(v))); T.pts = [];
     const r = this.app.apply({ op: "add", element: { type: "Floor", args: { boundary, floorType: { ref: o.floorType }, level: level ? { ref: level } : null, heightOffset: o.floorOffset ?? 0 } } });
-    this.app.say(r.ok ? `Floor ${r.id}: ${fmtLen(Math.abs(polyArea(boundary)) / 1e6)} m²` : r.error, r.ok ? "ok" : "error"); if (r.ok) this.app.select([r.id]);
+    this.app.say(r.ok ? `Floor ${r.id}: ${fmtArea(Math.abs(polyArea(boundary)))} m²` : r.error, r.ok ? "ok" : "error"); if (r.ok) this.app.select([r.id]);
   }
   toolClick(p, e) {
     const T = this.tool, tool = this.app.tool, o = this.app.toolOpts, doc = this.doc;
@@ -804,7 +805,7 @@ export class View2D {
     if (tool === "beam") {
       T.pts.push(q); if (T.pts.length < 2) { this.draw(); return; }
       const [a, b] = T.pts; T.pts = [];
-      return addEl({ type: "Beam", args: { axis: { type: "line", start: a, end: b }, beamType: { ref: o.beamType }, level: level ? { ref: level } : null, topOffset: o.beamTop ?? 3000 } }, `Beam ${fmtLen(dist(a, b))} mm`);
+      return addEl({ type: "Beam", args: { axis: { type: "line", start: a, end: b }, beamType: { ref: o.beamType }, level: level ? { ref: level } : null, topOffset: o.beamTop ?? 3000 } }, `Beam ${fmtLen(dist(a, b))}`);
     }
     if (["grid", "elev", "sep", "section"].includes(tool)) {
       T.pts.push(q);
@@ -872,7 +873,7 @@ export class View2D {
         : (x => { const u = normalise(op.mirror.d), v = sub(x, op.mirror.p), t = dot(v, u); return add(op.mirror.p, sub(mul(u, 2 * t), v)); });
       for (const ht of this.scene().hits) if (this.app.selection.has(ht.id)) ghost.push(ht.pts.map(P));
       T.ghost = ghost;
-      const text = op.move ? `${fmtLen(Math.hypot(...op.move))} mm` : op.rotate ? `${fmtLen(op.rotate.a * 180 / Math.PI)}°` : "mirror axis";
+      const text = op.move ? `${fmtLen(Math.hypot(...op.move))}` : op.rotate ? `${Math.round(op.rotate.a * 1800 / Math.PI) / 10}°` : "mirror axis";
       this.showHud(sx, sy, this.hudInput ? this.hud.textContent : text);
     } else this.showHud(sx, sy, tool === "rotate" ? "click the start of the angle" : tool === "mirror" ? "click the first point of the axis" : "click the base point");
     this.draw();
@@ -912,15 +913,15 @@ export class View2D {
   key(e) {
     if (this.app.sketch) return false;       // sketch mode's keys are the window's (it holds the session)
     const T = this.tool, tool = this.app.tool;
-    if (MODIFY_TOOLS.has(tool) && T.pts.length && (/^[0-9.\-]$/.test(e.key) || e.key === "Backspace" || (e.key === "Enter" && this.typed))) {
+    if (MODIFY_TOOLS.has(tool) && T.pts.length && (typeKey(e.key, this.typed) || e.key === "Backspace" || (e.key === "Enter" && this.typed))) {
       if (e.key === "Enter") {
-        const n = Number(this.typed); this.typed = ""; this.hudInput = null;
+        const n = tool === "rotate" ? readAngle(this.typed, this.app) : readLen(this.typed, this.app); this.typed = ""; this.hudInput = null; if (n === null) return true;
         if (tool === "rotate") { const c = T.centre, a0 = Math.atan2(T.pts[0][1] - c[1], T.pts[0][0] - c[0]) + n * Math.PI / 180; this.commitModify(add(c, [Math.cos(a0) * 1000, Math.sin(a0) * 1000])); }
         else { const dir = normalise(sub(T.cursor || add(T.pts[0], [1, 0]), T.pts[0])); this.commitModify(add(T.pts[0], mul(dir, n))); }
         return true;
       }
       this.typed = e.key === "Backspace" ? (this.typed || "").slice(0, -1) : (this.typed || "") + e.key;
-      this.hudInput = true; this.hud.hidden = false; this.hud.textContent = `${tool === "rotate" ? "angle" : "distance"} ${this.typed} ${tool === "rotate" ? "°" : "mm"} ⏎`;
+      this.hudInput = true; this.hud.hidden = false; this.hud.textContent = `${tool === "rotate" ? "angle" : "distance"} ${this.typed} ${tool === "rotate" ? "°" : ""} ⏎`;
       return true;
     }
     if (e.key === "Escape") { if (T.pts.length || T.refs || T.ghost) { T.pts = []; T.refs = []; T.ghost = null; T.centre = null; this.hideHud(); this.draw(); return true; } return false; }
@@ -928,15 +929,15 @@ export class View2D {
     if (tool === "wall" && T.pts.length) {
       if (e.key === "Enter" && !this.typed) { this.finishWall(false); return true; }
       if (e.key.toLowerCase() === "c" && T.pts.length >= 3) { this.finishWall(true); return true; }
-      if (/^[0-9.]$/.test(e.key) || (e.key === "Backspace" && this.typed) || (e.key === "Enter" && this.typed)) {
+      if ((typeKey(e.key, this.typed) && (e.key !== "-" || this.typed)) || (e.key === "Backspace" && this.typed) || (e.key === "Enter" && this.typed)) {
         if (e.key === "Enter") {
           // walls are drawn by typing dimensions: the length along the current direction
-          const last = T.pts[T.pts.length - 1], dir = normalise(sub(T.cursor || add(last, [1, 0]), last)), n = Number(this.typed);
+          const last = T.pts[T.pts.length - 1], dir = normalise(sub(T.cursor || add(last, [1, 0]), last)), n = readLen(this.typed, this.app) || 0;
           if (n > 0) T.pts.push(add(last, mul(dir, n)));
           this.typed = ""; this.hudInput = null; this.draw(); return true;
         }
         this.typed = e.key === "Backspace" ? this.typed.slice(0, -1) : (this.typed || "") + e.key;
-        this.hudInput = true; this.hud.hidden = false; this.hud.textContent = `length ${this.typed} mm ⏎`;
+        this.hudInput = true; this.hud.hidden = false; this.hud.textContent = `length ${this.typed} ⏎`;
         return true;
       }
     }
@@ -952,3 +953,10 @@ export function translateGeom(g, d) {
   return o;
 }
 
+
+/** Keys that belong to a typed value: digits and maths, feet and inch marks; letters (units: m, cm,
+ *  ft...) once a value has begun, so a bare letter is still a shortcut. */
+function typeKey(k, typed) { return /^[0-9.\-'"\/]$/.test(k) || (!!typed && /^[a-z+*()]$/i.test(k)); }
+/** What typed text is worth as a length, in mm (any unit, any maths), or null having said why. */
+function readLen(text, app) { try { return parseLength(text, { lookup: n => { const f = app.doc.element(n); const d = f && app.doc.data(f); return d && d.kind ? { kind: d.kind, v: d.value } : undefined; } }); } catch (e) { app.say(`${String(text).trim()}: ${e.message}`, "error"); return null; } }
+function readAngle(text, app) { try { return parseAngle(text); } catch (e) { app.say(`${String(text).trim()}: ${e.message}`, "error"); return null; } }
