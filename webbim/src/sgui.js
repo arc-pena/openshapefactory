@@ -442,6 +442,8 @@ function sgLegendPanel(app, f, g) {
   return box;
 }
 
+/** Whether an element takes part in the packing: unticked, it stays in the brief and its totals but is not placed. */
+const packBox = (nd, put) => h("input", { type: "checkbox", checked: !nd.skip, "aria-label": `${nd.name} takes part in the packing`, onchange: e => { nd.skip = !e.target.checked || undefined; put(); } });
 function sgProgramTable(app, f, g, plan) {
   const wrap = h("div", { class: "sgtable" }), tb = h("tbody"), doc = app.doc, by = SGST.by;
   const put = () => sgCommit(app, f, { nodes: g.nodes }, { replan: false });
@@ -454,6 +456,7 @@ function sgProgramTable(app, f, g, plan) {
     const basis = nd.basis || "GFA", gfa = gfaOf(nd);
     return h("tr", { class: (SGST.sel === nd.id ? "on " : "") + (warn ? "warn " : "") + (ctx ? "ctx" : ""), onclick: e => { if (e.target.tagName === "TD") { SGST.sel = nd.id; app.refresh({ keepMain: false }); } } },
       h("td", {}, h("span", { class: "mswatch", style: { background: sgColour(nd), borderColor: "#888" } })),
+      h("td", { title: "Pack: take part in the packing. Untick to leave it out of the plan (it stays in the brief and its totals)" }, ctx ? "" : packBox(nd, put)),
       h("td", { class: "mono muted" }, nd.id), h("td", {}, inp("name", "120px")),
       h("td", {}, ctx ? "" : h("select", { "aria-label": `${nd.name} area basis`, title: "What the stated area measures: GLA (lettable), NLA (net), or GFA (gross, built as stated)", onchange: e => { nd.basis = e.target.value; put(); } }, ["GLA", "NLA", "GFA"].map(b => h("option", { selected: b === basis }, b)))),
       h("td", {}, ctx ? h("span", { class: "muted" }, nd.side || "–") : inp("area", "62px", v => Math.max(1, num(v) || 1))),
@@ -473,14 +476,14 @@ function sgProgramTable(app, f, g, plan) {
   const groups = new Map(); for (const nd of prog) { const k = groupKey(nd, by); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(nd); }
   const labelOf = k => (SGST.legend.find(e => e.key === k) || {}).label || k;
   for (const [k, ns] of groups) {
-    if (groups.size > 1) tb.append(h("tr", {}, h("td", { colspan: 14, class: "sgsub" }, h("span", { class: "mswatch", style: { background: sgColour(ns[0]), borderColor: "#888" } }), ` ${labelOf(k)} - ${ns.reduce((a, n) => a + (n.units || 0), 0) || ""}${ns.some(n => n.units) ? " units · " : ""}${Math.round(ns.reduce((a, n) => a + +n.area, 0)).toLocaleString()} m² stated · ${Math.round(ns.reduce((a, n) => a + gfaOf(n), 0)).toLocaleString()} m² GFA`)));
+    if (groups.size > 1) tb.append(h("tr", {}, h("td", { colspan: 15, class: "sgsub" }, h("span", { class: "mswatch", style: { background: sgColour(ns[0]), borderColor: "#888" } }), ` ${labelOf(k)} - ${ns.reduce((a, n) => a + (n.units || 0), 0) || ""}${ns.some(n => n.units) ? " units · " : ""}${Math.round(ns.reduce((a, n) => a + +n.area, 0)).toLocaleString()} m² stated · ${Math.round(ns.reduce((a, n) => a + gfaOf(n), 0)).toLocaleString()} m² GFA`)));
     for (const nd of ns) tb.append(row(nd));
   }
   const ctxRows = g.nodes.filter(n => !(n.area > 0) || n.zone === "Context");
-  if (ctxRows.length) { tb.append(h("tr", {}, h("td", { colspan: 14, class: "sgsub" }, `Context and circulation (${ctxRows.length}) - outside the plot or not areas; placed on their side of the site`))); for (const nd of ctxRows) tb.append(row(nd)); }
+  if (ctxRows.length) { tb.append(h("tr", {}, h("td", { colspan: 15, class: "sgsub" }, `Context and circulation (${ctxRows.length}) - outside the plot or not areas; placed on their side of the site`))); for (const nd of ctxRows) tb.append(row(nd)); }
   const byName = (SG_GROUPINGS.find(x => x[0] === by) || [, "Group"])[1];
-  const tot = h("tr", { class: "sgtot" }, h("td", { colspan: 4 }, "Total (parking in its own tab)"), h("td", { class: "mono" }, Math.round(prog.reduce((a, n) => a + +n.area, 0)).toLocaleString()), h("td"), h("td", { class: "mono" }, Math.round(prog.reduce((a, n) => a + gfaOf(n), 0)).toLocaleString()), h("td", { class: "mono" }, prog.reduce((a, n) => a + (n.units || 0), 0).toLocaleString()), h("td", { colspan: 6 }));
-  wrap.append(h("table", {}, h("thead", {}, h("tr", {}, ["", "Id", "Name", "Basis", "Area m²", "Eff %", "GFA m²", "Units", byName, "Zone", "St.", "Level", "🔒", ""].map(x => h("th", {}, x)))), tb, h("tfoot", {}, tot)),
+  const tot = h("tr", { class: "sgtot" }, h("td", { colspan: 5 }, "Total (parking in its own tab)"), h("td", { class: "mono" }, Math.round(prog.reduce((a, n) => a + +n.area, 0)).toLocaleString()), h("td"), h("td", { class: "mono" }, Math.round(prog.reduce((a, n) => a + gfaOf(n), 0)).toLocaleString()), h("td", { class: "mono" }, prog.reduce((a, n) => a + (n.units || 0), 0).toLocaleString()), h("td", { colspan: 6 }));
+  wrap.append(h("table", {}, h("thead", {}, h("tr", {}, ["", "Pack", "Id", "Name", "Basis", "Area m²", "Eff %", "GFA m²", "Units", byName, "Zone", "St.", "Level", "🔒", ""].map(x => h("th", {}, x)))), tb, h("tfoot", {}, tot)),
     h("div", { class: "cellrow", style: { marginTop: "6px" } }, h("button", { class: "btn small", onclick: () => { let n = 1; while (g.nodes.some(x => x.id === "N" + n)) n++; g.nodes.push({ id: "N" + n, name: "New space", area: 20, basis: "GFA", dept: "", zone: "Room", facade: true, ratio: null, level: "" }); seedBubbles(g.nodes); sgCommit(app, f, { nodes: g.nodes }, { replan: true }); } }, "+ Element")));
   return wrap;
 }
@@ -495,7 +498,8 @@ function sgParkingTable(app, f, g) {
   for (const nd of park) {
     const p = pk(nd), fp = gfaOf(nd) / Math.max(1, nd.storeys || PARKING_DEFAULTS.storeys), rel = p.baysFuture != null && p.bays > p.baysFuture ? (p.bays - p.baysFuture) * (p.m2PerBay || 31) : 0;
     tb.append(h("tr", { class: SGST.sel === nd.id ? "on" : "", onclick: e => { if (e.target.tagName === "TD") { SGST.sel = nd.id; app.refresh({ keepMain: false }); } } },
-      h("td", {}, h("span", { class: "mswatch", style: { background: sgColour(nd), borderColor: "#888" } })), h("td", { class: "mono muted" }, nd.id),
+      h("td", {}, h("span", { class: "mswatch", style: { background: sgColour(nd), borderColor: "#888" } })),
+      h("td", { title: "Pack: take part in the packing. Untick to leave this car park out of the plan (its bays still count)" }, packBox(nd, put)), h("td", { class: "mono muted" }, nd.id),
       h("td", {}, h("input", { type: "text", value: nd.name, style: { width: "110px" }, "aria-label": `${nd.id} name`, onchange: e => { nd.name = e.target.value; put(); } })),
       h("td", {}, h("input", { type: "text", value: p.serves || "", style: { width: "60px" }, "aria-label": `${nd.name} serves`, onchange: e => { p.serves = e.target.value; put(); } })),
       h("td", {}, cell(nd, "bays", "52px")), h("td", {}, cell(nd, "baysFuture", "52px")), h("td", {}, cell(nd, "m2PerBay", "34px")),
@@ -514,7 +518,7 @@ function sgParkingTable(app, f, g) {
   const ev = park.reduce((a, n) => a + ((n.parking && n.parking.ev) || 0), 0), gfa = park.reduce((a, n) => a + gfaOf(n), 0);
   const sum = h("div", { class: "sgmetrics" }, ...[["Bays day one", bays.toLocaleString()], ["Bays future", fut.toLocaleString()], ["Parking GFA", m2k(gfa)], ["Released later", m2k((bays - fut) * 31)],
     ["Retail ratio", gla ? `${(ret / gla * 100).toFixed(1)} / 100 m²` : "–", gla ? `→ ${(retF / gla * 100).toFixed(1)} future, on ${m2k(gla)} GLA` : ""], ["EV bays", ev ? `${ev.toLocaleString()} (${Math.round(ev / Math.max(1, bays) * 100)}%)` : "–"]].map(([l, v, n]) => h("div", { class: "sgm" }, h("b", {}, v), h("span", {}, l), n ? h("i", {}, n) : "")));
-  wrap.append(h("table", {}, h("thead", {}, h("tr", {}, ["", "Id", "Car park", "Serves", "Bays", "Future", "m²/bay", "GFA m²", "EV", "EV fut.", "Decks", "F2F m", "Deck m²", "Pilotis", "Convert"].map(x => h("th", {}, x)))), tb), sum,
+  wrap.append(h("table", {}, h("thead", {}, h("tr", {}, ["", "Pack", "Id", "Car park", "Serves", "Bays", "Future", "m²/bay", "GFA m²", "EV", "EV fut.", "Decks", "F2F m", "Deck m²", "Pilotis", "Convert"].map(x => h("th", {}, x)))), tb), sum,
     h("div", { class: "cellrow", style: { marginTop: "6px" } }, h("button", { class: "btn small", onclick: () => { let n = 1; while (g.nodes.some(x => x.id === "P-" + n)) n++; const parking = { bays: 500, baysFuture: 500, m2PerBay: PARKING_DEFAULTS.m2PerBay, serves: "" }; g.nodes.push({ id: "P-" + n, name: "New car park", use: "parking", basis: "GFA", dept: "Parking", category: "Parking", zone: "Parking", area: parkingArea(parking), parking, storeys: 3, f2f: 6000, facade: false, level: "" }); seedBubbles(g.nodes); sgCommit(app, f, { nodes: g.nodes }, { replan: true }); } }, "+ Car park")));
   return wrap;
 }
@@ -769,14 +773,14 @@ function sgLayoutCanvas(app, f, cv, g, plan, site) {
   };
   cv.onpointerup = e => {
     const d = drag; drag = null;
-    if (d && d.grip && d.size) { const nd = g.nodes.find(n => n.id === d.grip.b.id); if (nd) { nd.blockW = Math.round(d.size[0]); const list = (g.site.attractors || []).filter(a => a.node !== nd.id); list.push({ at: d.at.map(Math.round), node: nd.id, w: 1 }); g.site.attractors = list; sgCommit(app, f, { nodes: g.nodes, site: g.site }, { replan: true, say: `${nd.name} reshaped to ${(d.size[0] / 1000).toFixed(1)} × ${(d.size[1] / 1000).toFixed(1)} m - same area; the rest re-packed` }); } return; }
+    if (d && d.grip && d.size) { const nd = g.nodes.find(n => n.id === d.grip.b.id); if (nd) { nd.blockW = Math.round(d.size[0]); const list = (g.site.attractors || []).filter(a => a.node !== nd.id); list.push({ at: d.at.map(Math.round), node: nd.id, w: 1, exact: true }); g.site.attractors = list; sgCommit(app, f, { nodes: g.nodes, site: g.site }, { replan: true, say: `${nd.name} reshaped to ${(d.size[0] / 1000).toFixed(1)} × ${(d.size[1] / 1000).toFixed(1)} m - same area; the rest re-packed` }); } return; }
     if (!d || !d.hit) return;
     const r = cv.getBoundingClientRect(), sx = e.clientX - r.left, sy = e.clientY - r.top;
     if (plan && plan.mode === "blocks") {
       if (dist(d.from, [sx, sy]) < 4) { app.refresh({ keepMain: false }); return; }
       // a block dropped somewhere: that is where it is wanted - an attractor for it
-      const p = M(sx, sy), list = (g.site.attractors || []).filter(a => a.node !== d.hit.id); list.push({ at: p.map(Math.round), node: d.hit.id, w: 1 });
-      g.site.attractors = list; sgCommit(app, f, { site: g.site }, { replan: true, say: `${d.hit.name} wanted there: re-planned around it` }); return;
+      const p = M(sx, sy), list = (g.site.attractors || []).filter(a => a.node !== d.hit.id); list.push({ at: p.map(Math.round), node: d.hit.id, w: 1, exact: true, wd: [Math.round(d.hit.w), Math.round(d.hit.d)] });
+      g.site.attractors = list; sgCommit(app, f, { site: g.site }, { replan: true, say: `${d.hit.name} put there: it stays, the rest re-packed around it (Alt-click its ◎ in Attractor mode to free it)` }); return;
     }
     const to = hitAt(sx, sy);
     if (to && to.id !== d.hit.id) { const res = app.apply({ op: "sgswap", id: app.doc.idOf(f), a: d.hit.id, b: to.id }); if (res.ok) app.say(`${d.hit.name} ⇄ ${to.name}: each takes the other's slot, widths follow the areas`, "ok"); }

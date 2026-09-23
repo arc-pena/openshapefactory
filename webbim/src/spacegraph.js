@@ -399,11 +399,16 @@ export function planSpaceGraph(sg, { relax = true, storeys = null } = {}) {
   // masterplan scale (towers, parking, or more programme than a building of rooms) plans as blocks first
   const big = nodes.some(nd => nd.zone === "Tower" || nd.zone === "Parking") || nodes.reduce((a, nd) => a + (nd.area || 0), 0) > 20000;
   const mode = o.mode && o.mode !== "auto" ? o.mode : storeys && storeys.length ? "plates" : big ? "blocks" : "rooms";
-  if (mode === "blocks") { const pl = planBlocks(sg, nodes, edges, o, report); pl.bubbles = nodes.map(nd => ({ id: nd.id, x: nd.x, y: nd.y })); return pl; }
-  if (storeys && storeys.length) { const pl = planOnMassing(sg, nodes, edges, o, storeys, report); pl.bubbles = nodes.map(nd => ({ id: nd.id, x: nd.x, y: nd.y })); pl.site = sg.site && sg.site.boundary && sg.site.boundary.length >= 3 ? sg.site.boundary : null; return pl; }
+  // an element unticked in the programme sits out of the packing: kept in the brief and its totals, not placed
+  const sitOut = nodes.filter(nd => nd.skip && nd.area > 0);
+  if (sitOut.length) report.push(`not packed (unticked): ${sitOut.map(nd => nd.name).join(", ")} - ${Math.round(sitOut.reduce((a, nd) => a + gfaOf(nd), 0)).toLocaleString()} m² GFA left out of the plan`);
+  const packIds = new Set(nodes.filter(nd => !(nd.skip && nd.area > 0)).map(nd => nd.id));
+  const pn = sitOut.length ? nodes.filter(nd => packIds.has(nd.id)) : nodes, pe = sitOut.length ? edges.filter(e => packIds.has(e.a) && packIds.has(e.b)) : edges;
+  if (mode === "blocks") { const pl = planBlocks(sg, pn, pe, o, report); pl.bubbles = nodes.map(nd => ({ id: nd.id, x: nd.x, y: nd.y })); pl.skipped = sitOut.map(nd => nd.id); return pl; }
+  if (storeys && storeys.length) { const pl = planOnMassing(sg, pn, pe, o, storeys, report); pl.bubbles = nodes.map(nd => ({ id: nd.id, x: nd.x, y: nd.y })); pl.site = sg.site && sg.site.boundary && sg.site.boundary.length >= 3 ? sg.site.boundary : null; return pl; }
   const site = sg.site && sg.site.boundary && sg.site.boundary.length >= 3 ? sg.site.boundary : null;
   const buildable = site ? buildableArea(site, sg.site.setbacks || []) : null;
-  const packable = nodes.filter(nd => nd.zone !== "Circulation");
+  const packable = pn.filter(nd => nd.zone !== "Circulation");
   const levels = sgLevels(packable);
   // an internal core is worth its two corridors only when enough of the program does without daylight
   const coreWorth = ns => { const inside = ns.filter(nd => !nd.facade).reduce((a, nd) => a + nd.area, 0), all = ns.reduce((a, nd) => a + nd.area, 0); return inside >= 40 && inside >= 0.12 * all; };
@@ -589,7 +594,7 @@ export function movedBlocks(doc, sgId) {
       const dw = Math.abs(W - wd[0]) / wd[0], dd = Math.abs(D - wd[1]) / wd[1];
       if (Math.max(dw, dd) > 0.01) blockW = Math.round(dw >= dd ? W : wd[0] * wd[1] / D);
     }
-    if (dist(c, at) > 100 || blockW) out.push({ node: pid, at: c.map(Math.round), blockW });
+    if (dist(c, at) > 100 || blockW) out.push({ node: pid, at: c.map(Math.round), blockW, wd: [Math.round(W), Math.round(D)] });
   }
   return out;
 }
@@ -1074,6 +1079,9 @@ export function planBlocks(sg, nodes, edges, o, report) {
     const nb = tie.get(b.id).filter(([o]) => byIdPlaced.has(o)), W = nb.reduce((a, [, w]) => a + w, 0);
     if (W > 0 && !held.has(b.id)) { const m = nb.reduce((a, [o, w]) => add(a, mul([byIdPlaced.get(o).x, byIdPlaced.get(o).y], w / W)), [0, 0]), t = target.get(b.id); target.set(b.id, lerp(t, m, 0.75)); }
     const [tx, ty] = target.get(b.id), step = Math.max(3000, Math.min(gap, 8000));
+    // put there by hand: it stays exactly there, and everything else keeps clear of it
+    const ex = attr.find(a => a.exact && a.node === b.id);
+    if (ex) { b.x = ex.at[0]; b.y = ex.at[1]; b.byHand = true; if (ex.wd && !b.fixed && Math.abs(b.d - ex.wd[0]) < Math.abs(b.w - ex.wd[0])) [b.w, b.d] = [b.d, b.w]; placed.push(b); byIdPlaced.set(b.id, b); continue; }
     const maxR = ext ? Math.max(ext[2] - ext[0], ext[3] - ext[1]) : Math.sqrt(totalFp) * 1000 * 3;
     let best = null;
     for (let r = 0; r <= maxR && !best; r += step) {

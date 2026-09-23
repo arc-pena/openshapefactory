@@ -298,7 +298,7 @@ const HANDLERS = {
     doc.regenerate();
     // blocks moved by hand hold where they were put: the rest pack around them
     const moved = movedBlocks(doc, o.id);
-    if (moved.length) { const site = clone(doc.argValue(f, "site") || {}), ids = new Set(moved.map(m => m.node)); site.attractors = (site.attractors || []).filter(a => !ids.has(a.node)).concat(moved.map(m => ({ at: m.at, node: m.node, w: 1 }))); doc.setArg(f, "site", site);
+    if (moved.length) { const site = clone(doc.argValue(f, "site") || {}), ids = new Set(moved.map(m => m.node)); site.attractors = (site.attractors || []).filter(a => !ids.has(a.node)).concat(moved.map(m => ({ at: m.at, node: m.node, w: 1, exact: true, wd: m.wd }))); doc.setArg(f, "site", site);
       if (moved.some(m => m.blockW)) doc.setArg(f, "nodes", clone(doc.argValue(f, "nodes")).map(nd => { const m = moved.find(x => x.node === nd.id && x.blockW); return m ? Object.assign(nd, { blockW: m.blockW }) : nd; })); }
     const sg = { nodes: doc.argValue(f, "nodes") || [], edges: doc.argValue(f, "edges") || [], site: effectiveSite(doc, f), options: doc.argValue(f, "options") || {}, order: o.replan ? null : doc.argValue(f, "order") };
     if (!sg.nodes.length) return { said: "the space graph has no spaces yet" };
@@ -666,7 +666,7 @@ export function geomKey(f, doc) { return geomKeyOf(doc.typeOf(f)); }
 export function geomKeyOf(t) {
   return t === "Wall" ? "centreline" : t === "Grid" || t === "RoomSeparator" || t === "ElevationView" || t === "SectionView" ? "line"
     : t === "Column" || t === "Furniture" || t === "Text" || t === "SymbolInstance" ? "position" : t === "Space" ? "anchor"
-    : t === "DetailLine" ? "curve" : t === "FilledRegion" ? "boundary" : t === "CADImport" ? "offsetX" : null;
+    : t === "DetailLine" ? "curve" : t === "FilledRegion" || t === "Generic" ? "boundary" : t === "CADImport" ? "offsetX" : null;
 }
 
 // ---------------------------------------------------------------- transforms

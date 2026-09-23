@@ -1603,3 +1603,15 @@ testCase("M52", "A block moved or resized in the model holds where it was put: t
   return R(ok, `the ULO block keeps its id; ${Math.round(W0 / 1000)} m wide → ${Math.round((W0 + 20000) / 1000)} m, its depth follows so the area holds; an attractor where it was left; A-001 carries 6 diagrams of SG1`,
     `id kept ${!!f1}; ${Math.round(W0)}×${Math.round(D0)} → ${Math.round(W1)}×${Math.round(D1)} (area ${(W0 * D0 / 1e6).toFixed(0)} → ${(W1 * D1 / 1e6).toFixed(0)} m²); blockW ${nd.blockW}; attractor ${!!att}; diagrams ${dg.map(d => d.diagram.kind).join(",")}`);
 });
+testCase("M53", "Blocks move like any element: Move (or a drag, in plan or 3D) shifts a massing block, the next build keeps it exactly there and the same way round, the rest pack around it; an element unticked from the packing is left out of the plan but stays in the brief", () => {
+  const doc = buildRmuhSample(), ed = new Editor(doc), id = "SG1-B-E01", box = f => { const b = F.json(f, "boundary"), xs = b.map(p => p[0]), ys = b.map(p => p[1]); return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)].map(Math.round); };
+  const b0 = box(doc.element(id));
+  const r = ed.apply({ op: "transform", ids: [id], move: [-45000, 30000] }); ed.apply({ op: "sgbuild", id: "SG1" });
+  const b1 = box(doc.element(id)), held = Math.abs(b1[0] - (b0[0] - 45000)) <= 2 && Math.abs(b1[1] - (b0[1] + 30000)) <= 2 && Math.abs((b1[2] - b1[0]) - (b0[2] - b0[0])) <= 2;
+  const sg = doc.element("SG1"), nodes = doc.argValue(sg, "nodes").map(n => n.id === "P-RET" ? Object.assign({}, n, { skip: true }) : n);
+  ed.apply({ op: "set", id: "SG1", key: "nodes", value: nodes }); ed.apply({ op: "sgbuild", id: "SG1" });
+  const gone = !doc.element("SG1-B-P-RET"), still = doc.argValue(sg, "nodes").some(n => n.id === "P-RET");
+  const ok = r.ok && held && gone && still;
+  return R(ok, "ULO moved 45 m west, 30 m north: rebuilt exactly there, same width; Retail Parking unticked: no block, still in the brief",
+    `transform ${r.ok}; ${b0} → ${b1}; held ${held}; parking block gone ${gone}, in brief ${still}`);
+});

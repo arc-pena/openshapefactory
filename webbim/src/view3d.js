@@ -10,6 +10,7 @@ import { h, clear, icon, fmtLen } from "./ui_util.js";
 import { buildHLRModel, hlrSteps, cameraBasis } from "./hlr.js";
 import { sectionBoxKey } from "./scene.js";
 import { F } from "./ocaf.js";
+import { geomKeyOf } from "./ops.js";
 import { add, sub, mul, dot, dist, normalise, lerp } from "./geom2d.js";
 import { rasterPixels } from "./acceptance.js";
 import { uOf, pointAt } from "./walls.js";
@@ -60,6 +61,8 @@ export class View3D {
     this.meshes = []; this.groups = new Map();
     this.cam = Object.assign({ azimuth: 225, elevation: 30, target: [6000, 4000, 1500] }, F.json(app.doc.element(viewId), "camera"));
     this.zoom = app.zoom3d && app.zoom3d[viewId] || 1;
+    // not yet framed: the zoom is not remembered until a fit has seen the model in a sized view
+    this.needFit = !(app.zoom3d && app.zoom3d[viewId]);
     this.cube = new ViewCube(root, {
       onTurn: c => this.turnTo(c.azimuth, c.keepElevation ? this.cam.elevation : c.elevation),
       onHome: () => { const c = F.json(this.doc.element(this.viewId), "camera"); this.turnTo(c.azimuth, c.elevation, c.target); },
@@ -73,11 +76,11 @@ export class View3D {
     this.bind();
     this.ro = new ResizeObserver(() => this.resize()); this.ro.observe(root);
     this.resize(); this.refresh();
-    if (!app.zoom3d || !app.zoom3d[viewId]) this.fit();
+    if (this.needFit) this.fit();
   }
   get doc() { return this.app.doc; }
   get style() { const v = this.doc.element(this.viewId); return (v && F.choice(v, "visualStyle")) || "Shaded"; }
-  resize() { if (!this.renderer) return; const r = this.root.getBoundingClientRect(); this.W = r.width; this.H = r.height; this.renderer.setSize(r.width, r.height); this.render(); }
+  resize() { if (!this.renderer) return; const r = this.root.getBoundingClientRect(); this.W = r.width; this.H = r.height; this.renderer.setSize(r.width, r.height); if (this.needFit && r.width > 40 && r.height > 40) this.fit(); else this.render(); }
 
   // ---------------------------------------------------------------- model → scene (one group per element)
   refresh() {
@@ -219,18 +222,20 @@ export class View3D {
     this.renderer.autoClear = false; this.renderer.clearDepth();
     this.renderer.render(this.overlayScene, this.camera);
     if (this.cube) this.cube.sync(B);
-    this.app.zoom3d = Object.assign(this.app.zoom3d || {}, { [this.viewId]: this.zoom });
+    if (!this.needFit) this.app.zoom3d = Object.assign(this.app.zoom3d || {}, { [this.viewId]: this.zoom });
   }
   fit() {
     const pts = [];
     for (const g of this.groups.values()) g.traverse(o => { if (o.isMesh) { o.geometry.computeBoundingBox(); const b = o.geometry.boundingBox; for (const x of [b.min.x, b.max.x]) for (const y of [b.min.y, b.max.y]) for (const z of [b.min.z, b.max.z]) pts.push([x, y, z]); } });
-    if (!pts.length) { this.render(); return; }
+    // the first fit can come before the meshes are built: try again shortly rather than sit at 1:10 inside the model
+    if (!pts.length) { if (this.renderer && (this.fitTries = (this.fitTries || 0) + 1) < 25) setTimeout(() => { if (this.renderer) this.fit(); }, 120); this.render(); return; }
     const c = [0, 1, 2].map(i => (Math.min(...pts.map(p => p[i])) + Math.max(...pts.map(p => p[i]))) / 2);
     this.cam.target = c;
     const B = this.basis();
     const xs = pts.map(p => vdot3(v3sub3(p, c), B.right)), ys = pts.map(p => vdot3(v3sub3(p, c), B.up));
     const need = Math.max((Math.max(...ys) - Math.min(...ys)) * 1.15, (Math.max(...xs) - Math.min(...xs)) * 1.15 / (this.W / this.H || 1));
     this.zoom = 22000 / Math.max(need, 1000);
+    if (this.W > 40 && this.H > 40) this.needFit = false;
     this.render();
   }
   /** Turn to a direction with a short animation — the ViewCube's job. */
@@ -387,6 +392,8 @@ export class View3D {
       el.focus({ preventScroll: true }); el.setPointerCapture(e.pointerId);
       const grip = e.button === 0 && this.app.tool === "select" ? this.pickGrip(e) : null;
       if (grip) { d = this.startGrip(e, grip); return; }
+      // press on a selected element and drag: it moves on the plane it was grabbed at (as in plan)
+      if (e.button === 0 && this.app.tool === "select" && e.pointerType !== "touch") { const body = this.startBody(e); if (body) { d = body; return; } }
       // Revit/PDF navigation: middle-drag pans, Shift+middle-drag orbits (so does the ViewCube);
       // a left drag is a normal drag: a selection window. One finger on a touch screen orbits.
       const touch = e.pointerType === "touch";
@@ -435,7 +442,7 @@ export class View3D {
       e.preventDefault();
       // zoom about the cursor: keep the point under it fixed on screen
       const r = el.getBoundingClientRect(), mx = (e.clientX - r.left) - this.W / 2, my = (e.clientY - r.top) - this.H / 2, B = this.basis();
-      const k0 = this.span() / this.H; this.zoom *= Math.exp(-e.deltaY * 0.0015); const k1 = this.span() / this.H;
+      this.needFit = false; const k0 = this.span() / this.H; this.zoom *= Math.exp(-e.deltaY * 0.0015); const k1 = this.span() / this.H;
       this.cam.target = this.cam.target.map((v, i) => v + B.right[i] * mx * (k0 - k1) - B.up[i] * my * (k0 - k1));
       this.render();
     }, { passive: false });
@@ -548,6 +555,28 @@ export class View3D {
         if (g.kind === "move" || g.kind === "height") this.app.repackMoved([id]);
         if (g.kind === "end" || g.kind === "move") { const ends = g.kind === "move" ? [{ id, end: "start" }, { id, end: "end" }] : [{ id, end: g.writes.split(".")[1] }]; if (doc.typeOf(f) === "Wall") this.app.apply({ op: "autojoin", ends }, { quiet: true, coalesce: key }); }
         this.app.editor.seal(); this.hud.hidden = true; this.app.refresh({ keepMain: true }); this.refresh(); if (drv) this.app.say(`Moved level ${drv.level}: every wall bound to it followed`, "ok"); else if (wasBound) this.app.say(`height was bound to ${orig.ref}; the grip set it to a literal — undo to restore the binding`, "note"); },
+    };
+  }
+  /** Dragging the body of a selected element: a translation of its placement, one undo step, in the
+   *  plane of the point grabbed. A block of a massing study re-packs the rest around where it lands. */
+  startBody(e) {
+    const hit = this.pickElement(e); if (!hit || !this.doc.element(hit.id) || !geomKeyOf(this.doc.typeOf(this.doc.element(hit.id)))) return null;
+    // pressing on something not yet selected moves just it (as in plan); a click without a drag selects it
+    const pressed = !this.app.selection.has(hit.id) && !e.shiftKey && !e.ctrlKey && !e.metaKey;
+    if (!pressed && !this.app.selection.has(hit.id)) return null;
+    const ids = pressed ? [hit.id] : [...this.app.selection].filter(id => this.doc.element(id) && geomKeyOf(this.doc.typeOf(this.doc.element(id))));
+    const z = hit.point[2], grab = this.onPlane(e, z); if (!grab) return null;
+    const key = `move3d:${ids.join(",")}:${Date.now()}`; let done = [0, 0], moved = false;
+    return {
+      grip: true,
+      move: ev => {
+        const p = this.onPlane(ev, z); if (!p) return;
+        const dv = [Math.round((p[0] - grab[0]) / 10) * 10, Math.round((p[1] - grab[1]) / 10) * 10], step = [dv[0] - done[0], dv[1] - done[1]];
+        if (!step[0] && !step[1]) return;
+        const r = this.app.apply({ op: "transform", ids, move: step }, { quiet: true, coalesce: key }); if (r.ok) { done = dv; moved = true; }
+        this.showHud(ev, `move ${fmtLen(dv[0])}, ${fmtLen(dv[1])}`); this.refresh();
+      },
+      end: () => { this.hud.hidden = true; this.app.editor.seal(); if (moved) { if (pressed) this.app.select([hit.id]); this.app.repackMoved(ids); this.app.refresh({ keepMain: true }); } else this.app.select([hit.id], e.shiftKey || e.ctrlKey || e.metaKey); this.refresh(); },
     };
   }
   /** Push or pull one face of the section box along its axis; the opposite face stays put. */
