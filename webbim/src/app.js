@@ -15,13 +15,13 @@ import { buildSample } from "./sample.js";
 import { buildRmuhSample } from "./sample_rmuh.js";
 import { openDocument, newDocument, sheetSize } from "./bim.js";
 import { F, CATALOGUE } from "./ocaf.js";
-import { deriveView, sheetScene, shownInView } from "./scene.js";
+import { deriveView, sheetScene, shownInView, SHEET_DIAGRAMS } from "./scene.js";
 import { elementsBox } from "./hlr.js";
 import { writePDF } from "./pdf.js";
 import { writeDXF, readDXF, dxfDrawing, makeZip } from "./dxf.js";
 import { runAll, CASES } from "./acceptance.js";
 import { renderPanel, renderSchedule, typeEditor, vvDialog, viewStyleEditor, materialsEditor } from "./panel.js";
-import { renderSpaceGraph, importProgram, briefDialog } from "./sgui.js";
+import { renderSpaceGraph, importProgram, briefDialog, sheetDiagramUrl } from "./sgui.js";
 import { renderGraph } from "./graph.js";
 import { View2D, SNAP_KINDS, MODIFY_TOOLS } from "./canvas2d.js";
 import { View3D, VISUAL_STYLES, hiddenLineFor } from "./view3d.js";
@@ -1286,3 +1286,13 @@ async function boot() {
   setDocument(doc, note || { msg: doc.meta.brief ? `D1 RMUH: the brief read into a space graph (${(doc.meta.brief.report || [])[0] || ""}) and a first massing built on the client's plot. File › Studio House Sample for the small house.` : `Studio House: ${doc.elements().length} elements.`, kind: "ok" });
 }
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();
+/** Blocks of a massing study moved by hand (plan or 3D): the graph that built them re-packs around where they now are. */
+app.repackMoved = ids => {
+  const doc = app.doc, sgs = new Set();
+  for (const id of ids || []) { const f = doc.element(id); const sg = f && doc.typeOf(f) === "Generic" && doc.getParam(f, "SpaceGraph"); if (sg && doc.element(sg) && F.bool(doc.element(sg), "auto") !== false) sgs.add(sg); }
+  for (const sg of sgs) { const r = app.apply({ op: "sgbuild", id: sg }); if (r.ok) app.say(`${sg}: the moved block holds there (an attractor); the rest re-packed around it`, "ok"); }
+};
+
+// a sheet's brief-analysis diagrams are drawn here, from the space graph as it is now
+SHEET_DIAGRAMS.url = (doc, im) => sheetDiagramUrl(app, doc, im);
+{ let t = 0; window.addEventListener("webbim:raster", () => { clearTimeout(t); t = setTimeout(() => app.refresh({ keepMain: true }), 30); }); }

@@ -570,6 +570,29 @@ export function stripModel(L, fr, o) {
  * each room onto the corridor. Everything carries SpaceGraph = the graph's id and ProgramId = its
  * node, so a rebuild finds and replaces it, and a room's walls are known as the room's.
  */
+/** A block's element id: the same on every rebuild, so a selected block stays selected as the rest re-pack. */
+function blockId(sgId, pid, doc, oldIds) { let id = `${sgId}-B-${pid}`.replace(/[^A-Za-z0-9-]/g, ""); while (doc.element(id) && !oldIds.has(id)) id += "x"; return id; }
+/** Blocks moved by hand since the last build (in plan or 3D): each becomes an attractor holding its
+ *  programme element where it was put, so the next packing keeps it there and packs the rest around it. */
+export function movedBlocks(doc, sgId) {
+  const out = [];
+  for (const g of doc.elements()) {
+    if (doc.typeOf(g) !== "Generic" || doc.getParam(g, "SpaceGraph") !== sgId) continue;
+    const pid = doc.getParam(g, "ProgramId"), at = String(doc.getParam(g, "SGAt") || "").split(",").map(Number), b = doc.argValue(g, "boundary");
+    if (!pid || at.length !== 2 || at.some(isNaN) || !Array.isArray(b) || b.length < 3) continue;
+    const c = b.reduce((a, p) => add(a, p), [0, 0]).map(v => v / b.length);
+    // a block resized: the side that was dragged is kept and the other follows, so its area holds
+    const wd = String(doc.getParam(g, "SGWD") || "").split(",").map(Number), xs = b.map(p => p[0]), ys = b.map(p => p[1]);
+    const W = Math.max(...xs) - Math.min(...xs), D = Math.max(...ys) - Math.min(...ys);
+    let blockW = null;
+    if (wd.length === 2 && wd.every(v => v > 0)) {
+      const dw = Math.abs(W - wd[0]) / wd[0], dd = Math.abs(D - wd[1]) / wd[1];
+      if (Math.max(dw, dd) > 0.01) blockW = Math.round(dw >= dd ? W : wd[0] * wd[1] / D);
+    }
+    if (dist(c, at) > 100 || blockW) out.push({ node: pid, at: c.map(Math.round), blockW });
+  }
+  return out;
+}
 export function buildOpsFor(doc, sgId, plan, { levelFor, types = {} } = {}) {
   const ops = [], tag = pid => ({ SpaceGraph: sgId, ProgramId: pid });
   const old = doc.elements().filter(f => doc.getParam(f, "SpaceGraph") === sgId);
@@ -580,8 +603,8 @@ export function buildOpsFor(doc, sgId, plan, { levelFor, types = {} } = {}) {
   if (plan.mode === "blocks") {
     // a massing study: one generic mass per block, coloured by the legend, on the base level
     const lv = levelFor(""); if (!lv) return ops;
-    for (const b of plan.blocks) b.colour = b.colour || legendColour(o.legend, b);
-    for (const b of plan.blocks) ops.push({ op: "add", element: { type: "Generic", name: b.name, args: { boundary: b.poly.map(p => p.map(v => Math.round(v))), level: { ref: lv }, baseOffset: Math.round(b.z0), height: Math.round(b.z1 - b.z0), ifcClass: b.zone === "Parking" ? "IfcBuildingElementProxy" : "IfcBuildingElementProxy", material: "M-CONC", colour: b.colour || "" }, params: Object.assign({ Comments: `${b.storeys} storeys × ${(b.f2f / 1000).toFixed(1)} m · ${Math.round(b.area).toLocaleString()} m²` }, tag(b.id)) } });
+    const leg = activeLegend(o, plan.blocks); for (const b of plan.blocks) b.colour = b.colour || legendColour(leg, b, o.colourBy || "dept");
+    for (const b of plan.blocks) ops.push({ op: "add", element: { id: blockId(sgId, b.id, doc, oldIds), type: "Generic", name: b.name, args: { boundary: b.poly.map(p => p.map(v => Math.round(v))), level: { ref: lv }, baseOffset: Math.round(b.z0), height: Math.round(b.z1 - b.z0), ifcClass: b.zone === "Parking" ? "IfcBuildingElementProxy" : "IfcBuildingElementProxy", material: "M-CONC", colour: b.colour || "" }, params: Object.assign({ SGAt: `${Math.round(b.x)},${Math.round(b.y)}`, SGWD: `${Math.round(b.w)},${Math.round(b.d)}`, Comments: `${b.storeys} storeys × ${(b.f2f / 1000).toFixed(1)} m · ${Math.round(b.area).toLocaleString()} m²` }, tag(b.id)) } });
     return ops;
   }
   let wn = 0; const wid = () => { let id; do { id = `${sgId}-W${++wn}`; } while (doc.element(id) && !oldIds.has(id)); return id; };
@@ -845,6 +868,15 @@ const USE_DEFAULTS = {
   residential: { zone: "Tower", storeys: 12, f2f: 3200, facade: true }, parking: { zone: "Parking", storeys: 3, f2f: 6000, facade: false },
   service: { zone: "BOH", storeys: 1, f2f: 6000, facade: false }, plant: { zone: "BOH", storeys: 1, f2f: 6000, facade: false },
 };
+/** What an element's stated area measures, and how much of the gross it is: shops are let by GLA,
+ *  offices by NLA, hotels and parking come as GFA. Its gross (what is built) is the stated area over
+ *  its efficiency, typed per element in the programme table. */
+export const BASIS_EFF = { GLA: 0.85, NLA: 0.8, NIA: 0.8, GFA: 1 };
+export function effOf(nd) { const b = nd.basis || "GFA"; return b === "GFA" ? 1 : nd.eff > 0 && nd.eff <= 1 ? nd.eff : BASIS_EFF[b] || 1; }
+export function gfaOf(nd) { return (Number(nd.area) || 0) / effOf(nd); }
+/** Parking is counted in bays: its area is bays × gross m² per bay, over as many decks as it has. */
+export const PARKING_DEFAULTS = { m2PerBay: 31, storeys: 3, f2f: 6000 };
+export function parkingArea(pk) { return Math.round((Number(pk && pk.bays) || 0) * (Number(pk && pk.m2PerBay) || PARKING_DEFAULTS.m2PerBay)); }
 const rangeMid = v => { if (typeof v === "number") return v; const m = String(v ?? "").replace(/,/g, "").match(/(\d+(?:\.\d+)?)(?:\s*[-–]\s*(\d+(?:\.\d+)?))?/); return m ? (m[2] ? (Number(m[1]) + Number(m[2])) / 2 : Number(m[1])) : NaN; };
 /** Is this text a structured brief (a JSON node table, or typed edges)? */
 export function looksStructured(text) { return /"nodes"\s*:\s*\[/.test(text) || /^\s*[\w\/ .&,*-]+->\s*[^|]+\|\s*[A-Z]{3,5}\s*\|\s*\d/m.test(text); }
@@ -869,16 +901,30 @@ export function programFromStructuredBrief(text) {
     const use = String(n.use || "").toLowerCase(), d = USE_DEFAULTS[use] || USE_DEFAULTS.retail;
     let area = rangeMid(n.gla ?? n.gfa ?? n.nla ?? n.area ?? n.area_m2 ?? n.footprint_m2);
     let note = "";
-    if (!(area > 0) && n.bays_day1) { area = rangeMid(n.bays_day1) * 31; note = `${n.bays_day1} bays × 31 m²`; }
+    // a schedule of units: unit size × count, with each unit's frontage - the element is their sum
+    const mix = Array.isArray(n.mix) ? n.mix.map(x => ({ label: String(x.label || x.gla), gla: Number(x.gla) || 0, units: Number(x.units) || 0, front: Number(x.front) || 0 })).filter(x => x.gla > 0 && x.units > 0) : null;
+    const mixArea = mix ? mix.reduce((a, x) => a + x.gla * x.units, 0) : 0;
+    if (!(area > 0) && mixArea) { area = mixArea; note = mix.map(x => `${x.units} × ${x.label}`).join(" · "); }
+    else if (mixArea && Math.abs(mixArea - area) > 1) report.push(`${n.id} ${n.name}: its unit schedule sums to ${mixArea.toLocaleString()} m², not the ${Number(area).toLocaleString()} m² stated`);
+    const units = Number(n.units) > 0 ? Number(n.units) : mix ? mix.reduce((a, x) => a + x.units, 0) : undefined;
+    const frontage = Number(n.frontage_m) > 0 ? Number(n.frontage_m) : mix && mix.some(x => x.front) ? Math.round(mix.reduce((a, x) => a + x.front * x.units, 0)) : undefined;
+    const groups0 = { category: n.category ? String(n.category) : undefined, fn: n.function ? String(n.function) : undefined, unitType: n.unit_type ? String(n.unit_type) : undefined, bu: n.business_unit || n.bu ? String(n.business_unit || n.bu) : undefined, units, frontage, mix: mix || undefined };
+    const basis = n.gla != null || mix ? "GLA" : n.gfa != null ? "GFA" : n.nla != null ? "NLA" : n.gia != null ? "GFA" : "GFA";
+    let parking;
+    if (!(area > 0) && n.bays_day1) {
+      parking = { bays: rangeMid(n.bays_day1), baysFuture: n.bays_future != null ? rangeMid(n.bays_future) : null, m2PerBay: Number(n.m2_per_bay) || PARKING_DEFAULTS.m2PerBay, ev: n.ev_bays != null ? rangeMid(n.ev_bays) : null, evFuture: n.ev_bays_future != null ? rangeMid(n.ev_bays_future) : null, serves: n.serves || "", ratio: n.ratio || "", convertible: n.convertible != null ? !!n.convertible : null };
+      area = parkingArea(parking); note = `${parking.bays} bays × ${parking.m2PerBay} m²`;
+    }
+    const groups = Object.assign(groups0, { basis: parking ? "GFA" : basis, eff: n.efficiency ? Number(n.efficiency) : undefined, parking });
     if (!(area > 0) && n.keys) { area = rangeMid(n.keys) * 70; note = `${n.keys} keys × 70 m²`; }
     if (!(area > 0) && use === "service") { area = 1500; note = "assumed 1,500 m²"; }
-    if (!(area > 0)) { report.push(`${n.id} ${n.name}: no area - kept as context`); add({ id: n.id, name: n.name, zone: "Context", area: 0, facade: false, dept: precinctOf(n.precinct, use), use }); continue; }
+    if (!(area > 0)) { report.push(`${n.id} ${n.name}: no area - kept as context`); add(Object.assign({ id: n.id, name: n.name, zone: "Context", area: 0, facade: false, dept: precinctOf(n.precinct, use), use }, groups)); continue; }
     let storeys = Number(n.levels) > 0 ? Number(n.levels) : Number(n.room_floors) > 0 ? Number(n.room_floors) + 1 : d.storeys;
     if (n.height_m && !(Number(n.levels) > 0)) storeys = 1;
     const f2f = n.f2f_m ? n.f2f_m * 1000 : n.height_m && storeys === 1 ? n.height_m * 1000 : d.f2f;
     const plate = n.plate_gfa ? Number(n.plate_gfa) : n.footprint_m2 ? rangeMid(n.footprint_m2) : null;
     if (n.plate_gfa && !(Number(n.levels) > 0)) storeys = Math.max(1, Math.round(area / n.plate_gfa));
-    add({ id: n.id, name: n.name, base: n.name, number: n.id, dept: precinctOf(n.precinct, use), use, zone: d.zone, area, facade: d.facade, storeys, f2f, plate, pilotis: !!n.on_pilotis, note, level: "" });
+    add(Object.assign({ id: n.id, name: n.name, base: n.name, number: n.id, dept: precinctOf(n.precinct, use), use, zone: d.zone, area, facade: d.facade, storeys, f2f, plate, pilotis: !!n.on_pilotis, note, level: "" }, groups));
   }
   // a decision stated once for a kind ("parking decks elevated on pilotis") holds for every node of that kind
   if (/pilotis/i.test(text) && nodes.some(n => n.pilotis)) for (const n of nodes) if (n.use === "parking") n.pilotis = true;
@@ -896,12 +942,22 @@ export function programFromStructuredBrief(text) {
   const sAt = text.search(/^\s*\d+\.\s+SITE\b/m), rest = sAt >= 0 ? text.slice(sAt + 10) : "", nx = rest.search(/^\s*\d+\.\s+[A-Z]/m);
   const siteText = sAt >= 0 ? rest.slice(0, nx > 0 ? nx : undefined) : text;
   // the line that names it (near its start) says which side: "PUA light-rail … SOUTH edge", "Grand Central Station (GCS) WEST"
-  const sideOf = key => { const words = key.toLowerCase().split(/[_\s]+/).filter(w => w.length > 2 && !/station|head|edge|retail|the|own/.test(w)); if (!words.length) return null; for (const line of siteText.split("\n")) { const l = line.trim().toLowerCase(), lead = l.slice(0, 40); if (!/^!!/.test(l) && words.some(w => lead.includes(w))) { const d = l.match(/\b(north|south|east|west)\b/); if (d) return d[1]; } } return null; };
+  // the site section's entries: a line at the margin, with its indented continuation lines
+  const siteEntries = []; for (const line of siteText.split("\n")) { if (!line.trim()) continue; const ind = line.match(/^\s*/)[0].length; if (ind <= 4 || !siteEntries.length) siteEntries.push([line]); else siteEntries[siteEntries.length - 1].push(line); }
+  const sideOf = key => {
+    const words = key.toLowerCase().split(/[_\s]+/).filter(w => w.length > 2 && !/station|head|edge|retail|the|own/.test(w)); if (!words.length) return null;
+    let best = null, bi = Infinity;
+    for (const en of siteEntries) { const l = en[0].trim().toLowerCase(), lead = l.slice(0, 40); if (/^!!/.test(l)) continue; const at = Math.min(...words.map(w => { const k = lead.indexOf(w); return k < 0 ? Infinity : k; })); if (at < bi && /\b(north|south|east|west)\b/.test(l)) { bi = at; best = en; } }
+    if (!best) return null;
+    const all = best.map(x => x.trim().toLowerCase()).join(" "), d = best[0].toLowerCase().match(/\b(north|south|east|west)\b/), far = all.match(/(\d[\d,]*)\s*m\s+(?:to the\s+)?(north|south|east|west)\b/);
+    return { side: d[1], far: far ? Number(far[1].replace(/,/g, "")) : null, locked: /\blocked\b/.test(all) };
+  };
   const context = key => {
     const id = key.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_|_$/g, ""); if (byId.has(id)) return byId.get(id);
     const nm = key.replace(/_/g, " ").split(/\s+/).map(w => w.length <= 4 && w === w.toUpperCase() && /[A-Z]/.test(w) && !/^(THE|AND|HEAD|OWN|OF|TO)$/.test(w) ? w : w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
-    const circ = /spine|street|pulse|ring|loop/i.test(key);
-    return add({ id, name: nm, zone: circ ? "Circulation" : "Context", area: 0, facade: false, dept: "Context", side: circ ? null : sideOf(key), level: "" });
+    const circ = /spine|street|pulse|ring|loop/i.test(key), sd = sideOf(key), fn = /pua|sua/i.test(key) ? "PUA / SUA" : /pulse|realm|terrace/i.test(key) ? "District Public Realm" : undefined;
+    // where the brief says which side (and how far out) a thing is, it is held there; "LOCKED" says it may not move
+    return add({ id, name: nm, zone: circ ? "Circulation" : "Context", area: 0, facade: false, dept: "Context", side: sd ? sd.side : null, far: sd && sd.far ? sd.far : undefined, locked: sd && sd.locked ? true : undefined, fn, level: "" });
   };
   // a reference in an edge → the nodes it means
   const retailish = () => nodes.filter(n => n.zone === "Room" && /retail|leisure|fnb/.test(n.use || "retail"));
@@ -932,9 +988,15 @@ export function programFromStructuredBrief(text) {
   // the site, as the brief states it
   const site = {};
   if (j && j.site) { if (j.site.area_total_m2) site.area = j.site.area_total_m2; if (j.site.area_developable_m2) site.developable = j.site.area_developable_m2; }
+  // the names of the groups' codes, where the brief gives them ("DAY" → "Daily")
+  const byOf = k => /precinct|dept|group/i.test(k) ? "dept" : /business|^bu$/i.test(k) ? "bu" : /unit.?type/i.test(k) ? "unitType" : /categor/i.test(k) ? "category" : /function|adjacen|^fn$/i.test(k) ? "fn" : null;
+  const labels = {}; if (j && j.labels) for (const [k, v] of Object.entries(j.labels)) { const by = byOf(k); if (by && v && typeof v === "object") labels[by] = Object.assign({}, v); }
+  // colour keys the brief gives (a client's or a practice's scheme), one per grouping
+  const legends = {}; if (j && j.legends) for (const [k, v] of Object.entries(j.legends)) { const by = byOf(k); if (by && Array.isArray(v)) legends[by] = v.filter(x => x && x.key && /^#[0-9a-f]{6}$/i.test(x.colour || "")).map(x => ({ key: String(x.key), label: String(x.label || x.key), colour: x.colour.toLowerCase() })); }
   const kinds = {}; for (const e of edges) kinds[e.rel] = (kinds[e.rel] || 0) + 1;
   report.unshift(`${nodes.filter(n => n.area > 0).length} programme nodes, ${nodes.filter(n => !(n.area > 0)).length} context nodes, ${edges.length} edges (${Object.entries(kinds).map(([k, v]) => `${v} ${k}`).join(", ")})`);
-  return { nodes, edges, report, site, structured: true };
+  const U = nodes.reduce((a, n) => a + (n.units || 0), 0); if (U) report.push(`${U.toLocaleString()} units${nodes.some(n => n.frontage) ? `, ${nodes.reduce((a, n) => a + (n.frontage || 0), 0).toLocaleString()} m of frontage` : ""}`);
+  return { nodes, edges, report, site, labels, legends, structured: true };
 }
 
 // ---------------------------------------------------------------- block massing (a first attempt, no site needed)
@@ -945,16 +1007,18 @@ export function programFromStructuredBrief(text) {
 const SG_ASPECT = { retail_anchor: 1.5, leisure: 1.3, retail: 2.2, fnb: 2.2, office: 1.2, hotel: 1.8, residential: 2.5, parking: 2.6, service: 1.8, plant: 1.6 };
 export function blockOf(nd) {
   const d = USE_DEFAULTS[nd.use] || (nd.zone === "Tower" ? USE_DEFAULTS.office : nd.zone === "Parking" ? USE_DEFAULTS.parking : nd.zone === "BOH" ? USE_DEFAULTS.service : USE_DEFAULTS.retail);
-  let storeys = Math.max(1, Math.round(nd.storeys || d.storeys)), fp = nd.plate ? nd.plate : nd.area / storeys;
-  if (nd.plate) storeys = Math.max(1, Math.ceil(nd.area / nd.plate));
-  const asp = SG_ASPECT[nd.use] || (nd.zone === "Tower" ? 1.3 : 1.8), w = Math.sqrt(fp * asp) * 1000, dd = Math.sqrt(fp / asp) * 1000;
+  const gfa = gfaOf(nd);
+  let storeys = Math.max(1, Math.round(nd.storeys || d.storeys)), fp = nd.plate ? nd.plate : gfa / storeys;
+  if (nd.plate) storeys = Math.max(1, Math.ceil(gfa / nd.plate));
+  // a block keeps its area: a width set by hand (resized in the plan) makes the depth follow
+  const asp = SG_ASPECT[nd.use] || (nd.zone === "Tower" ? 1.3 : 1.8), fixed = nd.blockW > 0, w = fixed ? nd.blockW : Math.sqrt(fp * asp) * 1000, dd = fixed ? fp * 1e6 / nd.blockW : Math.sqrt(fp / asp) * 1000;
   const f2f = nd.f2f || d.f2f, z0 = nd.pilotis ? 6000 : 0;
-  return { id: nd.id, name: nd.name, dept: nd.dept, use: nd.use, zone: nd.zone, area: nd.area, storeys, footprint: fp, w, d: dd, f2f, z0, z1: z0 + storeys * f2f };
+  return { id: nd.id, name: nd.name, dept: nd.dept, category: nd.category, fn: nd.fn, unitType: nd.unitType, bu: nd.bu, units: nd.units, frontage: nd.frontage, use: nd.use, zone: nd.zone, fixed, eff: effOf(nd), area: gfa, net: Number(nd.area) || 0, basis: nd.basis || "GFA", bays: nd.parking ? nd.parking.bays : undefined, storeys, footprint: fp, w, d: dd, f2f, z0, z1: z0 + storeys * f2f };
 }
 export function planBlocks(sg, nodes, edges, o, report) {
   const prog = nodes.filter(n => n.area > 0 && n.zone !== "Context" && n.zone !== "Circulation");
   const blocks = prog.map(blockOf), byId = new Map(blocks.map(b => [b.id, b]));
-  const totalFp = blocks.reduce((a, b) => a + b.footprint, 0), totalA = prog.reduce((a, n) => a + n.area, 0) || 1;
+  const totalFp = blocks.reduce((a, b) => a + b.footprint, 0), totalA = prog.reduce((a, n) => a + gfaOf(n), 0) || 1;
   // the bubble diagram, scaled from programme area to footprint, relaxed again at that scale
   const k = Math.sqrt(totalFp / totalA);
   const dirs = { north: [0, 1], south: [0, -1], east: [1, 0], west: [-1, 0] };
@@ -968,7 +1032,8 @@ export function planBlocks(sg, nodes, edges, o, report) {
   const phys = nodes.filter(n => byId.has(n.id) || n.zone === "Context" || n.zone === "Circulation").map(n => {
     const b = byId.get(n.id), side = dirs[n.side], as = b ? attractorsFor(n, attr) : [];
     if (as.length) { const W = as.reduce((a, x) => a + (x.w || 1), 0), p = as.reduce((a, x) => add(a, mul(x.at, (x.w || 1) / W / 1000)), [0, 0]); return { id: n.id, area: b.footprint, x: p[0], y: p[1], pinned: true, held: true }; }
-    return { id: n.id, area: b ? b.footprint : 1, x: C[0] + (side ? side[0] * reach(side) : (n.x || 0) * k), y: C[1] + (side ? side[1] * reach(side) : (n.y || 0) * k), pinned: !!side };
+    const out = side ? reach(side) + (n.far || 0) : 0;
+    return { id: n.id, area: b ? b.footprint : 1, x: C[0] + (side ? side[0] * out : (n.x || 0) * k), y: C[1] + (side ? side[1] * out : (n.y || 0) * k), pinned: !!side };
   });
   relaxBubbles(phys, edges, 400);
   // the programme's middle back on the site's middle (the relaxation drifts), context with it unless pinned
@@ -1018,7 +1083,7 @@ export function planBlocks(sg, nodes, edges, o, report) {
       // a keep-apart partner already placed: at least five streets away (the brief's dumbbell anchors want more; say so)
       const apart = edges.filter(e => e.w < 0 && (e.a === b.id || e.b === b.id)).map(e => byIdPlaced.get(e.a === b.id ? e.b : e.a)).filter(Boolean);
       const far = (x, y, w, d) => apart.every(q => Math.max(Math.abs(x - q.x) - (w + q.w) / 2, Math.abs(y - q.y) - (d + q.d) / 2) >= gap * 5);
-      for (const [x, y] of cands) { for (const [w, d] of [[b.w, b.d], [b.d, b.w]]) if (inside(x, y, w, d) && clear(x, y, w, d) && far(x, y, w, d)) { best = { x, y, w, d }; break; } if (best) break; }
+      for (const [x, y] of cands) { for (const [w, d] of b.fixed ? [[b.w, b.d]] : [[b.w, b.d], [b.d, b.w]]) if (inside(x, y, w, d) && clear(x, y, w, d) && far(x, y, w, d)) { best = { x, y, w, d }; break; } if (best) break; }
     }
     if (best) Object.assign(b, best); else { b.x = tx; b.y = ty; }
     placed.push(b); byIdPlaced.set(b.id, b);
@@ -1034,7 +1099,10 @@ export function planBlocks(sg, nodes, edges, o, report) {
   if (overlaps) report.unshift(`${overlaps} pair${overlaps === 1 ? "" : "s"} of blocks still overlap: the programme does not fit this plot at these storey counts with ${Math.round(gap / 1000)} m streets - add storeys, narrow the streets, or deck over`);
   if (outside.length) report.unshift(`${outside.map(b => b.name).join(", ")} ${outside.length === 1 ? "sits" : "sit"} over the buildable line`);
   if (!buildable && blocks.length) { const m = blocks.reduce((a, b) => add(a, [b.x, b.y]), [0, 0]).map(v => v / blocks.length); for (const b of blocks) { b.x -= m[0]; b.y -= m[1]; } for (const p of phys) if (!p.pinned) { p.x -= m[0] / 1000; p.y -= m[1] / 1000; } }
-  for (const b of blocks) b.poly = [[b.x - b.w / 2, b.y - b.d / 2], [b.x + b.w / 2, b.y - b.d / 2], [b.x + b.w / 2, b.y + b.d / 2], [b.x - b.w / 2, b.y + b.d / 2]];
+  // the let (or net) area as a core inside the gross outline: the ring between is what efficiency costs
+  for (const b of blocks) { const e = b.eff || 1, s = b.w + b.d, t = e < 1 ? (s - Math.sqrt(s * s - 4 * b.w * b.d * (1 - e))) / 4 : 0; b.inset = t; }
+  const rectAt = (b, t) => [[b.x - b.w / 2 + t, b.y - b.d / 2 + t], [b.x + b.w / 2 - t, b.y - b.d / 2 + t], [b.x + b.w / 2 - t, b.y + b.d / 2 - t], [b.x - b.w / 2 + t, b.y + b.d / 2 - t]];
+  for (const b of blocks) { b.poly = rectAt(b, 0); b.core = b.inset > 0 ? rectAt(b, b.inset) : null; }
   // how the graph was met: adjacencies within a street and a half, keep-aparts at least three streets
   const gapOf = (a, b) => Math.max(Math.abs(a.x - b.x) - (a.w + b.w) / 2, Math.abs(a.y - b.y) - (a.d + b.d) / 2);
   const adj = edges.filter(e => e.w >= 2 && byId.has(e.a) && byId.has(e.b)), sep = edges.filter(e => e.w < 0 && byId.has(e.a) && byId.has(e.b));
@@ -1043,13 +1111,15 @@ export function planBlocks(sg, nodes, edges, o, report) {
   for (const e of sep.filter(x => !sepMet.includes(x))) report.push(`${byId.get(e.a).name} — ${byId.get(e.b).name}: kept apart asked, only ${(gapOf(byId.get(e.a), byId.get(e.b)) / 1000).toFixed(0)} m`);
   const site = buildable ? Math.abs(polyArea(sg.site.boundary)) / 1e6 : (sg.site && sg.site.area) || null, dev = buildable ? Math.abs(polyArea(buildable)) / 1e6 : (sg.site && sg.site.developable) || null;
   const ground = blocks.filter(b => b.z0 < 1).reduce((a, b) => a + b.footprint, 0), gfa = blocks.reduce((a, b) => a + b.area, 0);
-  const byDept = {}; for (const b of blocks) byDept[b.dept || "—"] = (byDept[b.dept || "—"] || 0) + b.area;
+  // the programme by group - parking apart: it is counted in bays and would drown everything else
+  const by = o.colourBy || "dept", byDept = {}; for (const b of blocks) { if (b.zone === "Parking") continue; const k = groupKey(b, by); byDept[k] = (byDept[k] || 0) + b.area; }
+  const park = blocks.filter(b => b.zone === "Parking"), gla = blocks.filter(b => b.basis === "GLA").reduce((a, b) => a + b.net, 0);
   if (dev && ground > dev) report.push(`the ground footprint is ${Math.round(ground).toLocaleString()} m², more than the ${Math.round(dev).toLocaleString()} m² developable - stack higher or deck over`);
   const xs = blocks.flatMap(b => [b.x - b.w / 2, b.x + b.w / 2]), ys = blocks.flatMap(b => [b.y - b.d / 2, b.y + b.d / 2]);
   return { mode: "blocks", blocks, levels: [], report, options: o, order: {}, buildable, site: buildable ? sg.site.boundary : null,
     context: phys.filter(p => !byId.has(p.id)).map(p => ({ id: p.id, name: (nodes.find(n => n.id === p.id) || {}).name, at: [p.x * 1000, p.y * 1000] })),
     metrics: { overlaps, outside: outside.length, gfa, ground, footprint: blocks.reduce((a, b) => a + b.footprint, 0), blocks: blocks.length, maxHeight: Math.max(0, ...blocks.map(b => b.z1)) / 1000,
-      site, developable: dev, far: site ? gfa / site : null, coverage: site ? ground / site : null, byDept,
+      site, developable: dev, far: site ? gfa / site : null, coverage: site ? ground / site : null, byDept, by, gla, parkingGfa: park.reduce((a, b) => a + b.area, 0), bays: park.reduce((a, b) => a + (b.bays || 0), 0), programGfa: gfa - park.reduce((a, b) => a + b.area, 0), units: blocks.reduce((a, b) => a + (b.units || 0), 0), frontage: blocks.reduce((a, b) => a + (b.frontage || 0), 0),
       adjacency: adj.length ? adjMet.length / adj.length : null, separation: sep.length ? sepMet.length / sep.length : null,
       extent: xs.length ? [(Math.max(...xs) - Math.min(...xs)) / 1000, (Math.max(...ys) - Math.min(...ys)) / 1000] : null } };
 }
@@ -1060,15 +1130,33 @@ export function planBlocks(sg, nodes, edges, o, report) {
 //! image of a legend by Claude when you drop one; edited by hand.
 export const SG_PALETTE = ["#e8a23b", "#d9534f", "#5b8fd6", "#62b27a", "#a77fd3", "#e07fb0", "#4fb3bf", "#c2a15e", "#8c9aa8", "#f0cf5a", "#7d6bb5", "#e3836b"];
 const KNOWN_COLOURS = { ent: "#e8633b", lif: "#d9538f", day: "#62b27a", mixed: "#e8a23b", office: "#5b8fd6", hotel: "#a77fd3", residential: "#c2a15e", parking: "#9aa3ad", service: "#6b7280", context: "#cfd6de", circulation: "#e3e6ea", boh: "#8c9aa8" };
-export function defaultLegend(nodes) {
-  const keys = [...new Set(nodes.filter(n => n.zone !== "Context").map(n => n.dept || n.zone || "—"))];
-  return keys.map((k, i) => ({ key: k, label: k, colour: KNOWN_COLOURS[String(k).toLowerCase()] || SG_PALETTE[i % SG_PALETTE.length] }));
+/** The ways the analysis can be grouped and coloured: by precinct (the brief's department), category, business unit. */
+export const SG_GROUPINGS = [["dept", "Precinct"], ["category", "Retail category"], ["fn", "Functional adjacency"], ["unitType", "Unit type"], ["bu", "Business unit"]];
+const KNOWN_LABELS = { DAY: "Daily", LIF: "Lifestyle & Fashion", ENT: "Entertainment & Leisure" };
+/** The group a node falls in under a grouping; its department where it has none of that kind. */
+export function groupKey(nd, by = "dept") { return (by && nd[by]) || nd.dept || nd.zone || "—"; }
+export function defaultLegend(nodes, by = "dept", labels = null) {
+  const keys = [...new Set(nodes.filter(n => n.zone !== "Context").map(n => groupKey(n, by)))], L = (labels && labels[by]) || {};
+  return keys.map((k, i) => ({ key: k, label: L[k] || (by === "dept" && KNOWN_LABELS[k]) || k, colour: KNOWN_COLOURS[String(k).toLowerCase()] || SG_PALETTE[i % SG_PALETTE.length] }));
 }
-/** A node's colour: its department's entry, then its use's, its zone's, its name's; else a stable palette colour. */
-export function legendColour(legend, nd) {
+/** The legend in force: one kept per grouping (the precinct one is options.legend, as it always was). */
+export function activeLegend(o, nodes, by0) {
+  const by = by0 || (o && o.colourBy) || "dept", L = by === "dept" ? o && o.legend : o && o.legends && o.legends[by];
+  return L && L.length ? L : defaultLegend(nodes || [], by, o && o.labels);
+}
+/** A node's colour: its group's entry under the grouping, then its department's, use's, zone's, name's; else a stable palette colour. */
+export function legendColour(legend, nd, by = "dept") {
   const L = legend || [], k = s => String(s || "").toLowerCase();
-  for (const f of [nd.dept, nd.use, nd.zone, nd.name, nd.base]) { const e = L.find(x => k(x.key) === k(f) && f); if (e) return e.colour; }
+  for (const f of [nd[by], nd.dept, nd.use, nd.zone, nd.name, nd.base]) { const e = L.find(x => k(x.key) === k(f) && f); if (e) return e.colour; }
   if (nd.zone === "Context") return KNOWN_COLOURS.context; if (nd.zone === "Circulation") return KNOWN_COLOURS.circulation;
-  const key = k(nd.dept || nd.zone); if (KNOWN_COLOURS[key]) return KNOWN_COLOURS[key];
+  const key = k(groupKey(nd, by)); if (KNOWN_COLOURS[key]) return KNOWN_COLOURS[key];
   let h = 0; for (const c of key) h = (h * 31 + c.charCodeAt(0)) >>> 0; return SG_PALETTE[h % SG_PALETTE.length];
+}
+
+/** The analysis laid out on an A1 sheet: every diagram, the site analysis and the figures. */
+export function diagramSheetLayout(W = 841, H = 594) {
+  const border = 10, tbw = Math.min(180, W * 0.22), x0 = border + 8, x1 = W - border - tbw - 8, y0 = border + 8, y1 = H - border - 6;
+  const cols = 3, rows = 2, gx = 10, gy = 20, cw = (x1 - x0 - gx * (cols - 1)) / cols, ch = (y1 - y0 - gy * rows) / rows;
+  const kinds = [["site", "Site analysis", {}], ["bubbles", "Bubble diagram · functional adjacencies", { by: "fn" }], ["matrix", "Adjacency matrix", { by: "fn" }], ["pies", "Programme shares", { by: "fn" }], ["plan", "First massing attempt · functional adjacencies", { by: "fn" }], ["summary", "Programme summary and colour keys", {}]];
+  return kinds.map(([kind, title, o], i) => { const c = i % cols, r = Math.floor(i / cols); return { id: `D${i + 1}`, title, rect: [Math.round(x0 + c * (cw + gx)), Math.round(y1 - (r + 1) * ch - r * gy), Math.round(cw), Math.round(ch)], diagram: Object.assign({ kind }, o) }; });
 }

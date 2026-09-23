@@ -316,6 +316,8 @@ export class View3D {
         { key: "height", at: [...mid, p.z1], kind: "height", writes: "height" },
       ];
     }
+    // a block of a massing study (or any generic mass): move it whole, pull its top
+    if (t === "Generic" && p && p.foot && p.foot.length >= 3) { const c = p.foot.reduce((a, q) => add(a, q), [0, 0]).map(v => v / p.foot.length); return [{ key: "move", at: [...c, p.z0], kind: "move", writes: "boundary.@centre", origin: c }, { key: "height", at: [...c, p.z1], kind: "height", writes: "height" }]; }
     if (t === "Column" && p) { const c = F.point(f, "position"); return [{ key: "move", at: [...c, p.z0], kind: "move", writes: "position" }]; }
     if ((t === "Door" || t === "Window")) { const d = this.doc.data(f), fr = d && d.frame, host = fr && this.doc.element(fr.host), w = host && this.doc.plan(host); if (w) return [{ key: "along", at: [...pointAt(w, 0, fr.at), w.z0 + fr.sill + fr.h + 150], kind: "along", host: fr.host, opening: F.refId(f, "fills") }]; }
     return [];
@@ -512,7 +514,7 @@ export class View3D {
     if (g.kind === "face") return this.startFace(e, g);
     const doc = this.doc, id = [...this.app.selection][0], f = doc.element(id);
     const z0 = g.at[2], grab = this.onPlane(e, g.kind === "height" ? g.at[2] : z0);
-    const orig = JSON.parse(JSON.stringify(g.writes ? (g.writes.includes(".") ? F.json(f, g.writes.split(".")[0])[g.writes.split(".")[1]] : doc.argValue(f, g.writes)) : null));
+    const orig = g.origin ? g.origin.slice() : JSON.parse(JSON.stringify(g.writes ? (g.writes.includes(".") ? F.json(f, g.writes.split(".")[0])[g.writes.split(".")[1]] : doc.argValue(f, g.writes)) : null));
     const key = `grip3d:${id}:${g.key}`;
     const wasBound = g.kind === "height" && orig && typeof orig === "object" && orig.ref;
     const plan = doc.plan(f);
@@ -543,6 +545,7 @@ export class View3D {
         this.refresh();
       },
       end: () => {
+        if (g.kind === "move" || g.kind === "height") this.app.repackMoved([id]);
         if (g.kind === "end" || g.kind === "move") { const ends = g.kind === "move" ? [{ id, end: "start" }, { id, end: "end" }] : [{ id, end: g.writes.split(".")[1] }]; if (doc.typeOf(f) === "Wall") this.app.apply({ op: "autojoin", ends }, { quiet: true, coalesce: key }); }
         this.app.editor.seal(); this.hud.hidden = true; this.app.refresh({ keepMain: true }); this.refresh(); if (drv) this.app.say(`Moved level ${drv.level}: every wall bound to it followed`, "ok"); else if (wasBound) this.app.say(`height was bound to ${orig.ref}; the grip set it to a literal — undo to restore the binding`, "note"); },
     };

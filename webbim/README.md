@@ -153,6 +153,30 @@ The Artifact publishes `dist/web-bim-studio.html`. The CAD page rides in it as i
   - In section, a floor meeting a wall resolves by the same priority rule: a slab bears over a wall's structure. The outline is drawn only where the material changes.
 - **Sections:** `SE` draws a section line. It cuts walls, floors, beams (I-sections) and columns layer by layer, and draws what lies beyond as an elevation hidden behind the cut.
 - **View extents:** selecting (or hovering) an elevation or section in plan shows what it sees: the view line swept to the far clip, as a dashed rectangle. Its grips move the line's ends and the whole line, set the far clip (`depth`), and slide the sides to set the width. In an elevation or section, clicks take what is nearest the viewer; Tab steps back through the rest.
+- **Brief Analysis (D1 RMUH sample):** the sample brief carries the QIC Retail Design Metrics: 208,400 m² GLA in 605 units, scheduled per precinct (Daily / Lifestyle & Fashion / Entertainment & Leisure) as unit size × count with frontage. It also carries circulation widths, node spacing, escalator and lift catchments, amenity spacing, loading (35–45 bays) and the attention/walking-speed lessons. Its site edges are locked: PUA station south, SUA station north, The Pulse east, and GCS 650 m east.
+  - **Colour by:** the View dropdown colours, groups and totals everything (bubbles, plan, 3D blocks, legend, bars) by one of five groupings:
+    - Precinct.
+    - The client's Retail Category (Convenience / Comparison / F&B / Leisure / Hotels-Office).
+    - The client's Functional Adjacency.
+    - QIC unit type.
+    - Business unit.
+
+    Both client schemes use the ZHA hex codes (Design Brief pp.45 and 58).
+  - **Area basis:** each element states GLA, NLA or GFA; a typed efficiency % turns GLA/NLA into the GFA that gets built.
+  - **Parking tab:** parking has its own tab: bays now and later, m² per bay, EV bays, decks, floor-to-floor, pilotis, convertible decks, and the retail ratio per 100 m² GLA.
+  - **Pie charts:** shares per grouping, by area, GFA, units or frontage.
+  - **Site analysis:**
+    - The plot's edge lengths and area.
+    - Context at its stated sides and distances.
+    - 400 m walking radii from the stations.
+    - The sun path at 24.6° N.
+    - The prevailing wind (an assumption).
+    - The site's figures against the programme.
+  - **Panels:** every panel and every diagram pops off into a window of its own (⧉). Pop-off windows can be moved and resized, and zoom with ＋/－/⤢; the adjacency matrix also zooms with Ctrl-wheel.
+  - **Blocks:** blocks draw their GLA as a coloured core inside the GFA outline.
+    - Drag a block in the analysis plan, the model plan or 3D (its move grip): it holds there and the rest re-pack.
+    - Drag an edge grip: that side moves and the other follows, so the area holds.
+  - **Diagrams → A1 sheet:** lays out the site analysis, bubbles, matrix, pies, massing and summary on sheet A-001 (the sample ships with it). The diagrams redraw from the graph whenever it changes and print to PDF.
 - **Two-letter shortcuts:** WA DR WN OP CL GR RM RS DI TX EL MV CO RO MM DE LL VV TL ZF 3D SA PP MD. Ctrl+Z / Ctrl+Y undo and redo; Esc cancels, then clears the selection.
 
 ## Known gaps (said, not hidden)

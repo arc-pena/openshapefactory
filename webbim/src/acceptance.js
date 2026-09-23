@@ -24,7 +24,7 @@ import { parseLength, setLengthUnit } from "./units.js";
 import { bimToCad, cadEditsToOps } from "./cadbridge.js";
 import { fromPolygon, addElements, fillet, toggleLock, measureDim, dragHandle, regionsOf, shapeFromClicks, filletCorners, toCentreline, elementSegs, splitElement, bsplineAt, bsplineDomain } from "./bimsketch.js";
 import { cadSketchOutline } from "./cadsketch.js";
-import { programFromBrief, planSpaceGraph, relaxBubbles } from "./spacegraph.js";
+import { programFromBrief, planSpaceGraph, relaxBubbles, gfaOf, activeLegend, legendColour, groupKey } from "./spacegraph.js";
 import { buildRmuhSample, RMUH_BRIEF } from "./sample_rmuh.js";
 import { parseOBJ, storeysFor } from "./massing.js";
 
@@ -1485,14 +1485,16 @@ testCase("M43", "Build and swap: the graph becomes walls, slab, rooms and doors 
     `${spaces} spaces, ${walls} walls, ${doors} doors, ${floors} slab, ${errs} errors; swap ${a}⇄${z}: A ${A.join(",")} → ${A2.join(",")}, ${a} width ${w0.u1 - w0.u0} → ${w1.u1 - w1.u0}; elements ${n0} → ${mine().length}; room ${named}; undo ${back}`);
 });
 
-testCase("M44", "A structured brief (D1 RMUH) read without AI: its JSON node table, typed edges with groups expanded, context nodes on their stated side, the site's areas", () => {
+testCase("M44", "A structured brief (D1 RMUH) read without AI: its JSON node table with the QIC unit schedule, typed edges with groups expanded, context nodes on their locked side and distance, the site's areas", () => {
   const g = programFromBrief(RMUH_BRIEF), by = id => g.nodes.find(n => n.id === id);
   const E = (a, b, rel) => g.edges.find(e => ((e.a === a && e.b === b) || (e.a === b && e.b === a)) && (!rel || e.rel === rel));
-  const lifGroup = ["R07", "R08"].every(id => E("R02", id, "ADJ")), hotels = ["H01", "H02", "H03"].every(id => E(id, "P-HOT", "CONN")), parkWild = ["P-RET", "P-OFF", "P-HOT"].every(id => E(id, "RETAIL_CORES"));
-  const ok = by("R01").area === 25000 && by("P-RET").area === 8000 * 31 && by("O01").storeys === 25 && E("R02", "R03", "SEP").w < 0 && lifGroup && hotels && parkWild
-    && by("PUA_STATION") && by("PUA_STATION").side === "south" && by("GCS").side === "west" && g.site.area === 336500 && g.site.developable === 292000;
-  return R(ok, "ULO 25,000 m²; retail parking 8,000 bays × 31 m²; office 25 storeys as the brief states (its 1,500 m² plate recorded); Dept–Hyper kept apart; 'LIF precinct', 'H01/H02/H03', 'P-*' expanded; PUA south, GCS west; site 336,500 / 292,000 m²",
-    `${g.nodes.length} nodes, ${g.edges.length} edges; ULO ${by("R01").area}; P-RET ${by("P-RET").area}; office storeys ${by("O01").storeys}; LIF ${lifGroup}, hotels ${hotels}, P-* ${parkWild}; PUA ${by("PUA_STATION") && by("PUA_STATION").side}, GCS ${by("GCS") && by("GCS").side}; site ${g.site.area}/${g.site.developable}`);
+  const lifGroup = ["L03", "L04", "L06"].every(id => E("L01", id, "ADJ")), hotels = ["H01", "H02", "H03"].every(id => E(id, "P-HOT", "CONN")), parkWild = ["P-RET", "P-OFF", "P-HOT"].every(id => E(id, "RETAIL_CORES"));
+  const retail = g.nodes.filter(n => n.basis === "GLA"), gla = retail.reduce((a, n) => a + n.area, 0), units = retail.reduce((a, n) => a + (n.units || 0), 0);
+  const sides = by("PUA_STATION").side === "south" && by("SUA_STATION").side === "north" && by("THE_PULSE").side === "east" && by("GCS").side === "east" && by("GCS").far === 650 && by("PUA_STATION").locked;
+  const ok = by("E01").area === 25000 && by("P-RET").area === 8000 * 31 && by("P-RET").parking.bays === 8000 && by("O01").storeys === 25 && E("L01", "D01", "SEP").w < 0 && lifGroup && hotels && parkWild
+    && gla === 208400 && units === 605 && by("L04").units === 224 && sides && g.site.area === 336500 && g.site.developable === 292000;
+  return R(ok, "208,400 m² GLA in 605 units (QIC); ULO 25,000 m²; retail parking 8,000 bays × 31 m²; office 25 storeys; Dept–Hyper kept apart; 'LIF precinct', 'H01/H02/H03', 'P-*' expanded; PUA south, SUA north, Pulse east, GCS 650 m east, locked; site 336,500 / 292,000 m²",
+    `${g.nodes.length} nodes, ${g.edges.length} edges; GLA ${gla} in ${units} units; ULO ${by("E01").area}; P-RET ${by("P-RET").area}; office ${by("O01").storeys}; LIF ${lifGroup}, hotels ${hotels}, P-* ${parkWild}; sides ${sides}; site ${g.site.area}/${g.site.developable}`);
 });
 testCase("M45", "The D1 RMUH sample: the client's plot as the Site Boundary; the brief planned as blocks inside it, none overlapping, decks on pilotis over the ground, keep-aparts kept", () => {
   const doc = buildRmuhSample(), sb = doc.element("SITE"), area = doc.data(sb).props["Site area"].v / 1e6;
@@ -1501,11 +1503,11 @@ testCase("M45", "The D1 RMUH sample: the client's plot as the Site Boundary; the
   const boxes = blocks.map(f => { const b = F.json(f, "boundary"), xs = b.map(p => p[0]), ys = b.map(p => p[1]); return { deck: F.real(f, "baseOffset") > 0, x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) }; });
   let overlaps = 0; for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) { const a = boxes[i], b = boxes[j]; if (a.deck === b.deck && Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0) > 1 && Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0) > 1) overlaps++; }
   const decks = boxes.filter(b => b.deck).length, errs = doc.elements().filter(f => doc.error(f)).length;
-  const dept = blocks.find(f => f.get("Name") === "Department Store"), hyper = blocks.find(f => f.get("Name") === "Hypermarket");
+  const dept = blocks.find(f => f.get("Name") === "Department Store"), hyper = blocks.find(f => f.get("Name") === "Hypermarket"), nBlocks = doc.argValue(doc.element("SG1"), "nodes").filter(n => n.area > 0 && n.zone !== "Context" && n.zone !== "Circulation").length;
   const bb = f => { const b = F.json(f, "boundary"); return [Math.min(...b.map(p => p[0])), Math.min(...b.map(p => p[1])), Math.max(...b.map(p => p[0])), Math.max(...b.map(p => p[1]))]; };
   const [A, B] = [bb(dept), bb(hyper)], apart = Math.max(Math.max(A[0], B[0]) - Math.min(A[2], B[2]), Math.max(A[1], B[1]) - Math.min(A[3], B[3]));
-  const ok = Math.abs(area - 331800) < 500 && blocks.length === 21 && inside && overlaps === 0 && decks === 3 && errs === 0 && apart >= 5 * 18000 - 1;
-  return R(ok, "site ≈331,800 m² from the DXF; 21 blocks, all inside the plot, none overlapping within their layer; the 3 parking decks on pilotis; Department Store and Hypermarket ≥ 90 m apart; no errors",
+  const ok = Math.abs(area - 331800) < 500 && blocks.length === nBlocks && nBlocks >= 29 && inside && overlaps === 0 && decks === 3 && errs === 0 && apart >= 5 * 18000 - 1;
+  return R(ok, "site ≈331,800 m² from the DXF; a block per programme element, all inside the plot, none overlapping within their layer; the 3 parking decks on pilotis; Department Store and Hypermarket ≥ 90 m apart; no errors",
     `site ${Math.round(area)} m²; ${blocks.length} blocks; inside ${inside}; overlaps ${overlaps}; decks ${decks}; errors ${errs}; Dept–Hyper ${Math.round(apart / 1000)} m`);
 });
 testCase("M46", "Site boundary: each edge's own setback moves the buildable line in by exactly that much; the zoning planes are there when asked", () => {
@@ -1573,4 +1575,31 @@ testCase("M50", "Wall inclination about its centreline at the floor finish: the 
   const thick = Math.abs(yO - yI) * Math.cos(th), T = Math.abs(w.stack.s[w.stack.s.length - 1] - w.stack.s[0]);
   const ok = Math.abs(yMid - straightMid) < 0.5 && Math.abs(thick - T) < 0.5;
   return R(ok, `centre plane meets the floor finish at y = ${straightMid.toFixed(1)} (unmoved); thickness ${T} mm perpendicular to the faces`, `centre at floor ${yMid.toFixed(2)}; thickness ${thick.toFixed(2)}`);
+});
+
+testCase("M51", "Stated area and what gets built: shops in GLA grow to GFA by their efficiency (typed per element), office and hotels stay as the GFA given, parking is bays × m² per bay; the client's two colour schemes read from the brief", () => {
+  const g = programFromBrief(RMUH_BRIEF), by = id => g.nodes.find(n => n.id === id);
+  const l04 = Object.assign({}, by("L04")), g85 = gfaOf(l04); l04.eff = 0.8; const g80 = gfaOf(l04);
+  const cat = {}; for (const n of g.nodes) if (n.area > 0) cat[n.category] = (cat[n.category] || 0) + n.area;
+  const o = { legend: g.legends.dept, legends: { category: g.legends.category, fn: g.legends.fn }, colourBy: "fn" };
+  const col = (n, b) => legendColour(activeLegend(o, g.nodes, b), n, b);
+  const ok = Math.abs(g85 - 40400 / 0.85) < 1 && Math.abs(g80 - 40400 / 0.8) < 1 && gfaOf(by("O01")) === 40000 && gfaOf(by("P-RET")) === 8000 * 31
+    && cat.Convenience === 22000 && cat["F&B"] === 37900 && cat.Leisure === 48000
+    && col(by("D01"), "fn") === "#f2a878" && col(by("E01"), "fn") === "#b68ac9" && col(by("L01"), "fn") === "#e8c7e0" && col(by("D01"), "category") === "#fdc040" && col(by("O01"), "category") === "#dddbda";
+  return R(ok, "L04 40,400 m² GLA → 47,529 m² GFA at 85%, 50,500 at 80%; office 40,000 GFA as given; retail parking 248,000 m²; Convenience 22,000 / F&B 37,900 / Leisure 48,000 as the client's diagram; Hypermarket #f2a878, ULO #b68ac9, Dept #e8c7e0 (adjacencies), Hypermarket #fdc040, office #dddbda (categories)",
+    `L04 ${Math.round(g85)} / ${Math.round(g80)}; O01 ${gfaOf(by("O01"))}; P-RET ${gfaOf(by("P-RET"))}; categories ${JSON.stringify(cat)}; colours ${col(by("D01"), "fn")} ${col(by("E01"), "fn")} ${col(by("L01"), "fn")} ${col(by("D01"), "category")} ${col(by("O01"), "category")}`);
+});
+testCase("M52", "A block moved or resized in the model holds where it was put: the next build makes it an attractor, keeps its area with the dragged side, and re-packs the rest; the sample carries its A1 analysis sheet", () => {
+  const doc = buildRmuhSample(), ed = new Editor(doc), id = "SG1-B-E01", f0 = doc.element(id);
+  const b0 = F.json(f0, "boundary"), xs = b0.map(p => p[0]), ys = b0.map(p => p[1]), W0 = Math.max(...xs) - Math.min(...xs), D0 = Math.max(...ys) - Math.min(...ys);
+  // stretch it east by 20 m (the east side dragged), then build again
+  const x1 = Math.max(...xs), b1 = b0.map(p => p[0] === x1 ? [p[0] + 20000, p[1]] : p);
+  ed.apply({ op: "set", id, key: "boundary", value: b1 }); ed.apply({ op: "sgbuild", id: "SG1" });
+  const f1 = doc.element(id), b2 = F.json(f1, "boundary"), W1 = Math.max(...b2.map(p => p[0])) - Math.min(...b2.map(p => p[0])), D1 = Math.max(...b2.map(p => p[1])) - Math.min(...b2.map(p => p[1]));
+  const nd = doc.argValue(doc.element("SG1"), "nodes").find(n => n.id === "E01"), att = (doc.argValue(doc.element("SG1"), "site").attractors || []).find(a => a.node === "E01");
+  const sh = doc.element("SH-A001"), dg = doc.argValue(sh, "diagrams") || [];
+  const ok = !!f1 && Math.abs(W1 - (W0 + 20000)) < 2 && Math.abs(W1 * D1 - W0 * D0) / (W0 * D0) < 0.002 && nd.blockW === Math.round(W0 + 20000) && !!att
+    && dg.length === 6 && ["site", "bubbles", "matrix", "pies", "plan", "summary"].every(k => dg.some(d => d.diagram.kind === k && d.diagram.sg === "SG1"));
+  return R(ok, `the ULO block keeps its id; ${Math.round(W0 / 1000)} m wide → ${Math.round((W0 + 20000) / 1000)} m, its depth follows so the area holds; an attractor where it was left; A-001 carries 6 diagrams of SG1`,
+    `id kept ${!!f1}; ${Math.round(W0)}×${Math.round(D0)} → ${Math.round(W1)}×${Math.round(D1)} (area ${(W0 * D0 / 1e6).toFixed(0)} → ${(W1 * D1 / 1e6).toFixed(0)} m²); blockW ${nd.blockW}; attractor ${!!att}; diagrams ${dg.map(d => d.diagram.kind).join(",")}`);
 });

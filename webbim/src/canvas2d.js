@@ -529,7 +529,7 @@ export class View2D {
     const finish = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", finish); window.removeEventListener("keydown", key_, true);
       // the end let go of a wall or landed on one: joins follow the geometry, in the same undo step
       if (this.doc.typeOf(f) === "Wall" && hd.writes.startsWith("centreline")) { const ends = hd.writes === "centreline" ? wallEnds(this.doc, [id]) : [{ id, end: hd.writes.split(".")[1] }]; this.app.apply({ op: "autojoin", ends }, { quiet: true, coalesce: key }); }
-      this.app.editor.seal(); this.showSnap(null); this.hideHud(); this.app.refresh(); };
+      this.app.editor.seal(); this.showSnap(null); this.hideHud(); this.app.refresh(); this.app.repackMoved([this.doc.idOf(f)]); };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", finish);
     el.addEventListener("pointercancel", finish, { once: true });
@@ -687,7 +687,7 @@ export class View2D {
     const pressed = this.pressSelected; this.pressSelected = false;
     if (!d) return;
     if (d.viewport) { this.guides = []; this.app.editor.seal(); this.draw(); if (d.moved) { this.app.refresh({ keepMain: true }); return; } }
-    if (d.body && d.moved) { const ends = wallEnds(this.doc, d.body.ids); if (ends.length) this.app.apply({ op: "autojoin", ends }, { quiet: true, coalesce: `move:${d.body.ids.join(",")}:${d.start.join(",")}` }); this.app.editor.seal(); this.showSnap(null); this.hideHud(); this.app.refresh({ keepMain: true }); return; }
+    if (d.body && d.moved) { const ends = wallEnds(this.doc, d.body.ids); if (ends.length) this.app.apply({ op: "autojoin", ends }, { quiet: true, coalesce: `move:${d.body.ids.join(",")}:${d.start.join(",")}` }); this.app.editor.seal(); this.app.repackMoved(d.body.ids); this.showSnap(null); this.hideHud(); this.app.refresh({ keepMain: true }); return; }
     if (d.dim && d.moved) { this.app.editor.seal(); this.hideHud(); this.app.refresh({ keepMain: true }); return; }
     if (d.level && d.moved) { this.app.editor.seal(); this.hideHud(); this.app.refresh({ keepMain: true }); this.app.say("Level moved: walls, rooms and views bound to it followed", "ok"); return; }
     if (d.box && d.moved) return this.finishBox(d, e);

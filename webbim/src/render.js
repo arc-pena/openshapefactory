@@ -69,8 +69,9 @@ export function drawScene(g, scene, view, opts = {}) {
       const dx = p.align === "centre" ? -w / 2 : p.align === "right" ? -w : 0;
       g.fillText(p.text, dx, p.valign === "middle" ? p.height * view.z / 2 : 0);
       g.restore();
-    } else if (p.t === "raster" && p.img) {
-      g.drawImage(p.img, X(p.rect[0]), Y(p.rect[1] + p.rect[3]), p.rect[2] * view.z, p.rect[3] * view.z);
+    } else if (p.t === "raster" && (p.img || p.url)) {
+      const img = p.img || rasterImage(p.url);
+      if (img && img.complete && img.naturalWidth) g.drawImage(img, X(p.rect[0]), Y(p.rect[1] + p.rect[3]), p.rect[2] * view.z, p.rect[3] * view.z);
     }
   };
   if (scene.annoClip) {
@@ -123,3 +124,12 @@ export function primBBox(p) {
   return [-Infinity, -Infinity, Infinity, Infinity];
 }
 export function primsBBox(prims) { const bs = prims.map(p => p.t === "group" ? (p.clip || primsBBox(p.prims)) : primBBox(p)).filter(b => isFinite(b[0])); if (!bs.length) return [0, 0, 1, 1]; return [Math.min(...bs.map(b => b[0])), Math.min(...bs.map(b => b[1])), Math.max(...bs.map(b => b[2])), Math.max(...bs.map(b => b[3]))]; }
+
+/** Pictures by their data URL, decoded once; the page is told to redraw when one arrives. */
+const RASTERS = new Map();
+function rasterImage(url) {
+  if (typeof Image === "undefined") return null;
+  let img = RASTERS.get(url); if (img) return img;
+  if (RASTERS.size > 80) RASTERS.clear();
+  img = new Image(); img.onload = () => { if (typeof window !== "undefined") window.dispatchEvent(new Event("webbim:raster")); }; img.src = url; RASTERS.set(url, img); return img;
+}

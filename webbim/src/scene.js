@@ -1090,6 +1090,8 @@ export function scheduleScene(doc, v) {
 }
 
 // ---------------------------------------------------------------- sheets (§11)
+/** How a sheet's diagrams become pictures: set by the page (the brief analysis draws them); absent in node. */
+export const SHEET_DIAGRAMS = { url: null };
 export function sheetScene(doc, sh, opts = {}) {
   const size = sheetSize(sh), [W, H] = size;
   const prims = [], links = [];
@@ -1149,6 +1151,16 @@ export function sheetScene(doc, sh, opts = {}) {
       drawSymbol(doc, B2, doc.lib.symbols["SY-NORTH"], [right - 10, ty + 2], 0, "Annotation");
       prims.push(...B2.prims);
     }
+  });
+  // diagrams of the brief analysis: drawn by the page from the space graph as it is now (see SHEET_DIAGRAMS)
+  (doc.argValue(sh, "diagrams") || []).forEach((im, i) => {
+    const [x, y, w, hh] = im.rect, url = im.url || (SHEET_DIAGRAMS.url ? SHEET_DIAGRAMS.url(doc, im) : null);
+    if (url) prims.push({ t: "raster", rect: [x, y, w, hh], url, layer: "Viewport" });
+    else { prims.push({ t: "fill", path: rectPath(x, y, x + w, y + hh), colour: "#f3f4f6", layer: "Viewport" }); txt([x + w / 2, y + hh / 2], `${im.title || im.diagram && im.diagram.kind || "diagram"} - drawn when the sheet is opened in the app`, 3, { align: "centre", colour: "#666" }); }
+    put(rectPath(x, y, x + w, y + hh), 0.18);
+    const n = vps.length + i + 1, ty = y - 7;
+    put(circlePath([x + 4.5, ty + 1.5], 4.5), 0.35); txt([x + 4.5, ty], String(n), 3, { align: "centre" });
+    txt([x + 11, ty + 0.5], im.title || "Diagram", 3.5, {}); put([lineSeg([x + 10, ty - 1.2], [x + 11 + Math.max(40, textWidth(im.title || "Diagram", 3.5) + 2), ty - 1.2])], 0.5);
   });
   return { prims, links, hits: [], size, bbox: [0, 0, W, H], kind: "sheet" };
 }

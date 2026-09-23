@@ -548,7 +548,9 @@ declare({ type: "Sheet", guid: "wb-0601", category: "Sheet", kind: "sheet", idPr
           choice("size", "Size", ["A0", "A1", "A2", "A3", "A4", "ARCH D", "ANSI D", "Custom"], 1), choice("orientation", "Orientation", ["landscape", "portrait"], 0),
           when(json("custom", "Custom size", { w: 600, h: 400 }), "size", "Custom"), ref("titleBlock", "Title block", ["symbol"], { view: true }),
           // Placement is a view-side link: moving a viewport never rebuilds the model (§6.5).
-          json("viewports", "Viewports", [], { view: true }), text("revision", "Revision", "P01", { group: "Identity Data" }) ] });
+          json("viewports", "Viewports", [], { view: true }), text("revision", "Revision", "P01", { group: "Identity Data" }),
+          // diagrams drawn from a space graph, placed in paper mm: [{ id, title, rect: [x, y, w, h], diagram: { sg, kind, by } }]
+          json("diagrams", "Diagrams", [], { view: true }) ] });
 BUILDERS.Sheet = { build: (f) => ({ data: { size: sheetSize(f) } }) };
 export function sheetSize(f) {
   const s = F.choice(f, "size");

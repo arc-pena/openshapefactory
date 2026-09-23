@@ -12,7 +12,7 @@ import { CATALOGUE, F, clone, documentLookup, MODEL_LIBS } from "./ocaf.js";
 import { resolveReference, orthoLine, importPlacer, importLayerMap } from "./bim.js";
 import { outline } from "./bimsketch.js";
 import { lockedKey, pushStyleSettings } from "./styles.js";
-import { planSpaceGraph, buildOpsFor, swapInOrder } from "./spacegraph.js";
+import { planSpaceGraph, buildOpsFor, swapInOrder, movedBlocks } from "./spacegraph.js";
 import { storeysFor, placeMesh } from "./massing.js";
 
 export class Editor {
@@ -296,6 +296,10 @@ const HANDLERS = {
   sgbuild(doc, o, ed) {
     const f = doc.element(o.id); if (!f || doc.typeOf(f) !== "SpaceGraph") throw new Error(`${o.id} is not a space graph`);
     doc.regenerate();
+    // blocks moved by hand hold where they were put: the rest pack around them
+    const moved = movedBlocks(doc, o.id);
+    if (moved.length) { const site = clone(doc.argValue(f, "site") || {}), ids = new Set(moved.map(m => m.node)); site.attractors = (site.attractors || []).filter(a => !ids.has(a.node)).concat(moved.map(m => ({ at: m.at, node: m.node, w: 1 }))); doc.setArg(f, "site", site);
+      if (moved.some(m => m.blockW)) doc.setArg(f, "nodes", clone(doc.argValue(f, "nodes")).map(nd => { const m = moved.find(x => x.node === nd.id && x.blockW); return m ? Object.assign(nd, { blockW: m.blockW }) : nd; })); }
     const sg = { nodes: doc.argValue(f, "nodes") || [], edges: doc.argValue(f, "edges") || [], site: effectiveSite(doc, f), options: doc.argValue(f, "options") || {}, order: o.replan ? null : doc.argValue(f, "order") };
     if (!sg.nodes.length) return { said: "the space graph has no spaces yet" };
     const plan = planSpaceGraph(sg, { relax: !!o.relax, storeys: massingStoreys(doc, f) });
@@ -445,6 +449,8 @@ const HANDLERS = {
   drag(doc, o) {
     const f = doc.element(o.id);
     if (isPinned(doc, f)) throw new Error(`${o.id} is pinned - unpin it to move it (UP, or click its pin)`);
+    // an outline moved whole by its centre grip
+    if (o.key === "boundary.@centre") { const b = clone(doc.argValue(f, "boundary")), c = b.reduce((a, p) => add(a, p), [0, 0]).map(v => v / b.length), d = sub(o.value, c); doc.setArg(f, "boundary", b.map(p => [Math.round(p[0] + d[0]), Math.round(p[1] + d[1])])); return {}; }
     // Dragging a note moves the text and its elbows, never what it points at (§9.2).
     if (doc.typeOf(f) === "Text" && o.key === "position") {
       const was = doc.argValue(f, "position"), d = sub(o.value, was);
