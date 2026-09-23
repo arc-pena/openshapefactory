@@ -242,6 +242,7 @@ body.cad-switching .app { transform: scale(.985); filter: saturate(.6); }
 .handle:hover { transform: scale(1.3); }
 .handle.crop { width: 12px; height: 12px; margin: -6px 0 0 -6px; border-radius: 1px; background: #fff; border: 2px solid #1d6fd8; }
 .handle.crop.annotation { border-color: #7fa6d9; border-style: dashed; }
+.levelinput { position: absolute; z-index: 7; width: 84px; height: 24px; border: 1.5px solid #1d6fd8; border-radius: 3px; padding: 0 6px; font: 600 12px var(--mono); background: #fff; }
 .btn.cropedit { position: absolute; transform: translateX(-50%); z-index: 6; }
 .tdim { position: absolute; z-index: 6; display: flex; gap: 2px; align-items: center; transform: translate(-50%, -50%); }
 .tdim button { border: 1px solid #1d6fd8; background: #fff; color: #1d6fd8; font: 600 11px var(--mono); padding: 1px 5px; border-radius: 3px; }
@@ -3989,6 +3990,8 @@ function measureRefs(doc, keys) {
   const lost = keys.filter((k, i) => !R[i]);
   if (lost.length) return { lost };
   const [a, b] = R;
+  // two levels: the height between them, as an elevation or a section shows it
+  if (a.kind === "plane" && b.kind === "plane") return { value: Math.abs(b.z - a.z), signed: b.z - a.z, a, b, kind: "levels" };
   if (a.kind === "line" && b.kind === "line") {
     const par = Math.abs(a.geom.d[0] * b.geom.d[1] - a.geom.d[1] * b.geom.d[0]) < 1e-6;
     if (!par) return { value: null, why: "the references are not parallel" };
@@ -4583,6 +4586,8 @@ const HANDLERS = {
       setPath(doc, f, o.key, value);
       // a door or window sizes its opening: changing its type resizes the hole to the new type
       if ((o.key === "doorType" || o.key === "windowType") && value && value.ref) sizeOpeningsToType(doc, [f]);
+      // a level moved drags the levels padlocked to it, keeping each locked height
+      if (doc.typeOf(f) === "Level" && o.key === "elevation") holdLevelGaps(doc, id);
     }
     return {};
   },
@@ -4835,6 +4840,23 @@ function arcU(w, p) {
   let da = sweep > 0 ? ((ang - a0) % T + T) % T : ((a0 - ang) % T + T) % T;
   if (da > Math.abs(sweep) + 1e-9) return null;
   return da * (c.radius ?? dist(p, c.centre));
+}
+/** Locked dimensions between levels (constraint rows of kind "levelGap", value = z(b) - z(a)) hold:
+ *  from the level that moved, every level locked to it follows, breadth first. */
+function holdLevelGaps(doc, moved) {
+  const z = id => F.real(doc.element(id), "elevation"), seen = new Set([moved]), queue = [moved];
+  while (queue.length) {
+    const cur = queue.shift();
+    for (const c of doc.constraints) {
+      if (c.kind !== "levelGap" || c.locked === false) continue;
+      const [a, b] = c.of.map(k => k.split(":")[0]);
+      if (!doc.element(a) || !doc.element(b)) continue;
+      const other = a === cur ? b : b === cur ? a : null; if (!other || seen.has(other)) continue;
+      const want = a === cur ? z(a) + c.value : z(b) - c.value;
+      doc.setArg(doc.element(other), "elevation", Math.round(want * 1000) / 1000);
+      seen.add(other); queue.push(other);
+    }
+  }
 }
 /** The openings these fillers fill take their width and height from the filler's type. */
 function sizeOpeningsToType(doc, fillers) {
@@ -5107,7 +5129,7 @@ class SceneBuilder {
   text(atPaper, text, height, opts = {}) {
     this.prims.push(Object.assign({ t: "text", at: atPaper, text: String(text), height, rot: 0, align: "left", valign: "baseline", colour: "#000000" }, opts));
   }
-  hit(id, modelPts, kind = "region") { this.hits.push({ id, pts: modelPts, kind }); }
+  hit(id, modelPts, kind = "region", depth) { this.hits.push(depth === undefined ? { id, pts: modelPts, kind } : { id, pts: modelPts, kind, depth }); }
 }
 const lineSeg = (a, b) => ({ k: "L", a, b });
 const circlePath = (c, r) => [{ k: "A", c, r, a0: 0, a1: TAU }];
@@ -5260,7 +5282,7 @@ function planScene(doc, v, opts = {}) {
     if (t === "FilledRegion" && vis(f)) { const pts = F.json(f, "boundary"), path = polyPath(pts), pid = F.text(f, "pattern"); B.fill(path, "#ffffff", "Detail", doc.idOf(f)); B.hatch(path, doc.lib.patterns[pid], pid, "#000000", penWeight(doc, "hairline", S), "Detail", doc.idOf(f)); B.stroke(path, { weight: penWeight(doc, "thin", S), colour: "#000000" }, "Detail", doc.idOf(f)); B.hit(doc.idOf(f), pts); }
     if (t === "Text" && categoryVisible(ctx, "Annotation")) drawText(doc, ctx, B, f);
     if (t === "SymbolInstance" && categoryVisible(ctx, "Annotation")) drawSymbol(doc, B, doc.lib.symbols[F.refId(f, "symbol")], B.P(F.point(f, "position")), F.real(f, "rotation"), "Annotation", doc.idOf(f));
-    if (t === "Dimension" && categoryVisible(ctx, "Annotation")) drawDimension(doc, ctx, B, f);
+    if (t === "Dimension" && categoryVisible(ctx, "Annotation") && measureRefs(doc, F.json(f, "of") || []).kind !== "levels") drawDimension(doc, ctx, B, f);
   }
   if (categoryVisible(ctx, "Annotation")) drawConstraintGlyphs(doc, ctx, B);
   B.prims.push(...B.later);          // labels sit on top of fills and furniture
@@ -5464,7 +5486,7 @@ function drawSymbol(doc, B, sym, atPaper, rotDeg = 0, layer = "Annotation", id =
 
 /** Where a dimension sits: witness feet a, b; the measured direction; the dimension line A–Bp at its offset. */
 function dimensionGeometry(doc, f, m = measureRefs(doc, F.json(f, "of") || [])) {
-  if (!m || m.lost || m.value == null) return null;
+  if (!m || m.lost || m.value == null || m.kind === "levels") return null;
   const off = F.real(f, "offset");
   let a, b, dir;
   if (m.kind === "parallel") { const L = m.a.geom; dir = perp(L.d); a = L.p; b = add(a, mul(dir, dot(sub(m.b.geom.p, a), dir))); }
@@ -5577,6 +5599,18 @@ function drawDatums(doc, ctx, B, v, G) {
     B.text(add(hp, [5.5, -3.2]), (z + Z0 >= 0 ? "+" : "") + ((z + Z0) / 1000).toFixed(3), 2.0, { layer: "IfcBuildingStorey", id: doc.idOf(f) });
     B.hit(doc.idOf(f), [[ext[0], z - 50], [ext[1], z - 50], [ext[1], z + 50], [ext[0], z + 50]]);
   }
+  // dimensions between levels, drawn in the view they were placed in: a vertical string at their offset
+  if (categoryVisible(ctx, "Annotation")) for (const f of doc.elements()) {
+    if (doc.typeOf(f) !== "Dimension" || F.refId(f, "view") !== doc.idOf(v)) continue;
+    const m = measureRefs(doc, F.json(f, "of") || []); if (m.kind !== "levels") continue;
+    const sx = F.real(f, "offset"), za = m.a.z - Z0, zb = m.b.z - Z0, id = doc.idOf(f), g = { weight: penWeight(doc, "hairline", S), colour: "#000" };
+    B.stroke([lineSeg([sx, za], [sx, zb])], g, "Annotation-Dimension", id);
+    for (const z of [za, zb]) { const pp = B.P([sx, z]); B.stroke([lineSeg(add(pp, [-1.2, -1.2]), add(pp, [1.2, 1.2]))], { weight: penWeight(doc, "medium", S), colour: "#000" }, "Annotation-Dimension", id, true); B.stroke([lineSeg([sx - 250, z], [sx + 250, z])], g, "Annotation-Dimension", id); }
+    const mid = B.P([sx, (za + zb) / 2]);
+    B.text(add(mid, [-0.9, 0]), String(Math.round(m.value)), 2.5, { align: "centre", rot: 90, layer: "Annotation-Dimension", id });
+    if (F.bool(f, "locked")) drawPadlock(B, add(mid, [-2.2, textWidth(String(Math.round(m.value)), 2.5) / 2 + 3]), id);
+    B.hit(id, [[sx - 300, Math.min(za, zb)], [sx + 300, Math.min(za, zb)], [sx + 300, Math.max(za, zb)], [sx - 300, Math.max(za, zb)]]);
+  }
   for (const f of doc.elements()) if (doc.typeOf(f) === "Grid" && categoryVisible(ctx, "IfcGrid")) {
     const gl = F.json(f, "line"), gd = normalise(sub(gl.end, gl.start));
     const den = d[0] * gd[1] - d[1] * gd[0]; if (Math.abs(den) < 1e-9) continue;
@@ -5587,6 +5621,10 @@ function drawDatums(doc, ctx, B, v, G) {
     const bp = add(B.P([t, top]), [0, 4]);
     B.stroke(circlePath(bp, 4), { weight: penWeight(doc, "thin", S), colour: "#000" }, "IfcGrid", doc.idOf(f), true);
     B.text([bp[0], bp[1] - 1.25], F.text(f, "name"), 2.5, { align: "centre", layer: "IfcGrid", id: doc.idOf(f) });
+    // pickable along its line and by its bubble
+    B.hit(doc.idOf(f), [[t, -300], [t, top]], "curve");
+    const R_ = 4 * S, bc = [t, top + 4 * S];
+    B.hit(doc.idOf(f), [[bc[0] - R_, bc[1] - R_], [bc[0] + R_, bc[1] - R_], [bc[0] + R_, bc[1] + R_], [bc[0] - R_, bc[1] + R_]]);
   }
 }
 /** Items seen beyond the view plane, nearest first, each hidden by what is in front (and by the cut, in a section). */
@@ -5603,7 +5641,10 @@ function drawProjection(doc, ctx, B, vis, G, occluders) {
       for (const [p, q] of pieces) B.stroke([lineSeg(p, q)], gw, it.cat, it.id);
     }
     for (const s of it.sil) occluders.push(ensureCCW(s));
-    B.hit(it.id, it.sil[0]);
+    // hits carry depth, so a click takes what is in front; a door or window sits just before its wall
+    const dep = Math.max(0, it.depth) + 1;
+    for (const s of it.sil) B.hit(it.id, s, "region", dep);
+    for (const fh of it.fillerHits || []) B.hit(fh.id, fh.poly, "region", dep - 0.5);
   }
 }
 
@@ -5719,6 +5760,7 @@ function cutOutline(rects) {
 
 /** A wall's elevation rep and silhouette, from its construction — not from a solid. */
 function elevWall(doc, f, w, V, sOf, depthOf, ctx) {
+  const fillerHits = [];
   const regs = wallRegions(w, "Coarse", -Infinity, []);
   if (!regs.length) return null;
   const foot = samplePath(regs[0].path, 24);
@@ -5753,6 +5795,8 @@ function elevWall(doc, f, w, V, sOf, depthOf, ctx) {
       const er = doc.elev(g); if (!er) continue;
       const mapU = u => sOf(pointAt(w, nearS, u)), mapZ = z => V(foot[0], w.z0 + z)[1];
       for (const r of er.rects || []) { const x0 = mapU(r.u0), x1 = mapU(r.u1), y0 = mapZ(r.z0), y1 = mapZ(r.z1); curves.push([[x0, y0], [x1, y0]], [[x1, y0], [x1, y1]], [[x1, y1], [x0, y1]], [[x0, y1], [x0, y0]]); }
+      // a door or window is picked by its own outline, not its host wall's
+      if ((er.rects || []).length) { const r = er.rects[0], x0 = mapU(r.u0), x1 = mapU(r.u1), y0 = mapZ(r.z0), y1 = mapZ(r.z1); fillerHits.push({ id: doc.idOf(g), poly: [[Math.min(x0, x1), y0], [Math.max(x0, x1), y0], [Math.max(x0, x1), y1], [Math.min(x0, x1), y1]] }); }
       for (const l of er.lines || []) curves.push([[mapU(l.u0), mapZ(l.z0)], [mapU(l.u1), mapZ(l.z1)]]);
     }
   }
@@ -5768,7 +5812,7 @@ function elevWall(doc, f, w, V, sOf, depthOf, ctx) {
     for (const [ha, hb] of zs) { if (ha > z) sil.push([[sa, z], [sb, z], [sb, ha], [sa, ha]]); z = Math.max(z, hb); }
     sil.push([[sa, z], [sb, z], [sb, topLine(sb)], [sa, topLine(sa)]]);
   }
-  return { id: w.id, f, depth: Math.max(0, Math.min(...dd)), depthMax: Math.max(...dd), s0, s1, curves, sil: sil.length ? sil : [[[s0, baseZ], [s1, baseZ], [s1, t1], [s0, t0]]], cat: "IfcWall" };
+  return { id: w.id, f, fillerHits, depth: Math.max(0, Math.min(...dd)), depthMax: Math.max(...dd), s0, s1, curves, sil: sil.length ? sil : [[[s0, baseZ], [s1, baseZ], [s1, t1], [s0, t0]]], cat: "IfcWall" };
 }
 function frontDepth(foot, sOf, depthOf, s) {
   let best = Infinity;
@@ -10819,6 +10863,65 @@ class View2D {
     this.scalebar.innerHTML = `<div style="width:${px}px;height:5px;border:1px solid #333;border-top:0"></div><div>${nice} m · 1:${this.S}</div>`;
   }
   /** Transient things drawn in screen space: the rubber band, listening dimensions. */
+  // ---------------------------------------------------------------- levels in elevation and section
+  viewZ0() { const lv = F.reference(this.view, "baseLevel"), d = lv && this.doc.data(lv); return d ? d.value || 0 : 0; }
+  viewLineLength() { const c = F.json(this.view, "line"); return c ? dist(c.start, c.end) : 0; }
+  /** Dimension tool in an elevation: click a level, then another; the dimension stands where the second click was. */
+  levelDimClick(sx, sy) {
+    const T = this.tool, hit = this.hitAt(sx, sy), f = hit && this.doc.element(hit.id);
+    if (!f || this.doc.typeOf(f) !== "Level") return this.app.say("click a level line", "note");
+    T.refs = (T.refs || []).concat([hit.id]);
+    if (T.refs.length === 1) return this.app.say(`${F.text(f, "name")}: now click the other level`, "note");
+    const [a, b] = T.refs; T.refs = [];
+    if (a === b) return this.app.say("pick two different levels", "note");
+    const p = this.toModel(sx, sy);
+    const r = this.app.apply({ op: "add", element: { type: "Dimension", args: { of: [a + ":plane", b + ":plane"], offset: Math.round(p[0]), view: { ref: this.viewId }, locked: false } } });
+    if (r.ok) { this.app.say("Dimension between levels: click its padlock to lock the height, or its value to change it", "ok"); this.app.select([r.id]); }
+  }
+  /** A selected level shows its height at its head, editable: type a height and the level moves there. */
+  levelHeadEditor(f) {
+    const id = this.doc.idOf(f), z = F.real(f, "elevation"), at = this.toScreen([this.viewLineLength() + 1500, z - this.viewZ0()]);
+    const inp = h("input", { type: "text", value: String(Math.round(z)), class: "levelinput", "aria-label": `${F.text(f, "name")} elevation in mm`, title: "Elevation in mm: type and press Enter", style: { left: (at[0] + 22) + "px", top: (at[1] - 30) + "px" } });
+    inp.addEventListener("keydown", e => {
+      e.stopPropagation();
+      if (e.key !== "Enter") return;
+      const v = Number(inp.value.replace(",", ".")); if (!Number.isFinite(v)) return this.app.say("type the level's height in mm", "error");
+      const r = this.app.apply({ op: "set", id, key: "elevation", value: v });
+      if (r.ok) this.app.say(`${F.text(f, "name")} at ${fmtLen(v)} mm`, "ok");
+    });
+    this.overlay.append(inp);
+  }
+  /** A dimension between levels: its value typed moves the second level; its padlock locks the height between them. */
+  levelDimEditor(f) {
+    const doc = this.doc, id = doc.idOf(f), m = measureRefs(doc, F.json(f, "of")), keys = F.json(f, "of");
+    const [a, b] = keys.map(k => k.split(":")[0]), locked = F.bool(f, "locked");
+    const sx = F.real(f, "offset"), mid = this.toScreen([sx, (m.a.z + m.b.z) / 2 - this.viewZ0()]);
+    const box = h("div", { class: "tdim", style: { left: (mid[0] - 40) + "px", top: mid[1] + "px" } });
+    const val = h("button", { title: "Click to type the height between these levels", "aria-label": `Height ${fmtLen(m.value)}` }, fmtLen(m.value));
+    val.addEventListener("click", () => {
+      const inp = h("input", { type: "text", value: String(Math.round(m.value)), "aria-label": "Height between levels in mm" });
+      val.replaceWith(inp); inp.focus(); inp.select();
+      inp.addEventListener("keydown", e => {
+        e.stopPropagation();
+        if (e.key === "Escape") return this.draw();
+        if (e.key !== "Enter") return;
+        const v = Number(inp.value); if (!(v >= 0)) return this.app.say("type a height in mm", "error");
+        const signed = Math.sign(m.signed || 1) * v, row = doc.constraints.find(c => c.kind === "levelGap" && JSON.stringify(c.of) === JSON.stringify(keys));
+        const ops = [];
+        if (row) ops.push({ op: "relate", store: "constraints", row: Object.assign({}, row, { value: signed }) });
+        ops.push({ op: "set", id: b, key: "elevation", value: Math.round((m.a.z + signed) * 1000) / 1000 });
+        const r = this.app.apply(ops); if (r.ok) this.app.say(`${F.text(doc.element(b), "name")} is ${fmtLen(v)} mm from ${F.text(doc.element(a), "name")}`, "ok");
+      });
+    });
+    const lock = h("button", { class: "lock", title: locked ? "Unlock: the levels move independently again" : "Padlock: moving either level moves the other", "aria-label": locked ? "Unlock height" : "Lock height", "aria-pressed": String(locked) }, icon(locked ? "lock" : "unlock"));
+    lock.addEventListener("click", () => {
+      const row = doc.constraints.find(c => c.kind === "levelGap" && JSON.stringify(c.of) === JSON.stringify(keys));
+      const ops = [{ op: "set", id, key: "locked", value: !locked },
+        { op: "relate", store: "constraints", row: Object.assign(row ? {} : { kind: "levelGap", of: keys }, row || {}, { value: m.signed, locked: !locked }) }];
+      const r = this.app.apply(ops); if (r.ok) this.app.say(locked ? "Levels unlocked" : `Locked: ${fmtLen(m.value)} mm between them`, "ok");
+    });
+    box.append(val, lock); this.overlay.append(box);
+  }
   // ---------------------------------------------------------------- crop region: grips and the Edit Crop sketch
   clipOf() { return Object.assign({ rect: null, visible: false, active: false }, this.doc.argValue(this.view, "clip") || {}); }
   /** Two rectangles, as Revit draws them: the crop (model) and the annotation crop outside it, each with edge grips. */
@@ -11019,6 +11122,11 @@ class View2D {
     this.tdims = [];
     const doc = this.doc, ids = [...this.app.selection];
     if (this.kind === "PlanView" && this.app.tool === "select") this.cropGrips();
+    if ((this.kind === "ElevationView" || this.kind === "SectionView") && ids.length === 1 && this.app.tool === "select") {
+      const f = doc.element(ids[0]);
+      if (f && doc.typeOf(f) === "Level") return this.levelHeadEditor(f);
+      if (f && doc.typeOf(f) === "Dimension" && measureRefs(doc, F.json(f, "of") || []).kind === "levels") return this.levelDimEditor(f);
+    }
     if (this.kind !== "PlanView" || ids.length !== 1 || this.app.tool !== "select") return;
     const f = doc.element(ids[0]); if (!f) return;
     const decl = doc.declOf(f);
@@ -11252,7 +11360,15 @@ class View2D {
       for (const g of sc.prims.filter(x => x.t === "group")) { const bb = g.clip || primsBBox(g.prims); if (p[0] >= bb[0] && p[0] <= bb[2] && p[1] >= bb[1] && p[1] <= bb[3]) hits.push({ id: g.vp, view: g.view, area: (bb[2] - bb[0]) * (bb[3] - bb[1]), bb }); }
       hits.sort((a, b) => a.area - b.area); return hits[0] || null;
     }
-    let best = null;
+    // Tab has chosen among what is under the cursor: that choice holds until the cursor moves away
+    if (this.tabPick && Math.abs(sx - this.tabPick.sx) + Math.abs(sy - this.tabPick.sy) < 5) return this.tabPick.list[this.tabPick.index];
+    return this.hitsAt(sx, sy)[0] || null;
+  }
+  /** Everything under the cursor, most specific first: the smallest region, the nearest line, datums last. */
+  hitsAt(sx, sy) {
+    const sc = this.scene(); const p = this.toModel(sx, sy), tol = 6 * this.modelPerPx();
+    if (this.kind === "Sheet") return [];
+    const byId = new Map();
     for (const ht of sc.hits) {
       if (!ht.id) continue;
       let hit = false, score = 0;
@@ -11260,9 +11376,25 @@ class View2D {
         // a datum line running through a wall must not steal the click from the wall
         const f = this.doc.element(ht.id); if (f && ["Grid", "RoomSeparator", "ElevationView", "SectionView", "Level"].includes(this.doc.typeOf(f))) score += 1e12; }
       else if (ht.pts.length > 2 && pointInPoly(p, ht.pts)) { hit = true; score = Math.abs(polyArea(ht.pts)); }
-      if (hit && (!best || score < best.score)) best = { id: ht.id, score };
+      // in an elevation or section what is nearer the viewer comes first, whatever its size
+      const depth = ht.depth || 0, datum = score >= 1e12 ? 1 : 0;
+      const k = byId.get(ht.id);
+      if (hit && (!k || depth < k.depth || (depth === k.depth && score < k.score))) byId.set(ht.id, { id: ht.id, score, depth, datum });
     }
-    return best;
+    return [...byId.values()].sort((a, b) => a.datum - b.datum || a.depth - b.depth || a.score - b.score);
+  }
+  /** Revit's Tab: step through everything under the cursor; the click then takes the one highlighted. */
+  tabCycle(back) {
+    const [sx, sy] = this.lastMouse || [0, 0];
+    const fresh = !this.tabPick || Math.abs(sx - this.tabPick.sx) + Math.abs(sy - this.tabPick.sy) >= 5;
+    const list = fresh ? this.hitsAt(sx, sy) : this.tabPick.list;
+    if (!list.length) return false;
+    const index = fresh ? (list.length > 1 ? 1 : 0) : (this.tabPick.index + (back ? list.length - 1 : 1)) % list.length;
+    this.tabPick = { sx, sy, list, index };
+    this.hover = list[index].id; this.draw();
+    const f = this.doc.element(this.hover);
+    this.app.say(`Tab ${index + 1} of ${list.length}: ${f ? `${this.doc.typeOf(f)} ${this.hover}${f.get("Name") && f.get("Name") !== this.hover ? " · " + f.get("Name") : ""}` : this.hover} — click to select it, Tab for the next`, "note");
+    return true;
   }
 
   // ---------------------------------------------------------------- events
@@ -11277,6 +11409,10 @@ class View2D {
     c.addEventListener("contextmenu", e => e.preventDefault());
     const sp = on => e => { if (e.code === "Space" && !(e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName))) { this.space = on; this.canvas.style.cursor = on ? "grab" : "default"; } };
     window.addEventListener("keydown", sp(true)); window.addEventListener("keyup", sp(false));
+    // Tab under the cursor cycles the candidates, whether or not the canvas has focus
+    c.addEventListener("pointerenter", () => { this.mouseIn = true; }); c.addEventListener("pointerleave", () => { this.mouseIn = false; });
+    this.onTab = e => { if (e.key !== "Tab" || !this.mouseIn || !this.canvas.isConnected || this.app.tool !== "select") return; if (/INPUT|TEXTAREA|SELECT/.test((e.target && e.target.tagName) || "")) return; if (this.tabCycle(e.shiftKey)) { e.preventDefault(); e.stopPropagation(); } };
+    window.addEventListener("keydown", this.onTab, true);
     c.addEventListener("dragover", e => { if (this.kind === "Sheet") e.preventDefault(); });
     c.addEventListener("drop", e => {
       const vid = e.dataTransfer.getData("text/x-webbim-view"); if (!vid || this.kind !== "Sheet") return;
@@ -11338,6 +11474,8 @@ class View2D {
   }
   move(e) {
     const [sx, sy] = this.evPos(e);
+    this.lastMouse = [sx, sy];
+    if (this.tabPick && Math.abs(sx - this.tabPick.sx) + Math.abs(sy - this.tabPick.sy) >= 5) this.tabPick = null;
     if (this.pointers.has(e.pointerId)) this.pointers.set(e.pointerId, [sx, sy]);
     if (this.pinch && this.pointers.size === 2) { const [a, b] = [...this.pointers.values()]; const k = dist(a, b) / this.pinch.d; this.cam = Object.assign({}, this.pinch.cam); this.zoomAt(this.pinch.mid[0], this.pinch.mid[1], k); return; }
     const d = this.drag;
@@ -11371,6 +11509,7 @@ class View2D {
     const [sx, sy] = this.evPos(e);
     if (e.button === 2) return this.app.contextMenu(e, "2d");
     if (this.app.pickMode) return this.pick(sx, sy);
+    if (this.app.tool === "dim" && (this.kind === "ElevationView" || this.kind === "SectionView")) return this.levelDimClick(sx, sy);
     if (this.app.tool === "cropsketch" && this.kind === "PlanView") return this.cropClick(this.cropPoint(this.toModel(sx, sy), e), e);
     if (this.app.tool !== "select" && this.kind === "PlanView") return this.toolClick(this.toModel(sx, sy), e);
     const hit = this.hitAt(sx, sy);
@@ -11998,7 +12137,28 @@ class View3D {
     return this.ray.ray;
   }
   onPlane(e, z) { const p = new this.T.Vector3(); return this.rayAt(e).intersectPlane(new this.T.Plane(new this.T.Vector3(0, 0, 1), -z), p) ? [p.x, p.y] : null; }
-  pickElement(e) { this.rayAt(e); const hit = this.ray.intersectObjects(this.meshes, false)[0]; return hit ? { id: hit.object.userData.id, point: [hit.point.x, hit.point.y, hit.point.z] } : null; }
+  pickElement(e) {
+    if (this.tabPick && Math.abs(e.clientX - this.tabPick.x) + Math.abs(e.clientY - this.tabPick.y) < 5) return this.tabPick.list[this.tabPick.index];
+    return this.picksAt(e)[0] || null;
+  }
+  /** Every element the ray passes through, nearest first, each once. */
+  picksAt(e) {
+    this.rayAt(e);
+    const out = [], seen = new Set();
+    for (const hit of this.ray.intersectObjects(this.meshes, false)) { const id = hit.object.userData.id; if (seen.has(id)) continue; seen.add(id); out.push({ id, point: [hit.point.x, hit.point.y, hit.point.z] }); }
+    return out;
+  }
+  /** Tab: step through what the cursor's ray passes through, front to back. */
+  tabCycle(back) {
+    const m = this.lastMouse; if (!m) return false;
+    const fresh = !this.tabPick || Math.abs(m.clientX - this.tabPick.x) + Math.abs(m.clientY - this.tabPick.y) >= 5;
+    const list = fresh ? this.picksAt(m) : this.tabPick.list; if (!list.length) return false;
+    const index = fresh ? (list.length > 1 ? 1 : 0) : (this.tabPick.index + (back ? list.length - 1 : 1)) % list.length;
+    this.tabPick = { x: m.clientX, y: m.clientY, list, index };
+    this.hoverId = list[index].id; this.render();
+    this.app.say(`Tab ${index + 1} of ${list.length}: ${list[index].id} — click to select it, Tab for the next`, "note");
+    return true;
+  }
   screenOf(p3) { const v = new this.T.Vector3(...p3).project(this.camera); return [(v.x + 1) / 2 * this.W, (1 - v.y) / 2 * this.H]; }
   /** z where the ray passes closest to the vertical line through `at`. */
   onVertical(e, at) {
@@ -12086,7 +12246,11 @@ class View3D {
       if (nav === "orbit") { d.pivot = this.orbitPivot(e); d.orbit = true; }
       if (e.button === 1) e.preventDefault();
     });
+    el.addEventListener("pointerenter", () => { this.mouseIn = true; }); el.addEventListener("pointerleave", () => { this.mouseIn = false; });
+    window.addEventListener("keydown", e => { if (e.key !== "Tab" || !this.mouseIn || !this.renderer || this.app.tool !== "select") return; if (/INPUT|TEXTAREA|SELECT/.test((e.target && e.target.tagName) || "")) return; if (this.tabCycle(e.shiftKey)) { e.preventDefault(); e.stopPropagation(); } }, true);
     el.addEventListener("pointermove", e => {
+      this.lastMouse = { clientX: e.clientX, clientY: e.clientY };
+      if (this.tabPick && Math.abs(e.clientX - this.tabPick.x) + Math.abs(e.clientY - this.tabPick.y) >= 5) this.tabPick = null;
       if (d && d.grip) { d.move(e); return; }
       if (d) {
         const dx = e.clientX - d.x, dy = e.clientY - d.y;
@@ -12586,7 +12750,7 @@ app.placeOpening = (tool, wallId, u) => {
 };
 const firstOf = type => { const f = app.doc.elements().find(g => app.doc.typeOf(g) === type); return f ? app.doc.idOf(f) : null; };
 const activeType = () => { const v = app.activeView && app.doc.element(app.activeView); return v ? app.doc.typeOf(v) : app.activeView; };
-const canUseTool = k => { const t = activeType(); if (t === "PlanView") return true; if (t === "View3D") return ["wall", "door", "window", "opening", "column", "select"].includes(k); return k === "select"; };
+const canUseTool = k => { const t = activeType(); if (t === "PlanView") return true; if (t === "ElevationView" || t === "SectionView") return k === "select" || k === "dim"; if (t === "View3D") return ["wall", "door", "window", "opening", "column", "select"].includes(k); return k === "select"; };
 
 // ---------------------------------------------------------------- documents
 /** There is always a {3D} view: the house button must have somewhere to go. */

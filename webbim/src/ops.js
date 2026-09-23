@@ -173,6 +173,8 @@ const HANDLERS = {
       setPath(doc, f, o.key, value);
       // a door or window sizes its opening: changing its type resizes the hole to the new type
       if ((o.key === "doorType" || o.key === "windowType") && value && value.ref) sizeOpeningsToType(doc, [f]);
+      // a level moved drags the levels padlocked to it, keeping each locked height
+      if (doc.typeOf(f) === "Level" && o.key === "elevation") holdLevelGaps(doc, id);
     }
     return {};
   },
@@ -426,6 +428,23 @@ function arcU(w, p) {
   let da = sweep > 0 ? ((ang - a0) % T + T) % T : ((a0 - ang) % T + T) % T;
   if (da > Math.abs(sweep) + 1e-9) return null;
   return da * (c.radius ?? dist(p, c.centre));
+}
+/** Locked dimensions between levels (constraint rows of kind "levelGap", value = z(b) - z(a)) hold:
+ *  from the level that moved, every level locked to it follows, breadth first. */
+function holdLevelGaps(doc, moved) {
+  const z = id => F.real(doc.element(id), "elevation"), seen = new Set([moved]), queue = [moved];
+  while (queue.length) {
+    const cur = queue.shift();
+    for (const c of doc.constraints) {
+      if (c.kind !== "levelGap" || c.locked === false) continue;
+      const [a, b] = c.of.map(k => k.split(":")[0]);
+      if (!doc.element(a) || !doc.element(b)) continue;
+      const other = a === cur ? b : b === cur ? a : null; if (!other || seen.has(other)) continue;
+      const want = a === cur ? z(a) + c.value : z(b) - c.value;
+      doc.setArg(doc.element(other), "elevation", Math.round(want * 1000) / 1000);
+      seen.add(other); queue.push(other);
+    }
+  }
 }
 /** The openings these fillers fill take their width and height from the filler's type. */
 function sizeOpeningsToType(doc, fillers) {

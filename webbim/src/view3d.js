@@ -215,7 +215,28 @@ export class View3D {
     return this.ray.ray;
   }
   onPlane(e, z) { const p = new this.T.Vector3(); return this.rayAt(e).intersectPlane(new this.T.Plane(new this.T.Vector3(0, 0, 1), -z), p) ? [p.x, p.y] : null; }
-  pickElement(e) { this.rayAt(e); const hit = this.ray.intersectObjects(this.meshes, false)[0]; return hit ? { id: hit.object.userData.id, point: [hit.point.x, hit.point.y, hit.point.z] } : null; }
+  pickElement(e) {
+    if (this.tabPick && Math.abs(e.clientX - this.tabPick.x) + Math.abs(e.clientY - this.tabPick.y) < 5) return this.tabPick.list[this.tabPick.index];
+    return this.picksAt(e)[0] || null;
+  }
+  /** Every element the ray passes through, nearest first, each once. */
+  picksAt(e) {
+    this.rayAt(e);
+    const out = [], seen = new Set();
+    for (const hit of this.ray.intersectObjects(this.meshes, false)) { const id = hit.object.userData.id; if (seen.has(id)) continue; seen.add(id); out.push({ id, point: [hit.point.x, hit.point.y, hit.point.z] }); }
+    return out;
+  }
+  /** Tab: step through what the cursor's ray passes through, front to back. */
+  tabCycle(back) {
+    const m = this.lastMouse; if (!m) return false;
+    const fresh = !this.tabPick || Math.abs(m.clientX - this.tabPick.x) + Math.abs(m.clientY - this.tabPick.y) >= 5;
+    const list = fresh ? this.picksAt(m) : this.tabPick.list; if (!list.length) return false;
+    const index = fresh ? (list.length > 1 ? 1 : 0) : (this.tabPick.index + (back ? list.length - 1 : 1)) % list.length;
+    this.tabPick = { x: m.clientX, y: m.clientY, list, index };
+    this.hoverId = list[index].id; this.render();
+    this.app.say(`Tab ${index + 1} of ${list.length}: ${list[index].id} — click to select it, Tab for the next`, "note");
+    return true;
+  }
   screenOf(p3) { const v = new this.T.Vector3(...p3).project(this.camera); return [(v.x + 1) / 2 * this.W, (1 - v.y) / 2 * this.H]; }
   /** z where the ray passes closest to the vertical line through `at`. */
   onVertical(e, at) {
@@ -303,7 +324,11 @@ export class View3D {
       if (nav === "orbit") { d.pivot = this.orbitPivot(e); d.orbit = true; }
       if (e.button === 1) e.preventDefault();
     });
+    el.addEventListener("pointerenter", () => { this.mouseIn = true; }); el.addEventListener("pointerleave", () => { this.mouseIn = false; });
+    window.addEventListener("keydown", e => { if (e.key !== "Tab" || !this.mouseIn || !this.renderer || this.app.tool !== "select") return; if (/INPUT|TEXTAREA|SELECT/.test((e.target && e.target.tagName) || "")) return; if (this.tabCycle(e.shiftKey)) { e.preventDefault(); e.stopPropagation(); } }, true);
     el.addEventListener("pointermove", e => {
+      this.lastMouse = { clientX: e.clientX, clientY: e.clientY };
+      if (this.tabPick && Math.abs(e.clientX - this.tabPick.x) + Math.abs(e.clientY - this.tabPick.y) >= 5) this.tabPick = null;
       if (d && d.grip) { d.move(e); return; }
       if (d) {
         const dx = e.clientX - d.x, dy = e.clientY - d.y;

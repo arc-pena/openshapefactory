@@ -67,7 +67,7 @@ class SceneBuilder {
   text(atPaper, text, height, opts = {}) {
     this.prims.push(Object.assign({ t: "text", at: atPaper, text: String(text), height, rot: 0, align: "left", valign: "baseline", colour: "#000000" }, opts));
   }
-  hit(id, modelPts, kind = "region") { this.hits.push({ id, pts: modelPts, kind }); }
+  hit(id, modelPts, kind = "region", depth) { this.hits.push(depth === undefined ? { id, pts: modelPts, kind } : { id, pts: modelPts, kind, depth }); }
 }
 const lineSeg = (a, b) => ({ k: "L", a, b });
 const circlePath = (c, r) => [{ k: "A", c, r, a0: 0, a1: TAU }];
@@ -220,7 +220,7 @@ export function planScene(doc, v, opts = {}) {
     if (t === "FilledRegion" && vis(f)) { const pts = F.json(f, "boundary"), path = polyPath(pts), pid = F.text(f, "pattern"); B.fill(path, "#ffffff", "Detail", doc.idOf(f)); B.hatch(path, doc.lib.patterns[pid], pid, "#000000", penWeight(doc, "hairline", S), "Detail", doc.idOf(f)); B.stroke(path, { weight: penWeight(doc, "thin", S), colour: "#000000" }, "Detail", doc.idOf(f)); B.hit(doc.idOf(f), pts); }
     if (t === "Text" && categoryVisible(ctx, "Annotation")) drawText(doc, ctx, B, f);
     if (t === "SymbolInstance" && categoryVisible(ctx, "Annotation")) drawSymbol(doc, B, doc.lib.symbols[F.refId(f, "symbol")], B.P(F.point(f, "position")), F.real(f, "rotation"), "Annotation", doc.idOf(f));
-    if (t === "Dimension" && categoryVisible(ctx, "Annotation")) drawDimension(doc, ctx, B, f);
+    if (t === "Dimension" && categoryVisible(ctx, "Annotation") && measureRefs(doc, F.json(f, "of") || []).kind !== "levels") drawDimension(doc, ctx, B, f);
   }
   if (categoryVisible(ctx, "Annotation")) drawConstraintGlyphs(doc, ctx, B);
   B.prims.push(...B.later);          // labels sit on top of fills and furniture
@@ -424,7 +424,7 @@ export function drawSymbol(doc, B, sym, atPaper, rotDeg = 0, layer = "Annotation
 
 /** Where a dimension sits: witness feet a, b; the measured direction; the dimension line A–Bp at its offset. */
 export function dimensionGeometry(doc, f, m = measureRefs(doc, F.json(f, "of") || [])) {
-  if (!m || m.lost || m.value == null) return null;
+  if (!m || m.lost || m.value == null || m.kind === "levels") return null;
   const off = F.real(f, "offset");
   let a, b, dir;
   if (m.kind === "parallel") { const L = m.a.geom; dir = perp(L.d); a = L.p; b = add(a, mul(dir, dot(sub(m.b.geom.p, a), dir))); }
@@ -537,6 +537,18 @@ function drawDatums(doc, ctx, B, v, G) {
     B.text(add(hp, [5.5, -3.2]), (z + Z0 >= 0 ? "+" : "") + ((z + Z0) / 1000).toFixed(3), 2.0, { layer: "IfcBuildingStorey", id: doc.idOf(f) });
     B.hit(doc.idOf(f), [[ext[0], z - 50], [ext[1], z - 50], [ext[1], z + 50], [ext[0], z + 50]]);
   }
+  // dimensions between levels, drawn in the view they were placed in: a vertical string at their offset
+  if (categoryVisible(ctx, "Annotation")) for (const f of doc.elements()) {
+    if (doc.typeOf(f) !== "Dimension" || F.refId(f, "view") !== doc.idOf(v)) continue;
+    const m = measureRefs(doc, F.json(f, "of") || []); if (m.kind !== "levels") continue;
+    const sx = F.real(f, "offset"), za = m.a.z - Z0, zb = m.b.z - Z0, id = doc.idOf(f), g = { weight: penWeight(doc, "hairline", S), colour: "#000" };
+    B.stroke([lineSeg([sx, za], [sx, zb])], g, "Annotation-Dimension", id);
+    for (const z of [za, zb]) { const pp = B.P([sx, z]); B.stroke([lineSeg(add(pp, [-1.2, -1.2]), add(pp, [1.2, 1.2]))], { weight: penWeight(doc, "medium", S), colour: "#000" }, "Annotation-Dimension", id, true); B.stroke([lineSeg([sx - 250, z], [sx + 250, z])], g, "Annotation-Dimension", id); }
+    const mid = B.P([sx, (za + zb) / 2]);
+    B.text(add(mid, [-0.9, 0]), String(Math.round(m.value)), 2.5, { align: "centre", rot: 90, layer: "Annotation-Dimension", id });
+    if (F.bool(f, "locked")) drawPadlock(B, add(mid, [-2.2, textWidth(String(Math.round(m.value)), 2.5) / 2 + 3]), id);
+    B.hit(id, [[sx - 300, Math.min(za, zb)], [sx + 300, Math.min(za, zb)], [sx + 300, Math.max(za, zb)], [sx - 300, Math.max(za, zb)]]);
+  }
   for (const f of doc.elements()) if (doc.typeOf(f) === "Grid" && categoryVisible(ctx, "IfcGrid")) {
     const gl = F.json(f, "line"), gd = normalise(sub(gl.end, gl.start));
     const den = d[0] * gd[1] - d[1] * gd[0]; if (Math.abs(den) < 1e-9) continue;
@@ -547,6 +559,10 @@ function drawDatums(doc, ctx, B, v, G) {
     const bp = add(B.P([t, top]), [0, 4]);
     B.stroke(circlePath(bp, 4), { weight: penWeight(doc, "thin", S), colour: "#000" }, "IfcGrid", doc.idOf(f), true);
     B.text([bp[0], bp[1] - 1.25], F.text(f, "name"), 2.5, { align: "centre", layer: "IfcGrid", id: doc.idOf(f) });
+    // pickable along its line and by its bubble
+    B.hit(doc.idOf(f), [[t, -300], [t, top]], "curve");
+    const R_ = 4 * S, bc = [t, top + 4 * S];
+    B.hit(doc.idOf(f), [[bc[0] - R_, bc[1] - R_], [bc[0] + R_, bc[1] - R_], [bc[0] + R_, bc[1] + R_], [bc[0] - R_, bc[1] + R_]]);
   }
 }
 /** Items seen beyond the view plane, nearest first, each hidden by what is in front (and by the cut, in a section). */
@@ -563,7 +579,10 @@ function drawProjection(doc, ctx, B, vis, G, occluders) {
       for (const [p, q] of pieces) B.stroke([lineSeg(p, q)], gw, it.cat, it.id);
     }
     for (const s of it.sil) occluders.push(ensureCCW(s));
-    B.hit(it.id, it.sil[0]);
+    // hits carry depth, so a click takes what is in front; a door or window sits just before its wall
+    const dep = Math.max(0, it.depth) + 1;
+    for (const s of it.sil) B.hit(it.id, s, "region", dep);
+    for (const fh of it.fillerHits || []) B.hit(fh.id, fh.poly, "region", dep - 0.5);
   }
 }
 
@@ -679,6 +698,7 @@ export function cutOutline(rects) {
 
 /** A wall's elevation rep and silhouette, from its construction — not from a solid. */
 function elevWall(doc, f, w, V, sOf, depthOf, ctx) {
+  const fillerHits = [];
   const regs = wallRegions(w, "Coarse", -Infinity, []);
   if (!regs.length) return null;
   const foot = samplePath(regs[0].path, 24);
@@ -713,6 +733,8 @@ function elevWall(doc, f, w, V, sOf, depthOf, ctx) {
       const er = doc.elev(g); if (!er) continue;
       const mapU = u => sOf(pointAt(w, nearS, u)), mapZ = z => V(foot[0], w.z0 + z)[1];
       for (const r of er.rects || []) { const x0 = mapU(r.u0), x1 = mapU(r.u1), y0 = mapZ(r.z0), y1 = mapZ(r.z1); curves.push([[x0, y0], [x1, y0]], [[x1, y0], [x1, y1]], [[x1, y1], [x0, y1]], [[x0, y1], [x0, y0]]); }
+      // a door or window is picked by its own outline, not its host wall's
+      if ((er.rects || []).length) { const r = er.rects[0], x0 = mapU(r.u0), x1 = mapU(r.u1), y0 = mapZ(r.z0), y1 = mapZ(r.z1); fillerHits.push({ id: doc.idOf(g), poly: [[Math.min(x0, x1), y0], [Math.max(x0, x1), y0], [Math.max(x0, x1), y1], [Math.min(x0, x1), y1]] }); }
       for (const l of er.lines || []) curves.push([[mapU(l.u0), mapZ(l.z0)], [mapU(l.u1), mapZ(l.z1)]]);
     }
   }
@@ -728,7 +750,7 @@ function elevWall(doc, f, w, V, sOf, depthOf, ctx) {
     for (const [ha, hb] of zs) { if (ha > z) sil.push([[sa, z], [sb, z], [sb, ha], [sa, ha]]); z = Math.max(z, hb); }
     sil.push([[sa, z], [sb, z], [sb, topLine(sb)], [sa, topLine(sa)]]);
   }
-  return { id: w.id, f, depth: Math.max(0, Math.min(...dd)), depthMax: Math.max(...dd), s0, s1, curves, sil: sil.length ? sil : [[[s0, baseZ], [s1, baseZ], [s1, t1], [s0, t0]]], cat: "IfcWall" };
+  return { id: w.id, f, fillerHits, depth: Math.max(0, Math.min(...dd)), depthMax: Math.max(...dd), s0, s1, curves, sil: sil.length ? sil : [[[s0, baseZ], [s1, baseZ], [s1, t1], [s0, t0]]], cat: "IfcWall" };
 }
 function frontDepth(foot, sOf, depthOf, s) {
   let best = Infinity;

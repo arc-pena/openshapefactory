@@ -522,6 +522,8 @@ export function measureRefs(doc, keys) {
   const lost = keys.filter((k, i) => !R[i]);
   if (lost.length) return { lost };
   const [a, b] = R;
+  // two levels: the height between them, as an elevation or a section shows it
+  if (a.kind === "plane" && b.kind === "plane") return { value: Math.abs(b.z - a.z), signed: b.z - a.z, a, b, kind: "levels" };
   if (a.kind === "line" && b.kind === "line") {
     const par = Math.abs(a.geom.d[0] * b.geom.d[1] - a.geom.d[1] * b.geom.d[0]) < 1e-6;
     if (!par) return { value: null, why: "the references are not parallel" };
