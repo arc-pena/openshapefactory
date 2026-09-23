@@ -20282,6 +20282,15 @@ class View2D {
       const movable = [...this.app.selection].filter(id => this.doc.element(id) && geomKey(this.doc.element(id), this.doc));
       if (movable.length) this.drag.body = { ids: movable, grab: this.toModel(sx, sy) };
     } else if (!hit) this.drag.box = true;
+    // in an elevation or section a dimension between levels slides sideways: its offset along the view
+    if (hit && (this.kind === "ElevationView" || this.kind === "SectionView")) {
+      const f = this.doc.element(hit.id);
+      if (f && this.doc.typeOf(f) === "Dimension" && F.refId(f, "view") === this.viewId) {
+        if (!this.app.selection.has(hit.id)) { this.app.selection.clear(); this.app.selection.add(hit.id); this.pressSelected = true; }
+        this.drag.levelDim = { id: hit.id, grab: this.toModel(sx, sy), off0: F.real(f, "offset") };
+        return;
+      }
+    }
     // in an elevation or section a grid or a crossing section slides along the view (it moves in plan)
     if (hit && (this.kind === "ElevationView" || this.kind === "SectionView")) {
       const f = this.doc.element(hit.id);
@@ -20299,6 +20308,24 @@ class View2D {
         this.drag.level = { id: hit.id, z0: F.real(f, "elevation"), grab: this.toModel(sx, sy) };
       }
     }
+  }
+  /** A dimension between levels dragged sideways: it snaps to the other level dimensions in this view
+   *  (so a column of them lines up) and to grids, within a few pixels; Shift drags freely. */
+  dragLevelDim(d, sx, sy, e) {
+    const p = this.toModel(sx, sy), L = d.levelDim, doc = this.doc;
+    let off = L.off0 + (p[0] - L.grab[0]), snapped = null;
+    if (!e.shiftKey) {
+      const tol = SNAP_PX * this.S / this.cam.z, cands = [];
+      for (const g of doc.elements()) {
+        if (doc.typeOf(g) === "Dimension" && doc.idOf(g) !== L.id && F.refId(g, "view") === this.viewId) cands.push([F.real(g, "offset"), `dimension ${doc.idOf(g)}`]);
+      }
+      for (const h of this.scene().hits || []) if (h.kind === "curve" && h.pts && h.pts.length === 2 && Math.abs(h.pts[0][0] - h.pts[1][0]) < 1e-6 && doc.element(h.id) && doc.typeOf(doc.element(h.id)) === "Grid") cands.push([h.pts[0][0], `grid ${doc.element(h.id).get("Name") || h.id}`]);
+      let best = null; for (const c of cands) { const dd = Math.abs(c[0] - off); if (dd <= tol && (!best || dd < best.dd)) best = { dd, c }; }
+      if (best) { off = best.c[0]; snapped = best.c[1]; }
+    }
+    off = snapped ? off : Math.round(off / 10) * 10;
+    this.app.apply({ op: "set", id: L.id, key: "offset", value: off }, { quiet: true, coalesce: `leveldim:${L.id}:${d.start.join(",")}` });
+    this.showHud(sx, sy, snapped ? `aligned with ${snapped}` : `offset ${fmtLen(off)} · Shift: no snap`);
   }
   /** A grid or section seen edge-on: dragged sideways it moves along the view line, in plan. */
   dragDatum(d, sx, sy) {
@@ -20342,6 +20369,7 @@ class View2D {
       if (d.body && d.moved) return this.dragBody(d, sx, sy, e);
       if (d.level && d.moved) return this.dragLevel(d, sx, sy);
       if (d.datum && d.moved) return this.dragDatum(d, sx, sy);
+      if (d.levelDim && d.moved) return this.dragLevelDim(d, sx, sy, e);
       if (d.dim && d.moved) { this.slideDimension(d.dim.id, d.dim.g, d.dim.grab, this.toModel(sx, sy), `dimoff:${d.dim.id}:${d.start.join(",")}`); this.showHud(sx, sy, `offset ${fmtLen(F.real(this.doc.element(d.dim.id), "offset"))}`); return; }
       if (d.box && d.moved) { this.box = [d.start, [sx, sy]]; this.draw(); return; }
     }
@@ -20360,6 +20388,7 @@ class View2D {
     if (d.viewport) { this.guides = []; this.app.editor.seal(); this.draw(); if (d.moved) { this.app.refresh({ keepMain: true }); return; } }
     if (d.body && d.moved) { const ends = wallEnds(this.doc, d.body.ids); if (ends.length) this.app.apply({ op: "autojoin", ends }, { quiet: true, coalesce: `move:${d.body.ids.join(",")}:${d.start.join(",")}` }); this.app.editor.seal(); this.app.repackMoved(d.body.ids); this.showSnap(null); this.hideHud(); this.app.refresh({ keepMain: true }); return; }
     if (d.dim && d.moved) { this.app.editor.seal(); this.hideHud(); this.app.refresh({ keepMain: true }); return; }
+    if (d.levelDim && d.moved) { this.guides = []; this.app.editor.seal(); this.hideHud(); this.app.refresh({ keepMain: true }); return; }
     if (d.datum && d.moved) { this.app.editor.seal(); this.hideHud(); this.app.refresh({ keepMain: true }); return; }
     if (d.level && d.moved) { this.app.editor.seal(); this.hideHud(); this.app.refresh({ keepMain: true }); this.app.say("Level moved: walls, rooms and views bound to it followed", "ok"); return; }
     if (d.box && d.moved) return this.finishBox(d, e);

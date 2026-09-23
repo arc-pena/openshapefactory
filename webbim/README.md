@@ -195,6 +195,7 @@ The Artifact publishes `dist/web-bim-studio.html`. The CAD page rides in it as i
 - **Datums in elevations and sections:** grids, and sections whose line reaches into the view, are drawn where they cross it, and are edited right there.
   - Drag a grid or section sideways and it moves along the view, in plan.
   - Drag a level up or down.
+  - Drag a dimension between levels sideways. It snaps into line with the view's other level dimensions and grids; Shift drags freely. Locked dimensions move too, because the lock holds their value, not their position.
   - Move (MV) and Copy (CO) work in these views too: grids and sections slide along the view, levels change height.
   - None of this switches to a plan.
 - **Two-letter shortcuts:** WA DR WN OP CL GR RM RS DI TX EL MV CO RO MM DE LL VV TL ZF 3D SA PP MD. Ctrl+Z / Ctrl+Y undo and redo; Esc cancels, then clears the selection.
