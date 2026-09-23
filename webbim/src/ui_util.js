@@ -35,6 +35,8 @@ export const ICONS = {
   door: P('<path d="M2 14h4M14 14h4M6 14V4"/><path d="M6 4a10 10 0 0 1 8 10" stroke-dasharray="2 1.6"/>'),
   window: P('<path d="M2 8h16M2 12h16M5 8v4M15 8v4M5 10h10" />'),
   column: P('<rect x="6" y="6" width="8" height="8"/><path d="M6 6l8 8M14 6l-8 8" stroke-width="1"/>'),
+  floor: P('<path d="M2 12l8-4 8 4-8 4z"/><path d="M2 12v2l8 4 8-4v-2"/>'),
+  beam: P('<path d="M2 6h16M2 14h16M10 6v8"/><path d="M2 6v2M18 6v2M2 12v2M18 12v2"/>'),
   grid: P('<circle cx="10" cy="4" r="2.5"/><path d="M10 6.5V18" stroke-dasharray="3 1.5 1 1.5"/>'),
   text: P('<path d="M4 5h12M10 5v11M7 16h6"/>'),
   dim: P('<path d="M3 6v8M17 6v8M3 10h14"/><path d="M5 8l-2 2 2 2M15 8l2 2-2 2"/>'),

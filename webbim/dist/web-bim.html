@@ -1588,6 +1588,8 @@ const CATEGORIES = {
   IfcBuildingStorey: { name: "Levels", subcategories: { Common: { projection: "thin" } } },
   Annotation:        { name: "Annotation", subcategories: { Common: { symbolic: "thin" }, Dimension: { symbolic: "hairline" }, Text: { symbolic: "thin" }, Leader: { symbolic: "hairline" }, Marker: { symbolic: "medium" }, Constraint: { symbolic: "hairline" } } },
   Detail:            { name: "Detail items", subcategories: { Common: { projection: "thin" } } },
+  IfcSlab:           { name: "Floors", subcategories: { Common: { cut: "heavy", projection: "thin", beyond: "hairline" } } },
+  IfcBeam:           { name: "Structural Framing", subcategories: { Common: { cut: "heavy", projection: "thin", beyond: "hairline" } } },
   Furniture:         { name: "Furniture", subcategories: { Common: { projection: "thin" } } },
 };
 
@@ -1602,6 +1604,10 @@ const FAMILIES = {
   "F-CASEMENT":  { name: "Casement", extends: "F-WINDOW" },
   "F-COLUMN":    { name: "Column", category: "IfcColumn", system: "Column", sealed: true },
   "F-RCCOLUMN":  { name: "RC Column", extends: "F-COLUMN" },
+  "F-FLOOR":     { name: "Floor", category: "IfcSlab", system: "Floor", sealed: true },
+  "F-BEAM":      { name: "Beam", category: "IfcBeam", system: "Beam", sealed: true },
+  "F-STEELBEAM": { name: "Steel I-section", extends: "F-BEAM" },
+  "F-RCBEAM":    { name: "RC Beam", extends: "F-BEAM" },
 };
 
 const TYPES = {
@@ -1626,6 +1632,14 @@ const TYPES = {
   "T-WIN2415":   { family: "F-CASEMENT", name: "Casement 2400×1500", mark: "W2", width: 2400, height: 1500, frame: 60, mullions: 3 },
   "T-COL400":    { family: "F-RCCOLUMN", name: "RC 400×400", mark: "C1", width: 400, depth: 400, material: "M-CONC" },
   "T-COL300R":   { family: "F-RCCOLUMN", name: "RC Ø300", mark: "C2", width: 300, depth: 300, round: true, material: "M-CONC" },
+  // floors: layers from the top surface down, like a wall's from its exterior face
+  "T-FLOOR250":  { family: "F-FLOOR", name: "Concrete 200 + screed 50", mark: "FL1",
+    layers: [ { function: "Finish 1", thickness: 50, material: "M-PLAS" }, { function: "Structure", thickness: 200, material: "M-CONC" } ], coreStart: 1, coreEnd: 2 },
+  "T-FLOOR150T": { family: "F-FLOOR", name: "Timber deck 150", mark: "FL2",
+    layers: [ { function: "Finish 1", thickness: 22, material: "M-TIMBER" }, { function: "Structure", thickness: 128, material: "M-TIMBER" } ], coreStart: 1, coreEnd: 2 },
+  // beams: a profile swept along the beam's axis
+  "T-BEAMRC300": { family: "F-RCBEAM", name: "RC 300×600", mark: "B1", shape: "rect", width: 300, depth: 600, material: "M-CONC" },
+  "T-UB406":     { family: "F-STEELBEAM", name: "UB 406×178×60", mark: "B2", shape: "I", width: 178, depth: 406, flange: 12.8, web: 7.9, material: "M-STEEL" },
 };
 
 const TEXT_TYPES = {
@@ -3743,6 +3757,48 @@ BUILDERS.Column = {
   },
 };
 
+// ---------------------------------------------------------------- floors and beams
+//! A floor is a wall laid flat: a boundary instead of a centreline, and the
+//! type's layers stacked down from the top surface instead of across from the
+//! exterior face. A beam is a column laid along a line: its type's profile
+//! swept along the axis, hung from the level by its top.
+declare({ type: "Floor", guid: "wb-0401", category: "IfcSlab", kind: "floor", idPrefix: "FL",
+  summary: "A boundary on a level, and the type's layers stacked down from its top surface.",
+  args: [ json("boundary", "Boundary", [[0, 0], [6000, 0], [6000, 4000], [0, 4000]]), ref("floorType", "Type", ["floorType"]), ref("level", "Level", ["level"]),
+          real("heightOffset", "Height offset from level", 0, -10000, 10000, 1, "mm", { group: "Constraints" }) ],
+  handles: (f) => { const b = F.json(f, "boundary") || []; return b.map((p, i) => ({ key: "v" + i, at: p, constraint: "free2d", writes: `boundary.${i}` })); } });
+BUILDERS.Floor = {
+  precondition: (f) => { const b = F.json(f, "boundary"); if (!Array.isArray(b) || b.length < 3) return "a floor needs a boundary of three points or more"; return F.type(f, "floorType") ? null : "pick a floor type"; },
+  build: (f, doc) => {
+    const t = F.type(f, "floorType"), b = F.json(f, "boundary"), top = levelElev(doc, f, "level") + F.real(f, "heightOffset");
+    const layers = t.layers || [{ function: "Structure", thickness: 200, material: "M-CONC" }];
+    const parts = []; let z = top;
+    for (const L of layers) { parts.push({ foot: b.map(p => p.slice()), z0: z - L.thickness, z1: z, sub: L.function, material: L.material }); z -= L.thickness; }
+    const T_ = top - z, area = Math.abs(polyArea(b));
+    const per = b.reduce((a, p, i) => a + dist(p, b[(i + 1) % b.length]), 0);
+    return { plan: { path: polyPath(b), foot: b, z0: z, z1: top, material: layers[layers.length > 1 ? 1 : 0].material, parts },
+      data: { value: area, kind: "Area", parts, props: { Area: { kind: "Area", v: area / 1e6 }, Thickness: L(T_), Perimeter: L(per), "Top elevation": L(top), TypeMark: T(t.mark || t.id) } } };
+  },
+};
+declare({ type: "Beam", guid: "wb-0402", category: "IfcBeam", kind: "beam", idPrefix: "B",
+  summary: "A profile swept along a line, hung from its level by its top.",
+  args: [ curve2d("axis", "Axis", ["line"], { type: "line", start: [0, 0], end: [6000, 0] }), ref("beamType", "Type", ["beamType"]), ref("level", "Reference level", ["level"]),
+          real("topOffset", "Top offset", 0, -10000, 10000, 1, "mm", { group: "Constraints" }) ],
+  handles: (f) => { const c = F.json(f, "axis"); return c && c.type === "line" ? [{ key: "start", at: c.start, constraint: "free2d", writes: "axis.start" }, { key: "end", at: c.end, constraint: "free2d", writes: "axis.end", readout: "length" }, { key: "move", at: lerp(c.start, c.end, 0.5), constraint: "free2d", writes: "axis" }] : []; } });
+BUILDERS.Beam = {
+  precondition: (f) => { const c = F.json(f, "axis"); if (!c || c.type !== "line" || dist(c.start, c.end) < 1) return "a beam needs an axis"; return F.type(f, "beamType") ? null : "pick a beam type"; },
+  build: (f, doc) => {
+    const t = F.type(f, "beamType"), c = F.json(f, "axis"), top = levelElev(doc, f, "level") + F.real(f, "topOffset");
+    const d = normalise(sub(c.end, c.start)), n = perp(d);
+    const band = (w, z0, z1, sub_) => ({ foot: [add(c.start, mul(n, -w / 2)), add(c.end, mul(n, -w / 2)), add(c.end, mul(n, w / 2)), add(c.start, mul(n, w / 2))], z0, z1, sub: sub_, material: t.material });
+    const D = t.depth || 600, W = t.width || 300;
+    const parts = t.shape === "I" ? [band(W, top - (t.flange || 12), top, "Flange"), band(t.web || 8, top - D + (t.flange || 12), top - (t.flange || 12), "Web"), band(W, top - D, top - D + (t.flange || 12), "Flange")] : [band(W, top - D, top, "Beam")];
+    const foot = band(W, 0, 0).foot, len = dist(c.start, c.end);
+    return { plan: { path: polyPath(foot), foot, axis: c, z0: top - D, z1: top, parts },
+      data: { value: len, kind: "Length", parts, refs: [{ key: "axis", kind: "line", geom: lineThrough(c.start, c.end) }], props: { Length: L(len), Depth: L(D), Width: L(W), "Top elevation": L(top), TypeMark: T(t.mark || t.id) } } };
+  },
+};
+
 declare({ type: "Furniture", guid: "wb-0302", category: "Furniture", kind: "furniture", idPrefix: "FU",
   summary: "A loose furniture item. Its family defines a fill; the presentation style draws it stroke-only.",
   args: [ point2d("position", "Position", [0, 0]), choice("shape", "Shape", ["Table", "Chair", "Desk", "Sofa"], 0), json("size", "Size", [1600, 800], { group: "Dimensions" }), real("rotation", "Rotation", 0, -360, 360, 1, "°"), ref("level", "Level", ["level"]) ],
@@ -4163,13 +4219,13 @@ function penWeight(doc, pen, scale) {
 /** The category an element is filed under — the IFC class at its family root. */
 function categoryOf(doc, f) {
   const decl = doc.declOf(f);
-  for (const k of ["wallType", "doorType", "windowType", "columnType"]) {
+  for (const k of ["wallType", "doorType", "windowType", "columnType", "floorType", "beamType"]) {
     const id = F.refId(f, k); if (id) { const t = doc.resolveType(id); if (t && t.category) return t.category; }
   }
   return decl ? decl.category : "Unknown";
 }
 function familyChainOf(doc, f) {
-  for (const k of ["wallType", "doorType", "windowType", "columnType"]) {
+  for (const k of ["wallType", "doorType", "windowType", "columnType", "floorType", "beamType"]) {
     const id = F.refId(f, k); if (id) { const t = doc.resolveType(id); if (t) return t.chain.map(c => c.id); }
   }
   return [];
@@ -5041,6 +5097,23 @@ function planScene(doc, v, opts = {}) {
   // 3. columns, fillers, furniture
   for (const f of els) {
     const t = doc.typeOf(f); if (!vis(f)) continue;
+    if (t === "Floor" && vis(f)) {
+      // a floor reads in plan as its edge; cut, it is poché like any cut element
+      const p = doc.plan(f); if (!p) continue; const bnd = band(p.z0, p.z1);
+      if (bnd === "above" || bnd === "below") continue;
+      const g = resolveGraphics(doc, ctx, f, bnd === "cut" ? "cut" : "projection");
+      if (bnd === "cut") B.fill(p.path, g.fill || ((doc.lib.materials[p.material] || {}).cut || {}).background || "#e9eaec", "IfcSlab", doc.idOf(f));
+      B.stroke(p.path, g, "IfcSlab", doc.idOf(f)); B.hit(doc.idOf(f), p.foot);
+    }
+    if (t === "Beam" && vis(f)) {
+      // a beam above the cut is drawn dashed, as it is seen from below; cut, it is a section
+      const p = doc.plan(f); if (!p) continue; const bnd = band(p.z0, p.z1);
+      if (bnd === "below") continue;
+      const g = bnd === "cut" ? resolveGraphics(doc, ctx, f, "cut") : Object.assign({}, resolveGraphics(doc, ctx, f, "projection"), { dash: LINE_TYPES.dashed1 });
+      B.stroke(p.path, g, "IfcBeam", doc.idOf(f));
+      B.stroke([{ k: "L", a: p.axis.start, b: p.axis.end }], { weight: penWeight(doc, "hairline", S), colour: g.colour || "#000", dash: LINE_TYPES.centre }, "IfcBeam", doc.idOf(f));
+      B.hit(doc.idOf(f), p.foot);
+    }
     if (t === "Column") { const p = doc.plan(f); if (!p) continue; const bnd = band(p.z0, p.z1); if (bnd === "above" || bnd === "below") continue;
       const g = resolveGraphics(doc, ctx, f, bnd === "cut" ? "cut" : "projection", "Common", p.material);
       if (bnd === "cut") { if (g.pattern === "solid") B.fill(p.path, g.fill || "#000", "IfcColumn", doc.idOf(f)); else { B.fill(p.path, g.fill, "IfcColumn", doc.idOf(f)); if (g.pattern) B.hatch(p.path, doc.lib.patterns[g.pattern], g.pattern, g.colour, penWeight(doc, "hairline", S), "IfcColumn", doc.idOf(f)); } }
@@ -5334,6 +5407,14 @@ function elevationScene(doc, v, opts = {}) {
     if (!categoryVisible(ctx, categoryOf(doc, f))) continue;
     const t = doc.typeOf(f);
     if (t === "Wall") { const w = doc.plan(f); if (!w) continue; const it = elevWall(doc, f, w, V, sOf, depthOf, ctx); if (it) items.push(it); }
+    if (t === "Floor" || t === "Beam") {
+      const p = doc.plan(f); if (!p || !p.parts) continue;
+      for (const part of p.parts) {
+        const ss = part.foot.map(sOf), dd = part.foot.map(depthOf), s0 = Math.min(...ss), s1 = Math.max(...ss);
+        const sil = [[s0, part.z0 - Z0], [s1, part.z0 - Z0], [s1, part.z1 - Z0], [s0, part.z1 - Z0]];
+        items.push({ id: doc.idOf(f), f, depth: Math.min(...dd), depthMax: Math.max(...dd), s0, s1, curves: polyPath(sil).map(x => [x.a, x.b]), sil: [sil], cat: t === "Floor" ? "IfcSlab" : "IfcBeam" });
+      }
+    }
     if (t === "Column") { const p = doc.plan(f); if (!p) continue; const pts = p.foot.length ? p.foot : samplePath(p.path); const ss = pts.map(sOf), dd = pts.map(depthOf);
       const s0 = Math.min(...ss), s1 = Math.max(...ss); const sil = [[s0, p.z0 - Z0], [s1, p.z0 - Z0], [s1, p.z1 - Z0], [s0, p.z1 - Z0]];
       items.push({ id: doc.idOf(f), f, depth: Math.min(...dd), depthMax: Math.max(...dd), s0, s1, curves: polyPath(sil).map(x => [x.a, x.b]), sil: [sil], cat: "IfcColumn" }); }
@@ -6432,6 +6513,11 @@ function buildSample() {
   add({ id: "WN2", type: "Window", args: { fills: { ref: "OP3" }, windowType: { ref: "T-WIN2415" } }, params: { Mark: "W02" } });
   add({ id: "WN3", type: "Window", args: { fills: { ref: "OP4" }, windowType: { ref: "T-WIN1215" } }, params: { Mark: "W03" } });
   add({ id: "WN4", type: "Window", args: { fills: { ref: "OP7" }, windowType: { ref: "T-WIN1215" } }, params: { Mark: "W04" } });
+  // the ground slab under the rooms, the first floor on the walls, and two steel beams carrying it over the studio
+  add({ id: "FL1", type: "Floor", name: "Ground slab", args: { boundary: [[0, 0], [12000, 0], [12000, 8000], [0, 8000]], floorType: { ref: "T-FLOOR250" }, level: { ref: "L0" }, heightOffset: 0 } });
+  add({ id: "FL2", type: "Floor", name: "First floor", args: { boundary: [[-178, -178], [12178, -178], [12178, 8178], [-178, 8178]], floorType: { ref: "T-FLOOR250" }, level: { ref: "L1" }, heightOffset: 250 } });
+  add({ id: "BM1", type: "Beam", args: { axis: { type: "line", start: [0, 2800], end: [6000, 2800] }, beamType: { ref: "T-UB406" }, level: { ref: "L1" }, topOffset: 0 } });
+  add({ id: "BM2", type: "Beam", args: { axis: { type: "line", start: [0, 5600], end: [6000, 5600] }, beamType: { ref: "T-UB406" }, level: { ref: "L1" }, topOffset: 0 } });
   add({ id: "C1", type: "Column", args: { position: [3000, 4400], columnType: { ref: "T-COL300R" }, baseLevel: { ref: "L0" }, height: 3000, rotation: 0 } });
   add({ id: "FU1", type: "Furniture", args: { position: [3000, 6100], shape: "Table", size: [1800, 900], rotation: 0, level: { ref: "L0" } } });
   add({ id: "FU2", type: "Furniture", args: { position: [2400, 1700], shape: "Sofa", size: [2000, 850], rotation: 0, level: { ref: "L0" } } });
@@ -7384,6 +7470,8 @@ const ICONS = {
   door: P('<path d="M2 14h4M14 14h4M6 14V4"/><path d="M6 4a10 10 0 0 1 8 10" stroke-dasharray="2 1.6"/>'),
   window: P('<path d="M2 8h16M2 12h16M5 8v4M15 8v4M5 10h10" />'),
   column: P('<rect x="6" y="6" width="8" height="8"/><path d="M6 6l8 8M14 6l-8 8" stroke-width="1"/>'),
+  floor: P('<path d="M2 12l8-4 8 4-8 4z"/><path d="M2 12v2l8 4 8-4v-2"/>'),
+  beam: P('<path d="M2 6h16M2 14h16M10 6v8"/><path d="M2 6v2M18 6v2M2 12v2M18 12v2"/>'),
   grid: P('<circle cx="10" cy="4" r="2.5"/><path d="M10 6.5V18" stroke-dasharray="3 1.5 1 1.5"/>'),
   text: P('<path d="M4 5h12M10 5v11M7 16h6"/>'),
   dim: P('<path d="M3 6v8M17 6v8M3 10h14"/><path d="M5 8l-2 2 2 2M15 8l2 2-2 2"/>'),
@@ -7998,7 +8086,7 @@ const trim = (t, n) => t.length > n ? t.slice(0, n - 1) + "…" : t;
 const SNAP_PX = 8;
 const SNAP_KINDS = ["endpoint", "midpoint", "centre", "intersection", "perpendicular", "nearest", "grid", "angle"];
 const SNAP_SHORT = { endpoint: "end", midpoint: "mid", centre: "cen", intersection: "int", perpendicular: "perp", nearest: "near", grid: "grid", angle: "ang" };
-const TOOLS_NEED_PLAN = new Set(["wall", "opening", "door", "window", "column", "grid", "text", "dim", "space", "elev", "sep", "move", "copy", "rotate", "mirror"]);
+const TOOLS_NEED_PLAN = new Set(["floor", "beam", "wall", "opening", "door", "window", "column", "grid", "text", "dim", "space", "elev", "sep", "move", "copy", "rotate", "mirror"]);
 const MODIFY_TOOLS = new Set(["move", "copy", "rotate", "mirror"]);
 
 class View2D {
@@ -8735,6 +8823,13 @@ class View2D {
     }
     return best;
   }
+  finishFloor() {
+    const T = this.tool, o = this.app.toolOpts, level = F.refId(this.view, "level");
+    if (T.pts.length < 3) return this.app.say("a floor needs three points or more", "note");
+    const boundary = T.pts.map(p => p.map(v => Math.round(v))); T.pts = [];
+    const r = this.app.apply({ op: "add", element: { type: "Floor", args: { boundary, floorType: { ref: o.floorType }, level: level ? { ref: level } : null, heightOffset: o.floorOffset ?? 0 } } });
+    this.app.say(r.ok ? `Floor ${r.id}: ${fmtLen(Math.abs(polyArea(boundary)) / 1e6)} m²` : r.error, r.ok ? "ok" : "error"); if (r.ok) this.app.select([r.id]);
+  }
   toolClick(p, e) {
     const T = this.tool, tool = this.app.tool, o = this.app.toolOpts, doc = this.doc;
     if (MODIFY_TOOLS.has(tool)) return this.modifyClick();
@@ -8742,6 +8837,16 @@ class View2D {
     const level = F.refId(this.view, "level");
     const addEl = (element, msg) => { const r = this.app.apply({ op: "add", element }); this.app.say(r.ok ? msg || `Added ${r.id}` : r.error, r.ok ? "ok" : "error"); if (r.ok) this.app.select([r.id]); return r; };
     if (tool === "wall") { T.pts.push(q); if (T.pts.length >= 2 && o.closeOnStart && dist(q, T.pts[0]) < 1) return this.finishWall(true); this.draw(); return; }
+    if (tool === "floor") {
+      // click the boundary; clicking the first point again (or Enter) closes it
+      if (T.pts.length >= 3 && dist(q, T.pts[0]) < 12 * this.modelPerPx()) return this.finishFloor();
+      T.pts.push(q); this.draw(); return;
+    }
+    if (tool === "beam") {
+      T.pts.push(q); if (T.pts.length < 2) { this.draw(); return; }
+      const [a, b] = T.pts; T.pts = [];
+      return addEl({ type: "Beam", args: { axis: { type: "line", start: a, end: b }, beamType: { ref: o.beamType }, level: level ? { ref: level } : null, topOffset: o.beamTop ?? 3000 } }, `Beam ${fmtLen(dist(a, b))} mm`);
+    }
     if (["grid", "elev", "sep"].includes(tool)) {
       T.pts.push(q);
       if (T.pts.length < 2) { this.draw(); return; }
@@ -8864,6 +8969,7 @@ class View2D {
       return true;
     }
     if (e.key === "Escape") { if (T.pts.length || T.refs || T.ghost) { T.pts = []; T.refs = []; T.ghost = null; T.centre = null; this.hideHud(); this.draw(); return true; } return false; }
+    if (tool === "floor" && T.pts.length && e.key === "Enter") { this.finishFloor(); return true; }
     if (tool === "wall" && T.pts.length) {
       if (e.key === "Enter" && !this.typed) { this.finishWall(false); return true; }
       if (e.key.toLowerCase() === "c" && T.pts.length >= 3) { this.finishWall(true); return true; }
@@ -9738,11 +9844,11 @@ function mergeModel(cur, next) {
 
 
 const VIEW_TYPES = ["PlanView", "ElevationView", "View3D", "Schedule", "Sheet"];
-const PLACE_TOOLS = new Set(["wall", "opening", "door", "window", "column", "grid", "text", "dim", "space", "elev", "sep"]);
+const PLACE_TOOLS = new Set(["floor", "beam", "wall", "opening", "door", "window", "column", "grid", "text", "dim", "space", "elev", "sep"]);
 
 const app = {
   doc: null, editor: null, selection: new Set(), activeView: null, tabs: [], tool: "select",
-  toolOpts: { wallType: "T-EXTCAV300", mounting: "Core exterior", height: 3000, doorType: "T-DOOR915", windowType: "T-WIN1215", columnType: "T-COL400", width: 1000, height_: 2100, openSill: 0, sill: 900, boundaryAt: "finishFace", spaceName: "Room", mirrorCopy: true, moveCopy: false, rotateCopy: false },
+  toolOpts: { wallType: "T-EXTCAV300", mounting: "Core exterior", height: 3000, doorType: "T-DOOR915", windowType: "T-WIN1215", columnType: "T-COL400", floorType: "T-FLOOR250", beamType: "T-UB406", floorOffset: 0, beamTop: 3000, width: 1000, height_: 2100, openSill: 0, sill: 900, boundaryAt: "finishFace", spaceName: "Room", mirrorCopy: true, moveCopy: false, rotateCopy: false },
   snaps: Object.fromEntries(SNAP_KINDS.map(k => [k, k !== "angle"])), thinLines: false, pickMode: null,
   views: new Map(), visualStyle3d: {}, expanded: new Set(["Views (all)", "Floor Plans", "3D Views", "Elevations (Building Elevation)", "Schedules/Quantities (all)", "Sheets (all)"]),
   ribbonTab: "Architecture", ribbonAuto: null, ribbonCollapsed: false, browserTab: "browser", treeFilter: "", lastCommand: null, workLevel: null,
@@ -9845,7 +9951,7 @@ function setDocument(doc, note) {
 }
 function default3D() { const f = app.doc.elements().find(g => app.doc.typeOf(g) === "View3D" && g.get("Name") === "{3D}") || app.doc.elements().find(g => app.doc.typeOf(g) === "View3D"); return f ? app.doc.idOf(f) : null; }
 let draftTimer = null;
-function saveDraftSoon() { clearTimeout(draftTimer); draftTimer = setTimeout(() => { try { store("draft-v3", app.doc.toJSON()); } catch (e) { /* too big or blocked: the draft is a convenience only */ } }, 800); }
+function saveDraftSoon() { clearTimeout(draftTimer); draftTimer = setTimeout(() => { try { store("draft-v4", app.doc.toJSON()); } catch (e) { /* too big or blocked: the draft is a convenience only */ } }, 800); }
 
 // ---------------------------------------------------------------- the command registry
 //! Ribbon buttons, the Quick Access Toolbar, keyboard shortcuts and the
@@ -9858,6 +9964,8 @@ const COMMANDS = {
   window: tool("window", "Window", "window", "WN", "Click a wall to place a window (plan or 3D)."),
   opening: tool("opening", "Wall Opening", "opening", "OP", "Click a wall: an opening with nothing in it."),
   column: tool("column", "Column", "column", "CL", "Click to place (plan or 3D)."),
+  floor: tool("floor", "Floor", "floor", "SB", "Click the boundary's corners; click the first again (or Enter) to close. Layers hang down from the level."),
+  beam: tool("beam", "Beam", "beam", "BM", "Two clicks: the beam's axis. Its top sits at the level plus the top offset."),
   grid: tool("grid", "Grid", "grid", "GR", "Two clicks."),
   space: tool("space", "Room", "room", "RM", "Click inside an enclosed area. The room keeps its name by this point."),
   sep: tool("sep", "Room Separator", "sepline", "RS", "Two clicks: divides rooms where there is no wall."),
@@ -9922,7 +10030,7 @@ const RIBBON = [
     { title: "Datum", items: [big("level"), big("grid")] },
   ] },
   { tab: "Structure", panels: [
-    { title: "Structure", items: [big("column"), big("wall")] },
+    { title: "Structure", items: [big("beam"), big("column"), big("floor"), big("wall")] },
     { title: "Datum", items: [big("grid"), big("level")] },
   ] },
   { tab: "Insert", panels: [
@@ -10036,6 +10144,8 @@ function renderOptionsBar() {
     if (t === "door") kids = [sel("doorType", typesOf("IfcDoor").map(([id, x]) => [id, x.name]), "Type:")];
     if (t === "window") kids = [sel("windowType", typesOf("IfcWindow").map(([id, x]) => [id, x.name]), "Type:"), num("sill", "Sill Height:")];
     if (t === "opening") kids = [num("width", "Width:"), num("height_", "Height:"), num("openSill", "Sill:")];
+    if (t === "floor") kids = [sel("floorType", typesOf("IfcSlab").map(([id, x]) => [id, x.name]), "Type:"), num("floorOffset", "Height offset:")];
+    if (t === "beam") kids = [sel("beamType", typesOf("IfcBeam").map(([id, x]) => [id, x.name]), "Type:"), num("beamTop", "Top offset:")];
     if (t === "column") kids = [sel("columnType", typesOf("IfcColumn").map(([id, x]) => [id, x.name]), "Type:"), levelPicker()];
     if (t === "space") kids = [h("label", {}, "Name: ", h("input", { type: "text", value: o.spaceName, style: { width: "110px" }, onchange: e => { o.spaceName = e.target.value; } })), sel("boundaryAt", [["finishFace", "Finish face (net)"], ["coreFace", "Core face"], ["coreCentre", "Core centre"], ["wallCentre", "Wall centre (gross)"]], "Boundary:")];
     if (t === "move") kids = [chk("moveCopy", "Copy")];
@@ -10074,7 +10184,7 @@ function fileMenu(anchor) {
   menuAt(r.left, r.bottom, [
     { label: "New", icon: "sheet", run: () => newEmpty() }, { label: "Open…", icon: "open", run: () => openFile() }, { label: "Save", icon: "save", run: () => saveModel() },
     "-", { label: "Export…", icon: "exportI", run: () => exportDialog() }, { label: "Import DXF Symbol…", icon: "importI", run: () => importDXF() },
-    "-", { label: "Project Information…", icon: "info", run: () => projectInfo() }, { label: "Reset to Sample Project", icon: "house", run: () => { forget("draft-v3"); forget("tabs"); setDocument(buildSample(), { msg: "Sample project loaded", kind: "ok" }); } },
+    "-", { label: "Project Information…", icon: "info", run: () => projectInfo() }, { label: "Reset to Sample Project", icon: "house", run: () => { forget("draft-v4"); forget("tabs"); setDocument(buildSample(), { msg: "Sample project loaded", kind: "ok" }); } },
   ]);
 }
 
@@ -10316,7 +10426,7 @@ function openFile() {
 }
 async function saveModel() { const r = await saveFile(`${app.doc.meta.name || "model"}.json`, app.doc.serialise(), "application/json"); app.say(r.ok ? "Model saved" : r.error, r.ok ? "ok" : "error"); }
 function newEmpty() {
-  forget("draft-v3"); forget("tabs");
+  forget("draft-v4"); forget("tabs");
   const doc = newDocument("Untitled");
   doc.addElement({ id: "L0", type: "Level", name: "Level 1", args: { name: "Level 1", elevation: 0 } });
   doc.addElement({ id: "L1", type: "Level", name: "Level 2", args: { name: "Level 2", elevation: 3000 } });
@@ -10627,7 +10737,7 @@ async function boot() {
   const split = store("split"); if (split) document.getElementById("left").style.setProperty("--split", (split * 100).toFixed(1) + "%");
   await loadDrawingFont();
   let doc = null, note = null;
-  const draft = store("draft-v3");
+  const draft = store("draft-v4");
   if (draft) { try { doc = openDocument(draft); doc.regenerate(); note = { msg: "Restored your draft from this browser. File › New to start empty.", kind: "note" }; } catch (e) { doc = null; } }
   if (!doc) doc = buildSample();
   setDocument(doc, note || { msg: `Studio House: ${doc.elements().length} elements. Double-click a view in the Project Browser to open it; WA draws walls; 3D opens the {3D} view.`, kind: "ok" });

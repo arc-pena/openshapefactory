@@ -22,11 +22,11 @@ import { categoryOf } from "./styles.js";
 import { bimToCad, cadEditsToOps, cadDiff, mergeModel } from "./cadbridge.js";
 
 const VIEW_TYPES = ["PlanView", "ElevationView", "View3D", "Schedule", "Sheet"];
-const PLACE_TOOLS = new Set(["wall", "opening", "door", "window", "column", "grid", "text", "dim", "space", "elev", "sep"]);
+const PLACE_TOOLS = new Set(["floor", "beam", "wall", "opening", "door", "window", "column", "grid", "text", "dim", "space", "elev", "sep"]);
 
 const app = {
   doc: null, editor: null, selection: new Set(), activeView: null, tabs: [], tool: "select",
-  toolOpts: { wallType: "T-EXTCAV300", mounting: "Core exterior", height: 3000, doorType: "T-DOOR915", windowType: "T-WIN1215", columnType: "T-COL400", width: 1000, height_: 2100, openSill: 0, sill: 900, boundaryAt: "finishFace", spaceName: "Room", mirrorCopy: true, moveCopy: false, rotateCopy: false },
+  toolOpts: { wallType: "T-EXTCAV300", mounting: "Core exterior", height: 3000, doorType: "T-DOOR915", windowType: "T-WIN1215", columnType: "T-COL400", floorType: "T-FLOOR250", beamType: "T-UB406", floorOffset: 0, beamTop: 3000, width: 1000, height_: 2100, openSill: 0, sill: 900, boundaryAt: "finishFace", spaceName: "Room", mirrorCopy: true, moveCopy: false, rotateCopy: false },
   snaps: Object.fromEntries(SNAP_KINDS.map(k => [k, k !== "angle"])), thinLines: false, pickMode: null,
   views: new Map(), visualStyle3d: {}, expanded: new Set(["Views (all)", "Floor Plans", "3D Views", "Elevations (Building Elevation)", "Schedules/Quantities (all)", "Sheets (all)"]),
   ribbonTab: "Architecture", ribbonAuto: null, ribbonCollapsed: false, browserTab: "browser", treeFilter: "", lastCommand: null, workLevel: null,
@@ -129,7 +129,7 @@ function setDocument(doc, note) {
 }
 function default3D() { const f = app.doc.elements().find(g => app.doc.typeOf(g) === "View3D" && g.get("Name") === "{3D}") || app.doc.elements().find(g => app.doc.typeOf(g) === "View3D"); return f ? app.doc.idOf(f) : null; }
 let draftTimer = null;
-function saveDraftSoon() { clearTimeout(draftTimer); draftTimer = setTimeout(() => { try { store("draft-v3", app.doc.toJSON()); } catch (e) { /* too big or blocked: the draft is a convenience only */ } }, 800); }
+function saveDraftSoon() { clearTimeout(draftTimer); draftTimer = setTimeout(() => { try { store("draft-v4", app.doc.toJSON()); } catch (e) { /* too big or blocked: the draft is a convenience only */ } }, 800); }
 
 // ---------------------------------------------------------------- the command registry
 //! Ribbon buttons, the Quick Access Toolbar, keyboard shortcuts and the
@@ -142,6 +142,8 @@ const COMMANDS = {
   window: tool("window", "Window", "window", "WN", "Click a wall to place a window (plan or 3D)."),
   opening: tool("opening", "Wall Opening", "opening", "OP", "Click a wall: an opening with nothing in it."),
   column: tool("column", "Column", "column", "CL", "Click to place (plan or 3D)."),
+  floor: tool("floor", "Floor", "floor", "SB", "Click the boundary's corners; click the first again (or Enter) to close. Layers hang down from the level."),
+  beam: tool("beam", "Beam", "beam", "BM", "Two clicks: the beam's axis. Its top sits at the level plus the top offset."),
   grid: tool("grid", "Grid", "grid", "GR", "Two clicks."),
   space: tool("space", "Room", "room", "RM", "Click inside an enclosed area. The room keeps its name by this point."),
   sep: tool("sep", "Room Separator", "sepline", "RS", "Two clicks: divides rooms where there is no wall."),
@@ -206,7 +208,7 @@ const RIBBON = [
     { title: "Datum", items: [big("level"), big("grid")] },
   ] },
   { tab: "Structure", panels: [
-    { title: "Structure", items: [big("column"), big("wall")] },
+    { title: "Structure", items: [big("beam"), big("column"), big("floor"), big("wall")] },
     { title: "Datum", items: [big("grid"), big("level")] },
   ] },
   { tab: "Insert", panels: [
@@ -320,6 +322,8 @@ function renderOptionsBar() {
     if (t === "door") kids = [sel("doorType", typesOf("IfcDoor").map(([id, x]) => [id, x.name]), "Type:")];
     if (t === "window") kids = [sel("windowType", typesOf("IfcWindow").map(([id, x]) => [id, x.name]), "Type:"), num("sill", "Sill Height:")];
     if (t === "opening") kids = [num("width", "Width:"), num("height_", "Height:"), num("openSill", "Sill:")];
+    if (t === "floor") kids = [sel("floorType", typesOf("IfcSlab").map(([id, x]) => [id, x.name]), "Type:"), num("floorOffset", "Height offset:")];
+    if (t === "beam") kids = [sel("beamType", typesOf("IfcBeam").map(([id, x]) => [id, x.name]), "Type:"), num("beamTop", "Top offset:")];
     if (t === "column") kids = [sel("columnType", typesOf("IfcColumn").map(([id, x]) => [id, x.name]), "Type:"), levelPicker()];
     if (t === "space") kids = [h("label", {}, "Name: ", h("input", { type: "text", value: o.spaceName, style: { width: "110px" }, onchange: e => { o.spaceName = e.target.value; } })), sel("boundaryAt", [["finishFace", "Finish face (net)"], ["coreFace", "Core face"], ["coreCentre", "Core centre"], ["wallCentre", "Wall centre (gross)"]], "Boundary:")];
     if (t === "move") kids = [chk("moveCopy", "Copy")];
@@ -358,7 +362,7 @@ function fileMenu(anchor) {
   menuAt(r.left, r.bottom, [
     { label: "New", icon: "sheet", run: () => newEmpty() }, { label: "Open…", icon: "open", run: () => openFile() }, { label: "Save", icon: "save", run: () => saveModel() },
     "-", { label: "Export…", icon: "exportI", run: () => exportDialog() }, { label: "Import DXF Symbol…", icon: "importI", run: () => importDXF() },
-    "-", { label: "Project Information…", icon: "info", run: () => projectInfo() }, { label: "Reset to Sample Project", icon: "house", run: () => { forget("draft-v3"); forget("tabs"); setDocument(buildSample(), { msg: "Sample project loaded", kind: "ok" }); } },
+    "-", { label: "Project Information…", icon: "info", run: () => projectInfo() }, { label: "Reset to Sample Project", icon: "house", run: () => { forget("draft-v4"); forget("tabs"); setDocument(buildSample(), { msg: "Sample project loaded", kind: "ok" }); } },
   ]);
 }
 
@@ -600,7 +604,7 @@ function openFile() {
 }
 async function saveModel() { const r = await saveFile(`${app.doc.meta.name || "model"}.json`, app.doc.serialise(), "application/json"); app.say(r.ok ? "Model saved" : r.error, r.ok ? "ok" : "error"); }
 function newEmpty() {
-  forget("draft-v3"); forget("tabs");
+  forget("draft-v4"); forget("tabs");
   const doc = newDocument("Untitled");
   doc.addElement({ id: "L0", type: "Level", name: "Level 1", args: { name: "Level 1", elevation: 0 } });
   doc.addElement({ id: "L1", type: "Level", name: "Level 2", args: { name: "Level 2", elevation: 3000 } });
@@ -911,7 +915,7 @@ async function boot() {
   const split = store("split"); if (split) document.getElementById("left").style.setProperty("--split", (split * 100).toFixed(1) + "%");
   await loadDrawingFont();
   let doc = null, note = null;
-  const draft = store("draft-v3");
+  const draft = store("draft-v4");
   if (draft) { try { doc = openDocument(draft); doc.regenerate(); note = { msg: "Restored your draft from this browser. File › New to start empty.", kind: "note" }; } catch (e) { doc = null; } }
   if (!doc) doc = buildSample();
   setDocument(doc, note || { msg: `Studio House: ${doc.elements().length} elements. Double-click a view in the Project Browser to open it; WA draws walls; 3D opens the {3D} view.`, kind: "ok" });

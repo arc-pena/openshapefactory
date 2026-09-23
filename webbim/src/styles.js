@@ -31,13 +31,13 @@ export function penWeight(doc, pen, scale) {
 /** The category an element is filed under — the IFC class at its family root. */
 export function categoryOf(doc, f) {
   const decl = doc.declOf(f);
-  for (const k of ["wallType", "doorType", "windowType", "columnType"]) {
+  for (const k of ["wallType", "doorType", "windowType", "columnType", "floorType", "beamType"]) {
     const id = F.refId(f, k); if (id) { const t = doc.resolveType(id); if (t && t.category) return t.category; }
   }
   return decl ? decl.category : "Unknown";
 }
 export function familyChainOf(doc, f) {
-  for (const k of ["wallType", "doorType", "windowType", "columnType"]) {
+  for (const k of ["wallType", "doorType", "windowType", "columnType", "floorType", "beamType"]) {
     const id = F.refId(f, k); if (id) { const t = doc.resolveType(id); if (t) return t.chain.map(c => c.id); }
   }
   return [];

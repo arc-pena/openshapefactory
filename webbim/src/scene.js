@@ -163,6 +163,23 @@ export function planScene(doc, v, opts = {}) {
   // 3. columns, fillers, furniture
   for (const f of els) {
     const t = doc.typeOf(f); if (!vis(f)) continue;
+    if (t === "Floor" && vis(f)) {
+      // a floor reads in plan as its edge; cut, it is poché like any cut element
+      const p = doc.plan(f); if (!p) continue; const bnd = band(p.z0, p.z1);
+      if (bnd === "above" || bnd === "below") continue;
+      const g = resolveGraphics(doc, ctx, f, bnd === "cut" ? "cut" : "projection");
+      if (bnd === "cut") B.fill(p.path, g.fill || ((doc.lib.materials[p.material] || {}).cut || {}).background || "#e9eaec", "IfcSlab", doc.idOf(f));
+      B.stroke(p.path, g, "IfcSlab", doc.idOf(f)); B.hit(doc.idOf(f), p.foot);
+    }
+    if (t === "Beam" && vis(f)) {
+      // a beam above the cut is drawn dashed, as it is seen from below; cut, it is a section
+      const p = doc.plan(f); if (!p) continue; const bnd = band(p.z0, p.z1);
+      if (bnd === "below") continue;
+      const g = bnd === "cut" ? resolveGraphics(doc, ctx, f, "cut") : Object.assign({}, resolveGraphics(doc, ctx, f, "projection"), { dash: LINE_TYPES.dashed1 });
+      B.stroke(p.path, g, "IfcBeam", doc.idOf(f));
+      B.stroke([{ k: "L", a: p.axis.start, b: p.axis.end }], { weight: penWeight(doc, "hairline", S), colour: g.colour || "#000", dash: LINE_TYPES.centre }, "IfcBeam", doc.idOf(f));
+      B.hit(doc.idOf(f), p.foot);
+    }
     if (t === "Column") { const p = doc.plan(f); if (!p) continue; const bnd = band(p.z0, p.z1); if (bnd === "above" || bnd === "below") continue;
       const g = resolveGraphics(doc, ctx, f, bnd === "cut" ? "cut" : "projection", "Common", p.material);
       if (bnd === "cut") { if (g.pattern === "solid") B.fill(p.path, g.fill || "#000", "IfcColumn", doc.idOf(f)); else { B.fill(p.path, g.fill, "IfcColumn", doc.idOf(f)); if (g.pattern) B.hatch(p.path, doc.lib.patterns[g.pattern], g.pattern, g.colour, penWeight(doc, "hairline", S), "IfcColumn", doc.idOf(f)); } }
@@ -456,6 +473,14 @@ export function elevationScene(doc, v, opts = {}) {
     if (!categoryVisible(ctx, categoryOf(doc, f))) continue;
     const t = doc.typeOf(f);
     if (t === "Wall") { const w = doc.plan(f); if (!w) continue; const it = elevWall(doc, f, w, V, sOf, depthOf, ctx); if (it) items.push(it); }
+    if (t === "Floor" || t === "Beam") {
+      const p = doc.plan(f); if (!p || !p.parts) continue;
+      for (const part of p.parts) {
+        const ss = part.foot.map(sOf), dd = part.foot.map(depthOf), s0 = Math.min(...ss), s1 = Math.max(...ss);
+        const sil = [[s0, part.z0 - Z0], [s1, part.z0 - Z0], [s1, part.z1 - Z0], [s0, part.z1 - Z0]];
+        items.push({ id: doc.idOf(f), f, depth: Math.min(...dd), depthMax: Math.max(...dd), s0, s1, curves: polyPath(sil).map(x => [x.a, x.b]), sil: [sil], cat: t === "Floor" ? "IfcSlab" : "IfcBeam" });
+      }
+    }
     if (t === "Column") { const p = doc.plan(f); if (!p) continue; const pts = p.foot.length ? p.foot : samplePath(p.path); const ss = pts.map(sOf), dd = pts.map(depthOf);
       const s0 = Math.min(...ss), s1 = Math.max(...ss); const sil = [[s0, p.z0 - Z0], [s1, p.z0 - Z0], [s1, p.z1 - Z0], [s0, p.z1 - Z0]];
       items.push({ id: doc.idOf(f), f, depth: Math.min(...dd), depthMax: Math.max(...dd), s0, s1, curves: polyPath(sil).map(x => [x.a, x.b]), sil: [sil], cat: "IfcColumn" }); }

@@ -54,6 +54,11 @@ export function buildSample() {
   add({ id: "WN2", type: "Window", args: { fills: { ref: "OP3" }, windowType: { ref: "T-WIN2415" } }, params: { Mark: "W02" } });
   add({ id: "WN3", type: "Window", args: { fills: { ref: "OP4" }, windowType: { ref: "T-WIN1215" } }, params: { Mark: "W03" } });
   add({ id: "WN4", type: "Window", args: { fills: { ref: "OP7" }, windowType: { ref: "T-WIN1215" } }, params: { Mark: "W04" } });
+  // the ground slab under the rooms, the first floor on the walls, and two steel beams carrying it over the studio
+  add({ id: "FL1", type: "Floor", name: "Ground slab", args: { boundary: [[0, 0], [12000, 0], [12000, 8000], [0, 8000]], floorType: { ref: "T-FLOOR250" }, level: { ref: "L0" }, heightOffset: 0 } });
+  add({ id: "FL2", type: "Floor", name: "First floor", args: { boundary: [[-178, -178], [12178, -178], [12178, 8178], [-178, 8178]], floorType: { ref: "T-FLOOR250" }, level: { ref: "L1" }, heightOffset: 250 } });
+  add({ id: "BM1", type: "Beam", args: { axis: { type: "line", start: [0, 2800], end: [6000, 2800] }, beamType: { ref: "T-UB406" }, level: { ref: "L1" }, topOffset: 0 } });
+  add({ id: "BM2", type: "Beam", args: { axis: { type: "line", start: [0, 5600], end: [6000, 5600] }, beamType: { ref: "T-UB406" }, level: { ref: "L1" }, topOffset: 0 } });
   add({ id: "C1", type: "Column", args: { position: [3000, 4400], columnType: { ref: "T-COL300R" }, baseLevel: { ref: "L0" }, height: 3000, rotation: 0 } });
   add({ id: "FU1", type: "Furniture", args: { position: [3000, 6100], shape: "Table", size: [1800, 900], rotation: 0, level: { ref: "L0" } } });
   add({ id: "FU2", type: "Furniture", args: { position: [2400, 1700], shape: "Sofa", size: [2000, 850], rotation: 0, level: { ref: "L0" } } });

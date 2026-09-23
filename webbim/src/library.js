@@ -86,6 +86,8 @@ export const CATEGORIES = {
   IfcBuildingStorey: { name: "Levels", subcategories: { Common: { projection: "thin" } } },
   Annotation:        { name: "Annotation", subcategories: { Common: { symbolic: "thin" }, Dimension: { symbolic: "hairline" }, Text: { symbolic: "thin" }, Leader: { symbolic: "hairline" }, Marker: { symbolic: "medium" }, Constraint: { symbolic: "hairline" } } },
   Detail:            { name: "Detail items", subcategories: { Common: { projection: "thin" } } },
+  IfcSlab:           { name: "Floors", subcategories: { Common: { cut: "heavy", projection: "thin", beyond: "hairline" } } },
+  IfcBeam:           { name: "Structural Framing", subcategories: { Common: { cut: "heavy", projection: "thin", beyond: "hairline" } } },
   Furniture:         { name: "Furniture", subcategories: { Common: { projection: "thin" } } },
 };
 
@@ -100,6 +102,10 @@ export const FAMILIES = {
   "F-CASEMENT":  { name: "Casement", extends: "F-WINDOW" },
   "F-COLUMN":    { name: "Column", category: "IfcColumn", system: "Column", sealed: true },
   "F-RCCOLUMN":  { name: "RC Column", extends: "F-COLUMN" },
+  "F-FLOOR":     { name: "Floor", category: "IfcSlab", system: "Floor", sealed: true },
+  "F-BEAM":      { name: "Beam", category: "IfcBeam", system: "Beam", sealed: true },
+  "F-STEELBEAM": { name: "Steel I-section", extends: "F-BEAM" },
+  "F-RCBEAM":    { name: "RC Beam", extends: "F-BEAM" },
 };
 
 export const TYPES = {
@@ -124,6 +130,14 @@ export const TYPES = {
   "T-WIN2415":   { family: "F-CASEMENT", name: "Casement 2400×1500", mark: "W2", width: 2400, height: 1500, frame: 60, mullions: 3 },
   "T-COL400":    { family: "F-RCCOLUMN", name: "RC 400×400", mark: "C1", width: 400, depth: 400, material: "M-CONC" },
   "T-COL300R":   { family: "F-RCCOLUMN", name: "RC Ø300", mark: "C2", width: 300, depth: 300, round: true, material: "M-CONC" },
+  // floors: layers from the top surface down, like a wall's from its exterior face
+  "T-FLOOR250":  { family: "F-FLOOR", name: "Concrete 200 + screed 50", mark: "FL1",
+    layers: [ { function: "Finish 1", thickness: 50, material: "M-PLAS" }, { function: "Structure", thickness: 200, material: "M-CONC" } ], coreStart: 1, coreEnd: 2 },
+  "T-FLOOR150T": { family: "F-FLOOR", name: "Timber deck 150", mark: "FL2",
+    layers: [ { function: "Finish 1", thickness: 22, material: "M-TIMBER" }, { function: "Structure", thickness: 128, material: "M-TIMBER" } ], coreStart: 1, coreEnd: 2 },
+  // beams: a profile swept along the beam's axis
+  "T-BEAMRC300": { family: "F-RCBEAM", name: "RC 300×600", mark: "B1", shape: "rect", width: 300, depth: 600, material: "M-CONC" },
+  "T-UB406":     { family: "F-STEELBEAM", name: "UB 406×178×60", mark: "B2", shape: "I", width: 178, depth: 406, flange: 12.8, web: 7.9, material: "M-STEEL" },
 };
 
 export const TEXT_TYPES = {

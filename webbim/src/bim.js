@@ -339,6 +339,48 @@ BUILDERS.Column = {
   },
 };
 
+// ---------------------------------------------------------------- floors and beams
+//! A floor is a wall laid flat: a boundary instead of a centreline, and the
+//! type's layers stacked down from the top surface instead of across from the
+//! exterior face. A beam is a column laid along a line: its type's profile
+//! swept along the axis, hung from the level by its top.
+declare({ type: "Floor", guid: "wb-0401", category: "IfcSlab", kind: "floor", idPrefix: "FL",
+  summary: "A boundary on a level, and the type's layers stacked down from its top surface.",
+  args: [ json("boundary", "Boundary", [[0, 0], [6000, 0], [6000, 4000], [0, 4000]]), ref("floorType", "Type", ["floorType"]), ref("level", "Level", ["level"]),
+          real("heightOffset", "Height offset from level", 0, -10000, 10000, 1, "mm", { group: "Constraints" }) ],
+  handles: (f) => { const b = F.json(f, "boundary") || []; return b.map((p, i) => ({ key: "v" + i, at: p, constraint: "free2d", writes: `boundary.${i}` })); } });
+BUILDERS.Floor = {
+  precondition: (f) => { const b = F.json(f, "boundary"); if (!Array.isArray(b) || b.length < 3) return "a floor needs a boundary of three points or more"; return F.type(f, "floorType") ? null : "pick a floor type"; },
+  build: (f, doc) => {
+    const t = F.type(f, "floorType"), b = F.json(f, "boundary"), top = levelElev(doc, f, "level") + F.real(f, "heightOffset");
+    const layers = t.layers || [{ function: "Structure", thickness: 200, material: "M-CONC" }];
+    const parts = []; let z = top;
+    for (const L of layers) { parts.push({ foot: b.map(p => p.slice()), z0: z - L.thickness, z1: z, sub: L.function, material: L.material }); z -= L.thickness; }
+    const T_ = top - z, area = Math.abs(polyArea(b));
+    const per = b.reduce((a, p, i) => a + dist(p, b[(i + 1) % b.length]), 0);
+    return { plan: { path: polyPath(b), foot: b, z0: z, z1: top, material: layers[layers.length > 1 ? 1 : 0].material, parts },
+      data: { value: area, kind: "Area", parts, props: { Area: { kind: "Area", v: area / 1e6 }, Thickness: L(T_), Perimeter: L(per), "Top elevation": L(top), TypeMark: T(t.mark || t.id) } } };
+  },
+};
+declare({ type: "Beam", guid: "wb-0402", category: "IfcBeam", kind: "beam", idPrefix: "B",
+  summary: "A profile swept along a line, hung from its level by its top.",
+  args: [ curve2d("axis", "Axis", ["line"], { type: "line", start: [0, 0], end: [6000, 0] }), ref("beamType", "Type", ["beamType"]), ref("level", "Reference level", ["level"]),
+          real("topOffset", "Top offset", 0, -10000, 10000, 1, "mm", { group: "Constraints" }) ],
+  handles: (f) => { const c = F.json(f, "axis"); return c && c.type === "line" ? [{ key: "start", at: c.start, constraint: "free2d", writes: "axis.start" }, { key: "end", at: c.end, constraint: "free2d", writes: "axis.end", readout: "length" }, { key: "move", at: lerp(c.start, c.end, 0.5), constraint: "free2d", writes: "axis" }] : []; } });
+BUILDERS.Beam = {
+  precondition: (f) => { const c = F.json(f, "axis"); if (!c || c.type !== "line" || dist(c.start, c.end) < 1) return "a beam needs an axis"; return F.type(f, "beamType") ? null : "pick a beam type"; },
+  build: (f, doc) => {
+    const t = F.type(f, "beamType"), c = F.json(f, "axis"), top = levelElev(doc, f, "level") + F.real(f, "topOffset");
+    const d = normalise(sub(c.end, c.start)), n = perp(d);
+    const band = (w, z0, z1, sub_) => ({ foot: [add(c.start, mul(n, -w / 2)), add(c.end, mul(n, -w / 2)), add(c.end, mul(n, w / 2)), add(c.start, mul(n, w / 2))], z0, z1, sub: sub_, material: t.material });
+    const D = t.depth || 600, W = t.width || 300;
+    const parts = t.shape === "I" ? [band(W, top - (t.flange || 12), top, "Flange"), band(t.web || 8, top - D + (t.flange || 12), top - (t.flange || 12), "Web"), band(W, top - D, top - D + (t.flange || 12), "Flange")] : [band(W, top - D, top, "Beam")];
+    const foot = band(W, 0, 0).foot, len = dist(c.start, c.end);
+    return { plan: { path: polyPath(foot), foot, axis: c, z0: top - D, z1: top, parts },
+      data: { value: len, kind: "Length", parts, refs: [{ key: "axis", kind: "line", geom: lineThrough(c.start, c.end) }], props: { Length: L(len), Depth: L(D), Width: L(W), "Top elevation": L(top), TypeMark: T(t.mark || t.id) } } };
+  },
+};
+
 declare({ type: "Furniture", guid: "wb-0302", category: "Furniture", kind: "furniture", idPrefix: "FU",
   summary: "A loose furniture item. Its family defines a fill; the presentation style draws it stroke-only.",
   args: [ point2d("position", "Position", [0, 0]), choice("shape", "Shape", ["Table", "Chair", "Desk", "Sofa"], 0), json("size", "Size", [1600, 800], { group: "Dimensions" }), real("rotation", "Rotation", 0, -360, 360, 1, "°"), ref("level", "Level", ["level"]) ],

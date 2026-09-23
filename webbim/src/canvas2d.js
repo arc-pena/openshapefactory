@@ -18,7 +18,7 @@ import { chainLoop, sampleCropElement, cropLoop, loopBBox, ANNOTATION_CROP } fro
 export const SNAP_PX = 8;
 export const SNAP_KINDS = ["endpoint", "midpoint", "centre", "intersection", "perpendicular", "nearest", "grid", "angle"];
 const SNAP_SHORT = { endpoint: "end", midpoint: "mid", centre: "cen", intersection: "int", perpendicular: "perp", nearest: "near", grid: "grid", angle: "ang" };
-const TOOLS_NEED_PLAN = new Set(["wall", "opening", "door", "window", "column", "grid", "text", "dim", "space", "elev", "sep", "move", "copy", "rotate", "mirror"]);
+const TOOLS_NEED_PLAN = new Set(["floor", "beam", "wall", "opening", "door", "window", "column", "grid", "text", "dim", "space", "elev", "sep", "move", "copy", "rotate", "mirror"]);
 export const MODIFY_TOOLS = new Set(["move", "copy", "rotate", "mirror"]);
 
 export class View2D {
@@ -755,6 +755,13 @@ export class View2D {
     }
     return best;
   }
+  finishFloor() {
+    const T = this.tool, o = this.app.toolOpts, level = F.refId(this.view, "level");
+    if (T.pts.length < 3) return this.app.say("a floor needs three points or more", "note");
+    const boundary = T.pts.map(p => p.map(v => Math.round(v))); T.pts = [];
+    const r = this.app.apply({ op: "add", element: { type: "Floor", args: { boundary, floorType: { ref: o.floorType }, level: level ? { ref: level } : null, heightOffset: o.floorOffset ?? 0 } } });
+    this.app.say(r.ok ? `Floor ${r.id}: ${fmtLen(Math.abs(polyArea(boundary)) / 1e6)} m²` : r.error, r.ok ? "ok" : "error"); if (r.ok) this.app.select([r.id]);
+  }
   toolClick(p, e) {
     const T = this.tool, tool = this.app.tool, o = this.app.toolOpts, doc = this.doc;
     if (MODIFY_TOOLS.has(tool)) return this.modifyClick();
@@ -762,6 +769,16 @@ export class View2D {
     const level = F.refId(this.view, "level");
     const addEl = (element, msg) => { const r = this.app.apply({ op: "add", element }); this.app.say(r.ok ? msg || `Added ${r.id}` : r.error, r.ok ? "ok" : "error"); if (r.ok) this.app.select([r.id]); return r; };
     if (tool === "wall") { T.pts.push(q); if (T.pts.length >= 2 && o.closeOnStart && dist(q, T.pts[0]) < 1) return this.finishWall(true); this.draw(); return; }
+    if (tool === "floor") {
+      // click the boundary; clicking the first point again (or Enter) closes it
+      if (T.pts.length >= 3 && dist(q, T.pts[0]) < 12 * this.modelPerPx()) return this.finishFloor();
+      T.pts.push(q); this.draw(); return;
+    }
+    if (tool === "beam") {
+      T.pts.push(q); if (T.pts.length < 2) { this.draw(); return; }
+      const [a, b] = T.pts; T.pts = [];
+      return addEl({ type: "Beam", args: { axis: { type: "line", start: a, end: b }, beamType: { ref: o.beamType }, level: level ? { ref: level } : null, topOffset: o.beamTop ?? 3000 } }, `Beam ${fmtLen(dist(a, b))} mm`);
+    }
     if (["grid", "elev", "sep"].includes(tool)) {
       T.pts.push(q);
       if (T.pts.length < 2) { this.draw(); return; }
@@ -884,6 +901,7 @@ export class View2D {
       return true;
     }
     if (e.key === "Escape") { if (T.pts.length || T.refs || T.ghost) { T.pts = []; T.refs = []; T.ghost = null; T.centre = null; this.hideHud(); this.draw(); return true; } return false; }
+    if (tool === "floor" && T.pts.length && e.key === "Enter") { this.finishFloor(); return true; }
     if (tool === "wall" && T.pts.length) {
       if (e.key === "Enter" && !this.typed) { this.finishWall(false); return true; }
       if (e.key.toLowerCase() === "c" && T.pts.length >= 3) { this.finishWall(true); return true; }
