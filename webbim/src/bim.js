@@ -602,6 +602,17 @@ BUILDERS.SymbolInstance = { build: () => ({ data: {} }) };
 //! the parametric CAD's format with every element on its DXF layer. Placed by an offset of the file's
 //! origin, a scale and a rotation about that origin - numbers in Properties, so it can be put exactly
 //! - and pinned by default, so a stray drag cannot move it. Explode turns it into detail lines.
+/** A space graph: the program as nodes and adjacencies, the site and its setbacks, the entry and the
+ *  packing options - and the saved slot order that is each room's identity. Its model is built by
+ *  the sgbuild op (walls, slab, rooms, doors), tagged so a rebuild replaces it. */
+declare({ type: "SpaceGraph", guid: "wb-0901", category: "Program", kind: "program", idPrefix: "SG",
+  summary: "A program as a graph: spaces, adjacencies, site, setbacks and entry; packed along a corridor and built as walls, slab, rooms and doors.",
+  args: [ json("nodes", "Spaces", []), json("edges", "Adjacencies", []),
+          json("site", "Site", { boundary: [], setbacks: [], entries: [], spine: null }),
+          json("options", "Packing", {}), json("order", "Slot order", null),
+          ref("level", "Base level", ["level"]), bool("auto", "Rebuild on change", true) ] });
+BUILDERS.SpaceGraph = { build: () => ({ data: {} }) };
+
 /** Revit's Repeating Detail Component (and its Insulation tool): one component repeated along a path
  *  sketched with the sketch tools - lines, arcs, splines. Width is across the path, in model mm. */
 export const REPEAT_COMPONENTS = ["Batt insulation", "Rigid insulation", "Brick coursing", "Blocking", "Symbol"];

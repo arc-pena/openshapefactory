@@ -24,6 +24,7 @@ import { parseLength, setLengthUnit } from "./units.js";
 import { bimToCad, cadEditsToOps } from "./cadbridge.js";
 import { fromPolygon, addElements, fillet, toggleLock, measureDim, dragHandle, regionsOf, shapeFromClicks, filletCorners, toCentreline, elementSegs, splitElement, bsplineAt, bsplineDomain } from "./bimsketch.js";
 import { cadSketchOutline } from "./cadsketch.js";
+import { programFromBrief, planSpaceGraph } from "./spacegraph.js";
 
 export const CASES = [];
 const testCase = (id, name, fn, opts = {}) => CASES.push(Object.assign({ id, name, fn }, opts));
@@ -1419,4 +1420,65 @@ testCase("M40", "Material priority: by default a layer's material draws over the
   const def = withOv(undefined), view = withOv("view"), none = withOv("none");
   const ok = def.fill === doc.lib.materials[mat].cut.background && def.pattern === "P-BRICK" && view.fill === "#00ff00" && view.pattern === "P-DIAG" && none.fill === "#00ff00" && none.trace.every(t => !t.startsWith("material"));
   return R(ok, "default: brick's background and hatch; View wins: the view's green and diagonal; Ignore: green, no material in the trace", `default ${def.fill}/${def.pattern}; view ${view.fill}/${view.pattern}; none ${none.fill} [${none.trace.join(", ")}]`);
+});
+
+// ---------------------------------------------------------------- Space Graph
+const SG_BRIEF = `Front of house:
+Reception 30 m2, facade, adjacent to Lobby* and Waiting
+Lobby 50 m2
+Waiting 40 m2 near Consult room
+5 x Consult room 16 m2 near Waiting
+Back of house:
+Plant 25 sqm back of house, avoid Consult room
+Store 20 m2 no daylight
+Kitchen 18 m2 back of house
+Corridor 60 m2 circulation`;
+testCase("M41", "Space Graph from a written brief: copies from '5 x', zones, facade needs, strong / plain / keep-apart adjacencies", () => {
+  const g = programFromBrief(SG_BRIEF), by = n => g.nodes.find(x => x.name === n), E = (a, b) => g.edges.find(e => (e.a === by(a).id && e.b === by(b).id) || (e.b === by(a).id && e.a === by(b).id));
+  const consults = g.nodes.filter(n => n.base === "Consult room");
+  const ok = g.nodes.length === 12 && consults.length === 5 && by("Reception").zone === "Entry" && by("Plant").zone === "BOH" && !by("Plant").facade && !by("Store").facade && by("Corridor").zone === "Circulation"
+    && E("Reception", "Lobby").w === 3 && E("Reception", "Waiting").w === 2 && E("Plant", "Consult room 1").w === -1 && by("Consult room 3").dept === "Front of house";
+  return R(ok, "12 spaces (5 consult rooms); Reception is an entry, Plant back of house without facade; Reception–Lobby strong (3), Reception–Waiting (2), Plant–Consult keep apart",
+    `${g.nodes.length} spaces, ${consults.length} consult; zones ${by("Reception").zone}/${by("Plant").zone}/${by("Corridor").zone}; edges R-L ${E("Reception", "Lobby") && E("Reception", "Lobby").w}, R-W ${E("Reception", "Waiting") && E("Reception", "Waiting").w}, P-C ${E("Plant", "Consult room 1") && E("Plant", "Consult room 1").w}`);
+});
+testCase("M42", "Packing: the setbacks cut the site exactly; the footprint sits inside them; rooms tile their strips without overlap and within the footprint; the entry's room meets the entry", () => {
+  const g = programFromBrief(SG_BRIEF);
+  const site = { boundary: [[0, 0], [60000, 0], [60000, 40000], [0, 40000]], setbacks: [6000, 3000, 5000, 3000], entries: [{ at: [30000, 0], dir: [0, 1] }] };
+  const plan = planSpaceGraph({ nodes: g.nodes, edges: g.edges, site });
+  const B = plan.buildable, xs = B.map(p => p[0]), ys = B.map(p => p[1]);
+  const exact = Math.min(...xs) === 3000 && Math.max(...xs) === 57000 && Math.min(...ys) === 6000 && Math.max(...ys) === 35000;
+  const inside = plan.frame.poly.every(p => p[0] >= 3000 - 1 && p[0] <= 57000 + 1 && p[1] >= 6000 - 1 && p[1] <= 35000 + 1);
+  const L = plan.levels[0], rooms = L.rooms;
+  const inFp = rooms.every(r => r.u0 >= -1e-6 && r.u1 <= plan.frame.W + 1e-6 && r.v0 >= -1e-6 && r.v1 <= plan.frame.D + 1e-6);
+  let overlap = 0; for (let i = 0; i < rooms.length; i++) for (let j = i + 1; j < rooms.length; j++) { const a = rooms[i], b = rooms[j]; const ox = Math.min(a.u1, b.u1) - Math.max(a.u0, b.u0), oy = Math.min(a.v1, b.v1) - Math.max(a.v0, b.v0); if (ox > 1 && oy > 1) overlap++; }
+  const packed = rooms.length === g.nodes.filter(n => n.zone !== "Circulation").length;
+  const rec = rooms.find(r => r.name === "Reception"), recX = plan.frame.at((rec.u0 + rec.u1) / 2, 0)[0];
+  const atEntry = rec.strip === "A" && Math.abs(recX - 30000) <= (rec.u1 - rec.u0) / 2 + 1;
+  const ok = exact && inside && inFp && overlap === 0 && packed && atEntry;
+  return R(ok, "buildable 3–57 m × 6–35 m; footprint inside; every non-circulation space packed once, no overlaps; Reception on the entry facade, across the entry",
+    `buildable x ${Math.min(...xs)}–${Math.max(...xs)}, y ${Math.min(...ys)}–${Math.max(...ys)}; footprint inside ${inside}; ${rooms.length} rooms, ${overlap} overlaps, in footprint ${inFp}; Reception strip ${rec.strip}, centre x ${Math.round(recX)} (${L.kind})`);
+});
+testCase("M43", "Build and swap: the graph becomes walls, slab, rooms and doors with no errors; swapping two rooms trades their slots, each width follows its own area, and the rebuild replaces rather than adds; undo restores", () => {
+  const doc = buildSample(), ed = new Editor(doc), g = programFromBrief(SG_BRIEF);
+  const site = { boundary: [[40000, -30000], [100000, -30000], [100000, 10000], [40000, 10000]], setbacks: [6000, 3000, 5000, 3000], entries: [{ at: [70000, -30000], dir: [0, 1] }] };
+  const r = ed.apply({ op: "add", element: { type: "SpaceGraph", name: "Test", args: { nodes: g.nodes, edges: g.edges, site, options: {}, order: null, level: { ref: "L0" }, auto: true } } });
+  const b = ed.apply({ op: "sgbuild", id: r.id, relax: true });
+  const mine = () => doc.elements().filter(f => doc.getParam(f, "SpaceGraph") === r.id);
+  const count = t => mine().filter(f => doc.typeOf(f) === t).length, errs = mine().filter(f => doc.error(f)).length, n0 = mine().length;
+  const spaces = count("Space"), walls = count("Wall"), doors = count("Door"), floors = count("Floor");
+  const order = doc.argValue(doc.element(r.id), "order"), lk = Object.keys(order)[0], A = order[lk].A;
+  const a = A[0], z = A[A.length - 1], nd = id => g.nodes.find(x => x.id === id);
+  const plan0 = planSpaceGraph({ nodes: doc.argValue(doc.element(r.id), "nodes"), edges: g.edges, site, options: {}, order }, { relax: false });
+  const w0 = plan0.levels[0].rooms.find(x => x.id === a);
+  const s = ed.apply({ op: "sgswap", id: r.id, a, b: z });
+  const order2 = doc.argValue(doc.element(r.id), "order"), A2 = order2[lk].A;
+  const plan1 = planSpaceGraph({ nodes: doc.argValue(doc.element(r.id), "nodes"), edges: g.edges, site, options: {}, order: order2 }, { relax: false });
+  const w1 = plan1.levels[0].rooms.find(x => x.id === a), wz = plan1.levels[0].rooms.find(x => x.id === z);
+  const traded = A2[0] === z && A2[A2.length - 1] === a && (w1.u1 - w1.u0) === (w0.u1 - w0.u0) && Math.abs(wz.area - nd(z).area) / nd(z).area < 0.3;
+  const same = mine().length === n0;
+  const named = mine().filter(f => doc.typeOf(f) === "Space" && doc.getParam(f, "ProgramId") === a).map(f => f.get("Name"))[0];
+  ed.undo(); const back = JSON.stringify(doc.argValue(doc.element(r.id), "order")) === JSON.stringify(order) && mine().length === n0;
+  const ok = b.ok && errs === 0 && spaces >= 12 && walls > 8 && doors >= 6 && floors === 1 && s.ok && traded && same && named === nd(a).name && back;
+  return R(ok, "built with no errors (rooms + corridor spaces, walls, a slab, doors); the swap trades the two slots, the moved room keeps its own width, the other gets its area; same element count after rebuild; undo restores",
+    `${spaces} spaces, ${walls} walls, ${doors} doors, ${floors} slab, ${errs} errors; swap ${a}⇄${z}: A ${A.join(",")} → ${A2.join(",")}, ${a} width ${w0.u1 - w0.u0} → ${w1.u1 - w1.u0}; elements ${n0} → ${mine().length}; room ${named}; undo ${back}`);
 });

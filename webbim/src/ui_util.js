@@ -44,6 +44,8 @@ export const ICONS = {
   // a repeating detail: one component, repeated along a path
   repeat: P('<path d="M2 15c2-6 3-6 4 0s2 6 4 0 3-6 4 0 2 6 4 0"/><path d="M2 5h16" stroke-dasharray="2 2"/>'),
   insul: P('<path d="M2 6h16M2 14h16"/><path d="M3 14c0-8 3-8 3 0M6 6c0 8 3 8 3 0M9 14c0-8 3-8 3 0M12 6c0 8 3 8 3 0M15 14c0-8 3-8 3 0"/>'),
+  // a space graph: bubbles joined by adjacencies
+  bubbles: P('<circle cx="6" cy="7" r="3.5"/><circle cx="14.5" cy="6" r="2.5"/><circle cx="12" cy="14.5" r="3.5"/><path d="M9.3 6.6l2.8-.4M8 9.5l2 2.5M14 8.4l-.9 2.6"/>'),
   material: P('<circle cx="10" cy="10" r="7"/><path d="M4 7l12 0M3.5 12h13M7 3.8l6 12.4"/>'),
   skpoly: P('<path d="M10 3l6 4v6l-6 4-6-4V7z"/>'),
   skarc: P('<path d="M3 15a8 8 0 0 1 14 0"/><circle cx="3" cy="15" r="1.2"/><circle cx="17" cy="15" r="1.2"/>'),

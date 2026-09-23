@@ -20,6 +20,7 @@ import { writePDF } from "./pdf.js";
 import { writeDXF, readDXF, dxfDrawing, makeZip } from "./dxf.js";
 import { runAll, CASES } from "./acceptance.js";
 import { renderPanel, renderSchedule, typeEditor, vvDialog, viewStyleEditor, materialsEditor } from "./panel.js";
+import { renderSpaceGraph, importProgram, briefDialog } from "./sgui.js";
 import { renderGraph } from "./graph.js";
 import { View2D, SNAP_KINDS, MODIFY_TOOLS } from "./canvas2d.js";
 import { View3D, VISUAL_STYLES, hiddenLineFor } from "./view3d.js";
@@ -75,7 +76,7 @@ app.refresh = (opts = {}) => {
   else if (app.doc.element(app.activeView) && app.doc.typeOf(app.doc.element(app.activeView)) === "View3D" && (v instanceof View3D) === (visual3d(app.activeView) === "Sheet Line-work")) renderMain();
   else { if (v.draw) v.draw(); if (v.refresh && v.T) v.refresh(); renderViewControl(); }
   scheduleHiddenLine();
-  if (opts.keepMain && (app.activeView === "__graph" || app.activeView === "__tree" || (app.activeView && app.doc.element(app.activeView) && app.doc.typeOf(app.doc.element(app.activeView)) === "Schedule"))) renderMain();
+  if (opts.keepMain && (app.activeView === "__graph" || app.activeView === "__spacegraph" || app.activeView === "__tree" || (app.activeView && app.doc.element(app.activeView) && app.doc.typeOf(app.doc.element(app.activeView)) === "Schedule"))) renderMain();
 };
 app.openView = id => {
   if (!app.tabs.includes(id)) app.tabs.push(id);
@@ -195,6 +196,9 @@ const COMMANDS = {
   keynote: { label: "Keynote", icon: "keynote", key: "KN", hint: "A material keynote: the material's Mark in a box, on a leader", tool: "mtag", run: () => { app.toolOpts.mtagShow = "Mark"; app.toolOpts.mtagFrame = "Keynote box"; app.setTool("mtag"); } },
   repeat: { label: "Repeating Detail", icon: "repeat", key: "RD", hint: "Sketch a path (lines, arcs, splines): a component repeats along it - batt or rigid insulation, brick coursing, blocking, or any loaded symbol", run: () => startRepeatSketch("Batt insulation") },
   insulation: { label: "Insulation", icon: "insul", key: "IN", hint: "Batt insulation along a sketched path; its width is the insulation's thickness", run: () => startRepeatSketch("Batt insulation") },
+  spacegraph: { label: "Space Graph", icon: "bubbles", key: "SG", hint: "The program as a graph: import an Excel program or write a brief, relax the bubble diagram, set the site, setbacks and entry - it packs and builds the rooms", run: () => app.openView("__spacegraph") },
+  sgimport: { label: "Import Program", icon: "importI", run: () => importProgram(app) },
+  sgbrief: { label: "Brief", icon: "text", run: () => briefDialog(app) },
   materials: { label: "Materials", icon: "material", key: "MA", run: () => materialsEditor(app) },
   elev: tool("elev", "Elevation", "elevview", "EL", "Two clicks: the marker line is the view."),
   section: tool("section", "Section", "section", "SE", "Two clicks: the section line. It looks to the right of the direction you drew it; double-click its head to open it."),
@@ -267,6 +271,7 @@ const RIBBON = [
     { title: "Build", items: [big("wall"), big("door"), big("window"), big("column"), big("floor")] },
     { title: "Opening", items: [big("opening")] },
     { title: "Room & Area", items: [big("space"), small("sep"), small("schedule")] },
+    { title: "Program", items: [big("spacegraph"), small("sgimport"), small("sgbrief")] },
     { title: "Datum", items: [big("level"), big("grid"), big("planview")] },
   ] },
   { tab: "Structure", panels: [
@@ -450,7 +455,7 @@ function renderQAT() {
   const q = clear(document.getElementById("qat"));
   const b = (id, ic) => h("button", { class: "qbtn", title: COMMANDS[id].label + (COMMANDS[id].key ? ` (${COMMANDS[id].key})` : ""), "aria-label": COMMANDS[id].label, disabled: (id === "undo" && !app.editor.undoStack.length) || (id === "redo" && !app.editor.redoStack.length), onclick: () => app.run(id) }, icon(ic || COMMANDS[id].icon, 16));
   const v = app.activeView && app.doc.element(app.activeView);
-  const viewName = v ? `${{ PlanView: "Floor Plan", ElevationView: "Elevation", SectionView: "Section", View3D: "3D View", Schedule: "Schedule", Sheet: "Sheet" }[app.doc.typeOf(v)]}: ${v.get("Name")}` : app.activeView === "__graph" ? "Node Graph" : app.activeView === "__tree" ? "Feature Tree" : app.activeView === "__diag" ? "Acceptance Tests" : "";
+  const viewName = v ? `${{ PlanView: "Floor Plan", ElevationView: "Elevation", SectionView: "Section", View3D: "3D View", Schedule: "Schedule", Sheet: "Sheet" }[app.doc.typeOf(v)]}: ${v.get("Name")}` : app.activeView === "__graph" ? "Node Graph" : app.activeView === "__spacegraph" ? "Space Graph" : app.activeView === "__tree" ? "Feature Tree" : app.activeView === "__diag" ? "Acceptance Tests" : "";
   q.append(
     h("button", { class: "qbtn mobile-only", "aria-label": "Palettes", onclick: () => document.body.classList.toggle("show-left") }, icon("menu", 16)),
     h("div", { class: "logo", title: "Web BIM" }, "B"),
@@ -701,8 +706,8 @@ function renderMain() {
   const area = clear(document.getElementById("main"));
   const doc = app.doc;
   const tabs = h("div", { class: "dtabs", role: "tablist" }, app.tabs.map(t => {
-    const f = doc.element(t), label = t === "__graph" ? "Node Graph" : t === "__diag" ? "Acceptance Tests" : t === "__tree" ? "Feature Tree" : f ? f.get("Name") : t;
-    const ic = t === "__graph" ? "graph" : t === "__diag" ? "tests" : t === "__tree" ? "tree" : { PlanView: "plan", View3D: "view3d", ElevationView: "elevview", SectionView: "section", Schedule: "schedule", Sheet: "sheet" }[f && doc.typeOf(f)];
+    const f = doc.element(t), label = t === "__graph" ? "Node Graph" : t === "__spacegraph" ? "Space Graph" : t === "__diag" ? "Acceptance Tests" : t === "__tree" ? "Feature Tree" : f ? f.get("Name") : t;
+    const ic = t === "__graph" ? "graph" : t === "__spacegraph" ? "bubbles" : t === "__diag" ? "tests" : t === "__tree" ? "tree" : { PlanView: "plan", View3D: "view3d", ElevationView: "elevview", SectionView: "section", Schedule: "schedule", Sheet: "sheet" }[f && doc.typeOf(f)];
     return h("button", { class: "dtab", role: "tab", "aria-selected": String(t === app.activeView), onclick: () => app.openView(t), onauxclick: e => { if (e.button === 1) app.closeTab(t); } }, icon(ic, 14), h("span", {}, label),
       h("span", { class: "x", role: "button", "aria-label": `Close ${label}`, onclick: e => { e.stopPropagation(); app.closeTab(t); } }, "✕"));
   }));
@@ -713,6 +718,7 @@ function renderMain() {
   if (!id) { main.append(h("div", { class: "empty", style: { maxWidth: "520px", margin: "60px auto" } }, h("h3", {}, "No view open"), "Double-click a view in the Project Browser, or press the 3D house in the Quick Access Toolbar.")); return; }
   if (id === "__graph") { renderGraph(app, main, app.graphFocus); app.graphFocus = null; app.views.set(id, {}); return; }
   if (id === "__diag") { renderDiagnostics(main); app.views.set(id, {}); return; }
+  if (id === "__spacegraph") { renderSpaceGraph(app, main); app.views.set(id, {}); return; }
   if (id === "__tree") { const b = h("div", { class: "sheetpane" }, h("div", { class: "doccard" }, h("header", {}, h("h2", {}, "Feature Tree"), h("span", { class: "muted" }, "construction order; ● built, ● note, ● error; double-click shows it")), h("div", { style: { padding: "0 0 10px" } }))); renderTree(b.querySelector(".doccard > div")); main.append(b); app.views.set(id, {}); return; }
   const v = doc.element(id); if (!v) { app.closeTab(id); return; }
   const t = doc.typeOf(v);

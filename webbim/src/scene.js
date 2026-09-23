@@ -10,6 +10,7 @@
 
 import { fmtLength, fmtArea } from "./units.js";
 import { outline, elementSegs } from "./bimsketch.js";
+import { buildableArea } from "./spacegraph.js";
 import {
   TOL, add, sub, mul, dot, dist, perp, normalise, lerp, samplePath, pathArea, polyPath, bboxOf, segStart, segEnd, segMinusConvex,
   ensureCCW, convexHull, TAU, pointInPoly, reversePath, polyArea,
@@ -280,6 +281,15 @@ export function planScene(doc, v, opts = {}) {
     if (t === "RepeatingDetail" && vis(f)) drawRepeating(doc, ctx, B, f);
     if (t === "MaterialTag" && categoryVisible(ctx, "Annotation")) drawMaterialTag(doc, ctx, B, f);
     if (t === "Dimension" && categoryVisible(ctx, "Annotation") && measureRefs(doc, F.json(f, "of") || []).kind !== "levels") drawDimension(doc, ctx, B, f);
+  }
+  // a space graph's site on its base level: the boundary (chain), what the setbacks leave (dashed) and the entry
+  if (categoryVisible(ctx, "Annotation")) for (const f of doc.elements()) if (doc.typeOf(f) === "SpaceGraph" && lv && F.refId(f, "level") === doc.idOf(lv)) {
+    const site = doc.argValue(f, "site") || {}, P = site.boundary || []; if (P.length < 3) continue;
+    const id = doc.idOf(f), g = { weight: penWeight(doc, "medium", S), colour: "#2b3a4e", dash: LINE_TYPES.centre };
+    B.stroke(polyPath(P), g, "Annotation-Site", id);
+    const bA = buildableArea(P, site.setbacks || []); if (bA.length >= 3) B.stroke(polyPath(bA), { weight: penWeight(doc, "thin", S), colour: "#d0312d", dash: LINE_TYPES.dashed1 }, "Annotation-Site", id);
+    for (const en of site.entries || []) { const p0 = B.P(en.at), d = normalise(en.dir || [0, 1]), n = [-d[1], d[0]]; B.fill(polyPath([p0, add(p0, add(mul(d, -5), mul(n, 2.2))), add(p0, add(mul(d, -5), mul(n, -2.2)))]), "#1d6fd8", "Annotation-Site", id, true); B.text(add(p0, add(mul(d, -8), [2, 0])), "ENTRY", 2, { layer: "Annotation-Site", id, colour: "#1d6fd8" }); }
+    B.hit(id, P, "curve");
   }
   if (categoryVisible(ctx, "Annotation")) drawConstraintGlyphs(doc, ctx, B);
   B.prims.push(...B.later);          // labels sit on top of fills and furniture

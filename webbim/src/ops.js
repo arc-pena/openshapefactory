@@ -12,6 +12,7 @@ import { CATALOGUE, F, clone, documentLookup, MODEL_LIBS } from "./ocaf.js";
 import { resolveReference, orthoLine, importPlacer, importLayerMap } from "./bim.js";
 import { outline } from "./bimsketch.js";
 import { lockedKey, pushStyleSettings } from "./styles.js";
+import { planSpaceGraph, buildOpsFor, swapInOrder } from "./spacegraph.js";
 
 export class Editor {
   constructor(doc) {
@@ -288,6 +289,55 @@ const HANDLERS = {
     // a door or window type that changes size resizes every opening its instances fill
     if (o.lib === "types") sizeOpeningsToType(doc, doc.elements().filter(g => (doc.typeOf(g) === "Door" || doc.typeOf(g) === "Window") && (F.refId(g, "doorType") === o.id || F.refId(g, "windowType") === o.id)));
     return {};
+  },
+  /** Build (or rebuild) what a space graph describes: plan it, keep its slot order as the rooms'
+   *  identity, make any levels it names, and replace the walls, slab, rooms and doors it built before. */
+  sgbuild(doc, o, ed) {
+    const f = doc.element(o.id); if (!f || doc.typeOf(f) !== "SpaceGraph") throw new Error(`${o.id} is not a space graph`);
+    const sg = { nodes: doc.argValue(f, "nodes") || [], edges: doc.argValue(f, "edges") || [], site: doc.argValue(f, "site") || {}, options: doc.argValue(f, "options") || {}, order: o.replan ? null : doc.argValue(f, "order") };
+    if (!sg.nodes.length) return { said: "the space graph has no spaces yet" };
+    const plan = planSpaceGraph(sg, { relax: !!o.relax });
+    doc.setArg(f, "order", plan.order);
+    if (o.relax) { const pos = new Map(plan.bubbles.map(b => [b.id, b])); doc.setArg(f, "nodes", sg.nodes.map(nd => Object.assign({}, nd, { x: pos.get(nd.id).x, y: pos.get(nd.id).y }))); }
+    // levels: the base level for the first (or unnamed) one; others found by name, or made above it
+    const levels = doc.elements().filter(g => doc.typeOf(g) === "Level");
+    const base = doc.element(F.refId(f, "level")) || levels[0];
+    if (!base) throw new Error("the document has no level to build on");
+    const baseZ = F.real(base, "elevation"), storey = plan.options.storey, made = new Map();
+    const keys = plan.levels.map(L => L.key);
+    const levelFor = key => {
+      if (made.has(key)) return made.get(key);
+      const i = keys.indexOf(key); let id = null;
+      if (!key || i === 0) id = doc.idOf(base);
+      else {
+        const k = key.toLowerCase(), hit = levels.find(g => { const nm = F.text(g, "name").toLowerCase(); return nm === k || doc.idOf(g).toLowerCase() === k || nm === "level " + k || nm.endsWith(" " + k); });
+        if (hit) id = doc.idOf(hit);
+        else if (/^(g|gf|ground|0|l0)$/.test(k)) id = doc.idOf(base);
+        else if (/^-?\d+$/.test(k.replace(/^l/, ""))) {
+          // a storey number: that many levels above (or below) the base, by elevation
+          const up = levels.slice().sort((a, b) => F.real(a, "elevation") - F.real(b, "elevation")), bi = up.indexOf(base), n = Number(k.replace(/^l/, ""));
+          if (up[bi + n]) id = doc.idOf(up[bi + n]);
+        }
+      }
+      if (!id) {
+        id = doc.freshId("Level");
+        HANDLERS.add(doc, { element: { id, type: "Level", name: `Level ${key}`, args: { name: `Level ${key}`, elevation: baseZ + i * storey } } });
+        HANDLERS.add(doc, { element: { type: "PlanView", name: `Level ${key} Plan`, args: { level: { ref: id }, scale: 100, viewRange: { top: 2300, cut: 1200, bottom: 0, depth: 0 }, detailLevel: "Fine", style: doc.lib.viewStyles["VS-CONSTRUCTION"] ? { ref: "VS-CONSTRUCTION" } : null } } });
+      }
+      made.set(key, id); return id;
+    };
+    const types = { exterior: plan.options.exteriorType || "T-EXTCAV300", interior: plan.options.interiorType || "T-PART100", floor: plan.options.floorType || "T-FLOOR250", door: plan.options.doors === false ? null : (plan.options.doorType || "T-DOOR915") };
+    for (const k of Object.keys(types)) if (types[k] && !doc.lib.types[types[k]]) types[k] = k === "door" ? null : Object.keys(doc.lib.types).find(t => (doc.resolveType(t) || {}).category === { exterior: "IfcWall", interior: "IfcWall", floor: "IfcSlab" }[k]);
+    const ops = buildOpsFor(doc, o.id, plan, { levelFor, types });
+    for (const op of ops) HANDLERS[op.op](doc, op, ed);
+    const rooms = plan.levels.reduce((a, L) => a + L.rooms.length, 0);
+    return { said: `${o.id}: ${rooms} rooms on ${plan.levels.length} level${plan.levels.length === 1 ? "" : "s"}, ${plan.levels.map(L => L.kind).join(" / ")}${plan.report.length ? " · " + plan.report[0] : ""}`, plan };
+  },
+  /** Two rooms trade places: each takes the other's slot, the widths follow the areas, the strip shifts. */
+  sgswap(doc, o, ed) {
+    const f = doc.element(o.id); if (!f) throw new Error(`there is no space graph ${o.id}`);
+    doc.setArg(f, "order", swapInOrder(doc.argValue(f, "order"), o.a, o.b));
+    return F.bool(f, "auto") !== false ? HANDLERS.sgbuild(doc, { id: o.id }, ed) : {};
   },
   /** A view style edited: every view using it takes what it includes (a view template applied). */
   style(doc, o) {

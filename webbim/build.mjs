@@ -15,8 +15,8 @@ const SRC = path.join(ROOT, "src");
 // Dependency order is the concatenation order: a module comes after everything it imports.
 const MODULES = [
   "fontdata.js", "geom2d.js", "expr.js", "units.js", "ocaf.js", "library.js", "walls.js", "spaces.js", "joins.js", "dxf.js",
-  "cadsketch.js", "bimsketch.js", "bim.js", "solids.js", "crop.js", "styles.js", "ops.js", "scene.js", "props.js", "hlr.js", "pdf.js", "render.js", "sample.js", "ifcsections.js", "ifcread.js", "ifcimport.js", "cadbridge.js", "acceptance.js",
-  "ui_util.js", "panel.js", "graph.js", "sketchui.js", "canvas2d.js", "viewcube.js", "view3d.js", "app.js",
+  "cadsketch.js", "bimsketch.js", "bim.js", "solids.js", "crop.js", "styles.js", "spacegraph.js", "ops.js", "scene.js", "props.js", "hlr.js", "pdf.js", "render.js", "sample.js", "ifcsections.js", "ifcread.js", "ifcimport.js", "cadbridge.js", "acceptance.js",
+  "ui_util.js", "panel.js", "graph.js", "sketchui.js", "sgui.js", "canvas2d.js", "viewcube.js", "view3d.js", "app.js",
 ];
 const fail = msg => { console.error("build refused: " + msg); process.exit(1); };
 

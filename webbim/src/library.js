@@ -75,6 +75,9 @@ export const PARAM_SPECS = {
   Number:     { guid: "5d10-0002", kind: "Text", binding: "instance", categories: ["IfcSpace"], group: "Identity Data" },
   Occupancy:  { guid: "5d10-0003", kind: "Integer", binding: "instance", categories: ["IfcSpace"], group: "Identity Data" },
   FinishFloor:{ guid: "5d10-0004", kind: "Material", binding: "instance", categories: ["IfcSpace"], group: "Finishes" },
+  // what a space graph built, and which of its nodes (rooms) each element belongs to
+  SpaceGraph: { guid: "5d10-0010", kind: "Text", binding: "instance", categories: ["*"], group: "Space Graph" },
+  ProgramId:  { guid: "5d10-0011", kind: "Text", binding: "instance", categories: ["*"], group: "Space Graph" },
 };
 
 /** Categories are IFC classes (§2.2). Subcategories are the unit of pen assignment (§7.1). */
