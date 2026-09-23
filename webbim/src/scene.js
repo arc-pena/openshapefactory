@@ -368,6 +368,16 @@ export function drawSymbol(doc, B, sym, atPaper, rotDeg = 0, layer = "Annotation
   for (const t of geo.r.texts) B.prims.push({ t: "text", at: T(t.at), text: t.text, height: t.height * k, rot: rotDeg, align: "centre", valign: "baseline", colour: "#000", layer, id });
 }
 
+/** Where a dimension sits: witness feet a, b; the measured direction; the dimension line A–Bp at its offset. */
+export function dimensionGeometry(doc, f, m = measureRefs(doc, F.json(f, "of") || [])) {
+  if (!m || m.lost || m.value == null) return null;
+  const off = F.real(f, "offset");
+  let a, b, dir;
+  if (m.kind === "parallel") { const L = m.a.geom; dir = perp(L.d); a = L.p; b = add(a, mul(dir, dot(sub(m.b.geom.p, a), dir))); }
+  else { a = m.a.kind === "point" ? m.a.geom : m.a.geom.p; b = m.b.kind === "point" ? m.b.geom : m.b.geom.p; dir = normalise(sub(b, a)); }
+  const along = perp(dir), shift = mul(along, off);
+  return { a, b, dir, along, off, A: add(a, shift), Bp: add(b, shift), value: m.value, signed: dot(sub(b, a), dir) };
+}
 function drawDimension(doc, ctx, B, f) {
   const id = doc.idOf(f), keys = F.json(f, "of") || [];
   const m = measureRefs(doc, keys);
@@ -380,12 +390,7 @@ function drawDimension(doc, ctx, B, f) {
     return;
   }
   if (m.value == null) return;
-  const off = F.real(f, "offset");
-  let a, b, dir;
-  if (m.kind === "parallel") { const L = m.a.geom; dir = perp(L.d); a = L.p; b = add(a, mul(dir, dot(sub(m.b.geom.p, a), dir))); }
-  else { a = m.a.kind === "point" ? m.a.geom : m.a.geom.p; b = m.b.kind === "point" ? m.b.geom : m.b.geom.p; dir = normalise(sub(b, a)); }
-  const along = perp(dir), shift = mul(along, off);
-  const A = add(a, shift), Bp = add(b, shift);
+  const { a, b, dir, along, off, A, Bp } = dimensionGeometry(doc, f, m);
   B.stroke([lineSeg(A, Bp)], g, "Annotation-Dimension", id);
   B.stroke([lineSeg(a, add(A, mul(along, 150 * Math.sign(off || 1)))), lineSeg(b, add(Bp, mul(along, 150 * Math.sign(off || 1))))], g, "Annotation-Dimension", id);
   for (const p of [A, Bp]) { const pp = B.P(p), t = mul(normalise(add(dir, along)), 1.2); B.stroke([lineSeg(sub(pp, t), add(pp, t))], { weight: penWeight(doc, "medium", ctx.scale), colour: "#000" }, "Annotation-Dimension", id, true); }

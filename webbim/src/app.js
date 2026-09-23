@@ -128,7 +128,7 @@ function setDocument(doc, note) {
 }
 function default3D() { const f = app.doc.elements().find(g => app.doc.typeOf(g) === "View3D" && g.get("Name") === "{3D}") || app.doc.elements().find(g => app.doc.typeOf(g) === "View3D"); return f ? app.doc.idOf(f) : null; }
 let draftTimer = null;
-function saveDraftSoon() { clearTimeout(draftTimer); draftTimer = setTimeout(() => { try { store("draft-v2", app.doc.toJSON()); } catch (e) { /* too big or blocked: the draft is a convenience only */ } }, 800); }
+function saveDraftSoon() { clearTimeout(draftTimer); draftTimer = setTimeout(() => { try { store("draft-v3", app.doc.toJSON()); } catch (e) { /* too big or blocked: the draft is a convenience only */ } }, 800); }
 
 // ---------------------------------------------------------------- the command registry
 //! Ribbon buttons, the Quick Access Toolbar, keyboard shortcuts and the
@@ -337,7 +337,7 @@ function fileMenu(anchor) {
   menuAt(r.left, r.bottom, [
     { label: "New", icon: "sheet", run: () => newEmpty() }, { label: "Open…", icon: "open", run: () => openFile() }, { label: "Save", icon: "save", run: () => saveModel() },
     "-", { label: "Export…", icon: "exportI", run: () => exportDialog() }, { label: "Import DXF Symbol…", icon: "importI", run: () => importDXF() },
-    "-", { label: "Project Information…", icon: "info", run: () => projectInfo() }, { label: "Reset to Sample Project", icon: "house", run: () => { forget("draft-v2"); forget("tabs"); setDocument(buildSample(), { msg: "Sample project loaded", kind: "ok" }); } },
+    "-", { label: "Project Information…", icon: "info", run: () => projectInfo() }, { label: "Reset to Sample Project", icon: "house", run: () => { forget("draft-v3"); forget("tabs"); setDocument(buildSample(), { msg: "Sample project loaded", kind: "ok" }); } },
   ]);
 }
 
@@ -575,7 +575,7 @@ function openFile() {
 }
 async function saveModel() { const r = await saveFile(`${app.doc.meta.name || "model"}.json`, app.doc.serialise(), "application/json"); app.say(r.ok ? "Model saved" : r.error, r.ok ? "ok" : "error"); }
 function newEmpty() {
-  forget("draft-v2"); forget("tabs");
+  forget("draft-v3"); forget("tabs");
   const doc = newDocument("Untitled");
   doc.addElement({ id: "L0", type: "Level", name: "Level 1", args: { name: "Level 1", elevation: 0 } });
   doc.addElement({ id: "L1", type: "Level", name: "Level 2", args: { name: "Level 2", elevation: 3000 } });
@@ -785,7 +785,7 @@ async function boot() {
   const split = store("split"); if (split) document.getElementById("left").style.setProperty("--split", (split * 100).toFixed(1) + "%");
   await loadDrawingFont();
   let doc = null, note = null;
-  const draft = store("draft-v2");
+  const draft = store("draft-v3");
   if (draft) { try { doc = openDocument(draft); doc.regenerate(); note = { msg: "Restored your draft from this browser. File › New to start empty.", kind: "note" }; } catch (e) { doc = null; } }
   if (!doc) doc = buildSample();
   setDocument(doc, note || { msg: `Studio House: ${doc.elements().length} elements. Double-click a view in the Project Browser to open it; WA draws walls; 3D opens the {3D} view.`, kind: "ok" });

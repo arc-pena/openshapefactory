@@ -75,9 +75,9 @@ export function buildSample() {
   // annotation in the ground floor plan
   add({ id: "TX1", type: "Text", args: { content: "190mm blockwork, plaster both sides", position: [11200, 9800], rotation: 0, textType: { ref: "TT-25" }, wrapWidth: 40, leaders: [{ side: "left", elbow: [10600, 9800], target: [10600, 7000], arrow: "AR-DOT", attachment: "middle" }], view: { ref: "V-P00" } } });
   add({ id: "TX2", type: "Text", args: { content: "=\"Wall type \" & W1.TypeMark & \" — \" & W1.FireRating & \" min\"", position: [500, -1600], rotation: 0, textType: { ref: "TT-25" }, wrapWidth: 80, leaders: [], view: { ref: "V-P00" } } });
-  add({ id: "DIM1", type: "Dimension", args: { of: ["W1:core.exterior", "W3:core.exterior"], offset: -1800, view: { ref: "V-P00" }, locked: false } });
-  add({ id: "DIM2", type: "Dimension", args: { of: ["W4:core.exterior", "P1:centreline"], offset: 9300, view: { ref: "V-P00" }, locked: false } });
-  add({ id: "DIM3", type: "Dimension", args: { of: ["P1:centreline", "W2:core.exterior"], offset: 9300, view: { ref: "V-P00" }, locked: false } });
+  add({ id: "DIM1", type: "Dimension", args: { of: ["W1:core.exterior", "W3:core.exterior"], offset: 1800, view: { ref: "V-P00" }, locked: false } });
+  add({ id: "DIM2", type: "Dimension", args: { of: ["W4:core.exterior", "P1:centreline"], offset: 1300, view: { ref: "V-P00" }, locked: false } });
+  add({ id: "DIM3", type: "Dimension", args: { of: ["P1:centreline", "W2:core.exterior"], offset: -9300, view: { ref: "V-P00" }, locked: false } });
   ed.apply({ op: "relate", store: "constraints", row: { id: "C1", kind: "distance", of: ["W4:core.exterior", "P1:centreline"], value: 6000, locked: false } }, { regenerate: false });
   // sheets
   add({ id: "SH-A101", type: "Sheet", name: "A-101 Ground Floor Plan", args: { number: "A-101", sheetName: "Ground Floor Plan", size: "A1", orientation: "landscape", titleBlock: { ref: "SY-TB-A1" },

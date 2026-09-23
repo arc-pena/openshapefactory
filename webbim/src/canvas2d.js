@@ -6,7 +6,7 @@
 
 import { h, clear, fmtLen, icon } from "./ui_util.js";
 import { TOL, add, sub, mul, dot, dist, perp, normalise, lerp, intersectLines, lineThrough, projectPoint, pointInPoly, samplePath, polyArea, bboxOf } from "./geom2d.js";
-import { deriveView, placements } from "./scene.js";
+import { deriveView, placements, dimensionGeometry } from "./scene.js";
 import { drawScene, primsBBox } from "./render.js";
 import { F, CATALOGUE } from "./ocaf.js";
 import { uOf, pointAt } from "./walls.js";
@@ -139,6 +139,65 @@ export class View2D {
       }
     }
     if (doc.typeOf(f) === "Wall" && doc.plan(f) && doc.plan(f).curve.type === "line") this.listening(f);
+    if (doc.typeOf(f) === "Dimension") this.dimensionEditor(f);
+  }
+  /** A placed dimension, as in Revit: drag the grip (or the dimension itself) to slide
+   *  the line; click the value to type a new distance, which moves what it measures. */
+  dimensionEditor(f) {
+    const doc = this.doc, id = doc.idOf(f), g = dimensionGeometry(doc, f); if (!g) return;
+    const mid = lerp(g.A, g.Bp, 0.5), sm = this.toScreen(mid);
+    const grip = h("div", { class: "handle move", title: "Drag to move the dimension line", "aria-label": "Move dimension line", style: { left: sm[0] + "px", top: sm[1] + "px" } });
+    grip.addEventListener("pointerdown", e => {
+      e.preventDefault(); e.stopPropagation(); // the overlay re-renders while dragging, so listen on the window
+      const r = this.canvas.getBoundingClientRect(), start = this.toModel(e.clientX - r.left, e.clientY - r.top), key = `dimoff:${id}:${e.timeStamp}`;
+      const move = ev => { const p = this.toModel(ev.clientX - r.left, ev.clientY - r.top); this.slideDimension(id, g, start, p, key); this.showHud(ev.clientX - r.left, ev.clientY - r.top, `offset ${fmtLen(F.real(doc.element(id), "offset"))} mm`); };
+      const up = () => { window.removeEventListener("pointermove", move); this.app.editor.seal(); this.hideHud(); this.app.refresh({ keepMain: true }); };
+      window.addEventListener("pointermove", move); window.addEventListener("pointerup", up, { once: true });
+    });
+    const at = this.toScreen(add(mid, mul(g.along, 6 * this.modelPerPx() * Math.sign(g.off || 1) + 0)));
+    const box = h("div", { class: "tdim", style: { left: at[0] + "px", top: (at[1] - 18) + "px" } });
+    const locked = F.bool(f, "locked");
+    const val = h("button", { title: "Click to type a new distance: the measured element moves", "aria-label": `Dimension value ${fmtLen(g.value)}` }, fmtLen(g.value));
+    val.addEventListener("click", () => {
+      const inp = h("input", { type: "text", value: String(Math.round(g.value)), "aria-label": "New distance in mm" });
+      val.replaceWith(inp); inp.focus(); inp.select();
+      inp.addEventListener("keydown", e => {
+        e.stopPropagation();
+        if (e.key === "Escape") return this.draw();
+        if (e.key !== "Enter") return;
+        const v = Number(inp.value); if (!(v >= 0)) return this.app.say("type a distance in mm", "error");
+        const r = this.setDimensionValue(f, v);
+        this.app.say(r.ok ? `Distance set to ${fmtLen(v)} mm; ${r.moved} moved` : r.error, r.ok ? "ok" : "error");
+      });
+    });
+    const lock = h("button", { class: "lock", title: locked ? "Unlock this distance" : "Padlock: keep this distance", "aria-label": locked ? "Unlock dimension" : "Lock dimension", "aria-pressed": String(locked) }, icon(locked ? "lock" : "unlock"));
+    lock.addEventListener("click", () => {
+      const keys = F.json(f, "of"), row = doc.constraints.find(c => JSON.stringify(c.of) === JSON.stringify(keys));
+      const ops = [{ op: "set", id, key: "locked", value: !locked },
+        { op: "relate", store: "constraints", row: Object.assign(row ? {} : { kind: "distance", of: keys }, row || {}, { value: Math.round(g.value * 1000) / 1000, locked: !locked }) }];
+      const r = this.app.apply(ops); if (r.ok) this.app.say(locked ? "Dimension unlocked: it follows the elements again" : `Padlocked at ${fmtLen(g.value)} mm`, "ok");
+    });
+    box.append(val, lock);
+    this.overlay.append(grip, box);
+  }
+  slideDimension(id, g, start, p, key) {
+    const off = Math.round((g.off + dot(sub(p, start), g.along)) / 10) * 10;
+    this.app.apply({ op: "set", id, key: "offset", value: off }, { quiet: true, coalesce: key });
+  }
+  /** Change what a dimension measures: move the element of its second reference (else the first) along the measured direction. */
+  setDimensionValue(f, value) {
+    const doc = this.doc, g = dimensionGeometry(doc, f); if (!g) return { ok: false, error: "this dimension has lost a reference" };
+    const keys = F.json(f, "of"), want = Math.sign(g.signed || 1) * value, delta = want - g.signed;
+    const movable = k => { const e = doc.element(k.split(":")[0]); return e && geomKey(e, doc) ? doc.idOf(e) : null; };
+    const second = movable(keys[1]), first = movable(keys[0]);
+    const mover = second || first; if (!mover) return { ok: false, error: "neither referenced element can move" };
+    const k = second ? delta : -delta, mv = [Math.round(g.dir[0] * k * 1000) / 1000, Math.round(g.dir[1] * k * 1000) / 1000];
+    const ops = [];
+    const row = doc.constraints.find(c => JSON.stringify(c.of) === JSON.stringify(keys));
+    if (row) ops.push({ op: "relate", store: "constraints", row: Object.assign({}, row, { value }) });
+    ops.push({ op: "transform", ids: [mover], move: mv });
+    const r = this.app.apply(ops);
+    return Object.assign({ moved: mover }, r);
   }
   /** Listening dimensions (§10.3): editable in place, padlockable. */
   listening(f) {
@@ -352,6 +411,8 @@ export class View2D {
     if (hit && this.kind === "PlanView") {
       // pressing on something not yet selected selects it first, so one press-and-drag moves it
       if (!this.app.selection.has(hit.id) && !e.shiftKey) { this.app.selection.clear(); this.app.selection.add(hit.id); this.pressSelected = true; }
+      const hf = this.doc.element(hit.id);
+      if (hf && this.doc.typeOf(hf) === "Dimension") { const g = dimensionGeometry(this.doc, hf); if (g) this.drag.dim = { id: hit.id, g, grab: this.toModel(sx, sy) }; return; }
       const movable = [...this.app.selection].filter(id => this.doc.element(id) && geomKey(this.doc.element(id), this.doc));
       if (movable.length) this.drag.body = { ids: movable, grab: this.toModel(sx, sy) };
     } else if (!hit) this.drag.box = true;
@@ -383,6 +444,7 @@ export class View2D {
       if (d.pan && d.moved) { this.cam.x = d.cam.x - (sx - d.start[0]) / this.cam.z; this.cam.y = d.cam.y + (sy - d.start[1]) / this.cam.z; this.draw(); return; }
       if (d.body && d.moved) return this.dragBody(d, sx, sy, e);
       if (d.level && d.moved) return this.dragLevel(d, sx, sy);
+      if (d.dim && d.moved) { this.slideDimension(d.dim.id, d.dim.g, d.dim.grab, this.toModel(sx, sy), `dimoff:${d.dim.id}:${d.start.join(",")}`); this.showHud(sx, sy, `offset ${fmtLen(F.real(this.doc.element(d.dim.id), "offset"))} mm`); return; }
       if (d.box && d.moved) { this.box = [d.start, [sx, sy]]; this.draw(); return; }
     }
     const p = this.toModel(sx, sy);
@@ -398,6 +460,7 @@ export class View2D {
     if (!d) return;
     if (d.viewport) { this.guides = []; this.app.editor.seal(); this.draw(); if (d.moved) return; }
     if (d.body && d.moved) { this.app.editor.seal(); this.showSnap(null); this.hideHud(); this.app.refresh({ keepMain: true }); return; }
+    if (d.dim && d.moved) { this.app.editor.seal(); this.hideHud(); this.app.refresh({ keepMain: true }); return; }
     if (d.level && d.moved) { this.app.editor.seal(); this.hideHud(); this.app.refresh({ keepMain: true }); this.app.say("Level moved: walls, rooms and views bound to it followed", "ok"); return; }
     if (d.box && d.moved) return this.finishBox(d, e);
     if (d.moved) return;

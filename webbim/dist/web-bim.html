@@ -4958,6 +4958,16 @@ function drawSymbol(doc, B, sym, atPaper, rotDeg = 0, layer = "Annotation", id =
   for (const t of geo.r.texts) B.prims.push({ t: "text", at: T(t.at), text: t.text, height: t.height * k, rot: rotDeg, align: "centre", valign: "baseline", colour: "#000", layer, id });
 }
 
+/** Where a dimension sits: witness feet a, b; the measured direction; the dimension line A–Bp at its offset. */
+function dimensionGeometry(doc, f, m = measureRefs(doc, F.json(f, "of") || [])) {
+  if (!m || m.lost || m.value == null) return null;
+  const off = F.real(f, "offset");
+  let a, b, dir;
+  if (m.kind === "parallel") { const L = m.a.geom; dir = perp(L.d); a = L.p; b = add(a, mul(dir, dot(sub(m.b.geom.p, a), dir))); }
+  else { a = m.a.kind === "point" ? m.a.geom : m.a.geom.p; b = m.b.kind === "point" ? m.b.geom : m.b.geom.p; dir = normalise(sub(b, a)); }
+  const along = perp(dir), shift = mul(along, off);
+  return { a, b, dir, along, off, A: add(a, shift), Bp: add(b, shift), value: m.value, signed: dot(sub(b, a), dir) };
+}
 function drawDimension(doc, ctx, B, f) {
   const id = doc.idOf(f), keys = F.json(f, "of") || [];
   const m = measureRefs(doc, keys);
@@ -4970,12 +4980,7 @@ function drawDimension(doc, ctx, B, f) {
     return;
   }
   if (m.value == null) return;
-  const off = F.real(f, "offset");
-  let a, b, dir;
-  if (m.kind === "parallel") { const L = m.a.geom; dir = perp(L.d); a = L.p; b = add(a, mul(dir, dot(sub(m.b.geom.p, a), dir))); }
-  else { a = m.a.kind === "point" ? m.a.geom : m.a.geom.p; b = m.b.kind === "point" ? m.b.geom : m.b.geom.p; dir = normalise(sub(b, a)); }
-  const along = perp(dir), shift = mul(along, off);
-  const A = add(a, shift), Bp = add(b, shift);
+  const { a, b, dir, along, off, A, Bp } = dimensionGeometry(doc, f, m);
   B.stroke([lineSeg(A, Bp)], g, "Annotation-Dimension", id);
   B.stroke([lineSeg(a, add(A, mul(along, 150 * Math.sign(off || 1)))), lineSeg(b, add(Bp, mul(along, 150 * Math.sign(off || 1))))], g, "Annotation-Dimension", id);
   for (const p of [A, Bp]) { const pp = B.P(p), t = mul(normalise(add(dir, along)), 1.2); B.stroke([lineSeg(sub(pp, t), add(pp, t))], { weight: penWeight(doc, "medium", ctx.scale), colour: "#000" }, "Annotation-Dimension", id, true); }
@@ -6107,9 +6112,9 @@ function buildSample() {
   // annotation in the ground floor plan
   add({ id: "TX1", type: "Text", args: { content: "190mm blockwork, plaster both sides", position: [11200, 9800], rotation: 0, textType: { ref: "TT-25" }, wrapWidth: 40, leaders: [{ side: "left", elbow: [10600, 9800], target: [10600, 7000], arrow: "AR-DOT", attachment: "middle" }], view: { ref: "V-P00" } } });
   add({ id: "TX2", type: "Text", args: { content: "=\"Wall type \" & W1.TypeMark & \" — \" & W1.FireRating & \" min\"", position: [500, -1600], rotation: 0, textType: { ref: "TT-25" }, wrapWidth: 80, leaders: [], view: { ref: "V-P00" } } });
-  add({ id: "DIM1", type: "Dimension", args: { of: ["W1:core.exterior", "W3:core.exterior"], offset: -1800, view: { ref: "V-P00" }, locked: false } });
-  add({ id: "DIM2", type: "Dimension", args: { of: ["W4:core.exterior", "P1:centreline"], offset: 9300, view: { ref: "V-P00" }, locked: false } });
-  add({ id: "DIM3", type: "Dimension", args: { of: ["P1:centreline", "W2:core.exterior"], offset: 9300, view: { ref: "V-P00" }, locked: false } });
+  add({ id: "DIM1", type: "Dimension", args: { of: ["W1:core.exterior", "W3:core.exterior"], offset: 1800, view: { ref: "V-P00" }, locked: false } });
+  add({ id: "DIM2", type: "Dimension", args: { of: ["W4:core.exterior", "P1:centreline"], offset: 1300, view: { ref: "V-P00" }, locked: false } });
+  add({ id: "DIM3", type: "Dimension", args: { of: ["P1:centreline", "W2:core.exterior"], offset: -9300, view: { ref: "V-P00" }, locked: false } });
   ed.apply({ op: "relate", store: "constraints", row: { id: "C1", kind: "distance", of: ["W4:core.exterior", "P1:centreline"], value: 6000, locked: false } }, { regenerate: false });
   // sheets
   add({ id: "SH-A101", type: "Sheet", name: "A-101 Ground Floor Plan", args: { number: "A-101", sheetName: "Ground Floor Plan", size: "A1", orientation: "landscape", titleBlock: { ref: "SY-TB-A1" },
@@ -7690,6 +7695,65 @@ class View2D {
       }
     }
     if (doc.typeOf(f) === "Wall" && doc.plan(f) && doc.plan(f).curve.type === "line") this.listening(f);
+    if (doc.typeOf(f) === "Dimension") this.dimensionEditor(f);
+  }
+  /** A placed dimension, as in Revit: drag the grip (or the dimension itself) to slide
+   *  the line; click the value to type a new distance, which moves what it measures. */
+  dimensionEditor(f) {
+    const doc = this.doc, id = doc.idOf(f), g = dimensionGeometry(doc, f); if (!g) return;
+    const mid = lerp(g.A, g.Bp, 0.5), sm = this.toScreen(mid);
+    const grip = h("div", { class: "handle move", title: "Drag to move the dimension line", "aria-label": "Move dimension line", style: { left: sm[0] + "px", top: sm[1] + "px" } });
+    grip.addEventListener("pointerdown", e => {
+      e.preventDefault(); e.stopPropagation(); // the overlay re-renders while dragging, so listen on the window
+      const r = this.canvas.getBoundingClientRect(), start = this.toModel(e.clientX - r.left, e.clientY - r.top), key = `dimoff:${id}:${e.timeStamp}`;
+      const move = ev => { const p = this.toModel(ev.clientX - r.left, ev.clientY - r.top); this.slideDimension(id, g, start, p, key); this.showHud(ev.clientX - r.left, ev.clientY - r.top, `offset ${fmtLen(F.real(doc.element(id), "offset"))} mm`); };
+      const up = () => { window.removeEventListener("pointermove", move); this.app.editor.seal(); this.hideHud(); this.app.refresh({ keepMain: true }); };
+      window.addEventListener("pointermove", move); window.addEventListener("pointerup", up, { once: true });
+    });
+    const at = this.toScreen(add(mid, mul(g.along, 6 * this.modelPerPx() * Math.sign(g.off || 1) + 0)));
+    const box = h("div", { class: "tdim", style: { left: at[0] + "px", top: (at[1] - 18) + "px" } });
+    const locked = F.bool(f, "locked");
+    const val = h("button", { title: "Click to type a new distance: the measured element moves", "aria-label": `Dimension value ${fmtLen(g.value)}` }, fmtLen(g.value));
+    val.addEventListener("click", () => {
+      const inp = h("input", { type: "text", value: String(Math.round(g.value)), "aria-label": "New distance in mm" });
+      val.replaceWith(inp); inp.focus(); inp.select();
+      inp.addEventListener("keydown", e => {
+        e.stopPropagation();
+        if (e.key === "Escape") return this.draw();
+        if (e.key !== "Enter") return;
+        const v = Number(inp.value); if (!(v >= 0)) return this.app.say("type a distance in mm", "error");
+        const r = this.setDimensionValue(f, v);
+        this.app.say(r.ok ? `Distance set to ${fmtLen(v)} mm; ${r.moved} moved` : r.error, r.ok ? "ok" : "error");
+      });
+    });
+    const lock = h("button", { class: "lock", title: locked ? "Unlock this distance" : "Padlock: keep this distance", "aria-label": locked ? "Unlock dimension" : "Lock dimension", "aria-pressed": String(locked) }, icon(locked ? "lock" : "unlock"));
+    lock.addEventListener("click", () => {
+      const keys = F.json(f, "of"), row = doc.constraints.find(c => JSON.stringify(c.of) === JSON.stringify(keys));
+      const ops = [{ op: "set", id, key: "locked", value: !locked },
+        { op: "relate", store: "constraints", row: Object.assign(row ? {} : { kind: "distance", of: keys }, row || {}, { value: Math.round(g.value * 1000) / 1000, locked: !locked }) }];
+      const r = this.app.apply(ops); if (r.ok) this.app.say(locked ? "Dimension unlocked: it follows the elements again" : `Padlocked at ${fmtLen(g.value)} mm`, "ok");
+    });
+    box.append(val, lock);
+    this.overlay.append(grip, box);
+  }
+  slideDimension(id, g, start, p, key) {
+    const off = Math.round((g.off + dot(sub(p, start), g.along)) / 10) * 10;
+    this.app.apply({ op: "set", id, key: "offset", value: off }, { quiet: true, coalesce: key });
+  }
+  /** Change what a dimension measures: move the element of its second reference (else the first) along the measured direction. */
+  setDimensionValue(f, value) {
+    const doc = this.doc, g = dimensionGeometry(doc, f); if (!g) return { ok: false, error: "this dimension has lost a reference" };
+    const keys = F.json(f, "of"), want = Math.sign(g.signed || 1) * value, delta = want - g.signed;
+    const movable = k => { const e = doc.element(k.split(":")[0]); return e && geomKey(e, doc) ? doc.idOf(e) : null; };
+    const second = movable(keys[1]), first = movable(keys[0]);
+    const mover = second || first; if (!mover) return { ok: false, error: "neither referenced element can move" };
+    const k = second ? delta : -delta, mv = [Math.round(g.dir[0] * k * 1000) / 1000, Math.round(g.dir[1] * k * 1000) / 1000];
+    const ops = [];
+    const row = doc.constraints.find(c => JSON.stringify(c.of) === JSON.stringify(keys));
+    if (row) ops.push({ op: "relate", store: "constraints", row: Object.assign({}, row, { value }) });
+    ops.push({ op: "transform", ids: [mover], move: mv });
+    const r = this.app.apply(ops);
+    return Object.assign({ moved: mover }, r);
   }
   /** Listening dimensions (§10.3): editable in place, padlockable. */
   listening(f) {
@@ -7903,6 +7967,8 @@ class View2D {
     if (hit && this.kind === "PlanView") {
       // pressing on something not yet selected selects it first, so one press-and-drag moves it
       if (!this.app.selection.has(hit.id) && !e.shiftKey) { this.app.selection.clear(); this.app.selection.add(hit.id); this.pressSelected = true; }
+      const hf = this.doc.element(hit.id);
+      if (hf && this.doc.typeOf(hf) === "Dimension") { const g = dimensionGeometry(this.doc, hf); if (g) this.drag.dim = { id: hit.id, g, grab: this.toModel(sx, sy) }; return; }
       const movable = [...this.app.selection].filter(id => this.doc.element(id) && geomKey(this.doc.element(id), this.doc));
       if (movable.length) this.drag.body = { ids: movable, grab: this.toModel(sx, sy) };
     } else if (!hit) this.drag.box = true;
@@ -7934,6 +8000,7 @@ class View2D {
       if (d.pan && d.moved) { this.cam.x = d.cam.x - (sx - d.start[0]) / this.cam.z; this.cam.y = d.cam.y + (sy - d.start[1]) / this.cam.z; this.draw(); return; }
       if (d.body && d.moved) return this.dragBody(d, sx, sy, e);
       if (d.level && d.moved) return this.dragLevel(d, sx, sy);
+      if (d.dim && d.moved) { this.slideDimension(d.dim.id, d.dim.g, d.dim.grab, this.toModel(sx, sy), `dimoff:${d.dim.id}:${d.start.join(",")}`); this.showHud(sx, sy, `offset ${fmtLen(F.real(this.doc.element(d.dim.id), "offset"))} mm`); return; }
       if (d.box && d.moved) { this.box = [d.start, [sx, sy]]; this.draw(); return; }
     }
     const p = this.toModel(sx, sy);
@@ -7949,6 +8016,7 @@ class View2D {
     if (!d) return;
     if (d.viewport) { this.guides = []; this.app.editor.seal(); this.draw(); if (d.moved) return; }
     if (d.body && d.moved) { this.app.editor.seal(); this.showSnap(null); this.hideHud(); this.app.refresh({ keepMain: true }); return; }
+    if (d.dim && d.moved) { this.app.editor.seal(); this.hideHud(); this.app.refresh({ keepMain: true }); return; }
     if (d.level && d.moved) { this.app.editor.seal(); this.hideHud(); this.app.refresh({ keepMain: true }); this.app.say("Level moved: walls, rooms and views bound to it followed", "ok"); return; }
     if (d.box && d.moved) return this.finishBox(d, e);
     if (d.moved) return;
@@ -8903,7 +8971,7 @@ function setDocument(doc, note) {
 }
 function default3D() { const f = app.doc.elements().find(g => app.doc.typeOf(g) === "View3D" && g.get("Name") === "{3D}") || app.doc.elements().find(g => app.doc.typeOf(g) === "View3D"); return f ? app.doc.idOf(f) : null; }
 let draftTimer = null;
-function saveDraftSoon() { clearTimeout(draftTimer); draftTimer = setTimeout(() => { try { store("draft-v2", app.doc.toJSON()); } catch (e) { /* too big or blocked: the draft is a convenience only */ } }, 800); }
+function saveDraftSoon() { clearTimeout(draftTimer); draftTimer = setTimeout(() => { try { store("draft-v3", app.doc.toJSON()); } catch (e) { /* too big or blocked: the draft is a convenience only */ } }, 800); }
 
 // ---------------------------------------------------------------- the command registry
 //! Ribbon buttons, the Quick Access Toolbar, keyboard shortcuts and the
@@ -9112,7 +9180,7 @@ function fileMenu(anchor) {
   menuAt(r.left, r.bottom, [
     { label: "New", icon: "sheet", run: () => newEmpty() }, { label: "Open…", icon: "open", run: () => openFile() }, { label: "Save", icon: "save", run: () => saveModel() },
     "-", { label: "Export…", icon: "exportI", run: () => exportDialog() }, { label: "Import DXF Symbol…", icon: "importI", run: () => importDXF() },
-    "-", { label: "Project Information…", icon: "info", run: () => projectInfo() }, { label: "Reset to Sample Project", icon: "house", run: () => { forget("draft-v2"); forget("tabs"); setDocument(buildSample(), { msg: "Sample project loaded", kind: "ok" }); } },
+    "-", { label: "Project Information…", icon: "info", run: () => projectInfo() }, { label: "Reset to Sample Project", icon: "house", run: () => { forget("draft-v3"); forget("tabs"); setDocument(buildSample(), { msg: "Sample project loaded", kind: "ok" }); } },
   ]);
 }
 
@@ -9350,7 +9418,7 @@ function openFile() {
 }
 async function saveModel() { const r = await saveFile(`${app.doc.meta.name || "model"}.json`, app.doc.serialise(), "application/json"); app.say(r.ok ? "Model saved" : r.error, r.ok ? "ok" : "error"); }
 function newEmpty() {
-  forget("draft-v2"); forget("tabs");
+  forget("draft-v3"); forget("tabs");
   const doc = newDocument("Untitled");
   doc.addElement({ id: "L0", type: "Level", name: "Level 1", args: { name: "Level 1", elevation: 0 } });
   doc.addElement({ id: "L1", type: "Level", name: "Level 2", args: { name: "Level 2", elevation: 3000 } });
@@ -9560,7 +9628,7 @@ async function boot() {
   const split = store("split"); if (split) document.getElementById("left").style.setProperty("--split", (split * 100).toFixed(1) + "%");
   await loadDrawingFont();
   let doc = null, note = null;
-  const draft = store("draft-v2");
+  const draft = store("draft-v3");
   if (draft) { try { doc = openDocument(draft); doc.regenerate(); note = { msg: "Restored your draft from this browser. File › New to start empty.", kind: "note" }; } catch (e) { doc = null; } }
   if (!doc) doc = buildSample();
   setDocument(doc, note || { msg: `Studio House: ${doc.elements().length} elements. Double-click a view in the Project Browser to open it; WA draws walls; 3D opens the {3D} view.`, kind: "ok" });
