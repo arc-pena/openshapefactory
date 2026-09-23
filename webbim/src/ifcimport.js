@@ -152,7 +152,9 @@ export function importIfc(doc, text) {
   const model = readIfc(text), scale = ifcScale(model);
   const report = { made: {}, missed: {}, notes: [] };
   const made = k => { report.made[k] = (report.made[k] || 0) + 1; };
-  const missed = k => { report.missed[k] = (report.missed[k] || 0) + 1; };
+  report.why = {};
+  //! Every element kept out says why, once per class and reason: "1 × IFCSLAB" alone is not something anybody can act on.
+  const missed = (k, why) => { report.missed[k] = (report.missed[k] || 0) + 1; if (why) { const w = (report.why[k] = report.why[k] || {}); w[why] = (w[why] || 0) + 1; } };
   const ops = [], taken = new Set(doc.elements().map(f => doc.idOf(f)));
   const fresh = prefix => { let n = 1; while (taken.has(prefix + n)) n++; taken.add(prefix + n); return prefix + n; };
   const newTypes = new Map();
@@ -231,7 +233,12 @@ export function importIfc(doc, text) {
     const isWall = WALLS.has(T), isSlab = SLABS.has(T) || T === "IFCFOOTING", isCol = COLUMNS.has(T), isBeam = BEAMS.has(T), isProxy = PROXIES.has(T);
     if (!(isWall || isSlab || isCol || isBeam || isProxy)) { if (!FILLERS.has(T) && /^IFC/.test(T) && e.args.length > 6 && isRef(e.args[5]) && !IGNORED.has(T)) missed(T); continue; }
     const body = bodySolids(model, e, scale), lv = levelFor(e);
-    if (!body.points.length) { missed(T); continue; }
+    if (!body.points.length) {
+      const reps = (follow(model, e.args[6]) || { args: [] }).args[2], kinds = followAll(model, reps).map(r => asText(r.args[1], "?") + "/" + asText(r.args[2], "?"));
+      const items = ifcBodyItems(model, e).map(i => i.type);
+      missed(T, items.length ? `its body (${[...new Set(items)].join(", ")}) has no points this reader understands` : `no Body representation${kinds.length ? " (it has " + kinds.join(", ") + ")" : ""}`);
+      continue;
+    }
     const [zLo, zHi] = zRange(body.points);
     if (body.clipped) note("clip", "elements cut by a boolean in the file (a wall clipped under a roof) come in whole, before the cut");
     if (isWall) {
@@ -246,7 +253,7 @@ export function importIfc(doc, text) {
       ops.push({ op: "add", element: { id, type: "Wall", name: ifcName(e) || id, args: { centreline: { type: "line", start: a.map(r1), end: b.map(r1) }, mounting: "Centred", wallType: { ref: typeId }, baseLevel: lv ? { ref: lv.id } : null, baseOffset: r1(zLo - (lv ? lv.z : 0)), height: r1(zHi - zLo) } } });
       wallOf.set(e.id, { id, a, b, z0: zLo, len: box.length }); made("Wall");
     } else if (isSlab) {
-      if (!addFlat(e, T, body, lv)) missed(T);
+      if (!addFlat(e, T, body, lv)) missed(T, "its outline has less than three distinct corners in plan (a vertical or degenerate slab)");
     } else if (isCol || isBeam) {
       const x = body.extrusions.length === 1 ? body.extrusions[0] : null, size = x && x.profile ? profileSize(x.profile, x.local || []) : null;
       if (x && size && size.W > 0 && size.D > 0) {

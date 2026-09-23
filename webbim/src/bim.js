@@ -14,6 +14,7 @@ import {
 import { wallRecord, wallReferences, pointAt, uOf, sideOf, boundary, wallPieces, faceLine, layerStack } from "./walls.js";
 import { resolveJoins, wallRegions, solidSpans, coarseMaterial, JOIN_TOL } from "./joins.js";
 import { findLoops, claimLoops, filterWallFaces, interiorPoint } from "./spaces.js";
+import { regionsOf } from "./bimsketch.js";
 import {
   PEN_ISO, PATTERNS, MATERIALS, PARAM_SPECS, CATEGORIES, FAMILIES, TYPES, TEXT_TYPES, SYMBOLS, VS_PRESENTATION, VS_CONSTRUCTION,
 } from "./library.js";
@@ -348,18 +349,36 @@ BUILDERS.Column = {
 declare({ type: "Floor", guid: "wb-0401", category: "IfcSlab", kind: "floor", idPrefix: "FL",
   summary: "A boundary on a level, and the type's layers stacked down from its top surface.",
   args: [ json("boundary", "Boundary", [[0, 0], [6000, 0], [6000, 4000], [0, 4000]]), ref("floorType", "Type", ["floorType"]), ref("level", "Level", ["level"]),
-          real("heightOffset", "Height offset from level", 0, -10000, 10000, 1, "mm", { group: "Constraints" }) ],
-  handles: (f) => { const b = F.json(f, "boundary") || []; return b.map((p, i) => ({ key: "v" + i, at: p, constraint: "free2d", writes: `boundary.${i}` })); } });
+          real("heightOffset", "Height offset from level", 0, -10000, 10000, 1, "mm", { group: "Constraints" }),
+          json("sketch", "Boundary sketch", null, { group: "Constraints" }) ],
+  // a sketched floor is edited in its sketch (Edit Boundary), where its loops stay closed; a plain one by its corners
+  handles: (f) => { if (hasSketch(F.json(f, "sketch"))) return []; const b = F.json(f, "boundary") || []; return b.map((p, i) => ({ key: "v" + i, at: p, constraint: "free2d", writes: `boundary.${i}` })); } });
+const hasSketch = s => !!(s && Array.isArray(s.elements) && s.elements.length);
+/** A floor's areas: the sketch's closed loops with their holes, or the plain boundary. */
+export function floorRegions(f) {
+  const sk = F.json(f, "sketch");
+  if (hasSketch(sk)) { const r = regionsOf(sk); if (r.error) throw new Error(r.error); return r.regions; }
+  return [{ outer: F.json(f, "boundary"), holes: [] }];
+}
 BUILDERS.Floor = {
-  precondition: (f) => { const b = F.json(f, "boundary"); if (!Array.isArray(b) || b.length < 3) return "a floor needs a boundary of three points or more"; return F.type(f, "floorType") ? null : "pick a floor type"; },
+  precondition: (f) => {
+    const sk = F.json(f, "sketch");
+    if (hasSketch(sk)) { const r = regionsOf(sk); if (r.error) return r.error; if (!r.regions.length) return "the sketch has no closed loop"; }
+    else { const b = F.json(f, "boundary"); if (!Array.isArray(b) || b.length < 3) return "a floor needs a boundary of three points or more"; }
+    return F.type(f, "floorType") ? null : "pick a floor type";
+  },
   build: (f, doc) => {
-    const t = F.type(f, "floorType"), b = F.json(f, "boundary"), top = levelElev(doc, f, "level") + F.real(f, "heightOffset");
+    const t = F.type(f, "floorType"), regions = floorRegions(f), top = levelElev(doc, f, "level") + F.real(f, "heightOffset");
     const layers = t.layers || [{ function: "Structure", thickness: 200, material: "M-CONC" }];
     const parts = []; let z = top;
-    for (const L of layers) { parts.push({ foot: b.map(p => p.slice()), z0: z - L.thickness, z1: z, sub: L.function, material: L.material }); z -= L.thickness; }
-    const T_ = top - z, area = Math.abs(polyArea(b));
-    const per = b.reduce((a, p, i) => a + dist(p, b[(i + 1) % b.length]), 0);
-    return { plan: { path: polyPath(b), foot: b, z0: z, z1: top, material: layers[layers.length > 1 ? 1 : 0].material, parts },
+    for (const L of layers) { for (const rg of regions) parts.push({ foot: rg.outer.map(p => p.slice()), holes: rg.holes.map(h => h.map(p => p.slice())), z0: z - L.thickness, z1: z, sub: L.function, material: L.material }); z -= L.thickness; }
+    const T_ = top - z;
+    const ringArea = r => Math.abs(polyArea(r)), ringLen = r => r.reduce((a, p, i) => a + dist(p, r[(i + 1) % r.length]), 0);
+    const area = regions.reduce((a, rg) => a + ringArea(rg.outer) - rg.holes.reduce((s, h) => s + ringArea(h), 0), 0);
+    const per = regions.reduce((a, rg) => a + ringLen(rg.outer) + rg.holes.reduce((s, h) => s + ringLen(h), 0), 0);
+    const main = regions.reduce((b, rg) => (ringArea(rg.outer) > ringArea(b.outer) ? rg : b), regions[0]), b = main.outer;
+    const path = regions.flatMap(rg => [...polyPath(rg.outer), ...rg.holes.flatMap(h => polyPath(h))]);
+    return { plan: { path, foot: b, regions, z0: z, z1: top, material: layers[layers.length > 1 ? 1 : 0].material, parts },
       data: { value: area, kind: "Area", parts, props: { Area: { kind: "Area", v: area / 1e6 }, Thickness: L(T_), Perimeter: L(per), "Top elevation": L(top), TypeMark: T(t.mark || t.id) } } };
   },
 };

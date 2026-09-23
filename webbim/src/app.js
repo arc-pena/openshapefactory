@@ -6,6 +6,8 @@
 //! registry, and every edit through app.apply → the op pipeline → regenerate.
 
 import { h, clear, icon, dialog, saveFile, store, forget, loadDrawingFont, fmtLen } from "./ui_util.js";
+import { SketchSession } from "./sketchui.js";
+import { fromPolygon } from "./bimsketch.js";
 import { Editor } from "./ops.js";
 import { buildSample } from "./sample.js";
 import { openDocument, newDocument, sheetSize } from "./bim.js";
@@ -143,7 +145,8 @@ const COMMANDS = {
   window: tool("window", "Window", "window", "WN", "Click a wall to place a window (plan or 3D)."),
   opening: tool("opening", "Wall Opening", "opening", "OP", "Click a wall: an opening with nothing in it."),
   column: tool("column", "Column", "column", "CL", "Click to place (plan or 3D)."),
-  floor: tool("floor", "Floor", "floor", "SB", "Click the boundary's corners; click the first again (or Enter) to close. Layers hang down from the level."),
+  floor: { label: "Floor", icon: "floor", key: "SB", hint: "Sketch the floor's boundary: lines, arcs, circles, splines, Pick Walls. Closed loops inside are holes. Finish ✓ makes the floor; its layers hang down from the level.", run: () => startFloorSketch(), active: () => !!(app.sketch && app.sketch.target.kind === "floor") },
+  editboundary: { label: "Edit Boundary", icon: "skline", hint: "Back into the floor's sketch", run: () => { const id = [...app.selection].find(i => app.doc.element(i) && app.doc.typeOf(app.doc.element(i)) === "Floor"); if (id) app.editBoundary(id); else app.say("select a floor", "note"); } },
   beam: tool("beam", "Beam", "beam", "BM", "Two clicks: the beam's axis. Its top sits at the level plus the top offset."),
   grid: tool("grid", "Grid", "grid", "GR", "Two clicks."),
   space: tool("space", "Room", "room", "RM", "Click inside an enclosed area. The room keeps its name by this point."),
@@ -205,7 +208,7 @@ app.run = id => { const c = COMMANDS[id]; if (!c) return; closeMenus(); c.run();
 const big = id => ({ id, size: "big" }), small = id => ({ id, size: "small" });
 const RIBBON = [
   { tab: "Architecture", panels: [
-    { title: "Build", items: [big("wall"), big("door"), big("window"), big("column")] },
+    { title: "Build", items: [big("wall"), big("door"), big("window"), big("column"), big("floor")] },
     { title: "Opening", items: [big("opening")] },
     { title: "Room & Area", items: [big("space"), small("sep"), small("schedule")] },
     { title: "Datum", items: [big("level"), big("grid"), big("planview")] },
@@ -249,12 +252,14 @@ function contextTab() {
     { title: "Properties", items: [big("props"), big("edittype")] },
     { title: "Modify", items: [big("move"), big("copy"), big("rotate"), big("mirror"), big("del")] },
     ...(hasWall ? [{ title: "Mode", items: [big("flip")] }] : []),
+    ...(els.length === 1 && app.doc.typeOf(els[0]) === "Floor" ? [{ title: "Mode", items: [big("editboundary")] }] : []),
     ...(els.some(f => app.doc.typeOf(f) === "Door") ? [{ title: "Door", items: [big("dooranim"), big("swingnext"), small("fliphand"), small("flipfacing")] }] : []),
     { title: "Select", items: [small("selectall"), small("select")] },
   ] };
 }
 function renderRibbon() {
   const root = clear(document.getElementById("ribbon"));
+  if (app.sketch) return renderSketchRibbon(root);
   const ctx = contextTab();
   if (app.ribbonTab === "__context" && !ctx) app.ribbonTab = app.ribbonAuto || "Architecture";
   const tabs = h("div", { class: "rtabs", role: "tablist" },
@@ -282,6 +287,54 @@ function renderRibbon() {
   }
   root.append(strip);
 }
+/** In sketch mode the ribbon is the sketch's own tab, as Revit's "Modify | Create Floor Boundary":
+ *  Mode (Finish / Cancel), Draw, Modify, Measure. The rest of the ribbon waits until it ends. */
+function renderSketchRibbon(root) {
+  const S = app.sketch;
+  root.classList.remove("collapsed");
+  root.append(h("div", { class: "rtabs", role: "tablist" },
+    h("button", { class: "rtab file", onclick: e => fileMenu(e.currentTarget) }, "File"),
+    h("button", { class: "rtab context", role: "tab", "aria-selected": "true" }, `Modify | ${S.title}`)));
+  const strip = h("div", { class: "rpanels" });
+  for (const p of S.ribbonPanels()) {
+    const body = h("div", { class: "rpbody" }); let smalls = null;
+    for (const it of p.items) {
+      const title = `${it.label}${it.hint ? "\n" + it.hint : ""}`;
+      if (it.size === "big") { smalls = null; body.append(h("button", { class: "rbig" + (it.finish ? " finish" : ""), "aria-pressed": String(!!it.on), title, onclick: () => it.run() }, icon(it.icon, 30), h("span", {}, it.label))); }
+      else { if (!smalls || smalls.children.length >= 3) { smalls = h("div", { class: "rsmallcol" }); body.append(smalls); } smalls.append(h("button", { class: "rsmall", "aria-pressed": String(!!it.on), title, onclick: () => it.run() }, icon(it.icon, 16), h("span", {}, it.label))); }
+    }
+    strip.append(h("div", { class: "rpanel" }, body, h("div", { class: "rptitle" }, p.title)));
+  }
+  root.append(strip);
+}
+/** Into sketch mode, in a plan view: for a new floor, a floor's boundary, or a crop. */
+app.startSketch = (view, target, drawing) => {
+  if (app.sketch) app.sketch.cancel();
+  app.sketch = new SketchSession(app, view, target, drawing);
+  app.tool = "sketch"; app.selection.clear();
+  if (target.kind === "crop" || (drawing && drawing.elements && drawing.elements.length)) app.sketch.tool = "select";
+  app.refresh({ keepMain: true });
+  app.say(`${app.sketch.title}: ${target.kind === "crop" ? "the crop's boundary" : "closed loops make the floor; a loop inside another is a hole"}. Draw, then Finish ✓ on the ribbon (or Cancel ✕).`, "note");
+};
+app.endSketch = () => { app.sketch = null; app.tool = "select"; const v = app.views.get(app.activeView); if (v && v.hideHud) { v.hideHud(); v.showSnap && v.showSnap(null); } app.refresh({ keepMain: true }); };
+function planViewForSketch(levelId) {
+  const cur = app.views.get(app.activeView);
+  if (cur && cur.kind === "PlanView" && (!levelId || F.refId(cur.view, "level") === levelId)) return cur;
+  const pv = app.doc.elements().find(f => app.doc.typeOf(f) === "PlanView" && (!levelId || F.refId(f, "level") === levelId));
+  if (!pv) return null;
+  app.openView(app.doc.idOf(pv)); return app.views.get(app.doc.idOf(pv));
+}
+function startFloorSketch() {
+  const v = planViewForSketch(null); if (!v) return app.say("open a floor plan to sketch a floor in", "error");
+  app.startSketch(v, { kind: "floor", id: null }, null);
+}
+/** A floor's boundary, back in its sketch. A floor drawn before sketches (or imported) opens as its polygon. */
+app.editBoundary = id => {
+  const f = app.doc.element(id); if (!f || app.doc.typeOf(f) !== "Floor") return;
+  const v = planViewForSketch(F.refId(f, "level")); if (!v) return app.say("open a plan of the floor's level first", "error");
+  const sk = app.doc.argValue(f, "sketch");
+  app.startSketch(v, { kind: "floor", id }, sk && sk.elements && sk.elements.length ? sk : fromPolygon(F.json(f, "boundary") || []));
+};
 function renderQAT() {
   const q = clear(document.getElementById("qat"));
   const b = (id, ic) => h("button", { class: "qbtn", title: COMMANDS[id].label + (COMMANDS[id].key ? ` (${COMMANDS[id].key})` : ""), "aria-label": COMMANDS[id].label, disabled: (id === "undo" && !app.editor.undoStack.length) || (id === "redo" && !app.editor.redoStack.length), onclick: () => app.run(id) }, icon(ic || COMMANDS[id].icon, 16));
@@ -296,6 +349,7 @@ function renderQAT() {
     h("button", { class: "qbtn", title: "Export (PDF set, DXF)", "aria-label": "Export", onclick: () => exportDialog() }, icon("exportI", 16)),
     h("button", { class: "qswitch", title: "Switch to the parametric CAD interface (PC) - the same model", onclick: () => switchToCad() }, icon("view3d", 15), h("span", {}, "Parametric CAD")));
 }
+app.renderOptions = () => renderOptionsBar();
 function renderOptionsBar() {
   const bar = clear(document.getElementById("options"));
   const o = app.toolOpts, doc = app.doc, t = app.tool;
@@ -305,18 +359,7 @@ function renderOptionsBar() {
   const chk = (key, label) => h("label", {}, h("input", { type: "checkbox", checked: !!o[key], onchange: e => { o[key] = e.target.checked; } }), " " + label);
   const els = [...app.selection].filter(id => doc.element(id));
   let title, kids = [];
-  if (t === "cropsketch" && app.cropView && app.cropView.cropSk) {
-    // Edit Crop: Revit's sketch mode - draw tools, modify tools, and Finish / Cancel
-    const cv = app.cropView, S = cv.cropSk;
-    const tb = (tool, label, tip) => h("button", { class: "btn small" + (S.tool === tool ? " primary" : ""), title: tip, onclick: () => cv.cropSetTool(tool) }, label);
-    const offIn = h("input", { type: "text", value: S.offset, style: { width: "60px" }, "aria-label": "Offset distance", onchange: e => { S.offset = Number(e.target.value) || 0; } });
-    bar.append(h("span", { class: "otitle" }, "Modify | Edit Crop"),
-      h("span", { class: "muted" }, "Draw"), tb("line", "Line", "click points; Enter ends the chain"), tb("rect", "Rectangle", "two corners"), tb("arc", "Arc", "start, through, end"), tb("circle", "Circle", "centre, then radius"), tb("ellipse", "Ellipse", "centre, major axis, minor"), tb("spline", "Spline", "click points; click the first to close, or Enter"),
-      h("span", { class: "muted" }, "Modify"), tb("pick", "Pick", "click elements to pick them (Shift adds); Delete removes"), tb("move", "Move", "base point, then destination"), tb("rotate", "Rotate", "centre, then from, then to"), tb("scale", "Scale", "centre, then from, then to"),
-      h("label", {}, "Offset ", offIn), h("button", { class: "btn small", onclick: () => cv.cropOffset(S.offset) }, "Offset"),
-      h("button", { class: "btn small primary", onclick: () => cv.finishCropSketch() }, "Finish ✓"), h("button", { class: "btn small", onclick: () => cv.cancelCropSketch() }, "Cancel ✗"));
-    return;
-  }
+  if (app.sketch) { app.sketch.optionsBar(bar); return; }
   if (app.pickMode) { title = `Bind ${app.pickMode.label}`; kids = [h("span", {}, "Click an element in the view"), h("button", { class: "btn small", onclick: app.endPick }, "Cancel")]; }
   else if (t === "select") { title = els.length ? `Modify | ${els.length} selected` : "Modify"; kids = els.length ? [h("span", { class: "muted" }, "Drag to move · MV CO RO MM · DE deletes · Esc clears")] : [h("span", { class: "muted" }, "Pick elements, or window-select by dragging on empty space")]; }
   else {
@@ -654,8 +697,10 @@ function importIfcFile() {
     try { r = importIfc(app.doc, await file.text()); } catch (e) { return app.say(`Could not read ${file.name}: ${e.message}`, "error"); }
     const res = app.apply(r.ops);
     if (!res.ok) return app.say(`${file.name}: ${res.error}`, "error");
-    const made = Object.entries(r.report.made).map(([k, n]) => `${n} ${k}${n > 1 ? "s" : ""}`).join(", ") || "nothing";
-    const missed = Object.entries(r.report.missed).map(([k, n]) => `${n} × ${k}`).join(", ");
+    // "9 Floors (footing)", not "9 Floor (footing)s"
+    const plural = (k, n) => n > 1 ? (/ \(/.test(k) ? k.replace(/ \(/, "s (") : k + "s") : k;
+    const made = Object.entries(r.report.made).map(([k, n]) => `${n} ${plural(k, n)}`).join(", ") || "nothing";
+    const missed = Object.entries(r.report.missed).map(([k, n]) => `${n} × ${k}${r.report.why && r.report.why[k] ? " (" + Object.entries(r.report.why[k]).map(([w, c]) => (c > 1 ? c + ": " : "") + w).join("; ") + ")" : ""}`).join(", ");
     dialog(`Imported ${file.name}`, h("div", { style: { display: "grid", gap: "8px" } },
       h("div", {}, `Made: ${made}${r.types ? ` · ${r.types} new type${r.types > 1 ? "s" : ""}` : ""}.`),
       missed ? h("div", { class: "banner note" }, `Not mapped (kept out, counted here): ${missed}. The Parametric CAD interface's IFC package can bring these in as geometry.`) : null,
@@ -935,13 +980,27 @@ let keyBuf = "", keyTimer = null;
 window.addEventListener("keydown", e => {
   const t = e.target; if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
   const mod = e.ctrlKey || e.metaKey;
+  if (app.sketch) {
+    // sketch mode: its own undo, its own keys and a few of Revit's two-letter shortcuts
+    if (mod && e.key.toLowerCase() === "z") { e.preventDefault(); e.shiftKey ? app.sketch.redo() : app.sketch.undo(); return; }
+    if (mod && e.key.toLowerCase() === "y") { e.preventDefault(); app.sketch.redo(); return; }
+    if (e.key === "Escape") { app.sketch.escape(); return; }
+    if (app.sketch.key(e)) { e.preventDefault(); return; }
+    if (mod || e.altKey || !/^[a-z]$/i.test(e.key)) return;
+    keyBuf = (keyBuf + e.key.toUpperCase()).slice(-2);
+    clearTimeout(keyTimer); keyTimer = setTimeout(() => { keyBuf = ""; }, 1200);
+    const SK = { LI: "line", RC: "rect", RE: "rect", PG: "polygon", AR: "arc", CI: "circle", EL: "ellipse", SP: "spline", BS: "bspline", PW: "pickwalls", MV: "move", CO: "copy", RO: "rotate", MM: "mirror", SC: "scale", S1: "scale1d", OF: "offset", FL: "fillet", TR: "fillet", DI: "dim", MD: "select" };
+    if (keyBuf.length === 2 && SK[keyBuf]) { app.sketch.setTool(SK[keyBuf]); keyBuf = ""; e.preventDefault(); }
+    if (keyBuf === "ZF" || keyBuf === "ZE") { app.run("zoomfit"); keyBuf = ""; }
+    return;
+  }
   if (mod && e.key.toLowerCase() === "z") { e.preventDefault(); app.run(e.shiftKey ? "redo" : "undo"); return; }
   if (mod && e.key.toLowerCase() === "y") { e.preventDefault(); app.run("redo"); return; }
   if (mod && e.key.toLowerCase() === "s") { e.preventDefault(); app.run("save"); return; }
   if (e.key === "Escape") {
     keyBuf = ""; if (openMenu) { closeMenus(); return; }
     if (app.pickMode) { app.endPick(); return; }
-    if (app.tool === "cropsketch" && app.cropView) { app.cropView.cancelCropSketch(); return; }
+    if (app.sketch) { app.sketch.escape(); return; }
     if (app.tool !== "select") { app.setTool("select"); return; }
     if (app.selection.size) app.select([]); return;
   }

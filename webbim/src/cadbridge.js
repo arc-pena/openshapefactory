@@ -13,6 +13,7 @@
 
 import { F, CATALOGUE } from "./ocaf.js";
 import { elementParts } from "./solids.js";
+import { forCad } from "./bimsketch.js";
 
 const PREFIX = "B_";
 const sid = id => String(id).replace(/[^A-Za-z0-9]/g, "_");
@@ -71,6 +72,21 @@ export function bimToCad(doc) {
       const nid = put(`${PREFIX}${s}__position`, "Point", `${id} position`, { x: cround(p[0]), y: cround(p[1]), z: cround(z) }, set);
       params.set(nid, { el: id, key: "position", kind: "point", value: [cround(p[0]), cround(p[1])] });
     }
+    // a sketched floor: its own drawing - the same elements and relations the BIM sketch holds, arcs
+    // and splines and holes as drawn - one sketch per layer, each pulled down through the layer
+    const fsk = t === "Floor" ? F.json(f, "sketch") : null;
+    if (fsk && Array.isArray(fsk.elements) && fsk.elements.length) {
+      const drawing = forCad(fsk), bands = [...new Map(elementParts(doc, f).map(p => [p.z0 + ":" + p.z1, p])).values()];
+      const bodies = bands.map((p, i) => {
+        const sk = put(`${PREFIX}${s}_s${i}`, "Sketch", `${id} ${p.sub || "layer"} boundary`, { plane: { ref: planeAt(p.z0) }, faces: "Make faces", solve: "Ignore", passes: 0, drawing: JSON.parse(JSON.stringify(drawing)) }, set,
+          { appearance: { finish: "matte", color: [0.16, 0.42, 0.78] } });
+        if (i === 0) params.set(sk, { el: id, key: "sketch", kind: "floorSketch", value: drawing });
+        return put(`${PREFIX}${s}_x${i}`, "Extrude", `${id} ${p.sub || "layer"} ${i + 1}`, { profile: { ref: sk }, limit: "Distance", distance: cround(p.z1 - p.z0), cap: "Solid", way: "Normal to the profile" }, set,
+          { appearance: { finish: "matte", color: COLOURS[t] } });
+      });
+      if (bodies.length > 1) put(`${PREFIX}${s}_body`, "Join", `${id} ${typeName}`, { parts: bodies.map(ref => ({ ref })) }, set, { appearance: { finish: "matte", color: COLOURS[t] } });
+      continue;
+    }
     // the body: each part a sketch pulled up into a solid, the parts joined
     const parts = elementParts(doc, f).filter(p => p.foot && p.foot.length >= 3 && p.z1 - p.z0 > 1e-6);
     const bodies = parts.map((p, i) => {
@@ -94,6 +110,13 @@ export function cadEditsToOps(doc, cadModel, params) {
   const ops = [], ends = [];
   for (const [nid, p] of params) {
     const f = byId.get(nid); if (!f || !doc.element(p.el)) continue;
+    if (p.kind === "floorSketch") {
+      // the floor's sketch edited in the modeller: its geometry comes back, the BIM dimensions stay
+      const dr = f.args && f.args.drawing; if (!dr || JSON.stringify(dr.elements) === JSON.stringify(p.value.elements)) continue;
+      const was = doc.argValue(doc.element(p.el), "sketch") || {};
+      ops.push({ op: "set", id: p.el, key: "sketch", value: Object.assign({}, dr, { dims: (was.dims || []).filter(x => (x.of || []).every(id => dr.elements.some(e => e.id === id))) }) });
+      continue;
+    }
     if (p.kind === "number") {
       const v = numB(f.args.value); if (!Number.isFinite(v) || Math.abs(v - p.value) < 1e-6) continue;
       ops.push({ op: "set", id: p.el, key: p.key, value: v });
@@ -132,7 +155,9 @@ export function cadDiff(cur, next) {
 }
 function sameDrawing(a, b) {
   if (!a || !b || !a.elements || a.elements.length !== b.elements.length) return false;
-  return a.elements.every((e, i) => { const o = b.elements[i]; return e.type === o.type && Math.abs(e.a[0] - o.a[0]) < 1e-6 && Math.abs(e.a[1] - o.a[1]) < 1e-6 && Math.abs(e.b[0] - o.b[0]) < 1e-6 && Math.abs(e.b[1] - o.b[1]) < 1e-6; });
+  // any element type (arcs, splines...) and the relations too: compared as written, to a micron
+  const q = x => JSON.stringify(x, (k, v) => (typeof v === "number" ? Math.round(v * 1000) / 1000 : v));
+  return q(a.elements) === q(b.elements) && q(a.constraints || []) === q(b.constraints || []);
 }
 /** The building's part written afresh, with the modeller's own features carried after it. */
 export function mergeModel(cur, next) {

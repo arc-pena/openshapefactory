@@ -20,6 +20,8 @@ import { drawScene } from "./render.js";
 import { resolveGraphics, penWeight } from "./styles.js";
 import { propertyModel, pickCandidates, graphModel, listeningDimensions, dimensionMove, editorFor } from "./props.js";
 import { buildSample } from "./sample.js";
+import { bimToCad, cadEditsToOps } from "./cadbridge.js";
+import { fromPolygon, addElements, fillet, toggleLock, measureDim, dragHandle, regionsOf } from "./bimsketch.js";
 
 export const CASES = [];
 const testCase = (id, name, fn, opts = {}) => CASES.push(Object.assign({ id, name, fn }, opts));
@@ -1070,4 +1072,28 @@ testCase("M21", "IFC as written by real exporters: mapped beams, brep columns, c
     && levels.length === 2 && levels.every(l => plans.filter(p => p === l).length === 1);
   return R(ok, "nothing missed; 2 mapped beams 4000 long top 3500; brep column 3000 high at y 4000; the two walls joined; pad footing -600→-200; proxy a Generic 800 high; a plan for each of 2 levels",
     `ok ${res.ok} ${res.error || ""}; missed ${JSON.stringify(r.report.missed)}; beams ${JSON.stringify(beams.map(([a, p]) => [a.start, a.end, p.z0, p.z1]))}; column ${cp && [cp.z0, cp.z1]} ${col && F.point(col, "position")}; joins ${JSON.stringify(doc.joins)}; footing ${fp && [fp.z0, fp.z1]}; generic ${gp && [gp.z0, gp.z1]}; plans ${plans} levels ${levels}; notes ${r.report.notes.join(" | ")}`);
+});
+
+testCase("M22", "A floor is a sketch: welded loops with holes, fillet and offset, dimensions that hold - and the same drawing in the parametric CAD", () => {
+  const doc = buildSample(), ed = new Editor(doc);
+  let d = fromPolygon([[20000, 0], [26000, 0], [26000, 4000], [20000, 4000]]);
+  d = addElements(d, [{ type: "circle", c: [23000, 2000], r: 500 }]);
+  d = fillet(d, "e1", [21000, 0], "e2", [26000, 3000], 600);                       // round one corner
+  d = toggleLock(d, { type: "length", of: ["e3"] });                                  // hold the top edge
+  const lockedLen = measureDim(d, { type: "length", of: ["e3"] }).value;
+  d = dragHandle(d, "e4.b", [19000, -500]);                                           // pull the bottom-left corner
+  const held = measureDim(d, { type: "length", of: ["e3"] }).value, closedAfterDrag = !regionsOf(d).error;
+  const res = ed.apply({ op: "add", element: { id: "FLS", type: "Floor", args: { boundary: [[20000, 0], [26000, 0], [26000, 4000]], floorType: { ref: Object.keys(doc.lib.types).find(k => doc.lib.types[k].family === "F-FLOOR") }, level: { ref: "L0" }, heightOffset: 0, sketch: d } } });
+  const f = doc.element("FLS"), p = f && doc.plan(f), err = f && doc.error(f);
+  const { model, params } = bimToCad(doc), sk = model.features.find(x => x.id === "B_FLS_s0");
+  const types = sk ? sk.args.drawing.elements.map(e => e.type).sort().join(",") : "";
+  // an edit in the CAD comes back as the floor's sketch
+  const edited = JSON.parse(JSON.stringify(model)); const esk = edited.features.find(x => x.id === "B_FLS_s0"); const circ = esk.args.drawing.elements.find(e => e.type === "circle"); circ.r = 800;
+  const ops = cadEditsToOps(doc, edited, params);
+  const back = ops.find(o => o.op === "set" && o.id === "FLS" && o.key === "sketch");
+  const ok = res.ok && !err && p && p.regions.length === 1 && p.regions[0].holes.length === 1 && Math.abs(held - lockedLen) < 0.5 && closedAfterDrag
+    && types === "arc,circle,line,line,line,line" && sk.args.drawing.constraints.some(c => c.type === "coincident") && sk.args.drawing.constraints.some(c => c.type === "tangent") && !sk.args.drawing.dims
+    && back && back.value.elements.find(e => e.type === "circle").r === 800 && back.value.dims.length === 1;
+  return R(ok, "one area with one hole; the locked top edge keeps its length when a corner is dragged; the CAD gets arcs/circle/lines with coincidences and the fillet's tangencies (no BIM dims); a CAD edit comes back with the dims kept",
+    `ok ${res.ok} err ${err}; regions ${p && p.regions.length} holes ${p && p.regions[0] && p.regions[0].holes.length}; top ${lockedLen}→${held}; closed ${closedAfterDrag}; CAD types ${types}; back ${back ? JSON.stringify(back.value.elements.find(e => e.type === "circle")) : "none"}`);
 });

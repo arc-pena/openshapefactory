@@ -35,7 +35,12 @@ export function buildHLRModel(doc, opts = {}) {
     if (f.get("Integer") === 0 || doc.error(f)) continue;
     if (opts.visible && !opts.visible(f)) continue;           // the view's Visibility/Graphics
     const t = doc.typeOf(f);
-    if (t === "Door" || t === "Window" || t === "Floor" || t === "Beam" || t === "Generic") { for (const pt of elementParts(doc, f)) if (pt.foot && pt.foot.length >= 3) prism(pt.foot, pt.z0, pt.z1, solids, edges, false); continue; }
+    if (t === "Door" || t === "Window" || t === "Floor" || t === "Beam" || t === "Generic") { for (const pt of elementParts(doc, f)) if (pt.foot && pt.foot.length >= 3) {
+      prism(pt.foot, pt.z0, pt.z1, solids, edges, false);
+      // a hole's edges are drawn; its opening does not yet let the line-work see through (the occluder is the outline)
+      for (const hole of pt.holes || []) for (let i = 0; i < hole.length; i++) { const a = hole[i], b = hole[(i + 1) % hole.length];
+        edges.push({ a: [a[0], a[1], pt.z0], b: [b[0], b[1], pt.z0], kind: "sharp" }, { a: [a[0], a[1], pt.z1], b: [b[0], b[1], pt.z1], kind: "sharp" }, { a: [a[0], a[1], pt.z0], b: [a[0], a[1], pt.z1], kind: "sharp" }); }
+    } continue; }
     if (t === "Wall") { const w = doc.plan(f); if (!w || !w.pieces) continue; wallSolids(w, solids); wallEdges(w, edges, chord); }
     if (t === "Column") { const p = doc.plan(f); if (!p) continue; const foot = p.foot.length ? p.foot : samplePath(p.path).slice(0, -1); prism(foot, p.z0, p.z1, solids, edges, !!(p.foot.length === 16)); }
   }

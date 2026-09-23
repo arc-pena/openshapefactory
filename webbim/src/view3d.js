@@ -5,6 +5,7 @@
 //! you click. Every gesture computes a value and sends an ordinary edit (§10.1).
 //! The ViewCube sits top-right; "Generate for sheet" runs hidden-line in slices.
 
+import { bridgeHoles } from "./bimsketch.js";
 import { h, clear, icon } from "./ui_util.js";
 import { buildHLRModel, hlrSteps, cameraBasis } from "./hlr.js";
 import { F } from "./ocaf.js";
@@ -126,8 +127,8 @@ export class View3D {
         if (!pivots.has(k)) { const lg = new T.Group(); lg.position.set(pt.pivot[0], pt.pivot[1], 0); lg.userData = { turn: pt.turn || 1, openDeg: pt.openDeg || 0, swingDeg: pt.swingDeg ?? 90 }; g.add(lg); g.userData.leaves.push(lg); pivots.set(k, lg); }
         parent = pivots.get(k); off = pt.pivot;
       }
-      const foot = pt.foot.map(q => [q[0] - off[0], q[1] - off[1]]);
-      const pos = prismTriangles(foot, pt.z0, pt.z1);
+      const foot = pt.foot.map(q => [q[0] - off[0], q[1] - off[1]]), holes = (pt.holes || []).map(h => h.map(q => [q[0] - off[0], q[1] - off[1]]));
+      const pos = prismTriangles(foot, pt.z0, pt.z1, holes);
       const geo = new T.BufferGeometry(); geo.setAttribute("position", new T.Float32BufferAttribute(pos, 3)); geo.computeVertexNormals();
       const colour = style === "Hidden Line" ? "#ffffff" : (PART_COLOURS[pt.sub] || PART_COLOURS[t] || "#c8c8c8");
       const glass = pt.sub === "Glass" && style !== "Hidden Line";
@@ -136,7 +137,7 @@ export class View3D {
       if (glass) { mat.transparent = true; mat.opacity = 0.35; mat.depthWrite = false; }
       if (style === "Wireframe") { mat.transparent = true; mat.opacity = 0.06; mat.depthWrite = false; }
       const mesh = new T.Mesh(geo, mat); mesh.userData.id = id; parent.add(mesh); this.meshes.push(mesh);
-      const eg = new T.BufferGeometry(); eg.setAttribute("position", new T.Float32BufferAttribute(prismEdges(foot, pt.z0, pt.z1), 3));
+      const eg = new T.BufferGeometry(); eg.setAttribute("position", new T.Float32BufferAttribute([foot, ...holes].flatMap(r => prismEdges(r, pt.z0, pt.z1)), 3));
       const line = new T.LineSegments(eg, new T.LineBasicMaterial({ color: pt.sub === "Glass" ? 0x5a7f99 : 0x1b2230 })); line.userData.edges = true; parent.add(line);
     }
     this.groups.set(id, g); this.scene.add(g);
@@ -536,13 +537,16 @@ const v3sub3 = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const PART_TYPES = new Set(["Door", "Window", "Floor", "Beam", "Generic"]);
 const PART_COLOURS = { Frame: "#eeeeec", Panel: "#9c7650", Glass: "#9fd0ee", Handle: "#b8bcc4", Sill: "#d9d6cf", Door: "#9c7650", Window: "#eeeeec", Floor: "#c9c7c1", Beam: "#8f9aa8", Generic: "#b9b2a6", Body: "#b9b2a6" };
 /** Triangles of a prism: a plan footprint between two heights, any winding. */
-function prismTriangles(foot, z0, z1) {
-  const n = foot.length, pos = [];
-  let a2 = 0; for (let i = 0; i < n; i++) { const p = foot[i], q = foot[(i + 1) % n]; a2 += p[0] * q[1] - q[0] * p[1]; }
-  const F_ = a2 > 0 ? foot : foot.slice().reverse();
+/** A prism's triangles. Holes (a floor's openings) are bridged into the outline for the caps,
+ *  and each gets its own side walls. */
+function prismTriangles(foot, z0, z1, holes = []) {
+  const area2 = r => { let a = 0; for (let i = 0; i < r.length; i++) { const p = r[i], q = r[(i + 1) % r.length]; a += p[0] * q[1] - q[0] * p[1]; } return a; };
+  const pos = [], O = area2(foot) > 0 ? foot : foot.slice().reverse();
+  const H = holes.filter(h => h.length >= 3).map(h => (area2(h) < 0 ? h : h.slice().reverse()));
+  const F_ = H.length ? bridgeHoles(O, H) : O;
   const tri = earcut2(F_);
   for (const [i, j, k] of tri) pos.push(F_[i][0], F_[i][1], z1, F_[j][0], F_[j][1], z1, F_[k][0], F_[k][1], z1, F_[k][0], F_[k][1], z0, F_[j][0], F_[j][1], z0, F_[i][0], F_[i][1], z0);
-  for (let i = 0; i < n; i++) { const a = F_[i], b = F_[(i + 1) % n]; pos.push(a[0], a[1], z0, b[0], b[1], z0, b[0], b[1], z1, a[0], a[1], z0, b[0], b[1], z1, a[0], a[1], z1); }
+  for (const R of [O, ...H]) for (let i = 0; i < R.length; i++) { const a = R[i], b = R[(i + 1) % R.length]; pos.push(a[0], a[1], z0, b[0], b[1], z0, b[0], b[1], z1, a[0], a[1], z0, b[0], b[1], z1, a[0], a[1], z1); }
   return pos;
 }
 function prismEdges(foot, z0, z1) {

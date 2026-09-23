@@ -648,7 +648,10 @@ export function sectionCut(doc, v) {
     }
     if ((t === "Floor" || t === "Beam" || t === "Generic") && p.parts) for (const part of p.parts) {
       const pr = LAYER_PRIORITY[part.sub] ?? (t === "Beam" ? 1 : 4);
-      for (const [s0, s1] of lineIntervals(part.foot, G)) push(f, t === "Floor" ? "floor" : t === "Generic" ? "generic" : "beam", s0, s1, part.z0, part.z1, part.material, pr);
+      // a floor's holes take their stretch out of the cut
+      const holesAlong = (part.holes || []).flatMap(hh => lineIntervals(hh, G));
+      for (const [a0, a1] of lineIntervals(part.foot, G)) for (const [s0, s1] of holesAlong.reduce((acc, [h0, h1]) => acc.flatMap(([x0, x1]) => [[x0, Math.min(x1, h0)], [Math.max(x0, h1), x1]].filter(([u, v]) => v - u > 0.5)), [[a0, a1]]))
+        push(f, t === "Floor" ? "floor" : t === "Generic" ? "generic" : "beam", s0, s1, part.z0, part.z1, part.material, pr);
     }
     if (t === "Column") { const foot = p.foot.length ? p.foot : samplePath(p.path); for (const [s0, s1] of lineIntervals(foot, G)) push(f, "column", s0, s1, p.z0, p.z1, p.material, 1); }
   }

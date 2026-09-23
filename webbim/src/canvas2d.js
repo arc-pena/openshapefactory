@@ -13,7 +13,7 @@ import { uOf, pointAt } from "./walls.js";
 import { listeningDimensions, dimensionMove, pickCandidates } from "./props.js";
 import { resolveReference, measureRefs, sheetSize, viewExtent } from "./bim.js";
 import { getPath, geomKey, wallEnds } from "./ops.js";
-import { chainLoop, sampleCropElement, cropLoop, loopBBox, ANNOTATION_CROP } from "./crop.js";
+import { cropLoop, loopBBox, ANNOTATION_CROP } from "./crop.js";
 
 export const SNAP_PX = 8;
 export const SNAP_KINDS = ["endpoint", "midpoint", "centre", "intersection", "perpendicular", "nearest", "grid", "angle"];
@@ -196,111 +196,15 @@ export class View2D {
     const up = () => { window.removeEventListener("pointermove", move); this.app.editor.seal(); this.hideHud(); this.app.refresh({ keepMain: true }); };
     window.addEventListener("pointermove", move); window.addEventListener("pointerup", up, { once: true });
   }
-  /** Edit Crop: a sketch that is the boundary's driver. It opens with what is there (the sketch, or the rectangle as four lines). */
+  /** Edit Crop: the crop's sketch mode - the same sketcher a floor's boundary uses. It opens with
+   *  what is there: the sketch, or the rectangle as four lines. */
   startCropSketch() {
     const clip = this.clipOf();
     const els = clip.shape && clip.shape.elements && clip.shape.elements.length ? JSON.parse(JSON.stringify(clip.shape.elements))
-      : clip.rect ? (([x0, y0, x1, y1]) => [[[x0, y0], [x1, y0]], [[x1, y0], [x1, y1]], [[x1, y1], [x0, y1]], [[x0, y1], [x0, y0]]].map(([a, b]) => ({ type: "line", a, b })))(clip.rect)
+      : clip.rect ? (([x0, y0, x1, y1]) => [[[x0, y0], [x1, y0]], [[x1, y0], [x1, y1]], [[x1, y1], [x0, y1]], [[x0, y1], [x0, y0]]].map(([a, b], i) => ({ id: "e" + (i + 1), type: "line", a, b })))(clip.rect)
       : [];
-    this.cropSk = { els, tool: "line", pts: [], sel: new Set(), offset: 500 };
-    this.app.tool = "cropsketch"; this.app.cropView = this;
-    this.app.refresh({ keepMain: true });
-    this.app.say("Edit Crop: draw a closed boundary - line, arc, circle, ellipse, spline, rectangle. Pick elements to move, rotate, scale or offset them. Finish ✓ applies it.", "note");
-  }
-  cropPoint(p, e) {
-    const sn = this.snap(p, { shift: e && e.shiftKey, from: this.cropSk && this.cropSk.pts.length ? this.cropSk.pts[this.cropSk.pts.length - 1] : null });
-    let q = sn ? sn.point : this.quantise(p);
-    // the sketch's own ends are the snaps that matter most: a boundary must close
-    const tol = 10 * this.modelPerPx();
-    for (const el of (this.cropSk ? this.cropSk.els : [])) for (const end of cropEnds(el)) if (dist(end, p) < tol) q = end;
-    return q;
-  }
-  cropSetTool(t) { if (!this.cropSk) return; this.cropSk.tool = t; this.cropSk.pts = []; this.app.refresh({ keepMain: true }); this.draw(); }
-  cropEndChain() { if (!this.cropSk) return; const S = this.cropSk; if (S.tool === "spline" && S.pts.length >= 2) { S.els.push({ type: "spline", pts: S.pts.slice(), closed: false }); } S.pts = []; this.draw(); }
-  cropDelete() { const S = this.cropSk; if (!S || !S.sel.size) return; S.els = S.els.filter((_, i) => !S.sel.has(i)); S.sel.clear(); this.draw(); }
-  cropClick(q, e) {
-    const S = this.cropSk; if (!S) return;
-    const t = S.tool; S.pts.push(q);
-    const n = S.pts.length, P = S.pts;
-    if (t === "pick") {
-      S.pts = [];
-      const tol = 8 * this.modelPerPx();
-      const i = S.els.findIndex(el => { const pts = sampleCropElement(el, 32); for (let k = 0; k < pts.length - 1; k++) if (distSeg(q, pts[k], pts[k + 1]) < tol) return true; return false; });
-      if (i < 0) { if (!e.shiftKey) S.sel.clear(); } else if (S.sel.has(i)) S.sel.delete(i); else { if (!e.shiftKey) S.sel.clear(); S.sel.add(i); }
-    } else if (t === "line") {
-      if (n >= 2) { S.els.push({ type: "line", a: P[n - 2], b: P[n - 1] }); if (n > 2 && dist(P[n - 1], P[0]) < 1) S.pts = []; }
-    } else if (t === "rect" && n === 2) {
-      const [a, b] = P; const c = [[a[0], a[1]], [b[0], a[1]], [b[0], b[1]], [a[0], b[1]]];
-      for (let k = 0; k < 4; k++) S.els.push({ type: "line", a: c[k], b: c[(k + 1) % 4] }); S.pts = [];
-    } else if (t === "arc" && n === 3) { const el = arcThrough(P[0], P[2], P[1]); if (el) S.els.push(el); S.pts = []; }
-    else if (t === "circle" && n === 2) { S.els.push({ type: "circle", c: P[0], r: Math.max(1, dist(P[0], P[1])) }); S.pts = []; }
-    else if (t === "ellipse" && n === 3) { const rx = dist(P[0], P[1]), rot = Math.atan2(P[1][1] - P[0][1], P[1][0] - P[0][0]); const v = sub(P[2], P[0]); const ry = Math.abs(-Math.sin(rot) * v[0] + Math.cos(rot) * v[1]); S.els.push({ type: "ellipse", c: P[0], rx: Math.max(1, rx), ry: Math.max(1, ry), rot }); S.pts = []; }
-    else if (t === "spline") { if (n > 2 && dist(q, P[0]) < 1) { S.els.push({ type: "spline", pts: P.slice(0, -1), closed: true }); S.pts = []; } }
-    else if (t === "move" && n === 2) { const d = sub(P[1], P[0]); this.cropTransform(pt => add(pt, d), 1, 0); S.pts = []; }
-    else if (t === "rotate" && n === 3) { const c = P[0], a = Math.atan2(P[2][1] - c[1], P[2][0] - c[0]) - Math.atan2(P[1][1] - c[1], P[1][0] - c[0]); this.cropTransform(pt => { const v = sub(pt, c); return add(c, [v[0] * Math.cos(a) - v[1] * Math.sin(a), v[0] * Math.sin(a) + v[1] * Math.cos(a)]); }, 1, a); S.pts = []; }
-    else if (t === "scale" && n === 3) { const c = P[0], k = dist(c, P[2]) / Math.max(1, dist(c, P[1])); this.cropTransform(pt => add(c, mul(sub(pt, c), k)), k, 0); S.pts = []; }
-    this.draw();
-  }
-  /** Move, rotate and scale: points through f, radii times k, angles plus a. The picked elements, or all of them. */
-  cropTransform(f, k, a) {
-    const S = this.cropSk, which = S.sel.size ? [...S.sel] : S.els.map((_, i) => i);
-    for (const i of which) {
-      const el = S.els[i];
-      if (el.type === "line") { el.a = f(el.a); el.b = f(el.b); }
-      else if (el.type === "arc") { el.c = f(el.c); el.r *= k; el.a0 += a; el.a1 += a; }
-      else if (el.type === "circle") { el.c = f(el.c); el.r *= k; }
-      else if (el.type === "ellipse") { el.c = f(el.c); el.rx *= k; el.ry *= k; el.rot = (el.rot || 0) + a; }
-      else if (el.type === "spline") el.pts = el.pts.map(f);
-    }
-  }
-  /** Offset outward by d (inward when negative): lines slide along their normals and re-meet their neighbours, curves change radius. */
-  cropOffset(d) {
-    const S = this.cropSk; if (!S || !S.els.length) return;
-    const loop = chainLoop(S.els); if (loop.error) return this.app.say(loop.error, "error");
-    const cen = loop.pts.reduce((a, p) => add(a, p), [0, 0]).map(v => v / loop.pts.length);
-    const which = new Set(S.sel.size ? S.sel : S.els.map((_, i) => i));
-    const tol = 2, before = S.els.map(el => cropEnds(el).map(p => p.slice()));
-    S.els.forEach((el, i) => {
-      if (!which.has(i)) return;
-      if (el.type === "line") { const dir = normalise(sub(el.b, el.a)); let nrm = perp(dir); if (dot(sub(lerp(el.a, el.b, 0.5), cen), nrm) < 0) nrm = mul(nrm, -1); el.a = add(el.a, mul(nrm, d)); el.b = add(el.b, mul(nrm, d)); }
-      else if (el.type === "arc" || el.type === "circle") { const outward = dist(el.c, cen) < el.r ? 1 : -1; el.r = Math.max(1, el.r + outward * d); }
-      else if (el.type === "ellipse") { el.rx = Math.max(1, el.rx + d); el.ry = Math.max(1, el.ry + d); }
-      else if (el.type === "spline") el.pts = el.pts.map(p => add(p, mul(normalise(sub(p, cen)), d)));
-    });
-    // lines that shared a corner meet again at the intersection of their new lines
-    for (let i = 0; i < S.els.length; i++) for (let j = i + 1; j < S.els.length; j++) {
-      const A = S.els[i], B = S.els[j]; if (A.type !== "line" || B.type !== "line") continue;
-      for (const ea of ["a", "b"]) for (const eb of ["a", "b"]) {
-        if (dist(before[i][ea === "a" ? 0 : 1], before[j][eb === "a" ? 0 : 1]) > tol) continue;
-        const X = intersectLines(lineThrough(A.a, A.b), lineThrough(B.a, B.b)); if (X) { A[ea] = X; B[eb] = X; }
-      }
-    }
-    this.draw();
-  }
-  finishCropSketch() {
-    const S = this.cropSk; if (!S) return;
-    const loop = chainLoop(S.els); if (loop.error) return this.app.say(`Edit Crop: ${loop.error}`, "error");
-    const bb = loopBBox(loop.pts), clip = Object.assign(this.clipOf(), { rect: bb.map(v => Math.round(v)), active: true, visible: true });
-    const onlyRect = S.els.length === 4 && S.els.every(el => el.type === "line" && (Math.abs(el.a[0] - el.b[0]) < 1e-6 || Math.abs(el.a[1] - el.b[1]) < 1e-6));
-    clip.shape = onlyRect ? null : { elements: S.els };
-    this.cropSk = null; this.app.tool = "select"; this.app.cropView = null;
-    const r = this.app.apply({ op: "set", id: this.viewId, key: "clip", value: clip });
-    if (r.ok) this.app.say(onlyRect ? "Crop region set" : `Crop region follows the sketch: ${S.els.length} element${S.els.length > 1 ? "s" : ""}`, "ok");
-  }
-  cancelCropSketch() { this.cropSk = null; this.app.tool = "select"; this.app.cropView = null; this.app.refresh({ keepMain: true }); }
-  drawCropSketch(g) {
-    const S = this.cropSk, mag = "#c2188f";
-    const path = (pts) => { g.beginPath(); pts.forEach((p, i) => { const q = this.toScreen(p); i ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1]); }); g.stroke(); };
-    S.els.forEach((el, i) => { g.strokeStyle = S.sel.has(i) ? "#1d6fd8" : mag; g.lineWidth = S.sel.has(i) ? 3 : 2; path(sampleCropElement(el, 64)); for (const e of cropEnds(el)) { const q = this.toScreen(e); g.fillStyle = mag; g.fillRect(q[0] - 3, q[1] - 3, 6, 6); } });
-    const c = this.cropCursor, P = S.pts; if (!c) return;
-    g.strokeStyle = mag; g.lineWidth = 1.5; g.setLineDash([5, 4]);
-    const t = S.tool;
-    if (P.length && (t === "line" || t === "spline" || t === "move" || t === "rotate" || t === "scale")) path(t === "spline" ? sampleCropElement({ type: "spline", pts: [...P, c] }, 32) : [P[P.length - 1], c]);
-    if (P.length === 1 && t === "rect") path([P[0], [c[0], P[0][1]], c, [P[0][0], c[1]], P[0]]);
-    if (P.length === 1 && t === "circle") path(sampleCropElement({ type: "circle", c: P[0], r: dist(P[0], c) }, 64));
-    if (P.length === 2 && t === "arc") { const el = arcThrough(P[0], c, P[1]); if (el) path(sampleCropElement(el, 48)); }
-    if (P.length >= 1 && t === "ellipse") { const rx = dist(P[0], P.length > 1 ? P[1] : c), rot = Math.atan2((P.length > 1 ? P[1] : c)[1] - P[0][1], (P.length > 1 ? P[1] : c)[0] - P[0][0]); const v = sub(c, P[0]); const ry = P.length > 1 ? Math.abs(-Math.sin(rot) * v[0] + Math.cos(rot) * v[1]) : rx / 2; path(sampleCropElement({ type: "ellipse", c: P[0], rx, ry, rot }, 64)); }
-    g.setLineDash([]);
+    els.forEach((el, i) => { if (!el.id) el.id = "e" + (i + 1); });
+    this.app.startSketch(this, { kind: "crop", cropView: this }, { elements: els, constraints: [], dims: [] });
   }
   /** Swing a door's leaf open to its swing angle and back, drawn over the plan (nothing is edited). */
   animateDoor(id, ms = 2600) {
@@ -335,7 +239,7 @@ export class View2D {
   drawTemp(g) {
     g.save(); g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     const blue = "#1d6fd8";
-    if (this.cropSk && this.app.tool === "cropsketch") this.drawCropSketch(g);
+    if (this.app.sketch && this.app.sketch.view === this) this.app.sketch.draw(g);
     if (this.doorAnim) {
       g.fillStyle = "rgba(232,89,26,.25)"; g.strokeStyle = "#e8591a"; g.lineWidth = 2;
       for (const sw of this.doorAnim.swing) {
@@ -375,6 +279,7 @@ export class View2D {
     clear(this.overlay);
     this.tdims = [];
     const doc = this.doc, ids = [...this.app.selection];
+    if (this.app.sketch && this.app.sketch.view === this) { this.app.sketch.overlay(this.overlay); return; }
     if (this.kind === "PlanView" && this.app.tool === "select") this.cropGrips();
     if ((this.kind === "ElevationView" || this.kind === "SectionView") && ids.length === 1 && this.app.tool === "select") {
       const f = doc.element(ids[0]);
@@ -688,6 +593,8 @@ export class View2D {
     // middle-drag pans (as in a PDF viewer); so do Space+drag and a finger. A left drag is a normal drag.
     const pan = e.button === 1 || this.space || e.pointerType === "touch";
     if (e.button === 1) e.preventDefault();
+    // sketch mode: Select drags elements (and boxes); the drawing tools take the click on release
+    if (!pan && this.app.sketch && this.app.sketch.view === this && this.app.sketch.pointerDown(sx, sy, e)) { this.drag = null; return; }
     this.drag = { start: [sx, sy], cam: Object.assign({}, this.cam), moved: false, button: e.button, shift: e.shiftKey, pan };
     if (pan || e.button !== 0 || this.app.tool !== "select" || this.app.pickMode) return;
     const hit = this.hitAt(sx, sy);
@@ -743,7 +650,7 @@ export class View2D {
       if (d.box && d.moved) { this.box = [d.start, [sx, sy]]; this.draw(); return; }
     }
     const p = this.toModel(sx, sy);
-    if (this.app.tool === "cropsketch" && this.kind === "PlanView") { this.cropCursor = this.cropPoint(p, e); this.draw(); return; }
+    if (this.app.sketch && this.app.sketch.view === this) { this.canvas.style.cursor = this.app.sketch.tool === "select" ? "default" : "crosshair"; this.app.sketch.hover(p, e); return; }
     if (this.app.tool !== "select" && this.kind === "PlanView") return this.toolHover(p, sx, sy, e);
     const hit = this.hitAt(sx, sy), hid = hit ? (this.kind === "Sheet" ? null : hit.id) : null;
     if (hid !== this.hover) { this.hover = hid; this.draw(); if (hid) this.app.hoverInfo(hid); }
@@ -764,7 +671,7 @@ export class View2D {
     if (e.button === 2) return this.app.contextMenu(e, "2d");
     if (this.app.pickMode) return this.pick(sx, sy);
     if (this.app.tool === "dim" && (this.kind === "ElevationView" || this.kind === "SectionView")) return this.levelDimClick(sx, sy);
-    if (this.app.tool === "cropsketch" && this.kind === "PlanView") return this.cropClick(this.cropPoint(this.toModel(sx, sy), e), e);
+    if (this.app.sketch && this.app.sketch.view === this) return this.app.sketch.click(this.toModel(sx, sy), e);
     if (this.app.tool !== "select" && this.kind === "PlanView") return this.toolClick(this.toModel(sx, sy), e);
     const hit = this.hitAt(sx, sy);
     if (this.kind === "Sheet") { this.app.select(hit ? [this.viewId + ":" + hit.id] : [], e.shiftKey, true); return; }
@@ -805,6 +712,7 @@ export class View2D {
   }
   dbl(e) {
     const [sx, sy] = this.evPos(e);
+    if (this.app.sketch) { if (this.app.sketch.view === this) this.app.sketch.enter(); return; }
     if (this.app.tool === "wall" && this.tool.pts.length >= 2) return this.finishWall(false);
     const hit = this.hitAt(sx, sy);
     if (!hit) return;
@@ -812,6 +720,8 @@ export class View2D {
     if (this.kind === "Sheet") return this.app.openView(hit.view);
     const f = this.doc.element(hit.id);
     if (f && ["ElevationView", "SectionView", "PlanView", "View3D"].includes(this.doc.typeOf(f))) this.app.openView(hit.id);
+    // double-click a floor: into its boundary sketch, as in Revit
+    if (f && this.doc.typeOf(f) === "Floor" && this.kind === "PlanView") this.app.editBoundary(hit.id);
   }
   /** Viewports snap to the sheet's margins, the other viewports' edges and centres, with guides. */
   dragViewport(d, sx, sy) {
@@ -1000,13 +910,8 @@ export class View2D {
   }
   /** Keys while this view has focus: Enter/Esc/C for the chain, digits for length. */
   key(e) {
+    if (this.app.sketch) return false;       // sketch mode's keys are the window's (it holds the session)
     const T = this.tool, tool = this.app.tool;
-    if (tool === "cropsketch" && this.cropSk) {
-      if (e.key === "Enter") { this.cropEndChain(); return true; }
-      if (e.key === "Escape") { if (this.cropSk.pts.length) { this.cropSk.pts = []; this.draw(); return true; } return false; }
-      if (e.key === "Delete" || e.key === "Backspace") { this.cropDelete(); return true; }
-      return false;
-    }
     if (MODIFY_TOOLS.has(tool) && T.pts.length && (/^[0-9.\-]$/.test(e.key) || e.key === "Backspace" || (e.key === "Enter" && this.typed))) {
       if (e.key === "Enter") {
         const n = Number(this.typed); this.typed = ""; this.hudInput = null;
@@ -1047,21 +952,3 @@ export function translateGeom(g, d) {
   return o;
 }
 
-/** The ends of a sketch element (none for closed ones). */
-function cropEnds(el) {
-  if (el.type === "line") return [el.a, el.b];
-  if (el.type === "arc") return [[el.c[0] + el.r * Math.cos(el.a0), el.c[1] + el.r * Math.sin(el.a0)], [el.c[0] + el.r * Math.cos(el.a1), el.c[1] + el.r * Math.sin(el.a1)]];
-  if (el.type === "spline" && !el.closed) return [el.pts[0], el.pts[el.pts.length - 1]];
-  return [];
-}
-/** The arc from a to b passing through m. */
-function arcThrough(a, b, m) {
-  const ax = a[0], ay = a[1], bx = b[0], by = b[1], cx = m[0], cy = m[1];
-  const D = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by)); if (Math.abs(D) < 1e-9) return null;
-  const ux = ((ax * ax + ay * ay) * (by - cy) + (bx * bx + by * by) * (cy - ay) + (cx * cx + cy * cy) * (ay - by)) / D;
-  const uy = ((ax * ax + ay * ay) * (cx - bx) + (bx * bx + by * by) * (ax - cx) + (cx * cx + cy * cy) * (bx - ax)) / D;
-  const c = [ux, uy], r = dist(c, a), ang = p => Math.atan2(p[1] - uy, p[0] - ux);
-  const a0 = ang(a), a1 = ang(b), am = ang(m), T = Math.PI * 2, ccw = x => ((x % T) + T) % T;
-  const sweep = ccw(a1 - a0), mid = ccw(am - a0);
-  return mid <= sweep ? { type: "arc", c, r, a0, a1: a0 + sweep } : { type: "arc", c, r, a0, a1: a0 - (T - sweep) };
-}
