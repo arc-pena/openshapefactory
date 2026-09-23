@@ -252,8 +252,10 @@ export class View3D {
       // Revit/PDF navigation: middle-drag pans, Shift+middle-drag orbits (so does the ViewCube);
       // a left drag is a normal drag: a selection window. One finger on a touch screen orbits.
       const touch = e.pointerType === "touch";
-      const nav = e.button === 1 ? (e.shiftKey ? "orbit" : "pan") : touch && e.button === 0 && this.app.tool === "select" ? "orbit" : e.button === 0 && this.app.tool === "select" ? "box" : null;
+      // Revit: Shift+middle orbits; also Shift+right (mice and trackpads without a usable middle button)
+      const nav = e.button === 1 ? (e.shiftKey ? "orbit" : "pan") : e.button === 2 && e.shiftKey ? "orbit" : touch && e.button === 0 && this.app.tool === "select" ? "orbit" : e.button === 0 && this.app.tool === "select" ? "box" : null;
       d = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, cam: JSON.parse(JSON.stringify(this.cam)), nav, moved: false, button: e.button };
+      if (nav === "orbit") { d.pivot = this.orbitPivot(e); d.orbit = true; }
       if (e.button === 1) e.preventDefault();
     });
     el.addEventListener("pointermove", e => {
@@ -263,7 +265,7 @@ export class View3D {
         if (Math.abs(e.clientX - d.sx) + Math.abs(e.clientY - d.sy) > 3) d.moved = true;
         if (d.moved) {
           if (d.nav === "pan") { const B = this.basis(), k = this.span() / this.H; this.cam.target = this.cam.target.map((v, i) => v - B.right[i] * dx * k + B.up[i] * dy * k); }
-          else if (d.nav === "orbit") { this.cam.azimuth -= dx * 0.4; this.cam.elevation = Math.max(-89, Math.min(89, this.cam.elevation + dy * 0.3)); }
+          else if (d.nav === "orbit") this.orbitAbout(d.pivot, -dx * 0.4, dy * 0.3);
           else if (d.nav === "box") { this.showBox(d, e); return; }
           d.x = e.clientX; d.y = e.clientY; this.render();
         }
@@ -292,6 +294,21 @@ export class View3D {
       this.render();
     }, { passive: false });
     el.addEventListener("keydown", e => { if (this.key(e)) { e.preventDefault(); e.stopPropagation(); } });
+  }
+  /** Revit's orbit pivot: the selection's centre, else the model point under the cursor, else the view centre. */
+  orbitPivot(e) {
+    const T = this.T, sel = this.meshes.filter(m => this.app.selection.has(m.userData.id));
+    if (sel.length) { const b = new T.Box3(); for (const m of sel) b.expandByObject(m); const c = b.getCenter(new T.Vector3()); return [c.x, c.y, c.z]; }
+    const hit = this.pickElement(e); if (hit) return hit.point;
+    return this.cam.target.slice();
+  }
+  /** Turn the camera about a pivot that stays put on screen: the target rides the same rotation as the view basis. */
+  orbitAbout(pivot, dAz, dEl) {
+    const B0 = this.basis(), o = v3sub3(this.cam.target, pivot);
+    const c = [vdot3(o, B0.right), vdot3(o, B0.up), vdot3(o, B0.D)];
+    this.cam.azimuth += dAz; this.cam.elevation = Math.max(-89, Math.min(89, this.cam.elevation + dEl));
+    const B1 = this.basis();
+    this.cam.target = [0, 1, 2].map(i => pivot[i] + c[0] * B1.right[i] + c[1] * B1.up[i] + c[2] * B1.D[i]);
   }
   /** Left→right encloses (window), right→left touches (crossing), as in plan. */
   showBox(d, e) {

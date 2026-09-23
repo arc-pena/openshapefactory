@@ -120,18 +120,26 @@ export async function loadDrawingFont() {
 }
 
 // ---------------------------------------------------------------- dialogs
-export function dialog(title, body, actions = []) {
-  const back = h("div", { class: "dialog-back", role: "presentation" });
-  const close = () => back.remove();
-  const dlg = h("div", { class: "dialog", role: "dialog", "aria-modal": "true", "aria-label": title },
-    h("header", {}, h("h2", {}, title), h("button", { class: "btn ghost small", onclick: close, "aria-label": "Close" }, "✕")),
-    h("div", { class: "body" }, body),
+export function dialog(title, body, actions = [], { modeless = false } = {}) {
+  // a modeless dialog floats beside the view and never covers it with a backdrop: edits show live behind it
+  const back = h("div", { class: "dialog-back" + (modeless ? " modeless" : ""), role: "presentation" });
+  const close = () => { back.remove(); if (onClose) onClose(); };
+  let onClose = null;
+  const head = h("header", {}, h("h2", {}, title), h("button", { class: "btn ghost small", onclick: close, "aria-label": "Close" }, "✕"));
+  const dlg = h("div", { class: "dialog", role: "dialog", "aria-modal": modeless ? "false" : "true", "aria-label": title },
+    head, h("div", { class: "body" }, body),
     actions.length ? h("footer", {}, actions.map(a => h("button", { class: "btn" + (a.primary ? " primary" : ""), onclick: () => { if (a.run() !== false) close(); } }, a.label))) : null);
   back.append(dlg);
-  back.addEventListener("pointerdown", e => { if (e.target === back) close(); });
-  back.addEventListener("keydown", e => { if (e.key === "Escape") close(); });
+  if (!modeless) back.addEventListener("pointerdown", e => { if (e.target === back) close(); });
+  dlg.addEventListener("keydown", e => { if (e.key === "Escape") { e.stopPropagation(); close(); } });
+  if (modeless) head.addEventListener("pointerdown", e => {
+    if (e.target.closest("button")) return;
+    const r = dlg.getBoundingClientRect(), dx = e.clientX - r.left, dy = e.clientY - r.top; head.setPointerCapture(e.pointerId);
+    const mv = ev => { dlg.style.left = Math.max(0, Math.min(window.innerWidth - 80, ev.clientX - dx)) + "px"; dlg.style.top = Math.max(0, Math.min(window.innerHeight - 40, ev.clientY - dy)) + "px"; dlg.style.right = "auto"; };
+    head.addEventListener("pointermove", mv); head.addEventListener("pointerup", () => head.removeEventListener("pointermove", mv), { once: true });
+  });
   document.body.append(back);
-  const first = dlg.querySelector("input, select, button.primary"); if (first) first.focus();
-  return { close, el: dlg };
+  const first = dlg.querySelector("input, select, button.primary"); if (first) first.focus({ preventScroll: true });
+  return { close, el: dlg, set onClose(f) { onClose = f; } };
 }
 export const fmtLen = v => (Math.abs(v - Math.round(v)) < 1e-6 ? String(Math.round(v)) : v.toFixed(1));

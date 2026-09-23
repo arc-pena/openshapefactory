@@ -256,7 +256,14 @@ table.sched td.id { font: 11.5px var(--mono); color: var(--ink-3); }
 .stat b { font: 600 22px var(--cond); font-variant-numeric: tabular-nums; }
 .stat span { font-size: 11.5px; color: var(--ink-3); }
 .dialog-back { position: fixed; inset: 0; background: rgba(10,14,20,.35); z-index: 40; display: grid; place-items: center; padding: 16px; }
-.dialog { background: var(--panel); border-radius: 10px; box-shadow: var(--shadow); width: min(760px, 100%); max-height: calc(100% - 32px); display: flex; flex-direction: column; border: 1px solid var(--rule); }
+.dialog { background: var(--panel); border-radius: 6px; box-shadow: var(--shadow); width: min(760px, 100%); max-height: calc(100vh - 32px); display: flex; flex-direction: column; border: 1px solid var(--rule); min-height: 0; }
+.dialog .body { min-height: 0; flex: 1 1 auto; }
+.dialog header, .dialog footer { flex: none; }
+.dialog-back.modeless { background: none; pointer-events: none; display: block; padding: 0; }
+.dialog-back.modeless .dialog { pointer-events: auto; position: fixed; right: 16px; top: 96px; width: min(480px, calc(100vw - 32px)); max-height: calc(100vh - 120px); box-shadow: 0 6px 28px rgba(23,32,44,.28); }
+.dialog-back.modeless .dialog header { cursor: move; background: var(--chrome-2); border-radius: 6px 6px 0 0; padding: 8px 12px; }
+.dialog .live { font-size: 11.5px; color: var(--ok); }
+@media (max-width: 860px) { .dialog-back.modeless .dialog { left: 8px; right: 8px; top: auto; bottom: 32px; width: auto; max-height: 55vh; } }
 .dialog header { padding: 14px 18px; border-bottom: 1px solid var(--rule); display: flex; align-items: center; gap: 10px; }
 .dialog header h2 { margin: 0; font: 600 16px var(--cond); flex: 1; }
 .dialog .body { padding: 14px 18px; overflow: auto; display: grid; gap: 14px; }
@@ -7090,19 +7097,27 @@ async function loadDrawingFont() {
 }
 
 // ---------------------------------------------------------------- dialogs
-function dialog(title, body, actions = []) {
-  const back = h("div", { class: "dialog-back", role: "presentation" });
-  const close = () => back.remove();
-  const dlg = h("div", { class: "dialog", role: "dialog", "aria-modal": "true", "aria-label": title },
-    h("header", {}, h("h2", {}, title), h("button", { class: "btn ghost small", onclick: close, "aria-label": "Close" }, "✕")),
-    h("div", { class: "body" }, body),
+function dialog(title, body, actions = [], { modeless = false } = {}) {
+  // a modeless dialog floats beside the view and never covers it with a backdrop: edits show live behind it
+  const back = h("div", { class: "dialog-back" + (modeless ? " modeless" : ""), role: "presentation" });
+  const close = () => { back.remove(); if (onClose) onClose(); };
+  let onClose = null;
+  const head = h("header", {}, h("h2", {}, title), h("button", { class: "btn ghost small", onclick: close, "aria-label": "Close" }, "✕"));
+  const dlg = h("div", { class: "dialog", role: "dialog", "aria-modal": modeless ? "false" : "true", "aria-label": title },
+    head, h("div", { class: "body" }, body),
     actions.length ? h("footer", {}, actions.map(a => h("button", { class: "btn" + (a.primary ? " primary" : ""), onclick: () => { if (a.run() !== false) close(); } }, a.label))) : null);
   back.append(dlg);
-  back.addEventListener("pointerdown", e => { if (e.target === back) close(); });
-  back.addEventListener("keydown", e => { if (e.key === "Escape") close(); });
+  if (!modeless) back.addEventListener("pointerdown", e => { if (e.target === back) close(); });
+  dlg.addEventListener("keydown", e => { if (e.key === "Escape") { e.stopPropagation(); close(); } });
+  if (modeless) head.addEventListener("pointerdown", e => {
+    if (e.target.closest("button")) return;
+    const r = dlg.getBoundingClientRect(), dx = e.clientX - r.left, dy = e.clientY - r.top; head.setPointerCapture(e.pointerId);
+    const mv = ev => { dlg.style.left = Math.max(0, Math.min(window.innerWidth - 80, ev.clientX - dx)) + "px"; dlg.style.top = Math.max(0, Math.min(window.innerHeight - 40, ev.clientY - dy)) + "px"; dlg.style.right = "auto"; };
+    head.addEventListener("pointermove", mv); head.addEventListener("pointerup", () => head.removeEventListener("pointermove", mv), { once: true });
+  });
   document.body.append(back);
-  const first = dlg.querySelector("input, select, button.primary"); if (first) first.focus();
-  return { close, el: dlg };
+  const first = dlg.querySelector("input, select, button.primary"); if (first) first.focus({ preventScroll: true });
+  return { close, el: dlg, set onClose(f) { onClose = f; } };
 }
 const fmtLen = v => (Math.abs(v - Math.round(v)) < 1e-6 ? String(Math.round(v)) : v.toFixed(1));
 
@@ -7358,11 +7373,15 @@ function typeEditor(app, typeId) {
   }
   if (specs.length) body.append(h("h3", {}, "Type parameters"), h("table", {}, ptab));
   if (!isWall) body.append(h("div", { class: "muted" }, "Dimensions: ", JSON.stringify(Object.fromEntries(Object.entries(t).filter(([k]) => ["width", "height", "depth", "frame", "leafThickness", "mullions"].includes(k))))));
+  const orig = { op: "type", lib: "types", id: typeId, value: clone(doc.lib.types[typeId]) };
+  const live = liveEdit(app, body, () => { t.name = nameIn.value; return { op: "type", lib: "types", id: typeId, value: t }; });
+  body.prepend(live.status);
   const d = dialog(`Edit Type — ${t.name || typeId}`, body, [
-    { label: "Duplicate…", run: () => { let n = 2; while (doc.lib.types[typeId + "-" + n]) n++; const nid = typeId + "-" + n; const copy = clone(t); copy.name = (t.name || typeId) + " " + n; app.apply({ op: "type", lib: "types", id: nid, value: copy }); app.say(`Created ${copy.name} (${nid})`, "ok"); } },
-    { label: "Cancel", run: () => true },
-    { label: "Apply to all", primary: true, run: () => { t.name = nameIn.value; const res = app.apply({ op: "type", lib: "types", id: typeId, value: t }); if (!res.ok) { app.say(res.error, "error"); return false; } app.say(`${t.name} updated — ${app.doc.stats.lastRegen.rebuilt.length} element(s) rebuilt`, "ok"); } },
-  ]);
+    { label: "Duplicate…", run: () => { let n = 2; while (doc.lib.types[typeId + "-" + n]) n++; const nid = typeId + "-" + n; const copy = clone(t); copy.name = (t.name || typeId) + " " + n; app.apply({ op: "type", lib: "types", id: nid, value: copy }); app.say(`Created ${copy.name} (${nid})`, "ok"); return false; } },
+    { label: "Revert", run: () => { live.revert(orig); typeEditor(app, typeId); } },
+    { label: "Close", primary: true, run: () => true },
+  ], { modeless: true });
+  d.onClose = live.done;
   requestAnimationFrame(redraw);
   return d;
 }
@@ -7439,10 +7458,33 @@ function vvDialog(app, viewId) {
     h("h3", {}, "Categories"), h("div", { class: "tablewrap" }, h("table", {}, h("thead", {}, h("tr", {}, ["", "Category", "Subcategory pens"].map(x => h("th", {}, x)))), catTable)),
     h("h3", {}, "Filter rules (first match with stop wins)"), rulesBox, h("div", {}, h("button", { class: "btn small", onclick: () => { st.rules.push({ id: "FL-" + (st.rules.length + 1), when: { param: "Phase", is: "Existing" }, then: { cut: { colour: "#888888" }, halftone: true } }); drawRules(); } }, "+ Rule")),
     h("h3", {}, "Pens — ISO 128 (weight is what a pen is)"), h("table", {}, penRows));
-  dialog("Visibility / Graphics", body, [{ label: "Cancel", run: () => true }, { label: "Apply", primary: true, run: () => {
-    app.apply([{ op: "style", id: styleId, value: st }, { op: "type", lib: "pens", id: "PEN-ISO", value: pens }]);
-    app.say(`Style ${st.name} and pens updated — ${app.doc.stats.lastRegen.rebuilt.length} model rebuilds`, "ok");
-  } }]);
+  const orig = [{ op: "style", id: styleId, value: clone(doc.lib.viewStyles[styleId]) }, { op: "type", lib: "pens", id: "PEN-ISO", value: clone(doc.lib.pens["PEN-ISO"]) }];
+  const live = liveEdit(app, body, () => [{ op: "style", id: styleId, value: st }, { op: "type", lib: "pens", id: "PEN-ISO", value: pens }]);
+  body.prepend(live.status);
+  const d = dialog("Visibility / Graphics", body, [
+    { label: "Revert", run: () => { live.revert(orig); vvDialog(app, viewId); } },
+    { label: "Close", primary: true, run: () => true }], { modeless: true });
+  d.onClose = live.done;
+}
+/** Every click and keystroke in `body` applies at once (one undo step for the session), so the view shows the result while you edit. */
+function liveEdit(app, body, makeOps) {
+  const key = "live:" + Math.random().toString(36).slice(2);
+  const status = h("div", { class: "live", role: "status" }, "Changes apply as you edit · Ctrl+Z undoes the session");
+  let queued = false;
+  const push = () => {
+    if (queued) return; queued = true;
+    requestAnimationFrame(() => {
+      queued = false;
+      const r = app.apply(makeOps(), { quiet: true, coalesce: key });
+      status.textContent = r.ok ? "✓ Applied live · Ctrl+Z undoes the session" : "⚠ " + (r.error || "not applied");
+      status.style.color = r.ok ? "" : "var(--error)";
+    });
+  };
+  body.addEventListener("input", push); body.addEventListener("change", push);
+  body.addEventListener("click", e => { if (e.target.closest("button")) push(); });
+  return { push, status,
+    revert: ops => { app.apply(ops, { quiet: true, coalesce: key }); app.editor.seal(); app.refresh({ keepMain: true }); },
+    done: () => { app.editor.seal(); app.refresh({ keepMain: true }); } };
 }
 
 // ===== graph.js =====
@@ -8647,8 +8689,10 @@ class View3D {
       // Revit/PDF navigation: middle-drag pans, Shift+middle-drag orbits (so does the ViewCube);
       // a left drag is a normal drag: a selection window. One finger on a touch screen orbits.
       const touch = e.pointerType === "touch";
-      const nav = e.button === 1 ? (e.shiftKey ? "orbit" : "pan") : touch && e.button === 0 && this.app.tool === "select" ? "orbit" : e.button === 0 && this.app.tool === "select" ? "box" : null;
+      // Revit: Shift+middle orbits; also Shift+right (mice and trackpads without a usable middle button)
+      const nav = e.button === 1 ? (e.shiftKey ? "orbit" : "pan") : e.button === 2 && e.shiftKey ? "orbit" : touch && e.button === 0 && this.app.tool === "select" ? "orbit" : e.button === 0 && this.app.tool === "select" ? "box" : null;
       d = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, cam: JSON.parse(JSON.stringify(this.cam)), nav, moved: false, button: e.button };
+      if (nav === "orbit") { d.pivot = this.orbitPivot(e); d.orbit = true; }
       if (e.button === 1) e.preventDefault();
     });
     el.addEventListener("pointermove", e => {
@@ -8658,7 +8702,7 @@ class View3D {
         if (Math.abs(e.clientX - d.sx) + Math.abs(e.clientY - d.sy) > 3) d.moved = true;
         if (d.moved) {
           if (d.nav === "pan") { const B = this.basis(), k = this.span() / this.H; this.cam.target = this.cam.target.map((v, i) => v - B.right[i] * dx * k + B.up[i] * dy * k); }
-          else if (d.nav === "orbit") { this.cam.azimuth -= dx * 0.4; this.cam.elevation = Math.max(-89, Math.min(89, this.cam.elevation + dy * 0.3)); }
+          else if (d.nav === "orbit") this.orbitAbout(d.pivot, -dx * 0.4, dy * 0.3);
           else if (d.nav === "box") { this.showBox(d, e); return; }
           d.x = e.clientX; d.y = e.clientY; this.render();
         }
@@ -8687,6 +8731,21 @@ class View3D {
       this.render();
     }, { passive: false });
     el.addEventListener("keydown", e => { if (this.key(e)) { e.preventDefault(); e.stopPropagation(); } });
+  }
+  /** Revit's orbit pivot: the selection's centre, else the model point under the cursor, else the view centre. */
+  orbitPivot(e) {
+    const T = this.T, sel = this.meshes.filter(m => this.app.selection.has(m.userData.id));
+    if (sel.length) { const b = new T.Box3(); for (const m of sel) b.expandByObject(m); const c = b.getCenter(new T.Vector3()); return [c.x, c.y, c.z]; }
+    const hit = this.pickElement(e); if (hit) return hit.point;
+    return this.cam.target.slice();
+  }
+  /** Turn the camera about a pivot that stays put on screen: the target rides the same rotation as the view basis. */
+  orbitAbout(pivot, dAz, dEl) {
+    const B0 = this.basis(), o = v3sub3(this.cam.target, pivot);
+    const c = [vdot3(o, B0.right), vdot3(o, B0.up), vdot3(o, B0.D)];
+    this.cam.azimuth += dAz; this.cam.elevation = Math.max(-89, Math.min(89, this.cam.elevation + dEl));
+    const B1 = this.basis();
+    this.cam.target = [0, 1, 2].map(i => pivot[i] + c[0] * B1.right[i] + c[1] * B1.up[i] + c[2] * B1.D[i]);
   }
   /** Left→right encloses (window), right→left touches (crossing), as in plan. */
   showBox(d, e) {

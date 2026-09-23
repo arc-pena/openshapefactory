@@ -55,13 +55,17 @@ The build refuses:
 - **3D:** there is always a `{3D}` view (**3D** or the house in the QAT). The ViewCube (top right) turns the view by face, edge or corner, and turns about z from the compass. Drag the cube to orbit; the house button goes home.
 - **Mouse:**
   - Left-drag is a normal drag. On empty space it window-selects left→right and crossing-selects right→left, in plan and 3D. On an element it moves the element.
-  - Middle-drag pans (Space+drag too). Shift+middle-drag orbits in 3D. The wheel zooms about the cursor. Right-click opens the context menu.
+  - Middle-drag pans (Space+drag too). Shift+middle-drag orbits in 3D (Shift+right-drag too), about the selection or the point under the cursor, which stays put on screen, as in Revit. The wheel zooms about the cursor. Right-click opens the context menu.
 - **Everything moves:**
   - Walls: move, drag ends (joined neighbours follow), and drag height, in plan and 3D.
   - Doors and windows slide along their host.
   - Levels drag up and down in elevations.
   - A wall-top grip on a wall whose height is `Top.elevation - Base.elevation` moves the level, so every wall bound to it follows.
   - Dimensions: select one, then drag its grip (or the dimension itself) to slide the line. Click its value to type a new distance: the measured element moves and joined walls follow. The padlock locks or unlocks it. The sample's dimensions start unlocked.
+- **Dialogs never block the view:**
+  - Visibility/Graphics and Edit Type float beside the view; drag them by the title.
+  - Every edit applies live, and Ctrl+Z undoes the whole session. Revert restores the values from when the dialog opened.
+  - All dialogs fit the window, and their content scrolls.
 - **Hidden-line drawings are automatic:** a 3D view on a sheet recomputes its line-work shortly after the model changes while the sheet is open. Export computes any out-of-date viewport before writing the PDF, so there is no manual step and no refusal.
 - **Two-letter shortcuts:** WA DR WN OP CL GR RM RS DI TX EL MV CO RO MM DE LL VV TL ZF 3D SA PP MD. Ctrl+Z / Ctrl+Y undo and redo; Esc cancels, then clears the selection.
 

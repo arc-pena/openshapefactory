@@ -249,11 +249,15 @@ export function typeEditor(app, typeId) {
   }
   if (specs.length) body.append(h("h3", {}, "Type parameters"), h("table", {}, ptab));
   if (!isWall) body.append(h("div", { class: "muted" }, "Dimensions: ", JSON.stringify(Object.fromEntries(Object.entries(t).filter(([k]) => ["width", "height", "depth", "frame", "leafThickness", "mullions"].includes(k))))));
+  const orig = { op: "type", lib: "types", id: typeId, value: clone(doc.lib.types[typeId]) };
+  const live = liveEdit(app, body, () => { t.name = nameIn.value; return { op: "type", lib: "types", id: typeId, value: t }; });
+  body.prepend(live.status);
   const d = dialog(`Edit Type — ${t.name || typeId}`, body, [
-    { label: "Duplicate…", run: () => { let n = 2; while (doc.lib.types[typeId + "-" + n]) n++; const nid = typeId + "-" + n; const copy = clone(t); copy.name = (t.name || typeId) + " " + n; app.apply({ op: "type", lib: "types", id: nid, value: copy }); app.say(`Created ${copy.name} (${nid})`, "ok"); } },
-    { label: "Cancel", run: () => true },
-    { label: "Apply to all", primary: true, run: () => { t.name = nameIn.value; const res = app.apply({ op: "type", lib: "types", id: typeId, value: t }); if (!res.ok) { app.say(res.error, "error"); return false; } app.say(`${t.name} updated — ${app.doc.stats.lastRegen.rebuilt.length} element(s) rebuilt`, "ok"); } },
-  ]);
+    { label: "Duplicate…", run: () => { let n = 2; while (doc.lib.types[typeId + "-" + n]) n++; const nid = typeId + "-" + n; const copy = clone(t); copy.name = (t.name || typeId) + " " + n; app.apply({ op: "type", lib: "types", id: nid, value: copy }); app.say(`Created ${copy.name} (${nid})`, "ok"); return false; } },
+    { label: "Revert", run: () => { live.revert(orig); typeEditor(app, typeId); } },
+    { label: "Close", primary: true, run: () => true },
+  ], { modeless: true });
+  d.onClose = live.done;
   requestAnimationFrame(redraw);
   return d;
 }
@@ -330,8 +334,31 @@ export function vvDialog(app, viewId) {
     h("h3", {}, "Categories"), h("div", { class: "tablewrap" }, h("table", {}, h("thead", {}, h("tr", {}, ["", "Category", "Subcategory pens"].map(x => h("th", {}, x)))), catTable)),
     h("h3", {}, "Filter rules (first match with stop wins)"), rulesBox, h("div", {}, h("button", { class: "btn small", onclick: () => { st.rules.push({ id: "FL-" + (st.rules.length + 1), when: { param: "Phase", is: "Existing" }, then: { cut: { colour: "#888888" }, halftone: true } }); drawRules(); } }, "+ Rule")),
     h("h3", {}, "Pens — ISO 128 (weight is what a pen is)"), h("table", {}, penRows));
-  dialog("Visibility / Graphics", body, [{ label: "Cancel", run: () => true }, { label: "Apply", primary: true, run: () => {
-    app.apply([{ op: "style", id: styleId, value: st }, { op: "type", lib: "pens", id: "PEN-ISO", value: pens }]);
-    app.say(`Style ${st.name} and pens updated — ${app.doc.stats.lastRegen.rebuilt.length} model rebuilds`, "ok");
-  } }]);
+  const orig = [{ op: "style", id: styleId, value: clone(doc.lib.viewStyles[styleId]) }, { op: "type", lib: "pens", id: "PEN-ISO", value: clone(doc.lib.pens["PEN-ISO"]) }];
+  const live = liveEdit(app, body, () => [{ op: "style", id: styleId, value: st }, { op: "type", lib: "pens", id: "PEN-ISO", value: pens }]);
+  body.prepend(live.status);
+  const d = dialog("Visibility / Graphics", body, [
+    { label: "Revert", run: () => { live.revert(orig); vvDialog(app, viewId); } },
+    { label: "Close", primary: true, run: () => true }], { modeless: true });
+  d.onClose = live.done;
+}
+/** Every click and keystroke in `body` applies at once (one undo step for the session), so the view shows the result while you edit. */
+function liveEdit(app, body, makeOps) {
+  const key = "live:" + Math.random().toString(36).slice(2);
+  const status = h("div", { class: "live", role: "status" }, "Changes apply as you edit · Ctrl+Z undoes the session");
+  let queued = false;
+  const push = () => {
+    if (queued) return; queued = true;
+    requestAnimationFrame(() => {
+      queued = false;
+      const r = app.apply(makeOps(), { quiet: true, coalesce: key });
+      status.textContent = r.ok ? "✓ Applied live · Ctrl+Z undoes the session" : "⚠ " + (r.error || "not applied");
+      status.style.color = r.ok ? "" : "var(--error)";
+    });
+  };
+  body.addEventListener("input", push); body.addEventListener("change", push);
+  body.addEventListener("click", e => { if (e.target.closest("button")) push(); });
+  return { push, status,
+    revert: ops => { app.apply(ops, { quiet: true, coalesce: key }); app.editor.seal(); app.refresh({ keepMain: true }); },
+    done: () => { app.editor.seal(); app.refresh({ keepMain: true }); } };
 }
