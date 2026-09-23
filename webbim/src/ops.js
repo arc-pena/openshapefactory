@@ -247,7 +247,14 @@ const HANDLERS = {
       transformExtras(doc, f, T);
     }
     followJoins(doc, new Set(ids), before);
-    return { moved: ids.filter(id => !skipped.includes(id)), said: skipped.length ? `${skipped.join(", ")} move with their host — drag their handle instead` : undefined };
+    // padlocked dimensions hold: what is locked to the moved elements comes along (§10.5)
+    const movedIds = ids.filter(id => !skipped.includes(id));
+    if (movedIds.length) {
+      const res = propagate(doc, movedIds);
+      if (res.conflicts.length) return { conflicts: res.conflicts, error: res.conflicts.map(c => c.say).join("; ") };
+      for (const [id, cl] of res.set) if (!movedIds.includes(id)) { const g = doc.element(id), bw = doc.typeOf(g) === "Wall" ? clone(doc.argValue(g, "centreline")) : null; doc.setArg(g, geomKey(g, doc), cl); if (bw) followJoins(doc, new Set([id]), new Map([[id, bw]])); movedIds.push(id); }
+    }
+    return { moved: movedIds, said: skipped.length ? `${skipped.join(", ")} move with their host — drag their handle instead` : undefined };
   },
   /** Node positions ride in the file, so undo restores layout too. */
   layout(doc, o) { if (o.reset) doc.graph.layout = {}; else doc.graph.layout[o.id] = o.at; return {}; },
@@ -410,11 +417,10 @@ const translate = (geom, d) => Array.isArray(geom) ? add(geom, d) : Object.assig
 /** Breadth-first from the pinned element; one closed-form computation per
  *  constraint edge. A revisit either agrees (a consistent cycle) or names
  *  exactly which constraint disagreed with which. No iteration, no solver state. */
-export function propagate(doc, pinnedId) {
-  const set = new Map(), pinned = new Set([pinnedId]), conflicts = [];
-  const pf = doc.element(pinnedId);
-  set.set(pinnedId, clone(doc.argValue(pf, geomKey(pf, doc))));
-  const queue = [pinnedId], cause = new Map();
+export function propagate(doc, pinnedIds) {
+  const ids = [].concat(pinnedIds), set = new Map(), pinned = new Set(ids), conflicts = [];
+  for (const id of ids) { const pf = doc.element(id); set.set(id, clone(doc.argValue(pf, geomKey(pf, doc)))); }
+  const queue = ids.slice(), cause = new Map();
   const on = id => doc.constraints.filter(c => c.locked !== false && c.enabled !== false && c.of.some(r => r.split(":")[0] === id));
   const geomOf = id => set.has(id) ? set.get(id) : clone(doc.argValue(doc.element(id), geomKey(doc.element(id), doc)));
   let steps = 0;
