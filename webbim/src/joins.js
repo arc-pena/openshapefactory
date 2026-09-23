@@ -156,8 +156,56 @@ function endTerms(w, which, detail, groups) {
       const K = B.stack.layers.map((l, j) => j).filter(j => blocks(B.stack.layers[j].priority, pA) && B.stack.layers[j].thickness > 0);
       bIdx = K.length ? nearFace(K.flatMap(j => [j, j + 1])) : farFace;
     }
-    return { k: "wall", w: B, s: sB[bIdx], bIdx, nearU: u, role: "join" };
+    // the same material on both sides of the stop is one material: no line between them (a weld)
+    const mA = detail === "Coarse" ? coarseMaterial(w) : w.stack.layers[g[0]].material;
+    const mB = detail === "Coarse" ? coarseMaterial(B) : beyondMaterial(B, bIdx, side);
+    return { k: "wall", w: B, s: sB[bIdx], bIdx, nearU: u, role: mA && mA === mB ? "weld" : "join" };
   });
+}
+/** The material of the through wall's layer just past boundary bIdx, seen from the side a T arrives on. */
+function beyondMaterial(B, bIdx, side) {
+  const sB = B.stack.s;
+  for (const j of [bIdx, bIdx - 1]) {
+    if (j < 0 || j >= B.stack.layers.length) continue;
+    const mid = (sB[j] + sB[j + 1]) / 2;
+    if ((mid - sB[bIdx]) * side < 0 && B.stack.layers[j].thickness > 0) return B.stack.layers[j].material;
+  }
+  return null;
+}
+/** A T join blends into its through wall: over the width of each joining layer, the through
+ *  wall's line along the boundary that layer stops at is hidden when the materials are the same -
+ *  and always at Coarse, where the joining wall's end is the one line that separates them. */
+function blendT(w, out, detail) {
+  for (const cut of w.cuts) {
+    const A = cut.from, nA = A.stack.s.length - 1;
+    const groups = detail === "Coarse" ? [[0, nA]] : A.stack.layers.map((l, i) => [i, i + 1]).filter(g => A.stack.layers[g[0]].thickness > 0);
+    const terms = endTerms(A, cut.end, detail, groups);
+    groups.forEach(([lo, hi], gi) => {
+      const t = terms[gi]; if (t.k !== "wall" || t.w !== w) return;
+      if (detail !== "Coarse" && t.role !== "weld") return;
+      const pa = termAt(w, t.s, { k: "wall", w: A, s: A.stack.s[lo] }, cut.u), pb = termAt(w, t.s, { k: "wall", w: A, s: A.stack.s[hi] }, cut.u);
+      const u0 = Math.min(uOf(w, pa), uOf(w, pb)), u1 = Math.max(uOf(w, pa), uOf(w, pb));
+      hideAlong(w, out, t.s, u0, u1);
+    });
+  }
+}
+/** Hide the part of every straight region edge lying on boundary s of w between u0 and u1. */
+function hideAlong(w, out, s, u0, u1) {
+  if (w.curve.type !== "line") return;
+  for (const reg of out) {
+    const next = [];
+    for (const e of reg.edges || []) {
+      const g = e.seg;
+      if (g.k !== "L" || e.role === "hidden" || Math.abs(sideOf(w, g.a) - s) > 0.5 || Math.abs(sideOf(w, g.b) - s) > 0.5) { next.push(e); continue; }
+      const ua = uOf(w, g.a), ub = uOf(w, g.b), lo = Math.min(ua, ub), hiU = Math.max(ua, ub);
+      const c0 = Math.max(lo, u0), c1 = Math.min(hiU, u1);
+      if (c1 - c0 <= TOL) { next.push(e); continue; }
+      const at = u => pointAt(w, s, u), fwd = ub >= ua;
+      const pieces = [[lo, c0, e.role], [c0, c1, "hidden"], [c1, hiU, e.role]].filter(([x, y]) => y - x > TOL);
+      for (const [x, y, role] of (fwd ? pieces : pieces.reverse())) next.push({ seg: { k: "L", a: at(fwd ? x : y), b: at(fwd ? y : x) }, role });
+    }
+    reg.edges = next;
+  }
 }
 
 /** Gaps in a through wall where incoming walls pass (Fine only), and openings. */
@@ -215,6 +263,7 @@ export function wallRegions(w, detail, cutH, openings = []) {
       if (reg) out.push(Object.assign(reg, { lo, hi, layer: layerIdx, material: layerIdx === null ? coarseMaterial(w) : w.stack.layers[layerIdx].material }));
     }
   });
+  blendT(w, out, detail);
   // Bevel wedges past the miter limit, in the outer material.
   for (const e of ["start", "end"]) for (const b of (w.ends[e].bevel || [])) {
     out.push({ path: [{ k: "L", a: b.pts[0], b: b.pts[1] }, { k: "L", a: b.pts[1], b: b.pts[2] }, { k: "L", a: b.pts[2], b: b.pts[0] }],

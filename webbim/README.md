@@ -8,7 +8,7 @@ Live artifact: https://claude.ai/artifact/EuWpSVPSYJtKFJB8GHDqfP
 
 ```
 node build.mjs            # writes BOTH targets, and refuses on any of the checks below
-node --test test/*.test.mjs   # 130 tests: the §15 acceptance suite, spaces, DXF, PDF raster measurement
+node --test test/*.test.mjs   # 142 tests: the §15 acceptance suite, spaces, DXF, PDF raster measurement
 ```
 
 1. **The Artifact**: republish `dist/web-bim-studio.html` (both interfaces) to the URL above so the link stays the same. Declare `capabilities: {downloads: true}`: file saves (PDF, zipped DXF, JSON) go through it. Publishing without the URL creates a second artifact.
@@ -92,6 +92,12 @@ The Artifact publishes `dist/web-bim-studio.html`. The CAD page rides in it as i
   - Every edit applies live, and Ctrl+Z undoes the whole session. Revert restores the values from when the dialog opened.
   - All dialogs fit the window, and their content scrolls.
 - **Hidden-line drawings are automatic:** a 3D view on a sheet recomputes its line-work shortly after the model changes while the sheet is open. Export computes any out-of-date viewport before writing the PDF, so there is no manual step and no refusal.
+- **T-junctions blend:**
+  - In plan, each joining layer stops at the first through-wall layer that outranks it, and the through wall's finish opens where it passes.
+  - Where the materials are the same, no line is drawn between them. At Coarse detail, the joint is a single line or none.
+  - Crossings are two T's, and T's onto curved walls resolve.
+  - In section, a floor meeting a wall resolves by the same priority rule: a slab bears over a wall's structure. The outline is drawn only where the material changes.
+- **Sections:** `SE` draws a section line. It cuts walls, floors, beams (I-sections) and columns layer by layer, and draws what lies beyond as an elevation hidden behind the cut.
 - **Two-letter shortcuts:** WA DR WN OP CL GR RM RS DI TX EL MV CO RO MM DE LL VV TL ZF 3D SA PP MD. Ctrl+Z / Ctrl+Y undo and redo; Esc cancels, then clears the selection.
 
 ## Known gaps (said, not hidden)

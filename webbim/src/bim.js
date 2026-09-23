@@ -429,6 +429,16 @@ declare({ type: "ElevationView", guid: "wb-0502", category: "View", kind: "view"
     { key: "start", at: c.start, constraint: "free2d", writes: "line.start" }, { key: "end", at: c.end, constraint: "free2d", writes: "line.end" },
     { key: "move", at: lerp(c.start, c.end, 0.5), constraint: "free2d", writes: "line" } ]; } });
 BUILDERS.ElevationView = { build: () => ({ data: {} }) };
+declare({ type: "SectionView", guid: "wb-0505", category: "View", kind: "view", idPrefix: "V-S",
+  summary: "A line in plan cutting the building: what it crosses is drawn cut, layer by layer, and what lies beyond it as in an elevation.",
+  args: [ curve2d("line", "Section line", ["line"], { type: "line", start: [0, 4000], end: [12000, 4000] }), real("depth", "Far clip", 15000, 1, 1e6, 1),
+          integer("scale", "Scale 1:", 50, 1, 5000, { group: "Graphics" }), ref("baseLevel", "Base level", ["level"]), real("top", "Top", 6000, 1, 1e5, 1),
+          ref("style", "View style", ["viewStyle"], { group: "Graphics" }), choice("detailLevel", "Detail level", ["Coarse", "Medium", "Fine"], 2, { group: "Graphics" }),
+          json("clip", "Crop region", { rect: null, visible: false, active: false }, { group: "Extents" }) ],
+  handles: (f) => { const c = F.json(f, "line"); return [
+    { key: "start", at: c.start, constraint: "free2d", writes: "line.start" }, { key: "end", at: c.end, constraint: "free2d", writes: "line.end" },
+    { key: "move", at: lerp(c.start, c.end, 0.5), constraint: "free2d", writes: "line" } ]; } });
+BUILDERS.SectionView = { build: () => ({ data: {} }) };
 
 declare({ type: "View3D", guid: "wb-0503", category: "View", kind: "view", idPrefix: "V-3D",
   summary: "A camera. On a sheet it becomes exact hidden-line line-work, cached and never interactive (§6.4).",

@@ -171,6 +171,8 @@ const HANDLERS = {
         else value = o.text;
       }
       setPath(doc, f, o.key, value);
+      // a door or window sizes its opening: changing its type resizes the hole to the new type
+      if ((o.key === "doorType" || o.key === "windowType") && value && value.ref) sizeOpeningsToType(doc, [f]);
     }
     return {};
   },
@@ -198,6 +200,8 @@ const HANDLERS = {
     if (o.remove) { doc.setDef(o.lib, o.id, undefined); return {}; }
     if (o.path) { let x = cur; const ks = o.path.split("."); for (let i = 0; i < ks.length - 1; i++) x = x[ks[i]]; x[ks[ks.length - 1]] = o.value; doc.setDef(o.lib, o.id, cur); }
     else doc.setDef(o.lib, o.id, o.value);
+    // a door or window type that changes size resizes every opening its instances fill
+    if (o.lib === "types") sizeOpeningsToType(doc, doc.elements().filter(g => (doc.typeOf(g) === "Door" || doc.typeOf(g) === "Window") && (F.refId(g, "doorType") === o.id || F.refId(g, "windowType") === o.id)));
     return {};
   },
   style(doc, o) { return HANDLERS.type(doc, Object.assign({}, o, { lib: "viewStyles" })); },
@@ -362,9 +366,14 @@ function findJoin(doc, id, end, c) {
   const me = lineWall(doc, doc.element(id)); if (!me) return null;
   const p = c[end], q = end === "start" ? c.end : c.start, dir = normalise(sub(p, q));
   const walls = doc.elements().filter(g => doc.idOf(g) !== id).map(g => lineWall(doc, g)).filter(Boolean);
-  // 1. a corner: another wall's end within the walls' half-thickness
+  // 1. a corner: another wall's end within the walls' half-thickness - unless that end is itself
+  // T-joined into a wall this end also lands in: two walls meeting a third from either side are
+  // two Ts (a crossing), not a corner with each other
+  const inBand = (B, q) => { const s = signedDistance(B.line, q), u = dot(sub(q, B.line.p), B.line.d); return s >= B.sMin - 30 && s <= B.sMax + 30 && u > -1 && u < B.L + 1; };
+  const tEndInto = (id2, end2) => doc.joins.filter(j => j.a.of === id2 && j.a.end === end2 && !j.b.end).map(j => j.b.of);
   let best = null;
   for (const B of walls) for (const e of ["start", "end"]) {
+    if (tEndInto(B.id, e).some(host => { const H = walls.find(w => w.id === host); return H && inBand(H, p); })) continue;
     const d = dist(p, B.c[e]), tol = Math.max(me.half, B.half) + 1;
     if (d <= tol && (!best || d < best.d)) best = { d, B, e };
   }
@@ -389,7 +398,45 @@ function findJoin(doc, id, end, c) {
     if (uX > B.L - me.half - 1) { T = { d, p: X, rows: [{ a: { of: id, end }, b: { of: B.id, end: "end" } }], moveOther: [{ id: B.id, end: "end" }], what: `${id} ${end} ⟷ ${B.id} end (corner)` }; continue; }
     T = { d, p: X, rows: [{ a: { of: id, end }, b: { of: B.id, u: uX } }], what: `${id} ${end} T onto ${B.id}` };
   }
+  // 3. a T onto a curved wall: the end inside the arc's band snaps onto its location circle, along this wall's own line
+  for (const g of doc.elements()) {
+    if (doc.typeOf(g) !== "Wall" || doc.idOf(g) === id) continue;
+    const c = doc.argValue(g, "centreline"), w = doc.plan(g);
+    if (!c || (c.type !== "arc" && c.type !== "circle") || !w || !w.stack) continue;
+    const R = c.radius, ctr = c.centre, r = dist(p, ctr), sv = w.stack.s, sMin = Math.min(...sv), sMax = Math.max(...sv);
+    const s = c.ccw ? R - r : r - R;                         // the same side convention as walls.sideOf
+    if (s < sMin - 30 || s > sMax + 30) continue;
+    // the line q→p meets the circle: the root nearest p
+    const f = sub(p, ctr), dq = dir, b = dot(f, dq), cc = dot(f, f) - R * R, disc = b * b - cc;
+    if (disc < 0) continue;
+    const roots = [-b + Math.sqrt(disc), -b - Math.sqrt(disc)].sort((x, y) => Math.abs(x) - Math.abs(y));
+    const X = add(p, mul(dq, roots[0]));
+    const uX = arcU(w, X); if (uX === null || uX < me.half + 1 || uX > w.L - me.half - 1) continue;
+    const d = Math.abs(s);
+    if (T && T.d <= d) continue;
+    T = { d, p: X, rows: [{ a: { of: id, end }, b: { of: doc.idOf(g), u: uX } }], what: `${id} ${end} T onto ${doc.idOf(g)} (curved)` };
+  }
   return T;
+}
+/** Arc length from an arc wall's start to the point on it nearest p, or null past its ends. */
+function arcU(w, p) {
+  const c = w.curve; if (!c || !c.centre) return null;
+  const ang = Math.atan2(p[1] - c.centre[1], p[0] - c.centre[0]);
+  const T = Math.PI * 2, a0 = c.a0 ?? 0, sweep = c.sweep ?? T;
+  let da = sweep > 0 ? ((ang - a0) % T + T) % T : ((a0 - ang) % T + T) % T;
+  if (da > Math.abs(sweep) + 1e-9) return null;
+  return da * (c.radius ?? dist(p, c.centre));
+}
+/** The openings these fillers fill take their width and height from the filler's type. */
+function sizeOpeningsToType(doc, fillers) {
+  for (const f of fillers) {
+    const key = doc.typeOf(f) === "Door" ? "doorType" : "windowType", t = F.type(f, key), op = F.reference(f, "fills");
+    if (!t || !op || !(t.width > 0) || !(t.height > 0)) continue;
+    const prof = clone(doc.argValue(op, "profile") || {});
+    if (prof.w === t.width && prof.h === t.height) continue;
+    prof.w = t.width; prof.h = t.height;
+    doc.setArg(op, "profile", prof);
+  }
 }
 /** Every end of these walls, for autojoin. */
 export function wallEnds(doc, ids) { return ids.filter(id => { const f = doc.element(id); return f && doc.typeOf(f) === "Wall"; }).flatMap(id => [{ id, end: "start" }, { id, end: "end" }]); }
@@ -398,7 +445,7 @@ export function wallEnds(doc, ids) { return ids.filter(id => { const f = doc.ele
 /** Which argument moves an element as a whole. */
 export function geomKey(f, doc) { return geomKeyOf(doc.typeOf(f)); }
 export function geomKeyOf(t) {
-  return t === "Wall" ? "centreline" : t === "Grid" || t === "RoomSeparator" || t === "ElevationView" ? "line"
+  return t === "Wall" ? "centreline" : t === "Grid" || t === "RoomSeparator" || t === "ElevationView" || t === "SectionView" ? "line"
     : t === "Column" || t === "Furniture" || t === "Text" || t === "SymbolInstance" ? "position" : t === "Space" ? "anchor"
     : t === "DetailLine" ? "curve" : t === "FilledRegion" ? "boundary" : null;
 }

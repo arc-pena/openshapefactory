@@ -22,8 +22,8 @@ import { categoryOf } from "./styles.js";
 import { bimToCad, cadEditsToOps, cadDiff, mergeModel } from "./cadbridge.js";
 import { importIfc } from "./ifcimport.js";
 
-const VIEW_TYPES = ["PlanView", "ElevationView", "View3D", "Schedule", "Sheet"];
-const PLACE_TOOLS = new Set(["floor", "beam", "wall", "opening", "door", "window", "column", "grid", "text", "dim", "space", "elev", "sep"]);
+const VIEW_TYPES = ["PlanView", "ElevationView", "SectionView", "View3D", "Schedule", "Sheet"];
+const PLACE_TOOLS = new Set(["section", "floor", "beam", "wall", "opening", "door", "window", "column", "grid", "text", "dim", "space", "elev", "sep"]);
 
 const app = {
   doc: null, editor: null, selection: new Set(), activeView: null, tabs: [], tool: "select",
@@ -151,6 +151,7 @@ const COMMANDS = {
   dim: tool("dim", "Aligned", "dim", "DI", "Click two parallel references: faces, centrelines, grids. It binds to them, not to points."),
   text: tool("text", "Text", "text", "TX", "Click, type, Enter. Height is paper millimetres."),
   elev: tool("elev", "Elevation", "elevview", "EL", "Two clicks: the marker line is the view."),
+  section: tool("section", "Section", "section", "SE", "Two clicks: the section line. It looks to the right of the direction you drew it; double-click its head to open it."),
   move: tool("move", "Move", "move", "MV", "Click a base point, then the destination (or type a distance + Enter)."),
   copy: tool("copy", "Copy", "copy", "CO", "Click a base point, then where the copy goes."),
   rotate: tool("rotate", "Rotate", "rotate", "RO", "Click the start of the angle, then its end (or type degrees + Enter)."),
@@ -163,7 +164,7 @@ const COMMANDS = {
   level: { label: "Level", icon: "level", key: "LL", run: () => newLevel() },
   schedule: { label: "Schedule", icon: "schedule", run: () => newSchedule() },
   sheet: { label: "Sheet", icon: "sheet", run: () => newSheet() },
-  vv: { label: "Visibility/ Graphics", icon: "vv", key: "VV", run: () => { const v = app.doc.element(app.activeView); if (v && ["PlanView", "ElevationView", "View3D"].includes(app.doc.typeOf(v))) vvDialog(app, app.activeView); else app.say("open a plan, elevation or 3D view first", "note"); } },
+  vv: { label: "Visibility/ Graphics", icon: "vv", key: "VV", run: () => { const v = app.doc.element(app.activeView); if (v && ["PlanView", "ElevationView", "SectionView", "View3D"].includes(app.doc.typeOf(v))) vvDialog(app, app.activeView); else app.say("open a plan, elevation or 3D view first", "note"); } },
   thin: { label: "Thin Lines", icon: "thin", key: "TL", active: () => app.thinLines, run: () => { app.thinLines = !app.thinLines; app.refresh({ keepMain: true }); } },
   zoomfit: { label: "Zoom to Fit", icon: "fit", key: "ZF", run: () => { const v = app.views.get(app.activeView); if (v && v.fit) v.fit(); } },
   graph: { label: "Node Graph", icon: "graph", run: () => app.openView("__graph") },
@@ -177,7 +178,7 @@ const COMMANDS = {
   closehidden: { label: "Close Inactive", icon: "close", run: () => { app.tabs = app.tabs.filter(t => t === app.activeView); app.refresh(); } },
   edittype: { label: "Edit Type", icon: "edittype", run: () => { const t = selectedType(); if (t) typeEditor(app, t); else app.say("select an element with a type", "note"); } },
   props: { label: "Properties", icon: "props", key: "PP", active: () => !document.body.classList.contains("hide-props"), run: () => document.body.classList.toggle("hide-props") },
-  pens: { label: "Object Styles & Pens", icon: "pens", run: () => { const v = app.activeView && app.doc.element(app.activeView); vvDialog(app, v && ["PlanView", "ElevationView", "View3D"].includes(app.doc.typeOf(v)) ? app.activeView : firstOf("PlanView")); } },
+  pens: { label: "Object Styles & Pens", icon: "pens", run: () => { const v = app.activeView && app.doc.element(app.activeView); vvDialog(app, v && ["PlanView", "ElevationView", "SectionView", "View3D"].includes(app.doc.typeOf(v)) ? app.activeView : firstOf("PlanView")); } },
   projectinfo: { label: "Project Information", icon: "info", run: () => projectInfo() },
   open: { label: "Open…", icon: "open", run: () => openFile() },
   save: { label: "Save", icon: "save", key: "", run: () => saveModel() },
@@ -224,7 +225,7 @@ const RIBBON = [
   ] },
   { tab: "View", panels: [
     { title: "Graphics", items: [big("vv"), small("thin"), small("zoomfit")] },
-    { title: "Create", items: [big("default3d"), small("planview"), small("elev"), small("schedule"), big("sheet")] },
+    { title: "Create", items: [big("default3d"), big("section"), small("planview"), small("elev"), small("schedule"), big("sheet")] },
     { title: "Windows", items: [small("graph"), small("tree"), small("closehidden")] },
     { title: "Interface", items: [big("cadmode")] },
   ] },
@@ -285,7 +286,7 @@ function renderQAT() {
   const q = clear(document.getElementById("qat"));
   const b = (id, ic) => h("button", { class: "qbtn", title: COMMANDS[id].label + (COMMANDS[id].key ? ` (${COMMANDS[id].key})` : ""), "aria-label": COMMANDS[id].label, disabled: (id === "undo" && !app.editor.undoStack.length) || (id === "redo" && !app.editor.redoStack.length), onclick: () => app.run(id) }, icon(ic || COMMANDS[id].icon, 16));
   const v = app.activeView && app.doc.element(app.activeView);
-  const viewName = v ? `${{ PlanView: "Floor Plan", ElevationView: "Elevation", View3D: "3D View", Schedule: "Schedule", Sheet: "Sheet" }[app.doc.typeOf(v)]}: ${v.get("Name")}` : app.activeView === "__graph" ? "Node Graph" : app.activeView === "__tree" ? "Feature Tree" : app.activeView === "__diag" ? "Acceptance Tests" : "";
+  const viewName = v ? `${{ PlanView: "Floor Plan", ElevationView: "Elevation", SectionView: "Section", View3D: "3D View", Schedule: "Schedule", Sheet: "Sheet" }[app.doc.typeOf(v)]}: ${v.get("Name")}` : app.activeView === "__graph" ? "Node Graph" : app.activeView === "__tree" ? "Feature Tree" : app.activeView === "__diag" ? "Acceptance Tests" : "";
   q.append(
     h("button", { class: "qbtn mobile-only", "aria-label": "Palettes", onclick: () => document.body.classList.toggle("show-left") }, icon("menu", 16)),
     h("div", { class: "logo", title: "Web BIM" }, "B"),
@@ -434,6 +435,7 @@ function renderBrowser(body) {
     node("Floor Plans", byType("PlanView").map(f => viewRow(f, "plan"))),
     node("3D Views", byType("View3D").map(f => viewRow(f, "view3d"))),
     node("Elevations (Building Elevation)", byType("ElevationView").map(f => viewRow(f, "elevview"))),
+    node("Sections (Building Section)", byType("SectionView").map(f => viewRow(f, "section"))),
   ], { head: true }));
   tree.append(node("Schedules/Quantities (all)", byType("Schedule").map(f => viewRow(f, "schedule")), { head: true }));
   tree.append(node("Sheets (all)", byType("Sheet").sort((a, b) => String(doc.argValue(a, "number")).localeCompare(doc.argValue(b, "number"))).map(f => { const id = doc.idOf(f); return node(`${doc.argValue(f, "number")} - ${doc.argValue(f, "sheetName")}`, null, { key: "view:" + id, ic: "sheet", sel: app.selection.has(id), active: app.activeView === id, onclick: () => app.select([id]), ondbl: () => app.openView(id) }); }), { head: true }));
@@ -487,7 +489,7 @@ function renderMain() {
   const doc = app.doc;
   const tabs = h("div", { class: "dtabs", role: "tablist" }, app.tabs.map(t => {
     const f = doc.element(t), label = t === "__graph" ? "Node Graph" : t === "__diag" ? "Acceptance Tests" : t === "__tree" ? "Feature Tree" : f ? f.get("Name") : t;
-    const ic = t === "__graph" ? "graph" : t === "__diag" ? "tests" : t === "__tree" ? "tree" : { PlanView: "plan", View3D: "view3d", ElevationView: "elevview", Schedule: "schedule", Sheet: "sheet" }[f && doc.typeOf(f)];
+    const ic = t === "__graph" ? "graph" : t === "__diag" ? "tests" : t === "__tree" ? "tree" : { PlanView: "plan", View3D: "view3d", ElevationView: "elevview", SectionView: "section", Schedule: "schedule", Sheet: "sheet" }[f && doc.typeOf(f)];
     return h("button", { class: "dtab", role: "tab", "aria-selected": String(t === app.activeView), onclick: () => app.openView(t), onauxclick: e => { if (e.button === 1) app.closeTab(t); } }, icon(ic, 14), h("span", {}, label),
       h("span", { class: "x", role: "button", "aria-label": `Close ${label}`, onclick: e => { e.stopPropagation(); app.closeTab(t); } }, "✕"));
   }));
@@ -517,8 +519,8 @@ function renderViewControl() {
   const doc = app.doc, id = app.activeView, v = doc.element(id); if (!v) return;
   const t = doc.typeOf(v);
   const ib = (ic, title, on, run) => h("button", { class: "vbtn", title, "aria-label": title, "aria-pressed": on === undefined ? null : String(!!on), onclick: run }, icon(ic, 16));
-  if (["PlanView", "ElevationView", "View3D"].includes(t)) bar.append(h("select", { class: "vscale", "aria-label": "View scale", title: "View scale", onchange: e => app.apply({ op: "set", id, key: "scale", value: Number(e.target.value) }) }, [10, 20, 50, 100, 200, 500].map(s => h("option", { value: s, selected: F.int(v, "scale") === s }, "1 : " + s))));
-  if (t === "PlanView" || t === "ElevationView") {
+  if (["PlanView", "ElevationView", "SectionView", "View3D"].includes(t)) bar.append(h("select", { class: "vscale", "aria-label": "View scale", title: "View scale", onchange: e => app.apply({ op: "set", id, key: "scale", value: Number(e.target.value) }) }, [10, 20, 50, 100, 200, 500].map(s => h("option", { value: s, selected: F.int(v, "scale") === s }, "1 : " + s))));
+  if (t === "PlanView" || t === "ElevationView" || t === "SectionView") {
     const dl = F.choice(v, "detailLevel");
     bar.append(h("select", { class: "vsel", title: "Detail level", "aria-label": "Detail level", onchange: e => app.apply({ op: "set", id, key: "detailLevel", value: e.target.value }) }, ["Coarse", "Medium", "Fine"].map(d => h("option", { selected: dl === d }, d))));
     const st = F.refId(v, "style");

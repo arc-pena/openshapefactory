@@ -18,7 +18,7 @@ import { chainLoop, sampleCropElement, cropLoop, loopBBox, ANNOTATION_CROP } fro
 export const SNAP_PX = 8;
 export const SNAP_KINDS = ["endpoint", "midpoint", "centre", "intersection", "perpendicular", "nearest", "grid", "angle"];
 const SNAP_SHORT = { endpoint: "end", midpoint: "mid", centre: "cen", intersection: "int", perpendicular: "perp", nearest: "near", grid: "grid", angle: "ang" };
-const TOOLS_NEED_PLAN = new Set(["floor", "beam", "wall", "opening", "door", "window", "column", "grid", "text", "dim", "space", "elev", "sep", "move", "copy", "rotate", "mirror"]);
+const TOOLS_NEED_PLAN = new Set(["section", "floor", "beam", "wall", "opening", "door", "window", "column", "grid", "text", "dim", "space", "elev", "sep", "move", "copy", "rotate", "mirror"]);
 export const MODIFY_TOOLS = new Set(["move", "copy", "rotate", "mirror"]);
 
 export class View2D {
@@ -69,6 +69,8 @@ export class View2D {
     this._raf = requestAnimationFrame(() => this.drawNow());
   }
   drawNow() {
+    // a frame queued for a view the document no longer has (a new file was opened) draws nothing
+    if (!this.view || this.doc !== this.app.doc || !this.doc.element(this.viewId)) return;
     const g = this.canvas.getContext("2d"), dpr = this.dpr;
     g.setTransform(1, 0, 0, 1, 0, 0);
     const sheet = this.kind === "Sheet";
@@ -534,7 +536,7 @@ export class View2D {
       let hit = false, score = 0;
       if (ht.kind === "curve") { for (let i = 0; i < ht.pts.length - 1; i++) { const a = ht.pts[i], b = ht.pts[i + 1], d = distSeg(p, a, b); if (d < tol) { hit = true; score = d; } } score = score * 0.001;
         // a datum line running through a wall must not steal the click from the wall
-        const f = this.doc.element(ht.id); if (f && ["Grid", "RoomSeparator", "ElevationView", "Level"].includes(this.doc.typeOf(f))) score += 1e12; }
+        const f = this.doc.element(ht.id); if (f && ["Grid", "RoomSeparator", "ElevationView", "SectionView", "Level"].includes(this.doc.typeOf(f))) score += 1e12; }
       else if (ht.pts.length > 2 && pointInPoly(p, ht.pts)) { hit = true; score = Math.abs(polyArea(ht.pts)); }
       if (hit && (!best || score < best.score)) best = { id: ht.id, score };
     }
@@ -694,7 +696,7 @@ export class View2D {
     // double-click is "step into": a viewport opens its view, a view marker opens its view
     if (this.kind === "Sheet") return this.app.openView(hit.view);
     const f = this.doc.element(hit.id);
-    if (f && ["ElevationView", "PlanView", "View3D"].includes(this.doc.typeOf(f))) this.app.openView(hit.id);
+    if (f && ["ElevationView", "SectionView", "PlanView", "View3D"].includes(this.doc.typeOf(f))) this.app.openView(hit.id);
   }
   /** Viewports snap to the sheet's margins, the other viewports' edges and centres, with guides. */
   dragViewport(d, sx, sy) {
@@ -779,12 +781,13 @@ export class View2D {
       const [a, b] = T.pts; T.pts = [];
       return addEl({ type: "Beam", args: { axis: { type: "line", start: a, end: b }, beamType: { ref: o.beamType }, level: level ? { ref: level } : null, topOffset: o.beamTop ?? 3000 } }, `Beam ${fmtLen(dist(a, b))} mm`);
     }
-    if (["grid", "elev", "sep"].includes(tool)) {
+    if (["grid", "elev", "sep", "section"].includes(tool)) {
       T.pts.push(q);
       if (T.pts.length < 2) { this.draw(); return; }
       const [a, b] = T.pts; T.pts = [];
       if (tool === "grid") { const used = new Set(doc.elements().filter(f => doc.typeOf(f) === "Grid").map(f => F.text(f, "name"))); let n = 1; while (used.has(String(n))) n++; addEl({ type: "Grid", name: "Grid " + n, args: { name: String(n), line: { type: "line", start: a, end: b } } }); }
       if (tool === "elev") addEl({ type: "ElevationView", name: "Elevation " + (doc.elements().filter(f => doc.typeOf(f) === "ElevationView").length + 1), args: { line: { type: "line", start: a, end: b }, depth: 15000, scale: 100, baseLevel: level ? { ref: level } : null, top: 6000, style: { ref: "VS-CONSTRUCTION" }, detailLevel: "Coarse" } }, "Elevation added — its marker is its view line; drag it and the view follows");
+      if (tool === "section") addEl({ type: "SectionView", name: "Section " + (doc.elements().filter(f => doc.typeOf(f) === "SectionView").length + 1), args: { line: { type: "line", start: a, end: b }, depth: 15000, scale: 50, baseLevel: level ? { ref: level } : null, top: 7000, style: { ref: "VS-CONSTRUCTION" }, detailLevel: "Fine" } }, "Section added: double-click its head to open it");
       if (tool === "sep") addEl({ type: "RoomSeparator", args: { line: { type: "line", start: a, end: b }, level: level ? { ref: level } : null } });
       return;
     }

@@ -10,7 +10,7 @@ import { wallRegions, solidSpans } from "./joins.js";
 import { pointAt, uOf, boundary, wallPieces } from "./walls.js";
 import { newDocument, openDocument, measureRefs, resolveReference } from "./bim.js";
 import { Editor, propagate } from "./ops.js";
-import { deriveView, planScene, elevationScene, placements, textWidth, sheetScene, visibilityKey } from "./scene.js";
+import { deriveView, planScene, elevationScene, placements, textWidth, sheetScene, visibilityKey, sectionCut, cutOutline } from "./scene.js";
 import { chainLoop } from "./crop.js";
 import { importIfc } from "./ifcimport.js";
 import { writePDF, pathOps, PT_PER_MM } from "./pdf.js";
@@ -911,4 +911,97 @@ testCase("M10", "IFC classes arrive as BIM classes: IfcWall→Wall, IfcDoor→Do
     && bm && Math.abs(bm.z1 - 2800) < 1e-6 && Math.abs(bm.z0 - 2394) < 1e-6 && ax && Math.abs(ax.end[0] - 5000) < 1e-6 && F.type(beam, "beamType").shape === "I";
   return R(ok, "wall 5000 long, 200 type; door 1000×2100 at u=1500; slab top 0, 250 thick; UB406 top 2800 spanning x 0→5000",
     `ok ${res.ok} ${res.error || ""}; wall ${c && JSON.stringify(c)}; door ${prof && JSON.stringify(prof)}; floor ${fl && [fl.z0, fl.z1]}; beam ${bm && [bm.z0, bm.z1]} ${ax && JSON.stringify(ax)}; report ${JSON.stringify(r.report)}`);
+});
+// ---------------------------------------------------------------- T junctions: plan and section (drawn, not only resolved)
+/** Visible (drawn) edge length of a wall's regions lying on its boundary s, between u0 and u1. */
+const drawnAlong = (w, regs, s, u0, u1) => {
+  let L = 0;
+  for (const r of regs) for (const e of r.edges) {
+    if (e.role === "hidden" || e.role === "weld" || e.seg.k !== "L") continue;
+    const a = e.seg.a, b = e.seg.b, n = [-w.d[1], w.d[0]];
+    const sa = (a[0] - w.a[0]) * n[0] + (a[1] - w.a[1]) * n[1], sb = (b[0] - w.a[0]) * n[0] + (b[1] - w.a[1]) * n[1];
+    if (Math.abs(sa - s) > 0.5 || Math.abs(sb - s) > 0.5) continue;
+    const ua = (a[0] - w.a[0]) * w.d[0] + (a[1] - w.a[1]) * w.d[1], ub = (b[0] - w.a[0]) * w.d[0] + (b[1] - w.a[1]) * w.d[1];
+    L += Math.max(0, Math.min(Math.max(ua, ub), u1) - Math.max(Math.min(ua, ub), u0));
+  }
+  return L;
+};
+const drawT = (thru, join, tip, from, detail = "Fine") => {
+  const doc = newDocument("t"), ed = new Editor(doc);
+  doc.addElement({ id: "L0", type: "Level", args: { name: "G", elevation: 0 } }); doc.regenerate();
+  ed.apply({ op: "draw", points: [[0, 0], [7000, 0]], wallType: thru, level: "L0", height: 3000, mounting: "Centred", tol: 1 });
+  ed.apply({ op: "draw", points: [from, tip], wallType: join, level: "L0", height: 3000, mounting: "Centred", tol: 1 });
+  return { doc, ed, A: doc.plan(doc.element("W2")), B: doc.plan(doc.element("W1")) };
+};
+testCase("M11", "T of the same material welds: block into block leaves no line between the two blocks", () => {
+  const { doc, A, B } = drawT("T-BLOCK215", "T-BLOCK215", [3500, 108], [3500, 3000]);
+  const regsA = wallRegions(A, "Fine", 1200, []), regsB = wallRegions(B, "Fine", 1200, []);
+  const blockA = regsA.find(r => r.material === "M-BLOCK"), endRole = blockA && blockA.edges.find(e => e.role === "weld");
+  const sFace = B.stack.s[B.stack.s.length - 2];                 // block's face toward the partition side
+  const lineAcross = drawnAlong(B, regsB, sFace, 3500 - 94, 3500 + 94);
+  return R(!!endRole && lineAcross < 1, "joining block end is a weld; through block's face hidden across the joint", `weld ${!!endRole}, drawn ${lineAcross.toFixed(1)} mm across`);
+});
+testCase("M12", "Coarse T blends: the through wall's face is hidden over the joining wall's width", () => {
+  const { A, B } = drawT("T-EXTCAV300", "T-PART100", [3500, 145.25], [3500, 3000]);
+  const regsB = wallRegions(B, "Coarse", 1200, []), n = B.stack.s.length - 1;
+  const sNear = B.stack.s[n], across = drawnAlong(B, regsB, sNear, 3500 - 49, 3500 + 49), beside = drawnAlong(B, regsB, sNear, 1000, 3000);
+  return R(across < 1 && beside > 1990, "face hidden across the 100 mm partition, drawn beside it", `across ${across.toFixed(1)}, beside ${beside.toFixed(1)}`);
+});
+testCase("M13", "Crossing: two walls entering from either side both T into the wall they cross", () => {
+  const doc = newDocument("x"), ed = new Editor(doc);
+  doc.addElement({ id: "L0", type: "Level", args: { name: "G", elevation: 0 } }); doc.regenerate();
+  ed.apply({ op: "draw", points: [[0, 0], [7000, 0]], wallType: "T-BLOCK215", level: "L0", height: 3000, mounting: "Centred", tol: 1 });
+  ed.apply({ op: "draw", points: [[3500, 3000], [3500, 60]], wallType: "T-PART100", level: "L0", height: 3000, mounting: "Centred", tol: 1 });
+  ed.apply({ op: "draw", points: [[3500, -3000], [3500, -60]], wallType: "T-PART100", level: "L0", height: 3000, mounting: "Centred", tol: 1 });
+  const rows = doc.joins.map(j => `${j.a.of}.${j.a.end}>${j.b.of}${j.b.end ? "." + j.b.end : "@" + Math.round(j.b.u)}`);
+  return R(rows.includes("W2.end>W1@3500") && rows.includes("W3.end>W1@3500") && rows.length === 2, "W2 and W3 both T onto W1 at 3500", rows.join(" "));
+});
+testCase("M14", "T onto a curved wall: an end inside the arc's band snaps onto its location circle", () => {
+  const doc = newDocument("a"), ed = new Editor(doc);
+  doc.addElement({ id: "L0", type: "Level", args: { name: "G", elevation: 0 } }); doc.regenerate();
+  ed.apply({ op: "add", element: { id: "ARC", type: "Wall", args: { centreline: { type: "arc", centre: [0, 0], radius: 3000, start: 20, end: 160, ccw: true }, mounting: "Centred", wallType: { ref: "T-BLOCK215" }, baseLevel: { ref: "L0" }, height: 3000 } } });
+  ed.apply({ op: "draw", points: [[0, 0], [0, 2950]], wallType: "T-PART100", level: "L0", height: 3000, mounting: "Centred", tol: 1 });
+  const c = doc.argValue(doc.element("W1"), "centreline"), j = doc.joins.find(r => r.a.of === "W1" && r.b.of === "ARC"), w = doc.plan(doc.element("W1"));
+  return R(!!j && Math.abs(c.end[1] - 3000) < 1e-6 && w.ends.end.k === "T", "end at (0, 3000) on the circle; resolved as a T", `end ${c.end}, join ${!!j}, ${w.ends.end.k}`);
+});
+testCase("M15", "An angled T opens the through wall's finish over the joining width divided by sin(angle)", () => {
+  const a = 60 * Math.PI / 180, tip = [3500, 145.25], from = [3500 + Math.cos(a) * 3000, 145.25 + Math.sin(a) * 3000];
+  const { B } = drawT("T-EXTCAV300", "T-PART100", tip, from);
+  const regsB = wallRegions(B, "Fine", 1200, []), n = B.stack.s.length - 1;
+  const plaster = regsB.filter(r => r.layer === n - 1);
+  const hiddenLen = plaster.flatMap(r => r.edges).filter(e => e.role === "hidden").length;
+  // the plaster layer is split in two with hidden ends where the partition passes
+  const gap = (() => { const us = plaster.map(r => r.path.flatMap(sg => [sg.a, sg.b]).filter(Boolean).map(p => (p[0] - B.a[0]) * B.d[0] + (p[1] - B.a[1]) * B.d[1])); if (us.length !== 2) return null; const [x, y] = us; return Math.min(...(Math.max(...x) < Math.max(...y) ? y : x)) - Math.max(...(Math.max(...x) < Math.max(...y) ? x : y)); })();
+  // the plaster's ends run along the partition's faces, so its narrowest gap (at the inner boundary)
+  // is the width over sin(angle) less the plaster's 13 mm over tan(angle)
+  const want = 100 / Math.sin(a) - 13 / Math.tan(a);
+  return R(plaster.length === 2 && hiddenLen === 2 && gap !== null && Math.abs(gap - want) < 0.5, `plaster split with a ${want.toFixed(1)} mm gap at its inner boundary`, `${plaster.length} pieces, gap ${gap && gap.toFixed(1)}`);
+});
+testCase("M16", "Section: a floor meets a wall - the slab bears over the wall's structure; its finish stops at nothing stronger", () => {
+  const doc = buildSample(), sec = sectionCut(doc, doc.element("V-S01"));
+  const wall = sec.rects.filter(r => r.id === "W3"), slab = sec.rects.filter(r => r.id === "FL2");
+  const wallTop = Math.max(...wall.map(r => r.z1)), slabBottom = Math.min(...slab.map(r => r.z0));
+  const overlap = wall.some(w => slab.some(f => w.s0 < f.s1 && f.s0 < w.s1 && w.z0 < f.z1 && f.z0 < w.z1));
+  const slabOverWall = slab.some(f => f.s0 <= Math.min(...wall.map(r => r.s0)) + 1e-6 || f.s1 >= Math.max(...wall.map(r => r.s1)) - 1e-6);
+  return R(!overlap && Math.abs(wallTop - 3000) < 1e-6 && Math.abs(slabBottom - 3000) < 1e-6 && slabOverWall, "no overlap; wall stops at 3000 under the slab, which runs across it", `overlap ${overlap}, wall top ${wallTop}, slab bottom ${slabBottom}, over ${slabOverWall}`);
+});
+testCase("M17", "Section: an I-beam crossing the line cuts as flange, web, flange", () => {
+  const doc = buildSample(), sec = sectionCut(doc, doc.element("V-S01"));
+  const b = sec.rects.filter(r => r.id === "BM1").sort((x, y) => x.z0 - y.z0);
+  const ok = b.length === 3 && Math.abs(b[0].s1 - b[0].s0 - 178) < 1e-6 && Math.abs(b[1].s1 - b[1].s0 - 7.9) < 1e-6 && Math.abs(b[2].z1 - 3000) < 1e-6 && Math.abs(b[0].z0 - (3000 - 406)) < 1e-6;
+  return R(ok, "bottom flange 178 wide, web 7.9, top at 3000, bottom at 2594", JSON.stringify(b.map(r => [r.s1 - r.s0, r.z0, r.z1].map(v => Math.round(v * 10) / 10))));
+});
+testCase("M18", "Section outline: a line only where the material changes - concrete wall into concrete slab is one piece", () => {
+  const rects = [{ id: "W", s0: 0, s1: 200, z0: 0, z1: 3000, material: "M-CONC" }, { id: "F", s0: 0, s1: 4000, z0: 3000, z1: 3200, material: "M-CONC" }];
+  const e = cutOutline(rects), inner = e.filter(x => !x.outer);
+  const rects2 = [rects[0], Object.assign({}, rects[1], { material: "M-TIMBER" })], inner2 = cutOutline(rects2).filter(x => !x.outer);
+  return R(inner.length === 0 && inner2.length === 1 && Math.abs(inner2[0].b[0] - inner2[0].a[0] - 200) < 1e-6, "same concrete: no inner line; timber on concrete: one 200 mm line", `inner ${inner.length}, with timber ${inner2.length}`);
+});
+testCase("M19", "A door's type sizes its opening: changing type or widening the type resizes the hole", () => {
+  const doc = buildSample(), ed = new Editor(doc), D = doc.element("D1");
+  const prof = () => doc.argValue(F.reference(D, "fills"), "profile");
+  ed.apply({ op: "set", id: "D1", key: "doorType", value: { ref: "T-DOOR915" } });
+  const w1 = prof().w, note1 = doc.note(D);
+  const t = clone(doc.lib.types["T-DOOR915"]); t.width = 1200; ed.apply({ op: "type", lib: "types", id: "T-DOOR915", value: t });
+  return R(w1 === 915 && !note1 && prof().w === 1200, "915 after the type change, 1200 after widening the type, no mismatch note", `${w1}, ${prof().w}, note ${note1}`);
 });

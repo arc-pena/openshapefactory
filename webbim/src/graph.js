@@ -7,7 +7,7 @@ import { h, s, clear } from "./ui_util.js";
 import { graphModel, autoLayout, canConnect } from "./props.js";
 
 const NODE_W = 184, HEAD = 26, PORT_H = 17;
-const HIDE_TYPES = new Set(["PlanView", "ElevationView", "View3D", "Schedule", "Sheet", "Text", "Dimension", "DetailLine", "FilledRegion", "SymbolInstance", "Furniture", "Grid"]);
+const HIDE_TYPES = new Set(["PlanView", "ElevationView", "SectionView", "View3D", "Schedule", "Sheet", "Text", "Dimension", "DetailLine", "FilledRegion", "SymbolInstance", "Furniture", "Grid"]);
 
 export function renderGraph(app, root, focusId = null) {
   clear(root);

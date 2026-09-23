@@ -14,8 +14,8 @@ import {
 } from "./geom2d.js";
 import { F, propertyOf, evalParam, displayParam } from "./ocaf.js";
 import { formatValue, parse, evaluate } from "./expr.js";
-import { wallRegions, coarseMaterial } from "./joins.js";
-import { pointAt, uOf, wallSurfaces, cutAtHeight, plane } from "./walls.js";
+import { wallRegions, coarseMaterial, blocks } from "./joins.js";
+import { pointAt, uOf, wallSurfaces, cutAtHeight, plane, LAYER_PRIORITY } from "./walls.js";
 import { cropLoop, loopBBox, annotationRect, isAnnotationLayer } from "./crop.js";
 import { resolveGraphics, categoryOf, penWeight, rulesFor, categoryVisible, mix, LINE_TYPES, matches } from "./styles.js";
 import { measureRefs, resolveReference, sheetSize } from "./bim.js";
@@ -119,7 +119,7 @@ export function deriveView(doc, v, opts = {}) {
   if (hit && hit.key === key) return hit.scene;
   doc.stats.derives++;
   const t = doc.typeOf(v);
-  const scene = t === "PlanView" ? planScene(doc, v, opts) : t === "ElevationView" ? elevationScene(doc, v, opts)
+  const scene = t === "PlanView" ? planScene(doc, v, opts) : t === "ElevationView" ? elevationScene(doc, v, opts) : t === "SectionView" ? sectionScene(doc, v, opts)
     : t === "Sheet" ? sheetScene(doc, v, opts) : t === "View3D" ? view3dScene(doc, v, opts) : t === "Schedule" ? scheduleScene(doc, v, opts) : emptyScene();
   scene.watermark = doc.modelRevision;
   c.set(doc.idOf(v), { key, scene });
@@ -144,7 +144,9 @@ export function planScene(doc, v, opts = {}) {
   const vr = doc.argValue(v, "viewRange") || { top: 2300, cut: 1200, bottom: 0 };
   const cutZ = E + vr.cut, topZ = E + vr.top, botZ = E + vr.bottom;
   const band = (z0, z1) => z0 > topZ + TOL ? "above" : z1 < botZ - TOL ? "below" : (z0 <= cutZ + TOL && z1 >= cutZ - TOL) ? "cut" : z1 < cutZ ? "projection" : "beyond";
-  const els = doc.elements().filter(f => f.get("Integer") !== 0 && !doc.error(f) || doc.typeOf(f) === "Wall");
+  // floors first: a floor meeting a wall disappears under the wall's cut, as it does on paper
+  const els = doc.elements().filter(f => f.get("Integer") !== 0 && !doc.error(f) || doc.typeOf(f) === "Wall")
+    .map((f, i) => [f, i]).sort((a, b) => (doc.typeOf(b[0]) === "Floor") - (doc.typeOf(a[0]) === "Floor") || a[1] - b[1]).map(([f]) => f);
   const vis = f => categoryVisible(ctx, categoryOf(doc, f)) && f.get("Integer") !== 0;
   const onlyHere = f => { const r = F.refId(f, "view"); return !r || r === doc.idOf(v); };
   const place = placements(doc);
@@ -208,6 +210,7 @@ export function planScene(doc, v, opts = {}) {
     }
     if (t === "Grid" && vis(f)) drawGrid(doc, ctx, B, f);
     if (t === "ElevationView" && categoryVisible(ctx, "Annotation")) drawElevationMarker(doc, ctx, B, f, place);
+    if (t === "SectionView" && categoryVisible(ctx, "Annotation")) drawSectionMarker(doc, ctx, B, f, place);
     if (t === "RoomSeparator" && F.refId(f, "level") === (lv && doc.idOf(lv))) { const c = F.json(f, "line"); B.stroke([lineSeg(c.start, c.end)], { weight: penWeight(doc, "hairline", S), colour: "#6b7684", dash: LINE_TYPES.dashed2 }, "IfcSpace-Separator", doc.idOf(f)); B.hit(doc.idOf(f), [c.start, c.end], "curve"); }
   }
   // 4. detail and annotation belonging to this view
@@ -339,6 +342,22 @@ function drawGrid(doc, ctx, B, f) {
   }
   B.hit(id, [c.start, c.end], "curve");
 }
+/** A section line in plan: a chain line with a head at each end, the arrows pointing the way it looks. */
+function drawSectionMarker(doc, ctx, B, f, place) {
+  const c = F.json(f, "line"), id = doc.idOf(f), S = ctx.scale;
+  const d = normalise(sub(c.end, c.start)), look = mul(perp(d), -1);
+  B.stroke([lineSeg(c.start, c.end)], { weight: penWeight(doc, "medium", S), colour: "#000000", dash: LINE_TYPES.centre }, "Annotation-Marker", id);
+  const pl = place.get(id), r = 4.5;
+  for (const [end, sgn] of [[c.start, -1], [c.end, 1]]) {
+    const p = add(B.P(end), mul(d, sgn * r)), tip = add(p, mul(look, r * 1.7));
+    B.stroke(circlePath(p, r), { weight: penWeight(doc, "medium", S), colour: "#000" }, "Annotation-Marker", id, true);
+    B.fill(polyPath([add(p, mul(d, -r)), tip, add(p, mul(d, r))]), "#000000", "Annotation-Marker", id, true);
+    B.stroke([lineSeg(add(p, [-r * 0.8, 0]), add(p, [r * 0.8, 0]))], { weight: penWeight(doc, "thin", S), colour: "#000" }, "Annotation-Marker", id, true);
+    B.text([p[0], p[1] + 0.9], pl ? String(pl.vp) : "—", 2.0, { align: "centre", layer: "Annotation-Marker", id });
+    B.text([p[0], p[1] - 2.9], pl ? pl.number : "", 1.6, { align: "centre", layer: "Annotation-Marker", id });
+  }
+  B.hit(id, [c.start, c.end], "curve");
+}
 function drawElevationMarker(doc, ctx, B, f, place) {
   const c = F.json(f, "line"), id = doc.idOf(f), S = ctx.scale;
   const d = normalise(sub(c.end, c.start)), look = mul(perp(d), -1);
@@ -461,14 +480,31 @@ function drawConstraintGlyphs(doc, ctx, B) {
 export function elevationScene(doc, v, opts = {}) {
   const ctx = viewContext(doc, v);
   const S = ctx.scale, B = new SceneBuilder(S);
+  const G = viewLineGeometry(doc, v);
+  const items = gatherElevationItems(doc, ctx, G);
+  const inView = it => it.depthMax >= -TOL && it.depth <= G.depthMax && it.s1 >= 0 && it.s0 <= G.Lv;
+  const vis = items.filter(inView).sort((a, b) => a.depth - b.depth || (a.id < b.id ? -1 : 1));   // deterministic ties (test 40)
+  drawDatums(doc, ctx, B, v, G);
+  drawProjection(doc, ctx, B, vis, G, []);
+  const scene = { prims: B.prims, hits: B.hits, links: [], scale: S, kind: "elevation", stats: { items: vis.length } };
+  scene.bbox = sceneBBox(B.prims);
+  return scene;
+}
+/** An elevation's or a section's line in plan, and the maps from plan to view coordinates. */
+function viewLineGeometry(doc, v) {
   const c = F.json(v, "line"), d = normalise(sub(c.end, c.start)), look = mul(perp(d), -1), Lv = dist(c.start, c.end);
   const depthMax = F.real(v, "depth");
   const lv = F.reference(v, "baseLevel"), Z0 = lv ? (doc.data(lv) || {}).value || 0 : 0, topZ = Z0 + F.real(v, "top");
   const sOf = p => dot(sub(p, c.start), d), depthOf = p => dot(sub(p, c.start), look);
   const V = (p, z) => [sOf(p), z - Z0];              // view coords, model mm
+  return { c, d, look, Lv, depthMax, Z0, topZ, sOf, depthOf, V };
+}
+function gatherElevationItems(doc, ctx, G, skip = null) {
+  const { V, sOf, depthOf, Z0 } = G;
   const items = [];
   for (const f of doc.elements()) {
     if (f.get("Integer") === 0 || doc.error(f)) continue;
+    if (skip && skip.has(doc.idOf(f))) continue;
     // Visibility/Graphics is data: a category switched off in this view's style is not drawn, here as in plan
     if (!categoryVisible(ctx, categoryOf(doc, f))) continue;
     const t = doc.typeOf(f);
@@ -485,9 +521,11 @@ export function elevationScene(doc, v, opts = {}) {
       const s0 = Math.min(...ss), s1 = Math.max(...ss); const sil = [[s0, p.z0 - Z0], [s1, p.z0 - Z0], [s1, p.z1 - Z0], [s0, p.z1 - Z0]];
       items.push({ id: doc.idOf(f), f, depth: Math.min(...dd), depthMax: Math.max(...dd), s0, s1, curves: polyPath(sil).map(x => [x.a, x.b]), sil: [sil], cat: "IfcColumn" }); }
   }
-  const inView = it => it.depthMax >= -TOL && it.depth <= depthMax && it.s1 >= 0 && it.s0 <= Lv;
-  const vis = items.filter(inView).sort((a, b) => a.depth - b.depth || (a.id < b.id ? -1 : 1));   // deterministic ties (test 40)
-  // Datum lines first (never occluded), so the building draws over them.
+  return items;
+}
+/** Ground line, level lines with heads, and grids crossing the view line. */
+function drawDatums(doc, ctx, B, v, G) {
+  const S = ctx.scale, { c, d, Lv, Z0, topZ } = G;
   const ext = [-1500, Lv + 1500];
   B.stroke([lineSeg([ext[0], 0], [ext[1], 0])], { weight: penWeight(doc, "bold", S), colour: "#000" }, "Ground", null);
   for (const f of doc.elements()) if (doc.typeOf(f) === "Level" && categoryVisible(ctx, "IfcBuildingStorey")) {
@@ -499,7 +537,6 @@ export function elevationScene(doc, v, opts = {}) {
     B.text(add(hp, [5.5, -3.2]), (z + Z0 >= 0 ? "+" : "") + ((z + Z0) / 1000).toFixed(3), 2.0, { layer: "IfcBuildingStorey", id: doc.idOf(f) });
     B.hit(doc.idOf(f), [[ext[0], z - 50], [ext[1], z - 50], [ext[1], z + 50], [ext[0], z + 50]]);
   }
-  // Grids crossing the view line: vertical datum lines.
   for (const f of doc.elements()) if (doc.typeOf(f) === "Grid" && categoryVisible(ctx, "IfcGrid")) {
     const gl = F.json(f, "line"), gd = normalise(sub(gl.end, gl.start));
     const den = d[0] * gd[1] - d[1] * gd[0]; if (Math.abs(den) < 1e-9) continue;
@@ -511,9 +548,12 @@ export function elevationScene(doc, v, opts = {}) {
     B.stroke(circlePath(bp, 4), { weight: penWeight(doc, "thin", S), colour: "#000" }, "IfcGrid", doc.idOf(f), true);
     B.text([bp[0], bp[1] - 1.25], F.text(f, "name"), 2.5, { align: "centre", layer: "IfcGrid", id: doc.idOf(f) });
   }
-  const occluders = [];
+}
+/** Items seen beyond the view plane, nearest first, each hidden by what is in front (and by the cut, in a section). */
+function drawProjection(doc, ctx, B, vis, G, occluders) {
+  const S = ctx.scale;
   for (const it of vis) {
-    const bandIdx = Math.min(2, Math.floor(Math.max(0, it.depth) / (depthMax / 3 + 1e-9)));
+    const bandIdx = Math.min(2, Math.floor(Math.max(0, it.depth) / (G.depthMax / 3 + 1e-9)));
     const pen = ["medium", "thin", "hairline"][bandIdx];
     const g = resolveGraphics(doc, ctx, it.f, "projection");
     const gw = { weight: g.weight === "none" ? "none" : penWeight(doc, pen, S), colour: g.colour, dash: g.dash };
@@ -525,9 +565,116 @@ export function elevationScene(doc, v, opts = {}) {
     for (const s of it.sil) occluders.push(ensureCCW(s));
     B.hit(it.id, it.sil[0]);
   }
-  const scene = { prims: B.prims, hits: B.hits, links: [], scale: S, kind: "elevation", stats: { items: vis.length } };
-  scene.bbox = sceneBBox(B.prims);
+}
+
+// ---------------------------------------------------------------- sections: the cut, blended
+//! A section cuts every wall, floor, beam and column the line crosses into rectangles of
+//! material in (along, height). Where a floor meets a wall the two overlap; the layer
+//! priority that trims walls at a T in plan decides here which one stops. The outline is
+//! then read off a grid of the rectangles' edges: a line is drawn only where the material
+//! changes, so a slab running into a wall of the same concrete is one piece of poché.
+/** Where the view line crosses a plan polygon: [s0, s1] intervals along the line. */
+function lineIntervals(poly, G) {
+  const { c, d, Lv } = G, n = perp(d), ts = [];
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], b = poly[(i + 1) % poly.length];
+    const da = dot(sub(a, c.start), n), db = dot(sub(b, c.start), n);
+    if ((da > 0) === (db > 0) || da === db) continue;
+    const t = da / (da - db), p = add(a, mul(sub(b, a), t));
+    ts.push(dot(sub(p, c.start), d));
+  }
+  ts.sort((x, y) => x - y);
+  const out = [];
+  for (let i = 0; i + 1 < ts.length; i += 2) { const s0 = Math.max(0, ts[i]), s1 = Math.min(Lv, ts[i + 1]); if (s1 - s0 > 0.5) out.push([s0, s1]); }
+  return out;
+}
+const rectMinus = (r, k) => {
+  if (k.s1 <= r.s0 || k.s0 >= r.s1 || k.z1 <= r.z0 || k.z0 >= r.z1) return [r];
+  const out = [], mk = (s0, s1, z0, z1) => { if (s1 - s0 > 1e-6 && z1 - z0 > 1e-6) out.push(Object.assign({}, r, { s0, s1, z0, z1 })); };
+  mk(r.s0, k.s0, r.z0, r.z1); mk(k.s1, r.s1, r.z0, r.z1);
+  const s0 = Math.max(r.s0, k.s0), s1 = Math.min(r.s1, k.s1);
+  mk(s0, s1, r.z0, k.z0); mk(s0, s1, k.z1, r.z1);
+  return out;
+};
+/** The cut: material rectangles, their conflicts resolved by priority. */
+export function sectionCut(doc, v) {
+  const ctx = viewContext(doc, v), G = viewLineGeometry(doc, v);
+  const rects = [], cutIds = new Set();
+  const push = (f, kind, s0, s1, z0, z1, material, priority) => { rects.push({ id: doc.idOf(f), kind, s0, s1, z0: z0 - G.Z0, z1: z1 - G.Z0, material, priority }); cutIds.add(doc.idOf(f)); };
+  const detail = ctx.detail === "Coarse" ? "Coarse" : "Fine";
+  for (const f of doc.elements()) {
+    if (f.get("Integer") === 0 || doc.error(f) || !categoryVisible(ctx, categoryOf(doc, f))) continue;
+    const t = doc.typeOf(f), p = doc.plan(f); if (!p) continue;
+    if (t === "Wall" && p.stack) {
+      const regs = wallRegions(p, detail, -Infinity, []);
+      for (const r of regs) {
+        if (r.bevel) continue;
+        const L = r.layer === null ? null : p.stack.layers[r.layer];
+        for (const [s0, s1] of lineIntervals(samplePath(r.path, 24), G)) {
+          // openings the line passes through take their height out of the wall
+          const mid = add(G.c.start, mul(G.d, (s0 + s1) / 2)), u = uOf(p, mid);
+          let spans = [[p.z0, p.z1]];
+          for (const op of p.openings || []) if (u > op.u0 && u < op.u1) spans = spans.flatMap(([a, b]) => [[a, Math.min(b, p.z0 + op.sill)], [Math.max(a, p.z0 + op.sill + op.h), b]]).filter(([a, b]) => b - a > 1e-6);
+          for (const [z0, z1] of spans) push(f, "wall", s0, s1, z0, z1, r.material, L ? L.priority : 1);
+        }
+      }
+    }
+    if ((t === "Floor" || t === "Beam") && p.parts) for (const part of p.parts) {
+      const pr = LAYER_PRIORITY[part.sub] ?? (t === "Beam" ? 1 : 4);
+      for (const [s0, s1] of lineIntervals(part.foot, G)) push(f, t === "Floor" ? "floor" : "beam", s0, s1, part.z0, part.z1, part.material, pr);
+    }
+    if (t === "Column") { const foot = p.foot.length ? p.foot : samplePath(p.path); for (const [s0, s1] of lineIntervals(foot, G)) push(f, "column", s0, s1, p.z0, p.z1, p.material, 1); }
+  }
+  // conflicts: where a floor layer and a wall (or column) layer overlap, the stronger layer runs
+  // through and the other gives way - a wall layer wins only when it strictly outranks the floor's,
+  // so a slab bears over a wall's structure and a screed runs to a wall's plaster
+  const floors = rects.filter(r => r.kind === "floor"), others = rects.filter(r => r.kind !== "floor");
+  const upright = w => w.kind === "wall" || w.kind === "column";
+  const fl = floors.flatMap(r => others.filter(w => upright(w) && w.priority < r.priority).reduce((acc, w) => acc.flatMap(x => rectMinus(x, w)), [r]));
+  const ot = others.flatMap(w => !upright(w) ? [w] : floors.filter(r => !(w.priority < r.priority)).reduce((acc, r) => acc.flatMap(x => rectMinus(x, r)), [w]));
+  return { rects: fl.concat(ot), cutIds, G, ctx };
+}
+export function sectionScene(doc, v, opts = {}) {
+  const { rects, cutIds, G, ctx } = sectionCut(doc, v);
+  const S = ctx.scale, B = new SceneBuilder(S);
+  drawDatums(doc, ctx, B, v, G);
+  // beyond the cut: as an elevation, hidden behind the cut itself
+  const items = gatherElevationItems(doc, ctx, G, cutIds).filter(it => it.depthMax >= -TOL && it.depth >= -TOL && it.depth <= G.depthMax && it.s1 >= 0 && it.s0 <= G.Lv)
+    .sort((a, b) => a.depth - b.depth || (a.id < b.id ? -1 : 1));
+  const occ = rects.map(r => [[r.s0, r.z0], [r.s1, r.z0], [r.s1, r.z1], [r.s0, r.z1]]);
+  drawProjection(doc, ctx, B, items, G, occ.slice());
+  // the cut: fills and hatches per rectangle, then the outline off the grid
+  const matOf = m => doc.lib.materials[m] || {};
+  for (const r of rects) {
+    const path = polyPath([[r.s0, r.z0], [r.s1, r.z0], [r.s1, r.z1], [r.s0, r.z1]].map(q => B.P(q)));
+    const mc = matOf(r.material).cut || {};
+    const cat = { wall: "IfcWall", floor: "IfcSlab", beam: "IfcBeam", column: "IfcColumn" }[r.kind];
+    B.fill(path, mc.background || "#e9eaec", cat, r.id, true);
+    if (mc.pattern && doc.lib.patterns[mc.pattern]) B.hatch(path, doc.lib.patterns[mc.pattern], mc.pattern, mc.lineColour || "#000", penWeight(doc, "hairline", S), cat, r.id, true);
+    B.hit(r.id, [[r.s0, r.z0], [r.s1, r.z0], [r.s1, r.z1], [r.s0, r.z1]]);
+  }
+  for (const e of cutOutline(rects)) B.stroke([lineSeg(e.a, e.b)], { weight: penWeight(doc, e.outer ? "heavy" : "thin", S), colour: "#000" }, "Section-Cut", e.id);
+  const scene = { prims: B.prims, hits: B.hits, links: [], scale: S, kind: "section", stats: { cut: rects.length, beyond: items.length } };
+  applyCrop(doc, v, doc.argValue(v, "clip"), scene, S);
   return scene;
+}
+/** Edges between cells of different material on the grid of all rectangle edges; outer when one side is empty. */
+export function cutOutline(rects) {
+  if (!rects.length) return [];
+  const xs = [...new Set(rects.flatMap(r => [r.s0, r.s1]).map(v => Math.round(v * 1000) / 1000))].sort((a, b) => a - b);
+  const zs = [...new Set(rects.flatMap(r => [r.z0, r.z1]).map(v => Math.round(v * 1000) / 1000))].sort((a, b) => a - b);
+  const nx = xs.length - 1, nz = zs.length - 1, cell = new Array(nx * nz).fill(null), owner = new Array(nx * nz).fill(null);
+  const ix = v => xs.findIndex(x => Math.abs(x - v) < 1e-3), iz = v => zs.findIndex(z => Math.abs(z - v) < 1e-3);
+  for (const r of rects) {
+    const i0 = ix(Math.round(r.s0 * 1000) / 1000), i1 = ix(Math.round(r.s1 * 1000) / 1000), j0 = iz(Math.round(r.z0 * 1000) / 1000), j1 = iz(Math.round(r.z1 * 1000) / 1000);
+    for (let i = i0; i < i1; i++) for (let j = j0; j < j1; j++) { cell[j * nx + i] = r.material || "?"; owner[j * nx + i] = r.id; }
+  }
+  const at = (i, j) => (i < 0 || j < 0 || i >= nx || j >= nz) ? null : cell[j * nx + i];
+  const edges = [];
+  const add_ = (a, b, outer, id) => { const last = edges[edges.length - 1]; if (last && last.outer === outer && Math.abs(last.b[0] - a[0]) < 1e-6 && Math.abs(last.b[1] - a[1]) < 1e-6 && ((last.a[0] === last.b[0]) === (a[0] === b[0]))) { last.b = b; return; } edges.push({ a, b, outer, id }); };
+  for (let i = 0; i <= nx; i++) for (let j = 0; j < nz; j++) { const L = at(i - 1, j), R = at(i, j); if (L !== R) add_([xs[i], zs[j]], [xs[i], zs[j + 1]], L === null || R === null, owner[j * nx + Math.min(i, nx - 1)] || owner[j * nx + Math.max(0, i - 1)]); }
+  for (let j = 0; j <= nz; j++) for (let i = 0; i < nx; i++) { const D = at(i, j - 1), U = at(i, j); if (D !== U) add_([xs[i], zs[j]], [xs[i + 1], zs[j]], D === null || U === null, owner[Math.min(j, nz - 1) * nx + i] || owner[Math.max(0, j - 1) * nx + i]); }
+  return edges;
 }
 
 /** A wall's elevation rep and silhouette, from its construction — not from a solid. */
