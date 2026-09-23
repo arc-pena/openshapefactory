@@ -1690,3 +1690,32 @@ testCase("M56", "Datums are edited where they are seen: a section crossing an el
   return R(ok, "Section B-B (crossing) drawn and pickable in the South Elevation, Section A-A (parallel) not; grid B and section B-B 1 m west; the roof follows its level to +4.850",
     `B ${hitB}, A ${hitA}; grid B x ${gb}, section B-B x ${sb}; roof top ${roof && roof.z1}`);
 });
+
+const IFC_LEVELS = `ISO-10303-21;
+HEADER;FILE_DESCRIPTION((''),'2;1');FILE_NAME('v.ifc','',(''),(''),'','','');FILE_SCHEMA(('IFC4'));ENDSEC;
+DATA;
+#1=IFCSIUNIT(*,.LENGTHUNIT.,.MILLI.,.METRE.);#2=IFCUNITASSIGNMENT((#1));
+#10=IFCCARTESIANPOINT((0.,0.,0.));#11=IFCDIRECTION((0.,0.,1.));#12=IFCDIRECTION((1.,0.,0.));#13=IFCAXIS2PLACEMENT3D(#10,#11,#12);#14=IFCLOCALPLACEMENT($,#13);
+#15=IFCCARTESIANPOINT((0.,0.,4000.));#16=IFCAXIS2PLACEMENT3D(#15,$,$);#17=IFCLOCALPLACEMENT(#14,#16);#18=IFCLOCALPLACEMENT(#17,#13);
+#19=IFCCARTESIANPOINT((0.,0.,8000.));#20=IFCAXIS2PLACEMENT3D(#19,$,$);#21=IFCLOCALPLACEMENT(#14,#20);#22=IFCLOCALPLACEMENT(#21,#20);
+#23=IFCLOCALPLACEMENT($,#16);
+#30=IFCPROJECT('p',$,'T',$,$,$,$,$,#2);#31=IFCBUILDINGSTOREY('s1',$,'Level 1',$,$,#14,$,$,.ELEMENT.,0.);#32=IFCBUILDINGSTOREY('s2',$,'Level 2',$,$,#17,$,$,.ELEMENT.,4000.);#33=IFCBUILDINGSTOREY('s3',$,'Level 3',$,$,#21,$,$,.ELEMENT.,8000.);
+#40=IFCCARTESIANPOINT((0.,0.));#41=IFCAXIS2PLACEMENT2D(#40,$);#42=IFCRECTANGLEPROFILEDEF(.AREA.,'A',#41,1000.,200.);#43=IFCEXTRUDEDAREASOLID(#42,#13,#11,1500.);
+#44=IFCSHAPEREPRESENTATION($,'Body','SweptSolid',(#43));#45=IFCPRODUCTDEFINITIONSHAPE($,$,(#44));#46=IFCPRODUCTDEFINITIONSHAPE($,$,(#44));#47=IFCPRODUCTDEFINITIONSHAPE($,$,(#44));#48=IFCPRODUCTDEFINITIONSHAPE($,$,(#44));#49=IFCPRODUCTDEFINITIONSHAPE($,$,(#44));#50=IFCPRODUCTDEFINITIONSHAPE($,$,(#44));
+#51=IFCSTAIR('st',$,'Stair',$,$,#18,$,$,$);#52=IFCSTAIRFLIGHT('sf',$,'Flight',$,$,#18,#45,$,$,$,$,$,$);#53=IFCRELAGGREGATES('ag',$,$,$,#51,(#52));
+#54=IFCRAILING('fr',$,'Free rail',$,$,#23,#46,$,$);
+#55=IFCWALL('w1',$,'L3 wall 1',$,$,#22,#47,$,$);#56=IFCWALL('w2',$,'L3 wall 2',$,$,#22,#48,$,$);#57=IFCWALL('w3',$,'L3 wall 3',$,$,#22,#49,$,$);
+#60=IFCRELCONTAINEDINSPATIALSTRUCTURE('c2',$,$,$,(#51),#32);#61=IFCRELCONTAINEDINSPATIALSTRUCTURE('c3',$,$,$,(#55,#56,#57),#33);
+ENDSEC;END-ISO-10303-21;`;
+testCase("M57", "IFC heights land on their levels with no offset: a stair flight that is only part of a stair takes the stair's storey; an element in no storey takes the level at its base; a storey whose elements carry its height twice is brought down onto its level", () => {
+  const doc = newDocument("ifc"), ed = new Editor(doc), r = importIfc(doc, IFC_LEVELS), res = ed.apply(r.ops);
+  const lvName = f => { const id = (doc.argValue(f, "level") || doc.argValue(f, "baseLevel") || {}).ref; return id && doc.element(id).get("Name"); };
+  const by = n => doc.elements().find(f => f.get("Name") === n);
+  const flight = by("Flight"), rail = by("Free rail"), walls = ["L3 wall 1", "L3 wall 2", "L3 wall 3"].map(by);
+  const off = f => doc.argValue(f, "baseOffset");
+  const ok = res.ok && flight && lvName(flight) === "Level 2" && Math.abs(off(flight)) < 1 && Math.abs(doc.plan(flight).z0 - 4000) < 1
+    && rail && lvName(rail) === "Level 2" && Math.abs(off(rail)) < 1
+    && walls.every(w => w && lvName(w) === "Level 3" && Math.abs(off(w)) < 1 && Math.abs(doc.plan(w).z0 - 8000) < 1) && r.report.notes.some(n => /twice/.test(n));
+  return R(ok, "the flight on Level 2 at offset 0 (z 4000); the free rail on Level 2 at offset 0; the three Level 3 walls at offset 0 (z 8000, brought down from 16000); the report says so",
+    `ok ${res.ok} ${res.error || ""}; flight ${flight && [lvName(flight), off(flight), doc.plan(flight).z0]}; rail ${rail && [lvName(rail), off(rail)]}; walls ${walls.map(w => w && [lvName(w), off(w), doc.plan(w).z0]).join(" | ")}; notes ${r.report.notes.join(" | ")}`);
+});

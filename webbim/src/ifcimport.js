@@ -67,6 +67,7 @@ function orientedBox(pts) {
  *  a brep, a face set, a swept disk - arrives as the points it is made of. */
 function bodySolids(model, entity, scale) {
   const frame = ifcWorldFrame(model, entity.args[5], scale), out = [];
+  frame.o = [frame.o[0], frame.o[1], frame.o[2] - ((model.zShift && model.zShift.get(entity.id)) || 0)];
   let clipped = false;
   const turn = (f, v) => [f.x[0] * v[0] + f.y[0] * v[1] + f.z[0] * v[2], f.x[1] * v[0] + f.y[1] * v[1] + f.z[1] * v[2], f.x[2] * v[0] + f.y[2] * v[1] + f.z[2] * v[2]];
   const visit = (item, fr, depth) => {
@@ -292,6 +293,7 @@ const ID3 = { o: [0, 0, 0], x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] };
  *  by its representation map (and scale) so every instance shares one mesh; anything else is its own. */
 export function elementShape(model, e, scale) {
   const world = ifcWorldFrame(model, e.args[5], scale), items = ifcBodyItems(model, e), notes = new Set();
+  world.o = [world.o[0], world.o[1], world.o[2] - ((model.zShift && model.zShift.get(e.id)) || 0)];
   if (!items.length) return null;
   if (items.length === 1 && items[0].type === "IFCMAPPEDITEM") {
     const a = items[0].args, src = follow(model, a[0]), rep = src && follow(model, src.args[1]);
@@ -369,6 +371,7 @@ export function importIfc(doc, text, { everything = true, exact = true } = {}) {
   report.why = {};
   //! Every element kept out says why, once per class and reason: "1 × IFCSLAB" alone is not something anybody can act on.
   const missed = (k, why) => { report.missed[k] = (report.missed[k] || 0) + 1; if (why) { const w = (report.why[k] = report.why[k] || {}); w[why] = (w[why] || 0) + 1; } };
+  const noteOnce = new Set(), note = (key, text) => { if (!noteOnce.has(key)) { noteOnce.add(key); report.notes.push(text); } };
   const ops = [], taken = new Set(doc.elements().map(f => doc.idOf(f)));
   const fresh = prefix => { let n = 1; while (taken.has(prefix + n)) n++; taken.add(prefix + n); return prefix + n; };
   const newTypes = new Map();
@@ -378,11 +381,17 @@ export function importIfc(doc, text, { everything = true, exact = true } = {}) {
     let n = 1; while (doc.lib.types["T-IFC" + n] || newTypes.has("T-IFC" + n)) n++;
     const id = "T-IFC" + n; newTypes.set(id, Object.assign(make(), { ifcKey: key })); return id;
   };
-  // storeys → levels, matched by elevation
-  const levelOf = new Map();
-  const levels = doc.elements().filter(f => doc.typeOf(f) === "Level").map(f => ({ id: doc.idOf(f), z: (doc.data(f) || {}).value || 0 }));
+  // storeys → levels, matched by elevation. A storey's height is where the file's geometry puts it: its
+  // placement, when that carries a height (elements are placed relative to it); its Elevation attribute
+  // when the placement sits at zero (elements then carry absolute heights).
+  const levelOf = new Map(), storeyZ = new Map();
+  const levels = doc.elements().filter(f => doc.typeOf(f) === "Level").map(f => ({ id: doc.idOf(f), z: Number(doc.argValue(f, "elevation")) || (doc.data(f) || {}).value || 0 }));
   for (const st of ofType(model, "IFCBUILDINGSTOREY")) {
-    const z = asNumber(st.args[9]) * scale, name = ifcName(st) || "Storey";
+    const zAttr = asNumber(st.args[9]) * scale, zWorld = ifcWorldFrame(model, st.args[5], scale).o[2];
+    const z = Math.abs(zWorld - zAttr) < 1 || Math.abs(zWorld) < 1 || !isFinite(zWorld) ? zAttr : zWorld;
+    if (Math.abs(zWorld - zAttr) >= 1 && Math.abs(zWorld) >= 1) note("storeyz", "storey heights are taken from their placements, where these differ from the storeys' Elevation attributes (the elements are placed relative to them)");
+    storeyZ.set(st.id, z);
+    const name = ifcName(st) || "Storey";
     let lv = levels.find(l => Math.abs(l.z - z) < 1);
     if (!lv) { const id = fresh("L"); ops.push({ op: "add", element: { id, type: "Level", name, args: { name, elevation: r1(z) } } }); lv = { id, z }; levels.push(lv); made("Level"); }
     levelOf.set(st.id, lv);
@@ -402,10 +411,39 @@ export function importIfc(doc, text, { everything = true, exact = true } = {}) {
     const st = follow(model, rel.args[5]); if (!st) continue;
     for (const e of followAll(model, rel.args[4])) storeyOf.set(e.id, st.id);
   }
-  const fallback = levels.slice().sort((a, b) => a.z - b.z)[0] || null;
-  const levelFor = e => levelOf.get(storeyOf.get(e.id)) || fallback;
+  //! Parts of an assembly (a stair's flights, a curtain wall's panels and mullions, a railing's pieces)
+  //! are not contained in a storey themselves: they take their assembly's.
+  const parentOf = new Map();
+  for (const rel of ofType(model, "IFCRELAGGREGATES")) { const whole = follow(model, rel.args[4]); if (whole) for (const part of followAll(model, rel.args[5])) parentOf.set(part.id, whole.id); }
+  const storeyFor = id => { for (let k = 0, x = id; k < 12 && x; k++, x = parentOf.get(x)) if (storeyOf.has(x)) return storeyOf.get(x); return null; };
+  //! A storey height counted twice: elements placed relative to a storey placement that carries the
+  //! height, with the height written into their own placement again. Seen as every element of a storey
+  //! sitting at twice its height; corrected per storey, and said.
+  model.zShift = new Map();
+  const byStorey = new Map();
+  for (const e of model.entities ? model.entities.values() : []) {
+    if (!e.args || /^IFCREL/.test(e.type) || !isRef(e.args[6]) || e.type === "IFCBUILDINGSTOREY") continue;
+    const st = storeyFor(e.id); if (!st) continue;
+    if (!byStorey.has(st)) byStorey.set(st, []);
+    byStorey.get(st).push(e);
+  }
+  for (const [st, els] of byStorey) {
+    const E = storeyZ.get(st) || 0; if (Math.abs(E) < 500 || els.length < 3) continue;
+    const zs = els.map(e => ifcWorldFrame(model, e.args[5], scale).o[2]).sort((a, b) => a - b), med = zs[Math.floor(zs.length / 2)];
+    if (Math.abs(med - 2 * E) < Math.max(50, Math.abs(E) * 0.02)) {
+      for (const e of els) model.zShift.set(e.id, E);
+      note("doublez", "some storeys' elements carried their storey's height twice (in their own placement as well as the storey's): brought down onto their levels");
+    }
+  }
+  // what a shifted element voids and what fills it come down with it
+  for (const rel of ofType(model, "IFCRELVOIDSELEMENT")) { const w = follow(model, rel.args[4]), o = follow(model, rel.args[5]); if (w && o && model.zShift.has(w.id)) model.zShift.set(o.id, model.zShift.get(w.id)); }
+  for (const rel of ofType(model, "IFCRELFILLSELEMENT")) { const o = follow(model, rel.args[4]), fl = follow(model, rel.args[5]); if (o && fl && model.zShift.has(o.id) && !model.zShift.has(fl.id)) model.zShift.set(fl.id, model.zShift.get(o.id)); }
+  //! An element's level: its storey (or its assembly's); with none, the level at or below its base, as
+  //! Revit hosts a free element - never the lowest level with the whole height put into its offset.
+  const sortedLv = () => levels.slice().sort((a, b) => a.z - b.z);
+  const levelAt = z => { const L = sortedLv(); let best = L[0] || null; for (const l of L) if (l.z <= z + 1) best = l; return best; };
+  const levelFor = (e, zBase = null) => levelOf.get(storeyFor(e.id)) || (zBase != null && isFinite(zBase) ? levelAt(zBase) : sortedLv()[0] || null);
   const wallOf = new Map();                                  // IFC wall id → { id, a, b, z0, len }
-  const noteOnce = new Set(), note = (key, text) => { if (!noteOnce.has(key)) { noteOnce.add(key); report.notes.push(text); } };
   const products = model.entities ? [...model.entities.values()] : [];
   const addColumn = (e, lv, c, W, D, round, rot, z0, h) => {
     const typeId = typeFor(`col:${W}x${D}:${round}`, () => ({ family: "F-RCCOLUMN", name: round ? `IFC Ø${W}` : `IFC ${W}×${D}`, mark: "C", width: W, depth: D, round, material: "M-CONC" }));
@@ -460,6 +498,7 @@ export function importIfc(doc, text, { everything = true, exact = true } = {}) {
     const zs = []; for (let i = 2; i < world.positions.length; i += 3) zs.push(world.positions[i]);
     const zLo = Math.min(...zs), zHi = Math.max(...zs), xy = []; for (let i = 0; i < world.positions.length; i += 3) xy.push([world.positions[i], world.positions[i + 1]]);
     const boundary = hull2(xy); if (boundary.length < 3) return false;
+    lv = levelOf.get(storeyFor(e.id)) || levelAt(zLo) || lv;
     const ic = IFC_CLASS(T), cat = genericCategory(ic), [label, material] = MESH_KIND[cat] || ["Generic models (exact shape)", "M-CONC"];
     const r6 = v => Math.round(v * 1e6) / 1e6, fr = { o: [r1(sh.frame.o[0]), r1(sh.frame.o[1]), r1(sh.frame.o[2] - zLo)], x: sh.frame.x.map(r6), y: sh.frame.y.map(r6), z: sh.frame.z.map(r6) };
     const id = fresh("GM");
@@ -481,7 +520,7 @@ export function importIfc(doc, text, { everything = true, exact = true } = {}) {
       }
       continue;
     }
-    const body = bodySolids(model, e, scale), lv = levelFor(e);
+    const body = bodySolids(model, e, scale), lv = levelFor(e, body.points.length ? zRange(body.points)[0] : null);
     // a proxy is always its own shape; a wall, slab or member that is not a plain upright extrusion keeps its shape when asked
     if (isProxy && addMesh(e, T, lv)) continue;
     if (exact && body.points.length) {
