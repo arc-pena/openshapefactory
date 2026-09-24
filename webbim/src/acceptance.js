@@ -11,7 +11,7 @@ import { pointAt, uOf, boundary, wallPieces } from "./walls.js";
 import { newDocument, openDocument, measureRefs, resolveReference, importPlacer } from "./bim.js";
 import { Editor, propagate, massingStoreys, geomKey } from "./ops.js";
 import { sectionRows, findSection, sectionType } from "./sectionlib.js";
-import { viewLineGeometry, viewContext, sectionBoxKey, dimText, deriveView, planScene, elevationScene, placements, textWidth, sheetScene, visibilityKey, sectionCut, cutOutline } from "./scene.js";
+import { viewLineGeometry, viewContext, sectionBoxKey, dimText, deriveView, planScene, elevationScene, placements, textWidth, sheetScene, visibilityKey, sectionCut, cutOutline, SHEET_DISPLAYS, sheetDisplayOf } from "./scene.js";
 import { chainLoop } from "./crop.js";
 import { importIfc } from "./ifcimport.js";
 import { writePDF, pathOps, PT_PER_MM } from "./pdf.js";
@@ -1900,4 +1900,17 @@ testCase("M66", "Sun and hard shadows in plan: a 3 m column under a 45° sun fro
   const ok = Math.abs(whole.maxY - 3200) < 1e-6 && Math.abs(cut.maxY - 1400) < 1e-6 && whole.p.nonzero && whole.p.opacity > 0 && whole.sc.prims.indexOf(whole.p) < whole.sc.prims.findIndex(q => (q.layer || "").startsWith("IfcWall"));
   ed.apply({ op: "set", id: "V", key: "sun", value: { on: false } }); const off = !planScene(doc, doc.element("V")).prims.some(q => q.layer === "Shadow");
   return R(ok && off, "shadow reaches y = 3200 (200 + 3000/tan 45°); below the 1200 cut, 1400; one non-zero fill drawn before the walls; sun off, none", `${whole.maxY}, ${cut.maxY}, off ${off}`);
+});
+
+testCase("M67", "A 3D view on a sheet takes a display: hidden line (vector only), shaded (image only), with edges (both), rendered with the sun; a raster taken in another look is regenerated; older files keep their meaning", () => {
+  const doc = buildPavilionSample(), ed = new Editor(doc), v = doc.element("V-3D");
+  // older files: lines / linesOverShaded / hidden edges
+  const legacy = sheetDisplayOf({ mode: "lines" }).key === "hidden" && sheetDisplayOf({ mode: "lines", hidden: true }).key === "hiddenDashed" && sheetDisplayOf({ mode: "linesOverShaded" }).key === "shadedEdges";
+  // a generated drawing: one visible edge, one hidden, and a raster taken for "Shaded with edges"
+  doc._hlrCache = { "V-3D": { camera: JSON.stringify(doc.argValue(v, "camera")), revision: doc.modelRevision, vis: visibilityKey(doc, v), box: sectionBoxKey(doc, v),
+    lines: { visible: [[[0, 0], [1000, 0]]], hidden: [[[0, 100], [1000, 100]]] }, bbox: [0, 0, 1000, 1000], raster: "data:image/jpeg;base64,AA==", rasterDisplay: "shadedEdges", rasterDPI: 300 } };
+  const look = key => { ed.apply({ op: "set", id: "V-3D", key: "render", value: Object.assign({}, doc.argValue(v, "render"), { display: key }) }); doc._hlrCache["V-3D"].revision = doc.modelRevision; const sc = deriveView(doc, v); return { strokes: sc.prims.filter(p => p.t === "stroke").length, raster: sc.prims.some(p => p.t === "raster"), stale: sc.stale || "" }; };
+  const hid = look("hidden"), dash = look("hiddenDashed"), sh = look("shaded"), se = look("shadedEdges"), wh = look("whiteShadows");
+  const ok = legacy && SHEET_DISPLAYS.length >= 6 && hid.strokes === 1 && !hid.raster && dash.strokes === 2 && sh.strokes === 0 && sh.raster && !sh.stale && se.strokes === 1 && se.raster && /display changed/.test(wh.stale);
+  return R(ok, "hidden: 1 stroke, no image; dashed: 2; shaded: image only; with edges: both; a white/shadow look finds the shaded raster stale", JSON.stringify({ legacy, hid, dash, sh, se, wh }));
 });

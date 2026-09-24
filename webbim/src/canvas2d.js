@@ -603,7 +603,7 @@ export class View2D {
       e.preventDefault(); const p = this.toModel(...this.evPos(e));
       const r = this.app.apply({ op: "place", sheet: this.viewId, view: vid, at: p.map(Math.round) });
       this.app.say(r.ok ? `Placed ${this.doc.element(vid).get("Name")} as ${r.id}, centred where you dropped it` : r.error, r.ok ? "ok" : "error");
-      if (r.ok) this.app.select([`${this.viewId}:${r.id}`]);
+      if (r.ok) { this.app.select([`${this.viewId}:${r.id}`]); if (this.doc.typeOf(this.doc.element(vid)) === "View3D" && this.app.chooseSheetDisplay) this.app.chooseSheetDisplay(vid); }
     });
   }
   zoomAt(sx, sy, k) { const before = [sx / this.cam.z + this.cam.x, (this.H - sy) / this.cam.z + this.cam.y]; this.cam.z = Math.max(0.02, Math.min(400, this.cam.z * k)); this.cam.x = before[0] - sx / this.cam.z; this.cam.y = before[1] - (this.H - sy) / this.cam.z; this.draw(); }

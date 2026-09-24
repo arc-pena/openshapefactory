@@ -1145,6 +1145,27 @@ export function shownInView(doc, v, f) {
   if (f.get("Integer") === 0) return false;
   return categoryVisible(viewContext(doc, v), categoryOf(doc, f));
 }
+/** How a 3D view is drawn on a sheet: its vector hidden-line work, a raster of the model under it, or both.
+ *  raster names the look the snapshot is taken in (a visual style, or "White": every face white); sun puts
+ *  the view's sun (or a default one) in it, hard shadows and all. */
+export const SHEET_DISPLAYS = [
+  { key: "hidden", label: "Hidden line", lines: true },
+  { key: "hiddenDashed", label: "Hidden line, hidden edges dashed", lines: true, hidden: true },
+  { key: "shadedEdges", label: "Shaded with edges", lines: true, raster: "Shaded" },
+  { key: "shaded", label: "Shaded", raster: "Shaded" },
+  { key: "consistentEdges", label: "Consistent colours with edges", lines: true, raster: "Consistent Colors" },
+  { key: "rendered", label: "Rendered - sun and shadows", raster: "Shaded", sun: true },
+  { key: "renderedEdges", label: "Rendered with edges", lines: true, raster: "Shaded", sun: true },
+  { key: "whiteShadows", label: "White model, hard shadows, edges", lines: true, raster: "White", sun: true },
+];
+/** The display a view's render settings ask for (older files: mode lines / linesOverShaded, hidden on or off). */
+export const rasterLook = d => d.raster ? d.raster + (d.sun ? "+sun" : "") : "";
+export function sheetDisplayOf(render = {}) {
+  const d = SHEET_DISPLAYS.find(x => x.key === render.display);
+  if (d) return d;
+  if (render.mode === "linesOverShaded") return SHEET_DISPLAYS.find(x => x.key === "shadedEdges");
+  return SHEET_DISPLAYS.find(x => x.key === (render.hidden ? "hiddenDashed" : "hidden"));
+}
 export function view3dScene(doc, v, opts = {}) {
   const ctx = viewContext(doc, v), S = ctx.scale, B = new SceneBuilder(S);
   const cache = doc._hlrCache && doc._hlrCache[doc.idOf(v)];
@@ -1154,10 +1175,13 @@ export function view3dScene(doc, v, opts = {}) {
   if (cache && cache.camera === cam && (cache.box || "") !== sectionBoxKey(doc, v)) scene.stale = "the section box changed since generation";
   if (!cache || cache.camera !== cam) { scene.stale = "never generated"; B.text([0, 0], "Hidden-line view not generated yet", 3, {}); scene.bbox = [-5, -5, 120, 10]; return scene; }
   if (cache.revision !== doc.modelRevision) scene.stale = `model changed since generation (rev ${cache.revision} → ${doc.modelRevision})`;
-  const render = doc.argValue(v, "render") || {};
+  const render = doc.argValue(v, "render") || {}, disp = sheetDisplayOf(render);
   const style = ctx.style.byCategory && ctx.style.byCategory.View3D || {};
-  const slots = { visible: { pen: "medium", on: true }, outlineV: { pen: "medium", on: true }, smoothV: { pen: "hairline", on: false }, hidden: { pen: "hairline", on: !!render.hidden, dash: LINE_TYPES.hidden }, outlineH: { pen: "hairline", on: !!render.hidden, dash: LINE_TYPES.hidden } };
-  if (cache.raster && render.mode === "linesOverShaded") B.prims.push({ t: "raster", rect: [cache.bbox[0] / S, cache.bbox[1] / S, (cache.bbox[2] - cache.bbox[0]) / S, (cache.bbox[3] - cache.bbox[1]) / S], url: cache.raster, dpi: cache.rasterDPI, layer: "Shaded" });
+  const slots = { visible: { pen: "medium", on: !!disp.lines }, outlineV: { pen: "medium", on: !!disp.lines }, smoothV: { pen: "hairline", on: false }, hidden: { pen: "hairline", on: !!disp.hidden, dash: LINE_TYPES.hidden }, outlineH: { pen: "hairline", on: !!disp.hidden, dash: LINE_TYPES.hidden } };
+  // the raster must be the one this display asks for: another (or none) is regenerated
+  // the image must be taken in this display's look (the same image serves with or without the edges)
+  if (disp.raster && (!cache.raster || rasterLook(SHEET_DISPLAYS.find(x => x.key === cache.rasterDisplay) || SHEET_DISPLAYS[2]) !== rasterLook(disp))) scene.stale = scene.stale || `display changed to ${disp.label}`;
+  if (cache.raster && disp.raster) B.prims.push({ t: "raster", rect: [cache.bbox[0] / S, cache.bbox[1] / S, (cache.bbox[2] - cache.bbox[0]) / S, (cache.bbox[3] - cache.bbox[1]) / S], url: cache.raster, dpi: cache.rasterDPI, layer: "Shaded" });
   for (const [cat, segs] of Object.entries(cache.lines)) {
     const sl = slots[cat]; if (!sl || !sl.on) continue;
     const w = cat === "outlineV" && render.silhouetteWeight ? render.silhouetteWeight : penWeight(doc, sl.pen, S);

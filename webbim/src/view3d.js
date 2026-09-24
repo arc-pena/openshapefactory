@@ -8,7 +8,7 @@
 import { bridgeHoles } from "./bimsketch.js";
 import { h, clear, icon, fmtLen } from "./ui_util.js";
 import { buildHLRModel, hlrSteps, cameraBasis } from "./hlr.js";
-import { sectionBoxKey } from "./scene.js";
+import { sectionBoxKey, sheetDisplayOf } from "./scene.js";
 import { F } from "./ocaf.js";
 import { geomKeyOf } from "./ops.js";
 import { add, sub, mul, dot, dist, normalise, lerp } from "./geom2d.js";
@@ -88,7 +88,8 @@ export class View3D {
     if (this.needFit) this.fit();
   }
   get doc() { return this.app.doc; }
-  get style() { const v = this.doc.element(this.viewId); return (v && F.choice(v, "visualStyle")) || "Shaded"; }
+  // a sheet snapshot may ask for another look than the view shows on screen (SHEET_DISPLAYS)
+  get style() { if (this.styleOverride) return this.styleOverride; const v = this.doc.element(this.viewId); return (v && F.choice(v, "visualStyle")) || "Shaded"; }
   resize() { if (!this.renderer) return; const r = this.root.getBoundingClientRect(); this.W = r.width; this.H = r.height; this.renderer.setSize(r.width, r.height); if (this.needFit && r.width > 40 && r.height > 40) this.fit(); else this.render(); }
 
   // ---------------------------------------------------------------- model → scene (one group per element)
@@ -111,7 +112,7 @@ export class View3D {
       if (!p || (t !== "Wall" && t !== "Column")) continue;
       const id = doc.idOf(f);
       const m = one(f, p, t);
-      const colour = style === "Hidden Line" ? "#ffffff" : style === "Consistent Colors" ? flat(doc, t, p) : shade(doc, t, p);
+      const colour = style === "Hidden Line" ? "#ffffff" : style === "White" ? SHEET_WHITE : style === "Consistent Colors" ? flat(doc, t, p) : shade(doc, t, p);
       const g = new T.Group(); g.userData.id = id;
       const pos = [];
       for (const s of m.solids) for (const fc of s.faces) for (let i = 1; i < fc.poly.length - 1; i++) pos.push(...fc.poly[0], ...fc.poly[i], ...fc.poly[i + 1]);
@@ -134,7 +135,7 @@ export class View3D {
     const T = this.T, id = this.doc.idOf(f), g = new T.Group(); g.userData.id = id;
     for (const m of list) {
       const geo = new T.BufferGeometry(); geo.setAttribute("position", new T.Float32BufferAttribute(m.positions, 3)); geo.setIndex(m.index); geo.computeVertexNormals();
-      const colour = style === "Hidden Line" ? "#ffffff" : m.colour || "#c8c8c8";
+      const colour = style === "Hidden Line" ? "#ffffff" : style === "White" ? SHEET_WHITE : m.colour || "#c8c8c8";
       const mat = style === "Consistent Colors" || style === "Hidden Line" ? new T.MeshBasicMaterial({ color: new T.Color(colour), side: T.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 })
         : new T.MeshLambertMaterial({ color: new T.Color(colour), side: T.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
       if (m.opacity < 1 || style === "Wireframe") { mat.transparent = true; mat.opacity = style === "Wireframe" ? 0.06 : m.opacity; mat.depthWrite = false; }
@@ -161,7 +162,7 @@ export class View3D {
       const top = pt.topFoot ? pt.topFoot.map(q => [q[0] - off[0], q[1] - off[1]]) : null;
       const { pos, nrm } = prismMesh(foot, pt.z0, pt.z1, holes, top);
       const geo = new T.BufferGeometry(); geo.setAttribute("position", new T.Float32BufferAttribute(pos, 3)); geo.setAttribute("normal", new T.Float32BufferAttribute(nrm, 3));
-      const colour = style === "Hidden Line" ? "#ffffff" : (pt.colour || PART_COLOURS[pt.sub] || PART_COLOURS[t] || "#c8c8c8");
+      const colour = style === "Hidden Line" ? "#ffffff" : style === "White" ? (pt.sub === "Glass" ? "#dfe9ee" : SHEET_WHITE) : (pt.colour || PART_COLOURS[pt.sub] || PART_COLOURS[t] || "#c8c8c8");
       const glass = pt.sub === "Glass" && style !== "Hidden Line";
       const mat = style === "Consistent Colors" || style === "Hidden Line" ? new T.MeshBasicMaterial({ color: new T.Color(colour), side: T.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 })
         : new T.MeshLambertMaterial({ color: new T.Color(colour), side: T.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
@@ -641,11 +642,15 @@ export class View3D {
     for (;;) { r = it.next(); if (r.done) break; if (onProgress) onProgress(r.value.done / r.value.total); if (performance.now() - last > 12) { await new Promise(res => setTimeout(res, 0)); last = performance.now(); } }
     const out = r.value;
     const entry = { camera: JSON.stringify(cam), revision: doc.modelRevision, vis: visibilityKey(doc, v), box: sectionBoxKey(doc, v), lines: out.lines, bbox: out.bbox, counts: out.counts };
-    const render = F.json(v, "render") || {};
-    if (render.mode === "linesOverShaded" && this.renderer) {
+    const render = F.json(v, "render") || {}, disp = sheetDisplayOf(render);
+    if (disp.raster && this.renderer) {
       const S = F.int(v, "scale") || 200, wmm = (out.bbox[2] - out.bbox[0]) / S, hmm = (out.bbox[3] - out.bbox[1]) / S;
       const pxW = rasterPixels(wmm, render.rasterDPI || 300), pxH = rasterPixels(hmm, render.rasterDPI || 300);
-      entry.raster = this.snapshot(pxW, pxH, cam, out.bbox); entry.rasterDPI = render.rasterDPI || 300; entry.rasterPx = [pxW, pxH];
+      // taken in the display's look, whatever the view shows on screen, then put back
+      this.styleOverride = disp.raster; this.sunOverride = !!disp.sun; this.builtKey = null; this.sunKey = null; this.refresh();
+      try { entry.raster = this.snapshot(pxW, pxH, cam, out.bbox); }
+      finally { this.styleOverride = null; this.sunOverride = false; this.builtKey = null; this.sunKey = null; this.refresh(); }
+      entry.rasterDPI = render.rasterDPI || 300; entry.rasterPx = [pxW, pxH]; entry.rasterDisplay = disp.key;
     }
     doc._hlrCache = Object.assign({}, doc._hlrCache, { [this.viewId]: entry });
     doc.bumpView();
@@ -660,7 +665,8 @@ export class View3D {
   /** Place the sun for this view's settings: aim it at the model, fit its shadow camera to the model's box, lay the
    *  ground under the lowest body, and balance the lights so a shadowed face reads at the chosen strength. */
   applySun() {
-    const T = this.T, v = this.doc.element(this.viewId), sun = sunOf(v && F.json(v, "sun")), on = !!sun.on && this.style !== "Wireframe" && this.style !== "Hidden Line";
+    const T = this.T, v = this.doc.element(this.viewId), sun = sunOf(v && F.json(v, "sun")); if (this.sunOverride) sun.on = true;
+    const on = !!sun.on && this.style !== "Wireframe" && this.style !== "Hidden Line";
     const key = JSON.stringify(sun) + "|" + this.style + "|" + this.builtKey;
     if (this.sunKey === key) return; this.sunKey = key;
     this.sun.intensity = on ? 0.95 : 0; this.sun.castShadow = on; this.ground.visible = on;
@@ -710,6 +716,7 @@ export class View3D {
 function clear3(scene) { for (const o of scene.children.slice()) { scene.remove(o); if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); } }
 const vdot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const v3sub3 = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const SHEET_WHITE = "#f3f2ef";      // the "White" sheet look: every face one warm white, the sun doing the drawing
 const PART_TYPES = new Set(["Door", "Window", "Floor", "Beam", "Generic"]);
 const PART_COLOURS = { Frame: "#eeeeec", Panel: "#9c7650", Glass: "#9fd0ee", Handle: "#b8bcc4", Sill: "#d9d6cf", Door: "#9c7650", Window: "#eeeeec", Floor: "#c9c7c1", Beam: "#8f9aa8", Column: "#8f9aa8", Generic: "#b9b2a6", Body: "#b9b2a6" };
 /** Triangles of a prism: a plan footprint between two heights, any winding. */

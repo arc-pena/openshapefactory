@@ -65,6 +65,20 @@ for (const f of MODULES) {
   }
   const body = src.replace(importRe, "").replace(/^export\s+\{[^}]*\};?\s*$/gm, "").replace(/^export\s+(?=(const|let|function|class|async)\b)/gm, "");
   const names = [...body.matchAll(/^(?:const|let|class|function\*?|async function)\s+([A-Za-z_$][\w$]*)/gm)].map(x => x[1]);
+  // "const A = …, B = …" declares B too (a WHITE hidden behind BLACK once slipped through): split each one-line
+  // top-level const/let at its outermost commas
+  for (const m of body.matchAll(/^(?:const|let)\s+(.*)$/gm)) {
+    let depth = 0, str = null, part = "";
+    const parts = [];
+    for (const ch of m[1]) {
+      if (str) { if (ch === str) str = null; part += ch; continue; }
+      if (ch === '"' || ch === "'" || ch === "`") { str = ch; part += ch; continue; }
+      if ("([{".includes(ch)) depth++; else if (")]}".includes(ch)) depth--;
+      if (ch === "," && depth === 0) { parts.push(part); part = ""; } else part += ch;
+    }
+    parts.push(part);
+    for (const p of parts.slice(1)) { const n = /^\s*([A-Za-z_$][\w$]*)\s*=(?!=)/.exec(p); if (n) names.push(n[1]); }
+  }
   for (const n of names) {
     if (declared.has(n)) fail(`top-level "${n}" is declared in both ${declared.get(n)} and ${f}; in the single file the second silently wins`);
     declared.set(n, f);

@@ -11410,6 +11410,27 @@ function shownInView(doc, v, f) {
   if (f.get("Integer") === 0) return false;
   return categoryVisible(viewContext(doc, v), categoryOf(doc, f));
 }
+/** How a 3D view is drawn on a sheet: its vector hidden-line work, a raster of the model under it, or both.
+ *  raster names the look the snapshot is taken in (a visual style, or "White": every face white); sun puts
+ *  the view's sun (or a default one) in it, hard shadows and all. */
+const SHEET_DISPLAYS = [
+  { key: "hidden", label: "Hidden line", lines: true },
+  { key: "hiddenDashed", label: "Hidden line, hidden edges dashed", lines: true, hidden: true },
+  { key: "shadedEdges", label: "Shaded with edges", lines: true, raster: "Shaded" },
+  { key: "shaded", label: "Shaded", raster: "Shaded" },
+  { key: "consistentEdges", label: "Consistent colours with edges", lines: true, raster: "Consistent Colors" },
+  { key: "rendered", label: "Rendered - sun and shadows", raster: "Shaded", sun: true },
+  { key: "renderedEdges", label: "Rendered with edges", lines: true, raster: "Shaded", sun: true },
+  { key: "whiteShadows", label: "White model, hard shadows, edges", lines: true, raster: "White", sun: true },
+];
+/** The display a view's render settings ask for (older files: mode lines / linesOverShaded, hidden on or off). */
+const rasterLook = d => d.raster ? d.raster + (d.sun ? "+sun" : "") : "";
+function sheetDisplayOf(render = {}) {
+  const d = SHEET_DISPLAYS.find(x => x.key === render.display);
+  if (d) return d;
+  if (render.mode === "linesOverShaded") return SHEET_DISPLAYS.find(x => x.key === "shadedEdges");
+  return SHEET_DISPLAYS.find(x => x.key === (render.hidden ? "hiddenDashed" : "hidden"));
+}
 function view3dScene(doc, v, opts = {}) {
   const ctx = viewContext(doc, v), S = ctx.scale, B = new SceneBuilder(S);
   const cache = doc._hlrCache && doc._hlrCache[doc.idOf(v)];
@@ -11419,10 +11440,13 @@ function view3dScene(doc, v, opts = {}) {
   if (cache && cache.camera === cam && (cache.box || "") !== sectionBoxKey(doc, v)) scene.stale = "the section box changed since generation";
   if (!cache || cache.camera !== cam) { scene.stale = "never generated"; B.text([0, 0], "Hidden-line view not generated yet", 3, {}); scene.bbox = [-5, -5, 120, 10]; return scene; }
   if (cache.revision !== doc.modelRevision) scene.stale = `model changed since generation (rev ${cache.revision} → ${doc.modelRevision})`;
-  const render = doc.argValue(v, "render") || {};
+  const render = doc.argValue(v, "render") || {}, disp = sheetDisplayOf(render);
   const style = ctx.style.byCategory && ctx.style.byCategory.View3D || {};
-  const slots = { visible: { pen: "medium", on: true }, outlineV: { pen: "medium", on: true }, smoothV: { pen: "hairline", on: false }, hidden: { pen: "hairline", on: !!render.hidden, dash: LINE_TYPES.hidden }, outlineH: { pen: "hairline", on: !!render.hidden, dash: LINE_TYPES.hidden } };
-  if (cache.raster && render.mode === "linesOverShaded") B.prims.push({ t: "raster", rect: [cache.bbox[0] / S, cache.bbox[1] / S, (cache.bbox[2] - cache.bbox[0]) / S, (cache.bbox[3] - cache.bbox[1]) / S], url: cache.raster, dpi: cache.rasterDPI, layer: "Shaded" });
+  const slots = { visible: { pen: "medium", on: !!disp.lines }, outlineV: { pen: "medium", on: !!disp.lines }, smoothV: { pen: "hairline", on: false }, hidden: { pen: "hairline", on: !!disp.hidden, dash: LINE_TYPES.hidden }, outlineH: { pen: "hairline", on: !!disp.hidden, dash: LINE_TYPES.hidden } };
+  // the raster must be the one this display asks for: another (or none) is regenerated
+  // the image must be taken in this display's look (the same image serves with or without the edges)
+  if (disp.raster && (!cache.raster || rasterLook(SHEET_DISPLAYS.find(x => x.key === cache.rasterDisplay) || SHEET_DISPLAYS[2]) !== rasterLook(disp))) scene.stale = scene.stale || `display changed to ${disp.label}`;
+  if (cache.raster && disp.raster) B.prims.push({ t: "raster", rect: [cache.bbox[0] / S, cache.bbox[1] / S, (cache.bbox[2] - cache.bbox[0]) / S, (cache.bbox[3] - cache.bbox[1]) / S], url: cache.raster, dpi: cache.rasterDPI, layer: "Shaded" });
   for (const [cat, segs] of Object.entries(cache.lines)) {
     const sl = slots[cat]; if (!sl || !sl.on) continue;
     const w = cat === "outlineV" && render.silhouetteWeight ? render.silhouetteWeight : penWeight(doc, sl.pen, S);
@@ -17547,6 +17571,19 @@ testCase("M66", "Sun and hard shadows in plan: a 3 m column under a 45° sun fro
   return R(ok && off, "shadow reaches y = 3200 (200 + 3000/tan 45°); below the 1200 cut, 1400; one non-zero fill drawn before the walls; sun off, none", `${whole.maxY}, ${cut.maxY}, off ${off}`);
 });
 
+testCase("M67", "A 3D view on a sheet takes a display: hidden line (vector only), shaded (image only), with edges (both), rendered with the sun; a raster taken in another look is regenerated; older files keep their meaning", () => {
+  const doc = buildPavilionSample(), ed = new Editor(doc), v = doc.element("V-3D");
+  // older files: lines / linesOverShaded / hidden edges
+  const legacy = sheetDisplayOf({ mode: "lines" }).key === "hidden" && sheetDisplayOf({ mode: "lines", hidden: true }).key === "hiddenDashed" && sheetDisplayOf({ mode: "linesOverShaded" }).key === "shadedEdges";
+  // a generated drawing: one visible edge, one hidden, and a raster taken for "Shaded with edges"
+  doc._hlrCache = { "V-3D": { camera: JSON.stringify(doc.argValue(v, "camera")), revision: doc.modelRevision, vis: visibilityKey(doc, v), box: sectionBoxKey(doc, v),
+    lines: { visible: [[[0, 0], [1000, 0]]], hidden: [[[0, 100], [1000, 100]]] }, bbox: [0, 0, 1000, 1000], raster: "data:image/jpeg;base64,AA==", rasterDisplay: "shadedEdges", rasterDPI: 300 } };
+  const look = key => { ed.apply({ op: "set", id: "V-3D", key: "render", value: Object.assign({}, doc.argValue(v, "render"), { display: key }) }); doc._hlrCache["V-3D"].revision = doc.modelRevision; const sc = deriveView(doc, v); return { strokes: sc.prims.filter(p => p.t === "stroke").length, raster: sc.prims.some(p => p.t === "raster"), stale: sc.stale || "" }; };
+  const hid = look("hidden"), dash = look("hiddenDashed"), sh = look("shaded"), se = look("shadedEdges"), wh = look("whiteShadows");
+  const ok = legacy && SHEET_DISPLAYS.length >= 6 && hid.strokes === 1 && !hid.raster && dash.strokes === 2 && sh.strokes === 0 && sh.raster && !sh.stale && se.strokes === 1 && se.raster && /display changed/.test(wh.stale);
+  return R(ok, "hidden: 1 stroke, no image; dashed: 2; shaded: image only; with edges: both; a white/shadow look finds the shaded raster stale", JSON.stringify({ legacy, hid, dash, sh, se, wh }));
+});
+
 // ===== ui_util.js =====
 //! Small DOM vocabulary shared by the interface modules. The interface only
 //! mirrors the document: nothing here owns model state.
@@ -20858,7 +20895,7 @@ class View2D {
       e.preventDefault(); const p = this.toModel(...this.evPos(e));
       const r = this.app.apply({ op: "place", sheet: this.viewId, view: vid, at: p.map(Math.round) });
       this.app.say(r.ok ? `Placed ${this.doc.element(vid).get("Name")} as ${r.id}, centred where you dropped it` : r.error, r.ok ? "ok" : "error");
-      if (r.ok) this.app.select([`${this.viewId}:${r.id}`]);
+      if (r.ok) { this.app.select([`${this.viewId}:${r.id}`]); if (this.doc.typeOf(this.doc.element(vid)) === "View3D" && this.app.chooseSheetDisplay) this.app.chooseSheetDisplay(vid); }
     });
   }
   zoomAt(sx, sy, k) { const before = [sx / this.cam.z + this.cam.x, (this.H - sy) / this.cam.z + this.cam.y]; this.cam.z = Math.max(0.02, Math.min(400, this.cam.z * k)); this.cam.x = before[0] - sx / this.cam.z; this.cam.y = before[1] - (this.H - sy) / this.cam.z; this.draw(); }
@@ -21621,7 +21658,8 @@ class View3D {
     if (this.needFit) this.fit();
   }
   get doc() { return this.app.doc; }
-  get style() { const v = this.doc.element(this.viewId); return (v && F.choice(v, "visualStyle")) || "Shaded"; }
+  // a sheet snapshot may ask for another look than the view shows on screen (SHEET_DISPLAYS)
+  get style() { if (this.styleOverride) return this.styleOverride; const v = this.doc.element(this.viewId); return (v && F.choice(v, "visualStyle")) || "Shaded"; }
   resize() { if (!this.renderer) return; const r = this.root.getBoundingClientRect(); this.W = r.width; this.H = r.height; this.renderer.setSize(r.width, r.height); if (this.needFit && r.width > 40 && r.height > 40) this.fit(); else this.render(); }
 
   // ---------------------------------------------------------------- model → scene (one group per element)
@@ -21644,7 +21682,7 @@ class View3D {
       if (!p || (t !== "Wall" && t !== "Column")) continue;
       const id = doc.idOf(f);
       const m = one(f, p, t);
-      const colour = style === "Hidden Line" ? "#ffffff" : style === "Consistent Colors" ? flat(doc, t, p) : shade(doc, t, p);
+      const colour = style === "Hidden Line" ? "#ffffff" : style === "White" ? SHEET_WHITE : style === "Consistent Colors" ? flat(doc, t, p) : shade(doc, t, p);
       const g = new T.Group(); g.userData.id = id;
       const pos = [];
       for (const s of m.solids) for (const fc of s.faces) for (let i = 1; i < fc.poly.length - 1; i++) pos.push(...fc.poly[0], ...fc.poly[i], ...fc.poly[i + 1]);
@@ -21667,7 +21705,7 @@ class View3D {
     const T = this.T, id = this.doc.idOf(f), g = new T.Group(); g.userData.id = id;
     for (const m of list) {
       const geo = new T.BufferGeometry(); geo.setAttribute("position", new T.Float32BufferAttribute(m.positions, 3)); geo.setIndex(m.index); geo.computeVertexNormals();
-      const colour = style === "Hidden Line" ? "#ffffff" : m.colour || "#c8c8c8";
+      const colour = style === "Hidden Line" ? "#ffffff" : style === "White" ? SHEET_WHITE : m.colour || "#c8c8c8";
       const mat = style === "Consistent Colors" || style === "Hidden Line" ? new T.MeshBasicMaterial({ color: new T.Color(colour), side: T.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 })
         : new T.MeshLambertMaterial({ color: new T.Color(colour), side: T.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
       if (m.opacity < 1 || style === "Wireframe") { mat.transparent = true; mat.opacity = style === "Wireframe" ? 0.06 : m.opacity; mat.depthWrite = false; }
@@ -21694,7 +21732,7 @@ class View3D {
       const top = pt.topFoot ? pt.topFoot.map(q => [q[0] - off[0], q[1] - off[1]]) : null;
       const { pos, nrm } = prismMesh(foot, pt.z0, pt.z1, holes, top);
       const geo = new T.BufferGeometry(); geo.setAttribute("position", new T.Float32BufferAttribute(pos, 3)); geo.setAttribute("normal", new T.Float32BufferAttribute(nrm, 3));
-      const colour = style === "Hidden Line" ? "#ffffff" : (pt.colour || PART_COLOURS[pt.sub] || PART_COLOURS[t] || "#c8c8c8");
+      const colour = style === "Hidden Line" ? "#ffffff" : style === "White" ? (pt.sub === "Glass" ? "#dfe9ee" : SHEET_WHITE) : (pt.colour || PART_COLOURS[pt.sub] || PART_COLOURS[t] || "#c8c8c8");
       const glass = pt.sub === "Glass" && style !== "Hidden Line";
       const mat = style === "Consistent Colors" || style === "Hidden Line" ? new T.MeshBasicMaterial({ color: new T.Color(colour), side: T.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 })
         : new T.MeshLambertMaterial({ color: new T.Color(colour), side: T.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
@@ -22174,11 +22212,15 @@ class View3D {
     for (;;) { r = it.next(); if (r.done) break; if (onProgress) onProgress(r.value.done / r.value.total); if (performance.now() - last > 12) { await new Promise(res => setTimeout(res, 0)); last = performance.now(); } }
     const out = r.value;
     const entry = { camera: JSON.stringify(cam), revision: doc.modelRevision, vis: visibilityKey(doc, v), box: sectionBoxKey(doc, v), lines: out.lines, bbox: out.bbox, counts: out.counts };
-    const render = F.json(v, "render") || {};
-    if (render.mode === "linesOverShaded" && this.renderer) {
+    const render = F.json(v, "render") || {}, disp = sheetDisplayOf(render);
+    if (disp.raster && this.renderer) {
       const S = F.int(v, "scale") || 200, wmm = (out.bbox[2] - out.bbox[0]) / S, hmm = (out.bbox[3] - out.bbox[1]) / S;
       const pxW = rasterPixels(wmm, render.rasterDPI || 300), pxH = rasterPixels(hmm, render.rasterDPI || 300);
-      entry.raster = this.snapshot(pxW, pxH, cam, out.bbox); entry.rasterDPI = render.rasterDPI || 300; entry.rasterPx = [pxW, pxH];
+      // taken in the display's look, whatever the view shows on screen, then put back
+      this.styleOverride = disp.raster; this.sunOverride = !!disp.sun; this.builtKey = null; this.sunKey = null; this.refresh();
+      try { entry.raster = this.snapshot(pxW, pxH, cam, out.bbox); }
+      finally { this.styleOverride = null; this.sunOverride = false; this.builtKey = null; this.sunKey = null; this.refresh(); }
+      entry.rasterDPI = render.rasterDPI || 300; entry.rasterPx = [pxW, pxH]; entry.rasterDisplay = disp.key;
     }
     doc._hlrCache = Object.assign({}, doc._hlrCache, { [this.viewId]: entry });
     doc.bumpView();
@@ -22193,7 +22235,8 @@ class View3D {
   /** Place the sun for this view's settings: aim it at the model, fit its shadow camera to the model's box, lay the
    *  ground under the lowest body, and balance the lights so a shadowed face reads at the chosen strength. */
   applySun() {
-    const T = this.T, v = this.doc.element(this.viewId), sun = sunOf(v && F.json(v, "sun")), on = !!sun.on && this.style !== "Wireframe" && this.style !== "Hidden Line";
+    const T = this.T, v = this.doc.element(this.viewId), sun = sunOf(v && F.json(v, "sun")); if (this.sunOverride) sun.on = true;
+    const on = !!sun.on && this.style !== "Wireframe" && this.style !== "Hidden Line";
     const key = JSON.stringify(sun) + "|" + this.style + "|" + this.builtKey;
     if (this.sunKey === key) return; this.sunKey = key;
     this.sun.intensity = on ? 0.95 : 0; this.sun.castShadow = on; this.ground.visible = on;
@@ -22243,6 +22286,7 @@ class View3D {
 function clear3(scene) { for (const o of scene.children.slice()) { scene.remove(o); if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); } }
 const vdot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const v3sub3 = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const SHEET_WHITE = "#f3f2ef";      // the "White" sheet look: every face one warm white, the sun doing the drawing
 const PART_TYPES = new Set(["Door", "Window", "Floor", "Beam", "Generic"]);
 const PART_COLOURS = { Frame: "#eeeeec", Panel: "#9c7650", Glass: "#9fd0ee", Handle: "#b8bcc4", Sill: "#d9d6cf", Door: "#9c7650", Window: "#eeeeec", Floor: "#c9c7c1", Beam: "#8f9aa8", Column: "#8f9aa8", Generic: "#b9b2a6", Body: "#b9b2a6" };
 /** Triangles of a prism: a plan footprint between two heights, any winding. */
@@ -23059,6 +23103,30 @@ function renderTree(body) {
   }
   body.append(ul);
 }
+/** The sheet display of a 3D view (SHEET_DISPLAYS): picking one regenerates that viewport in the new look. */
+function displaySelect(viewId, htmlId) {
+  const doc = app.doc, v = doc.element(viewId), render = doc.argValue(v, "render") || {}, cur = sheetDisplayOf(render).key;
+  return h("select", { id: htmlId, "aria-label": "Sheet display", onchange: e => { setSheetDisplay(viewId, e.target.value); } },
+    SHEET_DISPLAYS.map(d => h("option", { value: d.key, selected: d.key === cur }, d.label)));
+}
+function setSheetDisplay(viewId, key) {
+  const doc = app.doc, v = doc.element(viewId), render = Object.assign({}, doc.argValue(v, "render") || {}, { display: key });
+  const d = SHEET_DISPLAYS.find(x => x.key === key);
+  render.mode = d.raster ? "linesOverShaded" : "lines"; render.hidden = !!d.hidden;         // older readers keep their meaning
+  app.apply({ op: "set", id: viewId, key: "render", value: render });
+  app.say(`${v.get("Name")}: ${d.label} - regenerating on the sheet…`, "note");
+  scheduleHiddenLine();
+}
+/** Dropped on a sheet, a 3D view asks how it should be drawn there. */
+app.chooseSheetDisplay = viewId => {
+  const doc = app.doc, v = doc.element(viewId); if (!v || doc.typeOf(v) !== "View3D") return;
+  const cur = sheetDisplayOf(doc.argValue(v, "render") || {}).key; let pick = cur;
+  const list = h("div", { role: "radiogroup", style: { display: "grid", gap: "6px" } }, SHEET_DISPLAYS.map(d => h("label", { style: { display: "flex", gap: "8px", alignItems: "center" } },
+    h("input", { type: "radio", name: "sheet-disp", value: d.key, checked: d.key === cur, onchange: () => { pick = d.key; } }), d.label)));
+  dialog(`Show ${v.get("Name")} on the sheet as`, h("div", { style: { width: "min(340px, 80vw)", display: "grid", gap: "10px" } }, list,
+    h("div", { class: "muted", style: { fontSize: "11.5px" } }, "Line-work stays vector; shaded and rendered looks are an image under it, at the view's raster DPI. Change it any time from the viewport's properties.")),
+    [{ label: "Keep", run: () => {} }, { label: "Use", primary: true, run: () => { if (pick !== cur) setSheetDisplay(viewId, pick); } }]);
+};
 function renderViewportPanel(body, key) {
   const [shId, vpId] = key.split(":"), doc = app.doc, sh = doc.element(shId);
   const vp = (doc.argValue(sh, "viewports") || []).find(v => v.id === vpId); if (!vp) return;
@@ -23068,6 +23136,8 @@ function renderViewportPanel(body, key) {
     h("div", { class: "prow" }, h("label", {}, "Position"), h("div", { class: "ro mono" }, `${fmtLen(vp.at[0])}, ${fmtLen(vp.at[1])} on paper`)),
     h("div", { class: "prow" }, h("label", { for: "vp-clip" }, "Show crop"), h("div", { class: "ro" }, h("input", { id: "vp-clip", type: "checkbox", checked: !!vp.clipVisible, onchange: e => app.apply({ op: "sheet", id: shId, viewport: vpId, value: { clipVisible: e.target.checked } }) }))),
     view && F.int(view, "scale") ? h("div", { class: "prow" }, h("label", {}, "Scale"), h("div", { class: "ro" }, "1:" + F.int(view, "scale"))) : null,
+    // a 3D view on paper: hidden line, shaded, rendered with the sun... (the view carries it: it sits on one sheet)
+    view && doc.typeOf(view) === "View3D" ? h("div", { class: "prow" }, h("label", { for: "vp-disp" }, "Display"), h("div", { class: "val" }, displaySelect(vp.view.ref, "vp-disp"))) : null,
     h("div", { style: { padding: "12px 14px" } }, h("button", { class: "btn", onclick: () => { app.apply({ op: "sheet", id: shId, viewport: vpId, remove: true }); app.select([]); app.say("Viewport removed; the view itself survives", "ok"); } }, "Remove from sheet"))));
 }
 

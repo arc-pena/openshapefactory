@@ -16,7 +16,7 @@ import { buildPavilionSample } from "./sample_pavilion.js";
 import { buildRmuhSample } from "./sample_rmuh.js";
 import { openDocument, newDocument, sheetSize } from "./bim.js";
 import { F, CATALOGUE } from "./ocaf.js";
-import { deriveView, sheetScene, shownInView, SHEET_DIAGRAMS } from "./scene.js";
+import { deriveView, sheetScene, shownInView, SHEET_DIAGRAMS, SHEET_DISPLAYS, sheetDisplayOf } from "./scene.js";
 import { elementsBox } from "./hlr.js";
 import { writePDF } from "./pdf.js";
 import { writeDXF, readDXF, dxfDrawing, makeZip } from "./dxf.js";
@@ -737,6 +737,30 @@ function renderTree(body) {
   }
   body.append(ul);
 }
+/** The sheet display of a 3D view (SHEET_DISPLAYS): picking one regenerates that viewport in the new look. */
+function displaySelect(viewId, htmlId) {
+  const doc = app.doc, v = doc.element(viewId), render = doc.argValue(v, "render") || {}, cur = sheetDisplayOf(render).key;
+  return h("select", { id: htmlId, "aria-label": "Sheet display", onchange: e => { setSheetDisplay(viewId, e.target.value); } },
+    SHEET_DISPLAYS.map(d => h("option", { value: d.key, selected: d.key === cur }, d.label)));
+}
+function setSheetDisplay(viewId, key) {
+  const doc = app.doc, v = doc.element(viewId), render = Object.assign({}, doc.argValue(v, "render") || {}, { display: key });
+  const d = SHEET_DISPLAYS.find(x => x.key === key);
+  render.mode = d.raster ? "linesOverShaded" : "lines"; render.hidden = !!d.hidden;         // older readers keep their meaning
+  app.apply({ op: "set", id: viewId, key: "render", value: render });
+  app.say(`${v.get("Name")}: ${d.label} - regenerating on the sheet…`, "note");
+  scheduleHiddenLine();
+}
+/** Dropped on a sheet, a 3D view asks how it should be drawn there. */
+app.chooseSheetDisplay = viewId => {
+  const doc = app.doc, v = doc.element(viewId); if (!v || doc.typeOf(v) !== "View3D") return;
+  const cur = sheetDisplayOf(doc.argValue(v, "render") || {}).key; let pick = cur;
+  const list = h("div", { role: "radiogroup", style: { display: "grid", gap: "6px" } }, SHEET_DISPLAYS.map(d => h("label", { style: { display: "flex", gap: "8px", alignItems: "center" } },
+    h("input", { type: "radio", name: "sheet-disp", value: d.key, checked: d.key === cur, onchange: () => { pick = d.key; } }), d.label)));
+  dialog(`Show ${v.get("Name")} on the sheet as`, h("div", { style: { width: "min(340px, 80vw)", display: "grid", gap: "10px" } }, list,
+    h("div", { class: "muted", style: { fontSize: "11.5px" } }, "Line-work stays vector; shaded and rendered looks are an image under it, at the view's raster DPI. Change it any time from the viewport's properties.")),
+    [{ label: "Keep", run: () => {} }, { label: "Use", primary: true, run: () => { if (pick !== cur) setSheetDisplay(viewId, pick); } }]);
+};
 function renderViewportPanel(body, key) {
   const [shId, vpId] = key.split(":"), doc = app.doc, sh = doc.element(shId);
   const vp = (doc.argValue(sh, "viewports") || []).find(v => v.id === vpId); if (!vp) return;
@@ -746,6 +770,8 @@ function renderViewportPanel(body, key) {
     h("div", { class: "prow" }, h("label", {}, "Position"), h("div", { class: "ro mono" }, `${fmtLen(vp.at[0])}, ${fmtLen(vp.at[1])} on paper`)),
     h("div", { class: "prow" }, h("label", { for: "vp-clip" }, "Show crop"), h("div", { class: "ro" }, h("input", { id: "vp-clip", type: "checkbox", checked: !!vp.clipVisible, onchange: e => app.apply({ op: "sheet", id: shId, viewport: vpId, value: { clipVisible: e.target.checked } }) }))),
     view && F.int(view, "scale") ? h("div", { class: "prow" }, h("label", {}, "Scale"), h("div", { class: "ro" }, "1:" + F.int(view, "scale"))) : null,
+    // a 3D view on paper: hidden line, shaded, rendered with the sun... (the view carries it: it sits on one sheet)
+    view && doc.typeOf(view) === "View3D" ? h("div", { class: "prow" }, h("label", { for: "vp-disp" }, "Display"), h("div", { class: "val" }, displaySelect(vp.view.ref, "vp-disp"))) : null,
     h("div", { style: { padding: "12px 14px" } }, h("button", { class: "btn", onclick: () => { app.apply({ op: "sheet", id: shId, viewport: vpId, remove: true }); app.select([]); app.say("Viewport removed; the view itself survives", "ok"); } }, "Remove from sheet"))));
 }
 
