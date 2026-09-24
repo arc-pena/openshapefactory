@@ -211,9 +211,15 @@ BUILDERS.Opening = {
   },
 };
 
+// In an inclined wall: follow it (the door or window leans with the wall), or stand plumb - placed where
+// its sill, its head or its middle meets the wall, plus an offset - with its frame run out across the
+// reveal as a shroud until the tilted wall faces trim it.
+const INCLINE_ARGS = () => [bool("followWall", "Follow wall geometry", true, { group: "Inclined wall" }),
+  when(choice("plumbAt", "Placed on wall at", ["Sill", "Head", "Middle"], 0, { group: "Inclined wall" }), "followWall", false),
+  when(real("plumbOffset", "Offset from wall", 0, -5000, 5000, 1, "mm", { group: "Inclined wall" }), "followWall", false)];
 function fillerDecl(type, guid, typeKind, extraArgs, summary, idPrefix, category) {
   declare({ type, guid, category, kind: type.toLowerCase(), idPrefix, summary,
-    args: [ ref("fills", "Fills", ["opening"]), ref(typeKind, "Type", [typeKind]), ...extraArgs ] });
+    args: [ ref("fills", "Fills", ["opening"]), ref(typeKind, "Type", [typeKind]), ...extraArgs, ...INCLINE_ARGS() ] });
 }
 fillerDecl("Door", "wb-0202", "doorType", [bool("flipHand", "Flip hand", false), bool("flipFacing", "Flip facing", false),
     choice("operation", "Operation", ["Single", "Double"], 0), real("swingAngle", "Swing angle", 90, 0, 180, 1, "°"),
@@ -240,6 +246,44 @@ const hostPt = (w, u, s) => pointAt(w, s, u);
 /** A box in the host's (u, s, z) frame, as a plan footprint and a height range: what the 3D view and the CAD bridge build from. */
 const hostBox = (w, u0, u1, s0, s1, z0, z1, sub, extra = {}) =>
   Object.assign({ foot: [pointAt(w, s0, u0), pointAt(w, s0, u1), pointAt(w, s1, u1), pointAt(w, s1, u0)], z0: w.z0 + z0, z1: w.z0 + z1, sub }, extra);
+/** A door or window in a leaning wall (§ inclined walls). The host's faces at height z sit at s·sc + k·(z − zRef)
+ *  across its drawn line (sc = 1 / cos θ, k = tan θ: the same faces its solid and its plan cut use).
+ *  Follow: every part is carried onto the leaning faces (each footprint solved at its bottom and at its top).
+ *  Plumb: the leaf stays upright, placed where the chosen height meets the wall plus an offset; the frame is
+ *  rebuilt as a shroud - at every height the span from the frame's own band to both wall faces - so it
+ *  closes the gap to the tilted reveal. Returns what the plan needs at a cut height. */
+function inclineFiller(f, w, fr, plan, parts, spec) {
+  if (!w.lean || w.curve.type !== "line") return null;
+  const n2 = perp(w.d), k = Math.tan(w.lean), sc = 1 / Math.cos(w.lean), zRef = w.z0;
+  const at = (q, z, extra = 0) => add(q, mul(n2, sideOf(w, q) * (sc - 1) + k * (z - zRef) + extra));
+  const moveSeg = (g, fn) => g.k === "L" ? { k: "L", a: fn(g.a), b: fn(g.b) } : g.k === "A" ? Object.assign({}, g, { c: fn(g.c) }) : g.k === "C" ? { k: "C", a: fn(g.a), c1: fn(g.c1), c2: fn(g.c2), b: fn(g.b) } : g;
+  if (F.bool(f, "followWall") !== false) {
+    for (const p of parts) {
+      const base = p.foot; p.foot = base.map(q => at(q, p.z0)); p.topFoot = base.map(q => at(q, p.z1));
+      if (p.pivot) p.pivot = at(p.pivot, (p.z0 + p.z1) / 2);
+    }
+    return { planAt: z => plan.map(pc => Object.assign({}, pc, { path: pc.path.map(g => moveSeg(g, q => at(q, z))) })), lean: true };
+  }
+  // plumb: where on the wall it stands, and how far out of it
+  const zA = w.z0 + (F.choice(f, "plumbAt") === "Head" ? fr.sill + fr.h : F.choice(f, "plumbAt") === "Middle" ? fr.sill + fr.h / 2 : fr.sill);
+  const off = F.real(f, "plumbOffset") || 0, place = q => at(q, zA, off);
+  const kept = parts.filter(p => p.sub !== "Frame" || p.mullion);
+  for (const p of kept) { p.foot = p.foot.map(place); if (p.pivot) p.pivot = place(p.pivot); }
+  const [fa, fb] = spec.band, lo = Math.min(fa, fb) * sc + k * (zA - zRef) + off, hi = Math.max(fa, fb) * sc + k * (zA - zRef) + off;
+  const wLo = Math.min(...w.stack.s) * sc, wHi = Math.max(...w.stack.s) * sc;
+  const span = z => [Math.min(lo, wLo + k * (z - zRef)), Math.max(hi, wHi + k * (z - zRef))];
+  const rect = (u0, u1, [s0, s1]) => [pointAt(w, s0, u0), pointAt(w, s0, u1), pointAt(w, s1, u1), pointAt(w, s1, u0)];
+  const frames = [];
+  for (const [u0, u1, za, zb] of spec.frame) {
+    // the shroud's two edges bend where a wall face crosses the frame's band: split there, loft between
+    const zs = [za, zb]; if (k) for (const v of [(lo - wLo) / k + zRef, (hi - wHi) / k + zRef]) if (v > za + 1e-6 && v < zb - 1e-6) zs.push(v);
+    zs.sort((a, b) => a - b);
+    for (let i = 0; i + 1 < zs.length; i++) frames.push({ foot: rect(u0, u1, span(zs[i])), topFoot: rect(u0, u1, span(zs[i + 1])), z0: zs[i], z1: zs[i + 1], sub: "Frame" });
+  }
+  parts.length = 0; parts.push(...kept, ...frames);
+  const others = plan.filter(pc => pc.sub !== "Frame").map(pc => Object.assign({}, pc, { path: pc.path.map(g => moveSeg(g, place)) }));
+  return { planAt: z => [...others, ...spec.frame.filter(([, , za, zb]) => z > za && z < zb).map(([u0, u1]) => ({ sub: "Frame", role: "cut", path: polyPath(rect(u0, u1, span(z))) }))] };
+}
 /** ADA 2010 §404.2.4 maneuvering clearances at a manual swinging door, mm: depth
  *  in front of the door, and how far the clear floor runs past the latch or the hinge. */
 export const ADA_CLEARANCE = {
@@ -311,7 +355,9 @@ BUILDERS.Door = {
       handle: { u: leaves[0].uo - Math.sign(leaves[0].uo - leaves[0].uh) * 80, z: fr.sill + hz }, glazed: !!t.glazed };
     const leafW = Math.abs(leaves[0].uo - leaves[0].uh);
     const scen = SWING_SCENARIOS[(hingeAtU0 ? 0 : 1) + (facing > 0 ? 0 : 2)];
-    return { plan, elev, data: { value: t.width, kind: "Length", host: fr.host, frame: fr, parts, swing, props: {
+    const top_ = w.z0 + fr.sill + fr.h, bot_ = w.z0 + fr.sill;
+    const incline = inclineFiller(f, w, fr, plan, parts, { band: [sMin, sMax], frame: [[fr.u0, fr.u0 + fw, bot_, top_], [fr.u1 - fw, fr.u1, bot_, top_], [fr.u0 + fw, fr.u1 - fw, top_ - fw, top_]] });
+    return { plan, elev, data: { value: t.width, kind: "Length", host: fr.host, frame: fr, parts, swing, incline, props: {
       Width: L(t.width), Height: L(t.height), TypeMark: T(t.mark || t.id), "Leaf width": L(leafW), "Clear width": L(leafW - lt), Swing: T(pair ? "Double" : scen), "ADA clearance": T(scenario) } },
       note: Math.abs(fr.w - t.width) > 1 ? `type is ${t.width}mm wide; its opening is ${fr.w}mm` : null };
   },
@@ -344,9 +390,11 @@ BUILDERS.Window = {
     for (let i = 1; i <= mull; i++) {
       const u = fr.u0 + (fr.u1 - fr.u0) * i / (mull + 1);
       lines.push({ u0: u, z0: fr.sill + fwid, u1: u, z1: top - fwid, sub: "Frame" });
-      parts.push(hostBox(w, u - fwid / 2, u + fwid / 2, s0, s1, fr.sill + fwid, top - fwid, "Frame"));
+      parts.push(hostBox(w, u - fwid / 2, u + fwid / 2, s0, s1, fr.sill + fwid, top - fwid, "Frame", { mullion: true }));
     }
-    return { plan, elev: { rects, lines }, data: { value: t.width, kind: "Length", host: fr.host, frame: fr, parts, props: { Width: L(t.width), Height: L(t.height), TypeMark: T(t.mark || t.id), "Sill height": L(fr.sill) } } };
+    const zb_ = w.z0 + fr.sill, zt_ = w.z0 + top;
+    const incline = inclineFiller(f, w, fr, plan, parts, { band: [s0, s1], frame: [[fr.u0, fr.u0 + fwid, zb_, zt_], [fr.u1 - fwid, fr.u1, zb_, zt_], [fr.u0 + fwid, fr.u1 - fwid, zb_, zb_ + fwid], [fr.u0 + fwid, fr.u1 - fwid, zt_ - fwid, zt_]] });
+    return { plan, elev: { rects, lines }, data: { value: t.width, kind: "Length", host: fr.host, frame: fr, parts, incline, props: { Width: L(t.width), Height: L(t.height), TypeMark: T(t.mark || t.id), "Sill height": L(fr.sill) } } };
   },
 };
 

@@ -455,6 +455,12 @@ const HANDLERS = {
         if (o.rotate) doc.setArg(f, "rotation", (F.real(f, "rotation") || 0) + o.rotate.a * 180 / Math.PI);
         continue;
       }
+      // a door, window or opening moves along its host: the part of the move that runs with the wall
+      const ft = doc.typeOf(f), opId = ft === "Opening" ? id : (ft === "Door" || ft === "Window") ? F.refId(f, "fills") : null;
+      if (opId && o.move) {
+        const og = doc.element(opId), od = og && doc.data(og), hw = od && od.frame && doc.plan(doc.element(od.frame.host));
+        if (hw && hw.d && !ids.includes(od.frame.host) && !(ft !== "Opening" && ids.includes(opId))) { const pr = clone(doc.argValue(og, "profile")); pr.at = Math.max(0, Math.min(hw.L, pr.at + dot(o.move, hw.d))); doc.setArg(og, "profile", pr); continue; }
+      }
       if (!k) { skipped.push(id); continue; }
       const g = doc.argValue(f, k);
       if (doc.typeOf(f) === "Wall") before.set(id, clone(g));

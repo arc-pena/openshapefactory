@@ -149,7 +149,8 @@ export class View3D {
         parent = pivots.get(k); off = pt.pivot;
       }
       const foot = pt.foot.map(q => [q[0] - off[0], q[1] - off[1]]), holes = (pt.holes || []).map(h => h.map(q => [q[0] - off[0], q[1] - off[1]]));
-      const { pos, nrm } = prismMesh(foot, pt.z0, pt.z1, holes);
+      const top = pt.topFoot ? pt.topFoot.map(q => [q[0] - off[0], q[1] - off[1]]) : null;
+      const { pos, nrm } = prismMesh(foot, pt.z0, pt.z1, holes, top);
       const geo = new T.BufferGeometry(); geo.setAttribute("position", new T.Float32BufferAttribute(pos, 3)); geo.setAttribute("normal", new T.Float32BufferAttribute(nrm, 3));
       const colour = style === "Hidden Line" ? "#ffffff" : (pt.colour || PART_COLOURS[pt.sub] || PART_COLOURS[t] || "#c8c8c8");
       const glass = pt.sub === "Glass" && style !== "Hidden Line";
@@ -158,7 +159,7 @@ export class View3D {
       if (glass) { mat.transparent = true; mat.opacity = 0.35; mat.depthWrite = false; }
       if (style === "Wireframe") { mat.transparent = true; mat.opacity = 0.06; mat.depthWrite = false; }
       const mesh = new T.Mesh(geo, mat); mesh.userData.id = id; parent.add(mesh); this.meshes.push(mesh);
-      const eg = new T.BufferGeometry(); eg.setAttribute("position", new T.Float32BufferAttribute([foot, ...holes].flatMap(r => prismEdges(r, pt.z0, pt.z1)), 3));
+      const eg = new T.BufferGeometry(); eg.setAttribute("position", new T.Float32BufferAttribute((top ? prismEdges(foot, pt.z0, pt.z1, top) : [foot, ...holes].flatMap(r => prismEdges(r, pt.z0, pt.z1))), 3));
       const line = new T.LineSegments(eg, new T.LineBasicMaterial({ color: pt.sub === "Glass" ? 0x5a7f99 : 0x1b2230 })); line.userData.edges = true; parent.add(line);
     }
     this.groups.set(id, g); this.scene.add(g);
@@ -670,7 +671,8 @@ const PART_COLOURS = { Frame: "#eeeeec", Panel: "#9c7650", Glass: "#9fd0ee", Han
  *  average of its two faces' normals unless the outline turns a real corner there (> 25°), so a spline
  *  edge or a round hole shades round instead of showing the chords it was tessellated into. */
 const CORNER = Math.cos(25 * Math.PI / 180);
-function prismMesh(foot, z0, z1, holes = []) {
+function prismMesh(foot, z0, z1, holes = [], top = null) {
+  if (top && top.length === foot.length && !holes.length) return loftMesh(foot, top, z0, z1);
   const area2 = r => { let a = 0; for (let i = 0; i < r.length; i++) { const p = r[i], q = r[(i + 1) % r.length]; a += p[0] * q[1] - q[0] * p[1]; } return a; };
   const O = area2(foot) > 0 ? foot : foot.slice().reverse();
   const H = holes.filter(h => h.length >= 3).map(h => (area2(h) < 0 ? h : h.slice().reverse()));
@@ -690,7 +692,21 @@ function prismMesh(foot, z0, z1, holes = []) {
   }
   return { pos, nrm };
 }
-function prismEdges(foot, z0, z1) {
+/** A lofted part: its footprint at z0 and another with the same corners at z1 (a door leaning with its
+ *  wall, a shroud widening to meet a tilted reveal). Caps triangulated once; each side a flat-shaded quad. */
+function loftMesh(foot, top, z0, z1) {
+  const area2 = r => { let a = 0; for (let i = 0; i < r.length; i++) { const p = r[i], q = r[(i + 1) % r.length]; a += p[0] * q[1] - q[0] * p[1]; } return a; };
+  const flip = area2(foot) < 0, B = flip ? foot.slice().reverse() : foot, T = flip ? top.slice().reverse() : top, pos = [], nrm = [];
+  const tri = (a, b, c) => { const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]], n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]], L = Math.hypot(...n) || 1; pos.push(...a, ...b, ...c); for (let i = 0; i < 3; i++) nrm.push(n[0] / L, n[1] / L, n[2] / L); };
+  for (const [i, j, k] of earcut2(B)) { tri([T[i][0], T[i][1], z1], [T[j][0], T[j][1], z1], [T[k][0], T[k][1], z1]); tri([B[k][0], B[k][1], z0], [B[j][0], B[j][1], z0], [B[i][0], B[i][1], z0]); }
+  for (let i = 0; i < B.length; i++) {
+    const j = (i + 1) % B.length, a = [B[i][0], B[i][1], z0], b = [B[j][0], B[j][1], z0], c = [T[j][0], T[j][1], z1], d = [T[i][0], T[i][1], z1];
+    tri(a, b, c); tri(a, c, d);
+  }
+  return { pos, nrm };
+}
+function prismEdges(foot, z0, z1, top = null) {
+  if (top && top.length === foot.length) { const out = [], n = foot.length; for (let i = 0; i < n; i++) { const a = foot[i], b = foot[(i + 1) % n], c = top[i], d = top[(i + 1) % n]; out.push(a[0], a[1], z0, b[0], b[1], z0, c[0], c[1], z1, d[0], d[1], z1, a[0], a[1], z0, c[0], c[1], z1); } return out; }
   // the top and bottom outlines, and an upright edge only where the outline turns a real corner
   const out = [], n = foot.length, dir = i => { const a = foot[i], b = foot[(i + 1) % n], L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1; return [(b[0] - a[0]) / L, (b[1] - a[1]) / L]; };
   for (let i = 0; i < n; i++) {

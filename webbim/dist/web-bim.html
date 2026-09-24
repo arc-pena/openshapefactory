@@ -6974,9 +6974,15 @@ BUILDERS.Opening = {
   },
 };
 
+// In an inclined wall: follow it (the door or window leans with the wall), or stand plumb - placed where
+// its sill, its head or its middle meets the wall, plus an offset - with its frame run out across the
+// reveal as a shroud until the tilted wall faces trim it.
+const INCLINE_ARGS = () => [bool("followWall", "Follow wall geometry", true, { group: "Inclined wall" }),
+  when(choice("plumbAt", "Placed on wall at", ["Sill", "Head", "Middle"], 0, { group: "Inclined wall" }), "followWall", false),
+  when(real("plumbOffset", "Offset from wall", 0, -5000, 5000, 1, "mm", { group: "Inclined wall" }), "followWall", false)];
 function fillerDecl(type, guid, typeKind, extraArgs, summary, idPrefix, category) {
   declare({ type, guid, category, kind: type.toLowerCase(), idPrefix, summary,
-    args: [ ref("fills", "Fills", ["opening"]), ref(typeKind, "Type", [typeKind]), ...extraArgs ] });
+    args: [ ref("fills", "Fills", ["opening"]), ref(typeKind, "Type", [typeKind]), ...extraArgs, ...INCLINE_ARGS() ] });
 }
 fillerDecl("Door", "wb-0202", "doorType", [bool("flipHand", "Flip hand", false), bool("flipFacing", "Flip facing", false),
     choice("operation", "Operation", ["Single", "Double"], 0), real("swingAngle", "Swing angle", 90, 0, 180, 1, "°"),
@@ -7003,6 +7009,44 @@ const hostPt = (w, u, s) => pointAt(w, s, u);
 /** A box in the host's (u, s, z) frame, as a plan footprint and a height range: what the 3D view and the CAD bridge build from. */
 const hostBox = (w, u0, u1, s0, s1, z0, z1, sub, extra = {}) =>
   Object.assign({ foot: [pointAt(w, s0, u0), pointAt(w, s0, u1), pointAt(w, s1, u1), pointAt(w, s1, u0)], z0: w.z0 + z0, z1: w.z0 + z1, sub }, extra);
+/** A door or window in a leaning wall (§ inclined walls). The host's faces at height z sit at s·sc + k·(z − zRef)
+ *  across its drawn line (sc = 1 / cos θ, k = tan θ: the same faces its solid and its plan cut use).
+ *  Follow: every part is carried onto the leaning faces (each footprint solved at its bottom and at its top).
+ *  Plumb: the leaf stays upright, placed where the chosen height meets the wall plus an offset; the frame is
+ *  rebuilt as a shroud - at every height the span from the frame's own band to both wall faces - so it
+ *  closes the gap to the tilted reveal. Returns what the plan needs at a cut height. */
+function inclineFiller(f, w, fr, plan, parts, spec) {
+  if (!w.lean || w.curve.type !== "line") return null;
+  const n2 = perp(w.d), k = Math.tan(w.lean), sc = 1 / Math.cos(w.lean), zRef = w.z0;
+  const at = (q, z, extra = 0) => add(q, mul(n2, sideOf(w, q) * (sc - 1) + k * (z - zRef) + extra));
+  const moveSeg = (g, fn) => g.k === "L" ? { k: "L", a: fn(g.a), b: fn(g.b) } : g.k === "A" ? Object.assign({}, g, { c: fn(g.c) }) : g.k === "C" ? { k: "C", a: fn(g.a), c1: fn(g.c1), c2: fn(g.c2), b: fn(g.b) } : g;
+  if (F.bool(f, "followWall") !== false) {
+    for (const p of parts) {
+      const base = p.foot; p.foot = base.map(q => at(q, p.z0)); p.topFoot = base.map(q => at(q, p.z1));
+      if (p.pivot) p.pivot = at(p.pivot, (p.z0 + p.z1) / 2);
+    }
+    return { planAt: z => plan.map(pc => Object.assign({}, pc, { path: pc.path.map(g => moveSeg(g, q => at(q, z))) })), lean: true };
+  }
+  // plumb: where on the wall it stands, and how far out of it
+  const zA = w.z0 + (F.choice(f, "plumbAt") === "Head" ? fr.sill + fr.h : F.choice(f, "plumbAt") === "Middle" ? fr.sill + fr.h / 2 : fr.sill);
+  const off = F.real(f, "plumbOffset") || 0, place = q => at(q, zA, off);
+  const kept = parts.filter(p => p.sub !== "Frame" || p.mullion);
+  for (const p of kept) { p.foot = p.foot.map(place); if (p.pivot) p.pivot = place(p.pivot); }
+  const [fa, fb] = spec.band, lo = Math.min(fa, fb) * sc + k * (zA - zRef) + off, hi = Math.max(fa, fb) * sc + k * (zA - zRef) + off;
+  const wLo = Math.min(...w.stack.s) * sc, wHi = Math.max(...w.stack.s) * sc;
+  const span = z => [Math.min(lo, wLo + k * (z - zRef)), Math.max(hi, wHi + k * (z - zRef))];
+  const rect = (u0, u1, [s0, s1]) => [pointAt(w, s0, u0), pointAt(w, s0, u1), pointAt(w, s1, u1), pointAt(w, s1, u0)];
+  const frames = [];
+  for (const [u0, u1, za, zb] of spec.frame) {
+    // the shroud's two edges bend where a wall face crosses the frame's band: split there, loft between
+    const zs = [za, zb]; if (k) for (const v of [(lo - wLo) / k + zRef, (hi - wHi) / k + zRef]) if (v > za + 1e-6 && v < zb - 1e-6) zs.push(v);
+    zs.sort((a, b) => a - b);
+    for (let i = 0; i + 1 < zs.length; i++) frames.push({ foot: rect(u0, u1, span(zs[i])), topFoot: rect(u0, u1, span(zs[i + 1])), z0: zs[i], z1: zs[i + 1], sub: "Frame" });
+  }
+  parts.length = 0; parts.push(...kept, ...frames);
+  const others = plan.filter(pc => pc.sub !== "Frame").map(pc => Object.assign({}, pc, { path: pc.path.map(g => moveSeg(g, place)) }));
+  return { planAt: z => [...others, ...spec.frame.filter(([, , za, zb]) => z > za && z < zb).map(([u0, u1]) => ({ sub: "Frame", role: "cut", path: polyPath(rect(u0, u1, span(z))) }))] };
+}
 /** ADA 2010 §404.2.4 maneuvering clearances at a manual swinging door, mm: depth
  *  in front of the door, and how far the clear floor runs past the latch or the hinge. */
 const ADA_CLEARANCE = {
@@ -7074,7 +7118,9 @@ BUILDERS.Door = {
       handle: { u: leaves[0].uo - Math.sign(leaves[0].uo - leaves[0].uh) * 80, z: fr.sill + hz }, glazed: !!t.glazed };
     const leafW = Math.abs(leaves[0].uo - leaves[0].uh);
     const scen = SWING_SCENARIOS[(hingeAtU0 ? 0 : 1) + (facing > 0 ? 0 : 2)];
-    return { plan, elev, data: { value: t.width, kind: "Length", host: fr.host, frame: fr, parts, swing, props: {
+    const top_ = w.z0 + fr.sill + fr.h, bot_ = w.z0 + fr.sill;
+    const incline = inclineFiller(f, w, fr, plan, parts, { band: [sMin, sMax], frame: [[fr.u0, fr.u0 + fw, bot_, top_], [fr.u1 - fw, fr.u1, bot_, top_], [fr.u0 + fw, fr.u1 - fw, top_ - fw, top_]] });
+    return { plan, elev, data: { value: t.width, kind: "Length", host: fr.host, frame: fr, parts, swing, incline, props: {
       Width: L(t.width), Height: L(t.height), TypeMark: T(t.mark || t.id), "Leaf width": L(leafW), "Clear width": L(leafW - lt), Swing: T(pair ? "Double" : scen), "ADA clearance": T(scenario) } },
       note: Math.abs(fr.w - t.width) > 1 ? `type is ${t.width}mm wide; its opening is ${fr.w}mm` : null };
   },
@@ -7107,9 +7153,11 @@ BUILDERS.Window = {
     for (let i = 1; i <= mull; i++) {
       const u = fr.u0 + (fr.u1 - fr.u0) * i / (mull + 1);
       lines.push({ u0: u, z0: fr.sill + fwid, u1: u, z1: top - fwid, sub: "Frame" });
-      parts.push(hostBox(w, u - fwid / 2, u + fwid / 2, s0, s1, fr.sill + fwid, top - fwid, "Frame"));
+      parts.push(hostBox(w, u - fwid / 2, u + fwid / 2, s0, s1, fr.sill + fwid, top - fwid, "Frame", { mullion: true }));
     }
-    return { plan, elev: { rects, lines }, data: { value: t.width, kind: "Length", host: fr.host, frame: fr, parts, props: { Width: L(t.width), Height: L(t.height), TypeMark: T(t.mark || t.id), "Sill height": L(fr.sill) } } };
+    const zb_ = w.z0 + fr.sill, zt_ = w.z0 + top;
+    const incline = inclineFiller(f, w, fr, plan, parts, { band: [s0, s1], frame: [[fr.u0, fr.u0 + fwid, zb_, zt_], [fr.u1 - fwid, fr.u1, zb_, zt_], [fr.u0 + fwid, fr.u1 - fwid, zb_, zb_ + fwid], [fr.u0 + fwid, fr.u1 - fwid, zt_ - fwid, zt_]] });
+    return { plan, elev: { rects, lines }, data: { value: t.width, kind: "Length", host: fr.host, frame: fr, parts, incline, props: { Width: L(t.width), Height: L(t.height), TypeMark: T(t.mark || t.id), "Sill height": L(fr.sill) } } };
   },
 };
 
@@ -9694,6 +9742,12 @@ const HANDLERS = {
         if (o.rotate) doc.setArg(f, "rotation", (F.real(f, "rotation") || 0) + o.rotate.a * 180 / Math.PI);
         continue;
       }
+      // a door, window or opening moves along its host: the part of the move that runs with the wall
+      const ft = doc.typeOf(f), opId = ft === "Opening" ? id : (ft === "Door" || ft === "Window") ? F.refId(f, "fills") : null;
+      if (opId && o.move) {
+        const og = doc.element(opId), od = og && doc.data(og), hw = od && od.frame && doc.plan(doc.element(od.frame.host));
+        if (hw && hw.d && !ids.includes(od.frame.host) && !(ft !== "Opening" && ids.includes(opId))) { const pr = clone(doc.argValue(og, "profile")); pr.at = Math.max(0, Math.min(hw.L, pr.at + dot(o.move, hw.d))); doc.setArg(og, "profile", pr); continue; }
+      }
       if (!k) { skipped.push(id); continue; }
       const g = doc.argValue(f, k);
       if (doc.typeOf(f) === "Wall") before.set(id, clone(g));
@@ -10447,14 +10501,17 @@ function planScene(doc, v, opts = {}) {
       if (!w || !doc.plan(f)) continue;
       const cutsHere = fr.sill + w.z0 < cutZ && fr.sill + fr.h + w.z0 > cutZ && band(w.z0, w.z1) === "cut";
       if (!cutsHere) continue;       // below or above the cut: the wall reads solid (§5.1)
-      for (const piece of doc.plan(f)) {
+      // in a leaning wall the door is drawn where the cut finds it (leaning with the wall, or plumb with its shroud)
+      const pieces = d.incline ? d.incline.planAt(cutZ) : doc.plan(f);
+      for (const piece of pieces) {
         // ADA maneuvering clearance: red dashed, whatever the style says about the door itself
         if (piece.role === "clearance") { B.stroke(piece.path, { weight: penWeight(doc, "thin", S), colour: "#d0021b", dash: LINE_TYPES.dashed1 }, categoryOf(doc, f) + "-Clearance", doc.idOf(f)); continue; }
         const role = piece.role === "swing" ? "swing" : piece.role === "projection" ? "projection" : "cut";
         const g = resolveGraphics(doc, ctx, f, role, piece.sub);
         B.stroke(piece.path, g, categoryOf(doc, f) + "-" + piece.sub, doc.idOf(f));
       }
-      B.hit(doc.idOf(f), [pointAt(w, w.stack.s[0], fr.u0), pointAt(w, w.stack.s[0], fr.u1), pointAt(w, w.stack.s[w.stack.s.length - 1], fr.u1), pointAt(w, w.stack.s[w.stack.s.length - 1], fr.u0)]);
+      { const wz = leanInvolved(w) ? wallAt(w, Math.max(w.z0, Math.min(w.z1, cutZ))) : w, n_ = wz.stack.s.length - 1;
+        B.hit(doc.idOf(f), [pointAt(wz, wz.stack.s[0], fr.u0), pointAt(wz, wz.stack.s[0], fr.u1), pointAt(wz, wz.stack.s[n_], fr.u1), pointAt(wz, wz.stack.s[n_], fr.u0)]); }
     }
     if (t === "Furniture") {
       const p = doc.plan(f); if (!p) continue; const bnd = band(p.z0, p.z1); if (bnd !== "projection" && bnd !== "cut") continue;
@@ -11501,7 +11558,7 @@ function propertyModel(doc, ids) {
       if (a.when) { const ctl = els.map(f => doc.argValue(f, a.when.key)); if (!ctl.every(v => v === a.when.value)) return; }
       const vals = els.map(f => doc.argValue(f, a.key));
       const v = vary(vals);
-      const row = { source: "arg", key: a.key, label: a.label, kind: a.kind, editor: editorFor(a), group: a.group || "Constraints", arg: a, entry: els.length === 1 ? els[0].child(1 + i, false)?.entry() : null };
+      const row = { source: "arg", key: a.key, label: a.label, kind: a.kind, editor: editorFor(a), group: a.group || "Constraints", arg: a, entry: els.length === 1 ? els[0].child(argTag(i), false)?.entry() : null };
       Object.assign(row, v);
       if (!v.varies && v.value && typeof v.value === "object" && v.value.ref && (a.kind === "Real" || a.kind === "Integer")) {
         // A bound value shows its expression, not its result (§4.5, test 37d).
@@ -11716,7 +11773,7 @@ function buildHLRModel(doc, opts = {}) {
     // a body of its own shape draws its feature edges (it does not hide others: it is not a convex solid)
     if (t === "Generic" && doc.plan(f) && doc.plan(f).mesh) { const m = doc.plan(f).mesh, P = m.positions; for (const [a, b] of featureEdges(m)) edges.push({ a: [P[a * 3], P[a * 3 + 1], P[a * 3 + 2]], b: [P[b * 3], P[b * 3 + 1], P[b * 3 + 2]], kind: "sharp" }); continue; }
     if (t === "Door" || t === "Window" || t === "Floor" || t === "Beam" || t === "Generic") { for (const pt of elementParts(doc, f)) if (pt.foot && pt.foot.length >= 3) {
-      prism(pt.foot, pt.z0, pt.z1, solids, edges, "auto");
+      prism(pt.foot, pt.z0, pt.z1, solids, edges, "auto", pt.topFoot);
       // a hole's edges are drawn; its opening does not yet let the line-work see through (the occluder is the outline)
       for (const hole of pt.holes || []) for (let i = 0; i < hole.length; i++) { const a = hole[i], b = hole[(i + 1) % hole.length];
         const p = hole[(i - 1 + hole.length) % hole.length], u = [a[0] - p[0], a[1] - p[1]], v = [b[0] - a[0], b[1] - a[1]], corner = (u[0] * v[0] + u[1] * v[1]) / (Math.hypot(...u) * Math.hypot(...v) || 1) < Math.cos(25 * Math.PI / 180);
@@ -11773,8 +11830,10 @@ function faceNormal(poly) {
   for (let i = 0; i < poly.length; i++) { const a = poly[i], b = poly[(i + 1) % poly.length]; n = [n[0] + (a[1] - b[1]) * (a[2] + b[2]), n[1] + (a[2] - b[2]) * (a[0] + b[0]), n[2] + (a[0] - b[0]) * (a[1] + b[1])]; }
   return norm3(n);
 }
-function prism(foot, z0, z1, solids, edges, smooth) {
-  const b = foot.map(p => [p[0], p[1], z0]), t = foot.map(p => [p[0], p[1], z1]);
+function prism(foot, z0, z1, solids, edges, smooth, top = null) {
+  // a lofted part (top footprint of its own) has flat sides between the two outlines
+  if (top && top.length === foot.length) smooth = false;
+  const b = foot.map(p => [p[0], p[1], z0]), t = (top && top.length === foot.length ? top : foot).map(p => [p[0], p[1], z1]);
   const s = solidFrom(b, t); solids.push(s);
   const n = foot.length;
   for (let i = 0; i < n; i++) {
@@ -17364,6 +17423,35 @@ testCase("M64", "A wall's Top Constraint: bounded by a top level (plus a top off
     `${h1}, ${h2}, ${hu}; ${JSON.stringify(note)}; ${bad}; ${h3}`);
 });
 
+testCase("M65", "A door in an inclined wall: following the wall it leans with it (every part's top moved h·tanθ across); plumb, its leaf stands upright where its sill (or head) meets the wall and its frame becomes a shroud that reaches both tilted faces at every height", () => {
+  const { doc, ed } = fixture();
+  wall(doc, "A", [0, 0], [6000, 0], "T-300", { slope: { top: 0, lean: 10 } });
+  doc.addElement({ id: "OP", type: "Opening", args: { host: { ref: "A" }, profile: { kind: "rect", at: 2800, sill: 0, w: 915, h: 2100 }, farProfile: null, depth: "through" } });
+  doc.addElement({ id: "D", type: "Door", args: { fills: { ref: "OP" }, doorType: { ref: "T-DOOR915" } } });
+  doc.regenerate();
+  const w = doc.plan(doc.element("A")), k = Math.tan(10 * Math.PI / 180), sc = 1 / Math.cos(10 * Math.PI / 180);
+  const parts = () => doc.data(doc.element("D")).parts, ys = q => q.map(p => p[1]);
+  // follow: the frame's top footprint sits k·(z1 − z0) further across than its bottom
+  const fr = parts().find(p => p.sub === "Frame"), dy = Math.min(...ys(fr.topFoot)) - Math.min(...ys(fr.foot));
+  const follow = Math.abs(dy - k * (fr.z1 - fr.z0)) < 1e-6;
+  // the plan at 1200 draws the door moved 1200·k across
+  const planY = z => Math.min(...doc.data(doc.element("D")).incline.planAt(z).filter(p => p.sub === "Frame").flatMap(p => p.path.flatMap(g => [g.a[1], g.b[1]])));
+  const planOk = Math.abs(planY(1200) - planY(0) - 1200 * k) < 1e-6;
+  // plumb, sill on the wall: the leaf is upright (no top footprint) and where the wall is at the sill
+  ed.apply({ op: "set", id: "D", key: "followWall", value: false });
+  const leaf = parts().find(p => p.sub === "Panel"), upright = leaf && !leaf.topFoot;
+  // the shroud at the head reaches both wall faces there: [sLo·sc + k·h, sHi·sc + k·h]
+  const heads = parts().filter(p => p.sub === "Frame" && p.topFoot), zTop = 2100;
+  const reach = heads.filter(p => Math.abs(p.z1 - zTop) < 1e-6).some(p => { const Y = ys(p.topFoot); return Math.max(...Y) >= Math.max(...w.stack.s) * sc + k * zTop - 1e-6 && Math.min(...Y) <= Math.min(...w.stack.s) * sc + 1e-6; });
+  // head on the wall: the leaf moves across by k·h
+  const y0 = Math.min(...ys(leaf.foot)); ed.apply({ op: "set", id: "D", key: "plumbAt", value: "Head" }); const y1 = Math.min(...ys(parts().find(p => p.sub === "Panel").foot));
+  const head = Math.abs(y1 - y0 - k * 2100) < 1e-6;
+  // moving the door with Move slides its opening along the wall by the along-wall part of the move
+  const r = ed.apply({ op: "transform", ids: ["D"], move: [500, 300] }), slid = r.ok && doc.argValue(doc.element("OP"), "profile").at === 3300;
+  return R(follow && planOk && upright && reach && head && slid, "follow: top moved h·tanθ, plan at 1200 moved 1200·tanθ; plumb: upright leaf, shroud reaches both faces at the head; head-on-wall moves the leaf h·tanθ; Move slides the opening 500 along",
+    `follow ${follow} (${dy.toFixed(2)} vs ${(k * (fr.z1 - fr.z0)).toFixed(2)}), plan ${planOk}, upright ${upright}, reach ${reach}, head ${head}, slid ${slid} (${doc.argValue(doc.element("OP"), "profile").at})`);
+});
+
 // ===== ui_util.js =====
 //! Small DOM vocabulary shared by the interface modules. The interface only
 //! mirrors the document: nothing here owns model state.
@@ -20711,6 +20799,10 @@ class View2D {
       const hf = this.doc.element(hit.id);
       if (hf && this.doc.typeOf(hf) === "Dimension") { const g = dimensionGeometry(this.doc, hf); if (g) this.drag.dim = { id: hit.id, g, grab: this.toModel(sx, sy) }; return; }
       const movable = [...this.app.selection].filter(id => this.doc.element(id) && geomKey(this.doc.element(id), this.doc));
+      // a door, window or opening slides along its host wall (as its 3D grip does)
+      const hostOp = id => { const g = this.doc.element(id), t = g && this.doc.typeOf(g); return t === "Opening" ? id : (t === "Door" || t === "Window") ? F.refId(g, "fills") : null; };
+      const op = hostOp(hit.id), od = op && this.doc.data(this.doc.element(op));
+      if (op && od && od.frame) { const w = this.doc.plan(this.doc.element(od.frame.host)); if (w) { this.drag.slide = { op, host: od.frame.host, at0: (F.json(this.doc.element(op), "profile") || {}).at, u0: uOf(w, this.toModel(sx, sy)) }; return; } }
       if (movable.length) this.drag.body = { ids: movable, grab: this.toModel(sx, sy) };
     } else if (!hit) this.drag.box = true;
     // in an elevation or section a dimension between levels slides sideways: its offset along the view
@@ -20798,6 +20890,12 @@ class View2D {
       if (d.viewport && d.moved) return this.dragViewport(d, sx, sy);
       if (d.pan && d.moved) { this.cam.x = d.cam.x - (sx - d.start[0]) / this.cam.z; this.cam.y = d.cam.y + (sy - d.start[1]) / this.cam.z; this.draw(); return; }
       if (d.body && d.moved) return this.dragBody(d, sx, sy, e);
+      if (d.slide && d.moved) {
+        const w = this.doc.plan(this.doc.element(d.slide.host)); if (!w) return;
+        const du = uOf(w, this.toModel(sx, sy)) - d.slide.u0, at = Math.round((d.slide.at0 + du) / 10) * 10;
+        const r = this.app.apply({ op: "drag", id: d.slide.op, key: "profile.at", value: at }, { quiet: true, coalesce: `slide:${d.slide.op}:${d.start.join(",")}` });
+        this.showHud(sx, sy, r.ok ? `along ${d.slide.host}: ${fmtLen(at)}` : r.error); return;
+      }
       if (d.level && d.moved) return this.dragLevel(d, sx, sy);
       if (d.datum && d.moved) return this.dragDatum(d, sx, sy);
       if (d.levelDim && d.moved) return this.dragLevelDim(d, sx, sy, e);
@@ -21489,7 +21587,8 @@ class View3D {
         parent = pivots.get(k); off = pt.pivot;
       }
       const foot = pt.foot.map(q => [q[0] - off[0], q[1] - off[1]]), holes = (pt.holes || []).map(h => h.map(q => [q[0] - off[0], q[1] - off[1]]));
-      const { pos, nrm } = prismMesh(foot, pt.z0, pt.z1, holes);
+      const top = pt.topFoot ? pt.topFoot.map(q => [q[0] - off[0], q[1] - off[1]]) : null;
+      const { pos, nrm } = prismMesh(foot, pt.z0, pt.z1, holes, top);
       const geo = new T.BufferGeometry(); geo.setAttribute("position", new T.Float32BufferAttribute(pos, 3)); geo.setAttribute("normal", new T.Float32BufferAttribute(nrm, 3));
       const colour = style === "Hidden Line" ? "#ffffff" : (pt.colour || PART_COLOURS[pt.sub] || PART_COLOURS[t] || "#c8c8c8");
       const glass = pt.sub === "Glass" && style !== "Hidden Line";
@@ -21498,7 +21597,7 @@ class View3D {
       if (glass) { mat.transparent = true; mat.opacity = 0.35; mat.depthWrite = false; }
       if (style === "Wireframe") { mat.transparent = true; mat.opacity = 0.06; mat.depthWrite = false; }
       const mesh = new T.Mesh(geo, mat); mesh.userData.id = id; parent.add(mesh); this.meshes.push(mesh);
-      const eg = new T.BufferGeometry(); eg.setAttribute("position", new T.Float32BufferAttribute([foot, ...holes].flatMap(r => prismEdges(r, pt.z0, pt.z1)), 3));
+      const eg = new T.BufferGeometry(); eg.setAttribute("position", new T.Float32BufferAttribute((top ? prismEdges(foot, pt.z0, pt.z1, top) : [foot, ...holes].flatMap(r => prismEdges(r, pt.z0, pt.z1))), 3));
       const line = new T.LineSegments(eg, new T.LineBasicMaterial({ color: pt.sub === "Glass" ? 0x5a7f99 : 0x1b2230 })); line.userData.edges = true; parent.add(line);
     }
     this.groups.set(id, g); this.scene.add(g);
@@ -22010,7 +22109,8 @@ const PART_COLOURS = { Frame: "#eeeeec", Panel: "#9c7650", Glass: "#9fd0ee", Han
  *  average of its two faces' normals unless the outline turns a real corner there (> 25°), so a spline
  *  edge or a round hole shades round instead of showing the chords it was tessellated into. */
 const CORNER = Math.cos(25 * Math.PI / 180);
-function prismMesh(foot, z0, z1, holes = []) {
+function prismMesh(foot, z0, z1, holes = [], top = null) {
+  if (top && top.length === foot.length && !holes.length) return loftMesh(foot, top, z0, z1);
   const area2 = r => { let a = 0; for (let i = 0; i < r.length; i++) { const p = r[i], q = r[(i + 1) % r.length]; a += p[0] * q[1] - q[0] * p[1]; } return a; };
   const O = area2(foot) > 0 ? foot : foot.slice().reverse();
   const H = holes.filter(h => h.length >= 3).map(h => (area2(h) < 0 ? h : h.slice().reverse()));
@@ -22030,7 +22130,21 @@ function prismMesh(foot, z0, z1, holes = []) {
   }
   return { pos, nrm };
 }
-function prismEdges(foot, z0, z1) {
+/** A lofted part: its footprint at z0 and another with the same corners at z1 (a door leaning with its
+ *  wall, a shroud widening to meet a tilted reveal). Caps triangulated once; each side a flat-shaded quad. */
+function loftMesh(foot, top, z0, z1) {
+  const area2 = r => { let a = 0; for (let i = 0; i < r.length; i++) { const p = r[i], q = r[(i + 1) % r.length]; a += p[0] * q[1] - q[0] * p[1]; } return a; };
+  const flip = area2(foot) < 0, B = flip ? foot.slice().reverse() : foot, T = flip ? top.slice().reverse() : top, pos = [], nrm = [];
+  const tri = (a, b, c) => { const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]], n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]], L = Math.hypot(...n) || 1; pos.push(...a, ...b, ...c); for (let i = 0; i < 3; i++) nrm.push(n[0] / L, n[1] / L, n[2] / L); };
+  for (const [i, j, k] of earcut2(B)) { tri([T[i][0], T[i][1], z1], [T[j][0], T[j][1], z1], [T[k][0], T[k][1], z1]); tri([B[k][0], B[k][1], z0], [B[j][0], B[j][1], z0], [B[i][0], B[i][1], z0]); }
+  for (let i = 0; i < B.length; i++) {
+    const j = (i + 1) % B.length, a = [B[i][0], B[i][1], z0], b = [B[j][0], B[j][1], z0], c = [T[j][0], T[j][1], z1], d = [T[i][0], T[i][1], z1];
+    tri(a, b, c); tri(a, c, d);
+  }
+  return { pos, nrm };
+}
+function prismEdges(foot, z0, z1, top = null) {
+  if (top && top.length === foot.length) { const out = [], n = foot.length; for (let i = 0; i < n; i++) { const a = foot[i], b = foot[(i + 1) % n], c = top[i], d = top[(i + 1) % n]; out.push(a[0], a[1], z0, b[0], b[1], z0, c[0], c[1], z1, d[0], d[1], z1, a[0], a[1], z0, c[0], c[1], z1); } return out; }
   // the top and bottom outlines, and an upright edge only where the outline turns a real corner
   const out = [], n = foot.length, dir = i => { const a = foot[i], b = foot[(i + 1) % n], L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1; return [(b[0] - a[0]) / L, (b[1] - a[1]) / L]; };
   for (let i = 0; i < n; i++) {

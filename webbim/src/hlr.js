@@ -39,7 +39,7 @@ export function buildHLRModel(doc, opts = {}) {
     // a body of its own shape draws its feature edges (it does not hide others: it is not a convex solid)
     if (t === "Generic" && doc.plan(f) && doc.plan(f).mesh) { const m = doc.plan(f).mesh, P = m.positions; for (const [a, b] of featureEdges(m)) edges.push({ a: [P[a * 3], P[a * 3 + 1], P[a * 3 + 2]], b: [P[b * 3], P[b * 3 + 1], P[b * 3 + 2]], kind: "sharp" }); continue; }
     if (t === "Door" || t === "Window" || t === "Floor" || t === "Beam" || t === "Generic") { for (const pt of elementParts(doc, f)) if (pt.foot && pt.foot.length >= 3) {
-      prism(pt.foot, pt.z0, pt.z1, solids, edges, "auto");
+      prism(pt.foot, pt.z0, pt.z1, solids, edges, "auto", pt.topFoot);
       // a hole's edges are drawn; its opening does not yet let the line-work see through (the occluder is the outline)
       for (const hole of pt.holes || []) for (let i = 0; i < hole.length; i++) { const a = hole[i], b = hole[(i + 1) % hole.length];
         const p = hole[(i - 1 + hole.length) % hole.length], u = [a[0] - p[0], a[1] - p[1]], v = [b[0] - a[0], b[1] - a[1]], corner = (u[0] * v[0] + u[1] * v[1]) / (Math.hypot(...u) * Math.hypot(...v) || 1) < Math.cos(25 * Math.PI / 180);
@@ -96,8 +96,10 @@ function faceNormal(poly) {
   for (let i = 0; i < poly.length; i++) { const a = poly[i], b = poly[(i + 1) % poly.length]; n = [n[0] + (a[1] - b[1]) * (a[2] + b[2]), n[1] + (a[2] - b[2]) * (a[0] + b[0]), n[2] + (a[0] - b[0]) * (a[1] + b[1])]; }
   return norm3(n);
 }
-function prism(foot, z0, z1, solids, edges, smooth) {
-  const b = foot.map(p => [p[0], p[1], z0]), t = foot.map(p => [p[0], p[1], z1]);
+function prism(foot, z0, z1, solids, edges, smooth, top = null) {
+  // a lofted part (top footprint of its own) has flat sides between the two outlines
+  if (top && top.length === foot.length) smooth = false;
+  const b = foot.map(p => [p[0], p[1], z0]), t = (top && top.length === foot.length ? top : foot).map(p => [p[0], p[1], z1]);
   const s = solidFrom(b, t); solids.push(s);
   const n = foot.length;
   for (let i = 0; i < n; i++) {

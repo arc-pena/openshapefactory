@@ -6,7 +6,7 @@
 //! declarations — nothing here names an element type.
 
 import { TOL, sub, dot, perp, normalise, dist, signedDistance, lineThrough } from "./geom2d.js";
-import { CATALOGUE, F, GEOMETRIC_KINDS, displayParam, evalParam } from "./ocaf.js";
+import { CATALOGUE, F, GEOMETRIC_KINDS, displayParam, evalParam, argTag } from "./ocaf.js";
 import { formatValue } from "./expr.js";
 import { categoryOf } from "./styles.js";
 import { resolveReference } from "./bim.js";
@@ -53,7 +53,7 @@ export function propertyModel(doc, ids) {
       if (a.when) { const ctl = els.map(f => doc.argValue(f, a.when.key)); if (!ctl.every(v => v === a.when.value)) return; }
       const vals = els.map(f => doc.argValue(f, a.key));
       const v = vary(vals);
-      const row = { source: "arg", key: a.key, label: a.label, kind: a.kind, editor: editorFor(a), group: a.group || "Constraints", arg: a, entry: els.length === 1 ? els[0].child(1 + i, false)?.entry() : null };
+      const row = { source: "arg", key: a.key, label: a.label, kind: a.kind, editor: editorFor(a), group: a.group || "Constraints", arg: a, entry: els.length === 1 ? els[0].child(argTag(i), false)?.entry() : null };
       Object.assign(row, v);
       if (!v.varies && v.value && typeof v.value === "object" && v.value.ref && (a.kind === "Real" || a.kind === "Integer")) {
         // A bound value shows its expression, not its result (§4.5, test 37d).

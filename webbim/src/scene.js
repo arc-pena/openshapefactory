@@ -297,14 +297,17 @@ export function planScene(doc, v, opts = {}) {
       if (!w || !doc.plan(f)) continue;
       const cutsHere = fr.sill + w.z0 < cutZ && fr.sill + fr.h + w.z0 > cutZ && band(w.z0, w.z1) === "cut";
       if (!cutsHere) continue;       // below or above the cut: the wall reads solid (§5.1)
-      for (const piece of doc.plan(f)) {
+      // in a leaning wall the door is drawn where the cut finds it (leaning with the wall, or plumb with its shroud)
+      const pieces = d.incline ? d.incline.planAt(cutZ) : doc.plan(f);
+      for (const piece of pieces) {
         // ADA maneuvering clearance: red dashed, whatever the style says about the door itself
         if (piece.role === "clearance") { B.stroke(piece.path, { weight: penWeight(doc, "thin", S), colour: "#d0021b", dash: LINE_TYPES.dashed1 }, categoryOf(doc, f) + "-Clearance", doc.idOf(f)); continue; }
         const role = piece.role === "swing" ? "swing" : piece.role === "projection" ? "projection" : "cut";
         const g = resolveGraphics(doc, ctx, f, role, piece.sub);
         B.stroke(piece.path, g, categoryOf(doc, f) + "-" + piece.sub, doc.idOf(f));
       }
-      B.hit(doc.idOf(f), [pointAt(w, w.stack.s[0], fr.u0), pointAt(w, w.stack.s[0], fr.u1), pointAt(w, w.stack.s[w.stack.s.length - 1], fr.u1), pointAt(w, w.stack.s[w.stack.s.length - 1], fr.u0)]);
+      { const wz = leanInvolved(w) ? wallAt(w, Math.max(w.z0, Math.min(w.z1, cutZ))) : w, n_ = wz.stack.s.length - 1;
+        B.hit(doc.idOf(f), [pointAt(wz, wz.stack.s[0], fr.u0), pointAt(wz, wz.stack.s[0], fr.u1), pointAt(wz, wz.stack.s[n_], fr.u1), pointAt(wz, wz.stack.s[n_], fr.u0)]); }
     }
     if (t === "Furniture") {
       const p = doc.plan(f); if (!p) continue; const bnd = band(p.z0, p.z1); if (bnd !== "projection" && bnd !== "cut") continue;

@@ -1860,3 +1860,32 @@ testCase("M64", "A wall's Top Constraint: bounded by a top level (plus a top off
   return R(ok, "2850 (3200 − 250 − 100); level moved to 4000 → 3650; unconnected wall stays 2700; top below base refused; unbound → its own 9999",
     `${h1}, ${h2}, ${hu}; ${JSON.stringify(note)}; ${bad}; ${h3}`);
 });
+
+testCase("M65", "A door in an inclined wall: following the wall it leans with it (every part's top moved h·tanθ across); plumb, its leaf stands upright where its sill (or head) meets the wall and its frame becomes a shroud that reaches both tilted faces at every height", () => {
+  const { doc, ed } = fixture();
+  wall(doc, "A", [0, 0], [6000, 0], "T-300", { slope: { top: 0, lean: 10 } });
+  doc.addElement({ id: "OP", type: "Opening", args: { host: { ref: "A" }, profile: { kind: "rect", at: 2800, sill: 0, w: 915, h: 2100 }, farProfile: null, depth: "through" } });
+  doc.addElement({ id: "D", type: "Door", args: { fills: { ref: "OP" }, doorType: { ref: "T-DOOR915" } } });
+  doc.regenerate();
+  const w = doc.plan(doc.element("A")), k = Math.tan(10 * Math.PI / 180), sc = 1 / Math.cos(10 * Math.PI / 180);
+  const parts = () => doc.data(doc.element("D")).parts, ys = q => q.map(p => p[1]);
+  // follow: the frame's top footprint sits k·(z1 − z0) further across than its bottom
+  const fr = parts().find(p => p.sub === "Frame"), dy = Math.min(...ys(fr.topFoot)) - Math.min(...ys(fr.foot));
+  const follow = Math.abs(dy - k * (fr.z1 - fr.z0)) < 1e-6;
+  // the plan at 1200 draws the door moved 1200·k across
+  const planY = z => Math.min(...doc.data(doc.element("D")).incline.planAt(z).filter(p => p.sub === "Frame").flatMap(p => p.path.flatMap(g => [g.a[1], g.b[1]])));
+  const planOk = Math.abs(planY(1200) - planY(0) - 1200 * k) < 1e-6;
+  // plumb, sill on the wall: the leaf is upright (no top footprint) and where the wall is at the sill
+  ed.apply({ op: "set", id: "D", key: "followWall", value: false });
+  const leaf = parts().find(p => p.sub === "Panel"), upright = leaf && !leaf.topFoot;
+  // the shroud at the head reaches both wall faces there: [sLo·sc + k·h, sHi·sc + k·h]
+  const heads = parts().filter(p => p.sub === "Frame" && p.topFoot), zTop = 2100;
+  const reach = heads.filter(p => Math.abs(p.z1 - zTop) < 1e-6).some(p => { const Y = ys(p.topFoot); return Math.max(...Y) >= Math.max(...w.stack.s) * sc + k * zTop - 1e-6 && Math.min(...Y) <= Math.min(...w.stack.s) * sc + 1e-6; });
+  // head on the wall: the leaf moves across by k·h
+  const y0 = Math.min(...ys(leaf.foot)); ed.apply({ op: "set", id: "D", key: "plumbAt", value: "Head" }); const y1 = Math.min(...ys(parts().find(p => p.sub === "Panel").foot));
+  const head = Math.abs(y1 - y0 - k * 2100) < 1e-6;
+  // moving the door with Move slides its opening along the wall by the along-wall part of the move
+  const r = ed.apply({ op: "transform", ids: ["D"], move: [500, 300] }), slid = r.ok && doc.argValue(doc.element("OP"), "profile").at === 3300;
+  return R(follow && planOk && upright && reach && head && slid, "follow: top moved h·tanθ, plan at 1200 moved 1200·tanθ; plumb: upright leaf, shroud reaches both faces at the head; head-on-wall moves the leaf h·tanθ; Move slides the opening 500 along",
+    `follow ${follow} (${dy.toFixed(2)} vs ${(k * (fr.z1 - fr.z0)).toFixed(2)}), plan ${planOk}, upright ${upright}, reach ${reach}, head ${head}, slid ${slid} (${doc.argValue(doc.element("OP"), "profile").at})`);
+});

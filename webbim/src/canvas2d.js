@@ -639,6 +639,10 @@ export class View2D {
       const hf = this.doc.element(hit.id);
       if (hf && this.doc.typeOf(hf) === "Dimension") { const g = dimensionGeometry(this.doc, hf); if (g) this.drag.dim = { id: hit.id, g, grab: this.toModel(sx, sy) }; return; }
       const movable = [...this.app.selection].filter(id => this.doc.element(id) && geomKey(this.doc.element(id), this.doc));
+      // a door, window or opening slides along its host wall (as its 3D grip does)
+      const hostOp = id => { const g = this.doc.element(id), t = g && this.doc.typeOf(g); return t === "Opening" ? id : (t === "Door" || t === "Window") ? F.refId(g, "fills") : null; };
+      const op = hostOp(hit.id), od = op && this.doc.data(this.doc.element(op));
+      if (op && od && od.frame) { const w = this.doc.plan(this.doc.element(od.frame.host)); if (w) { this.drag.slide = { op, host: od.frame.host, at0: (F.json(this.doc.element(op), "profile") || {}).at, u0: uOf(w, this.toModel(sx, sy)) }; return; } }
       if (movable.length) this.drag.body = { ids: movable, grab: this.toModel(sx, sy) };
     } else if (!hit) this.drag.box = true;
     // in an elevation or section a dimension between levels slides sideways: its offset along the view
@@ -726,6 +730,12 @@ export class View2D {
       if (d.viewport && d.moved) return this.dragViewport(d, sx, sy);
       if (d.pan && d.moved) { this.cam.x = d.cam.x - (sx - d.start[0]) / this.cam.z; this.cam.y = d.cam.y + (sy - d.start[1]) / this.cam.z; this.draw(); return; }
       if (d.body && d.moved) return this.dragBody(d, sx, sy, e);
+      if (d.slide && d.moved) {
+        const w = this.doc.plan(this.doc.element(d.slide.host)); if (!w) return;
+        const du = uOf(w, this.toModel(sx, sy)) - d.slide.u0, at = Math.round((d.slide.at0 + du) / 10) * 10;
+        const r = this.app.apply({ op: "drag", id: d.slide.op, key: "profile.at", value: at }, { quiet: true, coalesce: `slide:${d.slide.op}:${d.start.join(",")}` });
+        this.showHud(sx, sy, r.ok ? `along ${d.slide.host}: ${fmtLen(at)}` : r.error); return;
+      }
       if (d.level && d.moved) return this.dragLevel(d, sx, sy);
       if (d.datum && d.moved) return this.dragDatum(d, sx, sy);
       if (d.levelDim && d.moved) return this.dragLevelDim(d, sx, sy, e);
