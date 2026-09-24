@@ -13,7 +13,7 @@ import {
   documentLookup, propertyOf, PLAN_TAG, DATA_TAG, NOTE_TAG, RESULT_TAG, REVISION_TAG, loadDocument, danglingRefs, clone,
 } from "./ocaf.js";
 import { wallRecord, wallReferences, pointAt, uOf, sideOf, boundary, wallPieces, faceLine, layerStack } from "./walls.js";
-import { resolveJoins, wallRegions, solidSpans, coarseMaterial, JOIN_TOL } from "./joins.js";
+import { resolveJoins, wallRegions, solidSpans, solidPieces, coarseMaterial, JOIN_TOL } from "./joins.js";
 import { findLoops, claimLoops, filterWallFaces, interiorPoint } from "./spaces.js";
 import { regionsOf, regionPaths, FINE, elementSegs } from "./bimsketch.js";
 import { placeMesh, meshBox, meshMeasure, levelsIn } from "./massing.js";
@@ -837,7 +837,7 @@ export function systemPass(doc, rebuilt) {
     w.joinNotes = notes.get(id) || [];
     if (!dirty.has(id) && w.pieces) continue;
     doc.stats.resolved[id] = (doc.stats.resolved[id] || 0) + 1;
-    try { w.pieces = wallPieces(w, solidSpans(w, w.openings, doc.stats)); w.solidError = null; }
+    try { w.pieces = solidPieces(w, w.openings, doc.stats); w.solidError = null; }
     catch (e) { w.solidError = e.message; w.pieces = w.pieces || []; }
     w.resolvedRev = ++doc.modelRevision;
   }

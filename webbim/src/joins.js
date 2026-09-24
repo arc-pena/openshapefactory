@@ -5,9 +5,9 @@
 
 import {
   TOL, MITER_LIMIT, sub, add, mul, dot, cross, dist, perp, normalise, intersectLines, intersectLineCircle, intersectCircles,
-  projectPoint, angleOf, TAU, wrap,
+  projectPoint, angleOf, TAU, wrap, curveOf,
 } from "./geom2d.js";
-import { boundary, termPoint, uOf, sideOf, pointAt, layerRegion, faceLine } from "./walls.js";
+import { boundary, termPoint, uOf, sideOf, pointAt, layerRegion, faceLine, wallPieces } from "./walls.js";
 
 export const JOIN_TOL = 1.0;   // mm: ends closer than this share a node
 
@@ -48,7 +48,8 @@ export function termAt(w, s, term, nearU) {
 export function resolveJoins(walls, rows) {
   const notes = new Map();
   const say = (id, msg) => { if (!notes.has(id)) notes.set(id, []); notes.get(id).push(msg); };
-  for (const w of walls.values()) { w.ends = { start: { k: "free" }, end: { k: "free" } }; w.cuts = []; w.joinedTo = new Set(); }
+  const ctx = { walls, cache: new Map() };     // wallAt(w, z) proxies, per height, for this pass
+  for (const w of walls.values()) { w.ends = { start: { k: "free" }, end: { k: "free" } }; w.cuts = []; w.joinedTo = new Set(); w._joins = ctx; }
 
   // End-to-end rows form nodes; union-find over wall ends.
   const parent = new Map();
@@ -72,7 +73,9 @@ export function resolveJoins(walls, rows) {
     if (far) { ends.forEach(x => say(x.id, `join at ${x.e} not resolved: the ends are ${Math.round(dist(far.p, P0))}mm apart, drawn as free ends`)); continue; }
     const fitted = ends.find(x => !boundaryGeom(x.w, 0));
     if (fitted) { ends.forEach(x => say(x.id, `joins on a ${fitted.w.curve.type} centreline are drawn as free ends`)); continue; }
-    resolveNode(ends, kindOf.get(keys[0]), say);
+    const row = kindOf.get(keys[0]), members = ends.map(x => ({ id: x.id, e: x.e }));
+    resolveNode(ends, row, say);
+    for (const x of ends) x.w.ends[x.e] = Object.assign(x.out, { node: { members, row } });
     for (const a of ends) for (const b of ends) if (a !== b) a.w.joinedTo.add(b.id);
   }
 
@@ -131,8 +134,56 @@ function resolveNode(ends, row, say) {
     const E = ends[k];
     const pts = n === 2 && !bevels.length ? [rightCorner[k], leftCorner[k]] : [rightCorner[k], P, leftCorner[k]];
     const forced = row && row.kind === "miter";
-    E.w.ends[E.e] = { k: "node", term: { k: "poly", pts }, weld: sameType || false, forced, bevel: bevels.filter(b => b.of === E.id && b.e === E.e) };
+    E.out = { k: "node", term: { k: "poly", pts }, weld: sameType || false, forced, bevel: bevels.filter(b => b.of === E.id && b.e === E.e) };
   }
+}
+
+// ---------------------------------------------------------------- joins at a height
+//! A leaning wall's faces move across as they rise, so where it meets another wall
+//! moves too: a mitre solved at the floor and then sheared opens (or overlaps) at the
+//! top. wallAt(w, z) is the wall as its plan cut at height z sees it — each leaning
+//! wall's faces where they are at z (their horizontal spacing s / cos θ, test 47) —
+//! with every join re-solved there. Its drawing is wallRegions(wallAt(w, z), …).
+
+/** Does w's geometry at a height depend on the height (it leans, or a wall it joins does)? */
+export function leanInvolved(w) {
+  if (!w._joins) return false;
+  if (w.lean && w.curve.type === "line") return true;
+  for (const id of w.joinedTo || []) { const o = w._joins.walls.get(id); if (o && o.lean && o.curve.type === "line") return true; }
+  return false;
+}
+export function wallAt(w, z) {
+  const ctx = w._joins; if (!ctx) return w;
+  let m = ctx.cache.get(z); if (!m) { m = new Map(); ctx.cache.set(z, m); }
+  return proxyAt(ctx, m, w, z);
+}
+function proxyAt(ctx, m, w, z) {
+  let p = m.get(w.id); if (p) return p;
+  const leans = !!w.lean && w.curve.type === "line";
+  const k = leans ? Math.tan(w.lean) * (z - w.z0) : 0, sc = leans ? 1 / Math.cos(w.lean) : 1;
+  const n2 = leans ? perp(w.d) : null;
+  const curve = leans ? curveOf({ type: "line", start: add(w.curve.start, mul(n2, k)), end: add(w.curve.end, mul(n2, k)) }) : w.curve;
+  const stack = leans ? Object.assign({}, w.stack, { s: w.stack.s.map(x => x * sc), T: w.stack.T * sc }) : w.stack;
+  p = Object.assign(Object.create(Object.getPrototypeOf(w)), w, { curve, a: curve.start, stack, offsets: new Map(), atZ: z, base: w });
+  m.set(w.id, p);
+  const lazy = (key, make) => Object.defineProperty(p, key, { configurable: true, enumerable: true, get() { const v = make(); Object.defineProperty(p, key, { value: v, writable: true, configurable: true, enumerable: true }); return v; } });
+  const P = o => proxyAt(ctx, m, ctx.walls.get(o.id) || o, z);
+  lazy("ends", () => {
+    const out = {};
+    for (const e of ["start", "end"]) {
+      const E = w.ends[e];
+      if (E.k === "T") out[e] = Object.assign({}, E, { through: P(E.through) });
+      else if (E.k === "node" && E.node) {
+        const ends = E.node.members.map(({ id, e: ee }) => { const pw = P({ id }); return { id, e: ee, w: pw, p: ee === "start" ? pw.curve.start : pw.curve.end }; });
+        resolveNode(ends, E.node.row, () => {});
+        const me = ends.find(x => x.id === w.id && x.e === e);
+        out[e] = me ? Object.assign(me.out, { node: E.node }) : E;
+      } else out[e] = E;
+    }
+    return out;
+  });
+  lazy("cuts", () => w.cuts.map(c => Object.assign({}, c, { from: P(c.from) })));
+  return p;
 }
 
 // ---------------------------------------------------------------- spans per detail level
@@ -318,4 +369,25 @@ export function solidSpans(w, openings, stats) {
   }
   spans.push({ t0, t1: E, u0, u1: w.L });
   return spans.filter(s => s.u1 - s.u0 > TOL || s.t0.k !== "normal");
+}
+
+/** The wall's 3D pieces. Where the geometry depends on height (leanInvolved), each
+ *  piece's footprint is solved at its bottom and again at its top, and the solid
+ *  runs between the two — so a leaning wall's mitre stays closed all the way up. */
+export function solidPieces(w, openings, stats) {
+  const spans = solidSpans(w, openings, stats);
+  if (!leanInvolved(w)) return wallPieces(w, spans);
+  const at = new Map();
+  const spansAt = z => { if (!at.has(z)) at.set(z, solidSpans(wallAt(w, z), openings)); return at.get(z); };
+  const out = [];
+  spans.forEach((sp, i) => {
+    const zb = sp.zb ?? w.z0, zt = sp.zt ?? w.z1;
+    const lo = spansAt(zb)[i], hi = spansAt(zt)[i];
+    if (!lo || !hi) { out.push(...wallPieces(w, [sp])); return; }
+    const [pb] = wallPieces(wallAt(w, zb), [Object.assign({}, lo, { zb, zt })]);
+    const [pt] = wallPieces(wallAt(w, zt), [Object.assign({}, hi, { zb, zt })]);
+    if (!pb || !pt) return;
+    out.push(Object.assign(pb, { lean: 0, n2: null, topFoot: pt.foot }));
+  });
+  return out;
 }

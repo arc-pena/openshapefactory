@@ -18,7 +18,7 @@ import {
 } from "./geom2d.js";
 import { F, propertyOf, evalParam, displayParam } from "./ocaf.js";
 import { formatValue, parse, evaluate } from "./expr.js";
-import { wallRegions, coarseMaterial, blocks } from "./joins.js";
+import { wallRegions, coarseMaterial, blocks, wallAt, leanInvolved } from "./joins.js";
 import { pointAt, uOf, wallSurfaces, cutAtHeight, plane, LAYER_PRIORITY } from "./walls.js";
 import { cropLoop, loopBBox, annotationRect, isAnnotationLayer } from "./crop.js";
 import { resolveGraphics, categoryOf, penWeight, rulesFor, categoryVisible, mix, LINE_TYPES, matches, effectiveStyle } from "./styles.js";
@@ -364,8 +364,8 @@ function drawWall(doc, ctx, B, f, w, bnd, cutZ) {
     for (const r of wallRegions(w, "Coarse", -Infinity, [])) { for (const e of r.edges) if (e.role !== "weld" && e.role !== "hidden") B.stroke([e.seg], g, "IfcWall", id); B.hit(id, samplePath(r.path)); }
     return;
   }
-  let regions;
-  if (!w.fast && w.curve.type === "line") {
+  let regions, wz = w;
+  if (!w.fast && w.curve.type === "line" && w.topSlope) {
     // The general surface path (§3.1): sloped tops and leaning faces cut at the real height.
     regions = [];
     for (const piece of w.pieces || []) {
@@ -377,8 +377,10 @@ function drawWall(doc, ctx, B, f, w, bnd, cutZ) {
       if (poly.length >= 3) regions.push({ path: polyPath(poly), edges: polyPath(poly).map(seg => ({ seg, role: "face" })), material: coarseMaterial(w), layer: null });
     }
   } else {
-    doc.stats.fastPath++;
-    try { regions = wallRegions(w, detail, cutZ, w.openings || []); }
+    if (w.fast) doc.stats.fastPath++; else doc.stats.surfacePath++;
+    // a leaning wall (or one joined to it) is drawn as it is at the cut: its faces moved across, its joins re-solved there
+    wz = leanInvolved(w) && Number.isFinite(cutZ) ? wallAt(w, Math.max(w.z0, Math.min(w.z1, cutZ))) : w;
+    try { regions = wallRegions(wz, detail, cutZ, w.openings || []); }
     catch (e) { doc.setNote(f, (doc.note(f) ? doc.note(f) + "; " : "") + e.message); regions = []; }
   }
   const gLayer = resolveGraphics(doc, ctx, f, "cut", "Layer");
@@ -390,7 +392,7 @@ function drawWall(doc, ctx, B, f, w, bnd, cutZ) {
       const pat = g.pattern && doc.lib.patterns[g.pattern];
       if (pat) {
         const gp = resolveGraphics(doc, ctx, f, "cutPattern", "Cut", r.material);
-        if (pat.batt && r.layer !== null) battLine(doc, B, w, r, gp, id);
+        if (pat.batt && r.layer !== null) battLine(doc, B, wz, r, gp, id);
         else B.hatch(r.path, pat, g.pattern, gp.colour, gp.weight, "IfcWall-Pattern", id);
       }
     }

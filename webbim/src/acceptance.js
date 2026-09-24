@@ -1731,3 +1731,23 @@ testCase("M58", "Slabs and beams have types like walls: selected, a floor shows 
   return R(ok, "floor: type key floorType, T-PODIUM, every slab type offered (no wall types); beam: beamType, T-UB406; switched to 230 mm it is 230 thick",
     `floor ${mf.typeKey} ${mf.typeIds}; beam ${mb.typeKey} ${mb.typeIds}; options ${opts.join(",")}; thickness ${p && p.z1 - p.z0}`);
 });
+
+testCase("M59", "A leaning wall stays mitred to the wall it joins, all the way up: the joint is solved at the floor and at the top, and the plan cut at any height closes too", () => {
+  const { doc, ed } = fixture();
+  wall(doc, "A", [0, 0], [6000, 0], "T-300", { slope: { top: 0, lean: 10 } }); wall(doc, "B", [6000, 0], [6000, 4000], "T-300");
+  joinEE(doc, "A", "end", "B", "start"); doc.regenerate();
+  const A = doc.plan(doc.element("A")), B = doc.plan(doc.element("B"));
+  const pa = A.pieces[0], pb = B.pieces[0];
+  // A's end cap and B's start cap, at the floor and at the top: the same two points
+  const same = (P, Q) => P.every(p => Q.some(q => dist(p, q) < 0.5));
+  const base = same([pa.foot[1], pa.foot[2]], [pb.foot[0], pb.foot[3]]);
+  const top = same([pa.topFoot[1], pa.topFoot[2]], [pb.topFoot[0], pb.topFoot[3]]);
+  // at the top A has moved across by h·tan 10°, and still meets B
+  const shift = (A.z1 - A.z0) * Math.tan(10 * Math.PI / 180), ys = pa.topFoot.map(p => p[1]), mid = (Math.max(...ys) + Math.min(...ys)) / 2;
+  // the plan cut at 2000: A's and B's regions share their joint
+  ed.apply({ op: "set", id: "V", key: "viewRange", value: { top: 5000, cut: 2000, bottom: 0 } });
+  const fills = id => planScene(doc, doc.element("V")).prims.filter(p => p.t === "fill" && p.id === id).flatMap(p => samplePath(p.path, 2).map(q => mul(q, 100)));
+  const fa = fills("A"), fb = fills("B"), shared = fa.filter(p => fb.some(q => dist(p, q) < 0.5)).length;
+  const ok = base && top && Math.abs(mid - shift) < 1 && shared >= 2;
+  return R(ok, `mitre closed at floor and top; A's top ${shift.toFixed(1)} mm across; the cut at 2 m shares the joint`, `floor ${base}, top ${top}, A's top at ${mid.toFixed(1)}; ${shared} shared cut points`);
+});

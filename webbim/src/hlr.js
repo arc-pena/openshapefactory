@@ -9,8 +9,8 @@
 
 import { TOL, samplePath, segStart, segEnd, dist, add, mul, sub, perp, normalise } from "./geom2d.js";
 import { featureEdges } from "./massing.js";
-import { wallRegions } from "./joins.js";
-import { pointAt, uOf } from "./walls.js";
+import { wallRegions, wallAt, leanInvolved } from "./joins.js";
+import { pointAt, uOf, sideOf } from "./walls.js";
 import { F } from "./ocaf.js";
 import { elementParts } from "./solids.js";
 
@@ -78,7 +78,7 @@ function top3(piece, p) { const zt = piece.topAt ? piece.topAt(p) : piece.z1; co
 function bot3(piece, p) { const lean = piece.lean ? mul(piece.n2, Math.tan(piece.lean) * (piece.z0 - piece.zRef)) : [0, 0]; return [p[0] + lean[0], p[1] + lean[1], piece.z0]; }
 function wallSolids(w, solids) {
   for (const pc of w.pieces) {
-    const b = pc.foot.map(p => bot3(pc, p)), t = pc.foot.map(p => top3(pc, p));
+    const b = pc.foot.map(p => bot3(pc, p)), t = (pc.topFoot || pc.foot).map(p => top3(pc, p));
     solids.push(solidFrom(b, t));
   }
 }
@@ -113,11 +113,29 @@ function prism(foot, z0, z1, solids, edges, smooth) {
  *  floor and at the top, corners, and each opening's reveal. Seams between
  *  pieces of one wall and mitre seams between welded walls are not edges. */
 function wallEdges(w, out, chord) {
-  const lowRegs = wallRegions(w, "Coarse", w.z0 + 1, w.openings || []);
-  const highRegs = wallRegions(w, "Coarse", w.z1 - 1, (w.openings || []).filter(o => o.sill + o.h >= w.height - 1));
+  // Joins that move with height (a leaning wall, or one joined to it) are solved at the floor and the top.
+  const inv = leanInvolved(w), W0 = inv ? wallAt(w, w.z0) : w, W1 = inv ? wallAt(w, w.z1) : w;
+  const lowRegs = wallRegions(W0, "Coarse", w.z0 + 1, w.openings || []);
+  const highRegs = wallRegions(W1, "Coarse", w.z1 - 1, (w.openings || []).filter(o => o.sill + o.h >= w.height - 1));
   const topAt = p => w.z1 + (w.topSlope ? Math.tan(w.topSlope) * uOf(w, p) : 0);
-  const leanAt = (p, z) => w.lean ? add(p, mul(perp(w.d || [1, 0]), Math.tan(w.lean) * (z - w.z0))) : p;
+  const leanAt = (p, z) => !inv && w.lean ? add(p, mul(perp(w.d || [1, 0]), Math.tan(w.lean) * (z - w.z0))) : p;
   const P3 = (p, z) => { const q = leanAt(p, z); return [q[0], q[1], z]; };
+  // A face point at stack index i, arc length u and height z.
+  const PT = (i, u, z) => { const q = inv ? wallAt(w, z) : w; return P3(pointAt(q, q.stack.s[i], u), z); };
+  // A floor corner's partner at the top: the top corner on the same face nearest in u.
+  const topCorners = inv ? highRegs.flatMap(r => r.edges.filter(e => e.role !== "weld" && e.role !== "hidden").map(e => segStart(e.seg))) : [];
+  const riseTo = (p, z) => {
+    if (!inv) return P3(p, z);
+    const s = sideOf(W0, p), u = uOf(W0, p);
+    // an opening's jamb rises straight up its own face
+    const i = [0, W0.stack.s.length - 1].find(k => Math.abs(W0.stack.s[k] - s) < 0.5);
+    if (i !== undefined && (w.openings || []).some(o => Math.abs(o.u0 - u) < 1 || Math.abs(o.u1 - u) < 1)) return PT(i, u, z);
+    let best = null, bd = Infinity;
+    for (const q of topCorners) { const d = Math.abs(sideOf(W1, q) - s) * 10 + Math.abs(uOf(W1, q) - u); if (d < bd) { bd = d; best = q; } }
+    if (!best) best = add(p, sub(W1.a, W0.a));
+    const zt = topAt(best), t = (z - w.z0) / ((zt - w.z0) || 1);
+    return [p[0] + (best[0] - p[0]) * t, p[1] + (best[1] - p[1]) * t, z];
+  };
   const chordPts = s => s.k === "L" ? [s.a, s.b] : samplePath([s], Math.max(8, Math.ceil(Math.abs(s.a1 - s.a0) * s.r / chord)));
   const corners = [];
   const jambHead = p => { for (const o of w.openings || []) { const u = uOf(w, p); if (Math.abs(u - o.u0) < 1 || Math.abs(u - o.u1) < 1) if (o.sill < 1) return w.z0 + o.sill + o.h; } return null; };
@@ -131,7 +149,7 @@ function wallEdges(w, out, chord) {
       const p = pts[i], nrm = normalise(sub(p, e.seg.c)), tn = [-nrm[1], nrm[0]];
       // the two chord faces either side of this seam lean ±(half a chord angle) off the radial
       const n0 = norm3([nrm[0] - tn[0] * 0.05, nrm[1] - tn[1] * 0.05, 0]), n2 = norm3([nrm[0] + tn[0] * 0.05, nrm[1] + tn[1] * 0.05, 0]);
-      out.push({ a: P3(p, w.z0), b: P3(p, topAt(p)), kind: "smooth", n1: n0, n2: n2, onCurve: true, centre: e.seg.c });
+      out.push({ a: P3(p, w.z0), b: riseTo(p, topAt(p)), kind: "smooth", n1: n0, n2: n2, onCurve: true, centre: e.seg.c });
     }
   }
   for (const r of highRegs) for (const e of r.edges) {
@@ -143,19 +161,19 @@ function wallEdges(w, out, chord) {
   for (const p of corners) {
     if (seen.some(q => dist(p, q) < 1)) continue; seen.push(p);
     const h = jambHead(p);
-    out.push({ a: P3(p, w.z0), b: P3(p, h ?? topAt(p)), kind: "sharp" });
+    out.push({ a: P3(p, w.z0), b: riseTo(p, h ?? topAt(p)), kind: "sharp" });
   }
   // Openings: face rectangles and reveal edges.
   const n = w.stack.s.length - 1;
   for (const o of w.openings || []) {
     if (o.recess) continue;
     const zs = w.z0 + o.sill, zh = w.z0 + o.sill + o.h;
-    for (const s of [w.stack.s[0], w.stack.s[n]]) {
-      const a = pointAt(w, s, o.u0), b = pointAt(w, s, o.u1);
-      out.push({ a: P3(a, zh), b: P3(b, zh), kind: "sharp" });
-      if (o.sill > 1) { out.push({ a: P3(a, zs), b: P3(b, zs), kind: "sharp" }); out.push({ a: P3(a, zs), b: P3(a, zh), kind: "sharp" }); out.push({ a: P3(b, zs), b: P3(b, zh), kind: "sharp" }); }
+    for (const i of [0, n]) {
+      const A = z => PT(i, o.u0, z), B = z => PT(i, o.u1, z);
+      out.push({ a: A(zh), b: B(zh), kind: "sharp" });
+      if (o.sill > 1) { out.push({ a: A(zs), b: B(zs), kind: "sharp" }); out.push({ a: A(zs), b: A(zh), kind: "sharp" }); out.push({ a: B(zs), b: B(zh), kind: "sharp" }); }
     }
-    for (const u of [o.u0, o.u1]) for (const z of (o.sill > 1 ? [zs, zh] : [zh])) out.push({ a: P3(pointAt(w, w.stack.s[0], u), z), b: P3(pointAt(w, w.stack.s[n], u), z), kind: "sharp" });
+    for (const u of [o.u0, o.u1]) for (const z of (o.sill > 1 ? [zs, zh] : [zh])) out.push({ a: PT(0, u, z), b: PT(n, u, z), kind: "sharp" });
   }
 }
 
