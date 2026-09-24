@@ -760,11 +760,28 @@ function moveFrame(fr, P) {
   const o2 = P([fr.o[0], fr.o[1]]), ax = v => { const q = P([fr.o[0] + v[0], fr.o[1] + v[1]]); return [q[0] - o2[0], q[1] - o2[1], v[2]]; };
   return { o: [o2[0], o2[1], fr.o[2]], x: ax(fr.x), y: ax(fr.y), z: ax(fr.z) };
 }
-/** Walls joined to a moved wall keep their joint: the shared end follows the
- *  moved end (an L stretches), and a T end slides onto the moved through-wall. */
+/** Walls joined to a moved wall keep their joint - and, unless an end was dragged, their planes.
+ *  A wall moved whole (dragged by its body or move grip, Move, Rotate) keeps its angle; at each of its joins
+ *  both walls stop where their lines cross, so the neighbour only stretches or shrinks along its own line and
+ *  the moved wall is trimmed or extended to it. Only a dragged END reshapes the outline: the neighbour's end
+ *  follows the dragged point (an L bends). Parallel lines have no crossing, and a crossing that would turn a
+ *  wall round is refused: those fall back to following the point. */
 export function followJoins(doc, movedIds, before) {
-  const endOf = (id, e) => { const c = doc.argValue(doc.element(id), "centreline"); return c && c.type === "line" ? c[e] : null; };
-  const setEnd = (id, e, p) => { const f = doc.element(id), c = clone(doc.argValue(f, "centreline")); c[e] = p; doc.setArg(f, "centreline", c); };
+  const cl = id => { const c = doc.argValue(doc.element(id), "centreline"); return c && c.type === "line" ? c : null; };
+  const endOf = (id, e) => { const c = cl(id); return c ? c[e] : null; };
+  const setEnd = (id, e, p) => { const f = doc.element(id), c = clone(doc.argValue(f, "centreline")); c[e] = [p[0], p[1]]; doc.setArg(f, "centreline", c); };
+  // moved whole (both ends changed) or by one end
+  const whole = id => { const was = before.get(id), now = cl(id); return !!(was && now && was.type === "line" && dist(was.start, now.start) > 1e-6 && dist(was.end, now.end) > 1e-6); };
+  // where two walls' lines cross, if that keeps both of them pointing the way they did (and a real length)
+  const meet = (idA, eA, idB, eB) => {
+    const a = cl(idA), b = cl(idB); if (!a || !b) return null;
+    const X = intersectLines(lineThrough(a.start, a.end), lineThrough(b.start, b.end)); if (!X) return null;
+    for (const [c, e] of [[a, eA], [b, eB]]) { if (!e) continue;          // a through-wall (T) has no end here to check
+      const other = e === "start" ? c.end : c.start, was = sub(c[e], other), now = sub(X, other);
+      if (dot(was, now) <= 0 || Math.hypot(now[0], now[1]) < 10) return null;
+    }
+    return X;
+  };
   for (const j of doc.joins) {
     if (j.allowed === false) continue;
     const A = j.a.of, B = j.b.of;
@@ -775,11 +792,19 @@ export function followJoins(doc, movedIds, before) {
         const was = before.get(m); if (!was || was.type !== "line") continue;
         const oldEnd = was[me], otherEnd = endOf(o, oe);
         // only if they were actually together before this edit
-        if (otherEnd && dist(oldEnd, otherEnd) < 1) setEnd(o, oe, endOf(m, me));
+        if (!otherEnd || dist(oldEnd, otherEnd) >= 1) continue;
+        const X = whole(m) ? meet(m, me, o, oe) : null;
+        if (X) { setEnd(m, me, X); setEnd(o, oe, X); }          // planes kept: both stop at the crossing
+        else setEnd(o, oe, endOf(m, me));                       // an end dragged (or no crossing): the neighbour follows it
       }
     } else if (movedIds.has(B) && !movedIds.has(A)) {
-      const c = doc.argValue(doc.element(B), "centreline"), e = endOf(A, j.a.end);
-      if (c && c.type === "line" && e) { const L = lineThrough(c.start, c.end); setEnd(A, j.a.end, add(L.p, mul(L.d, dot(sub(e, L.p), L.d)))); }
+      // a T: the stem keeps its line and reaches the moved through-wall's line
+      const X = meet(A, j.a.end, B, null), c = cl(B), e = endOf(A, j.a.end);
+      if (X) setEnd(A, j.a.end, X);
+      else if (c && e) { const L = lineThrough(c.start, c.end); setEnd(A, j.a.end, add(L.p, mul(L.d, dot(sub(e, L.p), L.d)))); }
+    } else if (movedIds.has(A) && !movedIds.has(B) && whole(A)) {
+      // the stem moved whole: its end runs on to (or back to) the through-wall it stood on
+      const X = meet(A, j.a.end, B, null); if (X) setEnd(A, j.a.end, X);
     }
   }
 }

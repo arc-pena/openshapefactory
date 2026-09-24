@@ -1914,3 +1914,25 @@ testCase("M67", "A 3D view on a sheet takes a display: hidden line (vector only)
   const ok = legacy && SHEET_DISPLAYS.length >= 6 && hid.strokes === 1 && !hid.raster && dash.strokes === 2 && sh.strokes === 0 && sh.raster && !sh.stale && se.strokes === 1 && se.raster && /display changed/.test(wh.stale);
   return R(ok, "hidden: 1 stroke, no image; dashed: 2; shaded: image only; with edges: both; a white/shadow look finds the shaded raster stale", JSON.stringify({ legacy, hid, dash, sh, se, wh }));
 });
+
+testCase("M68", "Moving a wall keeps planes: moved whole it keeps its angle and its neighbours keep theirs, stretching to it (corners stay closed); only dragging an END reshapes - the neighbour's end follows the point", () => {
+  const { doc, ed } = fixture();
+  wall(doc, "S", [0, 0], [6000, 0], "T-300"); wall(doc, "E", [6000, 0], [6000, 4000], "T-300"); wall(doc, "N", [6000, 4000], [0, 4000], "T-300"); wall(doc, "Wt", [0, 4000], [0, 0], "T-300");
+  wall(doc, "T", [3000, 0], [3000, 2000], "T-300");
+  joinEE(doc, "S", "end", "E", "start"); joinEE(doc, "E", "end", "N", "start"); joinEE(doc, "N", "end", "Wt", "start"); joinEE(doc, "Wt", "end", "S", "start"); joinT(doc, "T", "start", "S", 3000);
+  doc.regenerate();
+  const C = id => doc.argValue(doc.element(id), "centreline"), near = (p, q) => dist(p, q) < 1e-6;
+  // the south wall dragged diagonally, whole: it stays horizontal at y = −1000, still spanning x 0…6000
+  ed.apply({ op: "transform", ids: ["S"], move: [500, -1000] });
+  const s1 = near(C("S").start, [0, -1000]) && near(C("S").end, [6000, -1000]);
+  const sides = near(C("E").start, [6000, -1000]) && near(C("E").end, [6000, 4000]) && near(C("Wt").end, [0, -1000]) && near(C("Wt").start, [0, 4000]);
+  const stem = near(C("T").start, [3000, -1000]) && near(C("T").end, [3000, 2000]);
+  // the same by the wall's move grip (a drag of the whole centreline)
+  const c0 = C("N"); ed.apply({ op: "drag", id: "N", key: "centreline", value: { type: "line", start: [c0.start[0] + 300, c0.start[1] + 700], end: [c0.end[0] + 300, c0.end[1] + 700] } });
+  const n1 = near(C("N").start, [6000, 4700]) && near(C("N").end, [0, 4700]) && near(C("E").end, [6000, 4700]) && near(C("Wt").start, [0, 4700]);
+  // an end dragged: the neighbour's end follows the point - the outline bends
+  ed.apply({ op: "drag", id: "S", key: "centreline.start", value: [-500, -1500] });
+  const bent = near(C("S").start, [-500, -1500]) && near(C("Wt").end, [-500, -1500]) && near(C("Wt").start, [0, 4700]);
+  return R(s1 && sides && stem && n1 && bent, "south wall moved (500, −1000): still 0…6000 at y −1000; east and west stay vertical and stretch; the T stem stays at x 3000 and reaches it; north by its grip likewise; an end dragged bends the west wall",
+    JSON.stringify({ s1, sides, stem, n1, bent, S: C("S"), E: C("E"), T: C("T") }));
+});
