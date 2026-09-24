@@ -25,6 +25,7 @@ import { resolveGraphics, categoryOf, penWeight, rulesFor, categoryVisible, mix,
 import { measureRefs, resolveReference, sheetSize, regionAreas, importPlacer, importLayerMap, sketchPath } from "./bim.js";
 import { FONT_WIDTHS, FONT_METRICS } from "./fontdata.js";
 import { readDXF } from "./dxf.js";
+import { sunOf, planShadows } from "./sun.js";
 import { NORTH_DXF } from "./library.js";
 
 // ---------------------------------------------------------------- text metrics
@@ -200,6 +201,8 @@ export function planScene(doc, v, opts = {}) {
 
   // 1. spaces first: fills sit under everything
   for (const f of els) if (doc.typeOf(f) === "Space" && vis(f) && F.refId(f, "level") === (lv && doc.idOf(lv))) drawSpace(doc, ctx, B, f);
+  // hard shadows go here, over the room fills and under everything drawn from the model (filled in at the end)
+  const shadowAt = B.prims.length;
   // 2. walls
   for (const f of els) if (doc.typeOf(f) === "Wall" && vis(f)) {
     const w = doc.plan(f); if (!w) continue;
@@ -344,6 +347,12 @@ export function planScene(doc, v, opts = {}) {
   }
   if (categoryVisible(ctx, "Annotation")) drawConstraintGlyphs(doc, ctx, B);
   B.prims.push(...B.later);          // labels sit on top of fills and furniture
+  // the sun's hard shadows on this level's ground: one non-zero fill, so overlaps stay one tone
+  const sun = sunOf(doc.argValue(v, "sun"));
+  if (sun.on) {
+    const rings = planShadows(doc, sun, E, { below: sun.cast === "Whole model" ? null : cutZ, visible: vis });
+    if (rings.length) B.prims.splice(shadowAt, 0, { t: "fill", path: B.path(rings.flatMap(r => polyPath(r))), colour: sun.colour, opacity: sun.opacity, nonzero: true, layer: "Shadow" });
+  }
   const clip = doc.argValue(v, "clip");
   const scene = { prims: B.prims, hits: B.hits, links: B.links, scale: S, kind: "plan", mat: B.mat,
     stats: { walls: stat.walls, offsets: doc.stats.offsets - stat.offsetsBefore } };

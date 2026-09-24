@@ -16,6 +16,7 @@ import { rasterPixels } from "./acceptance.js";
 import { uOf, pointAt } from "./walls.js";
 import { ViewCube } from "./viewcube.js";
 import { elementParts } from "./solids.js";
+import { sunOf, sunDirection } from "./sun.js";
 import { shownInView, visibilityKey } from "./scene.js";
 
 export const VISUAL_STYLES = ["Wireframe", "Hidden Line", "Shaded", "Consistent Colors"];
@@ -54,9 +55,17 @@ export class View3D {
     this.wrap.append(this.renderer.domElement);
     this.scene = new T.Scene();
     this.camera = new T.OrthographicCamera(-1, 1, 1, -1, -1e6, 1e6);
-    this.scene.add(new T.AmbientLight(0xffffff, 0.58));
-    const key = new T.DirectionalLight(0xffffff, 0.72); key.position.set(-0.6, -0.8, 1.2); this.scene.add(key);
-    const fill = new T.DirectionalLight(0xffffff, 0.28); fill.position.set(0.8, 0.4, 0.5); this.scene.add(fill);
+    // the sun (sun.js): a directional light with a hard shadow map, and a ground that only shows the shadow. It is
+    // added first: this three.js pairs the n-th shadow map with the n-th directional light in the scene, so a sun
+    // added after the key light had its shadows applied to the key light (switched off while the sun is on)
+    this.renderer.shadowMap.enabled = true; this.renderer.shadowMap.type = T.PCFShadowMap;
+    this.sun = new T.DirectionalLight(0xffffff, 0); this.sun.castShadow = true; this.sun.shadow.mapSize.set(4096, 4096);
+    this.sun.shadow.bias = -0.0002; this.sun.shadow.normalBias = 2; this.scene.add(this.sun); this.scene.add(this.sun.target);
+    this.ambient = new T.AmbientLight(0xffffff, 0.58); this.scene.add(this.ambient);
+    this.key = new T.DirectionalLight(0xffffff, 0.72); this.key.position.set(-0.6, -0.8, 1.2); this.scene.add(this.key);
+    this.fillLight = new T.DirectionalLight(0xffffff, 0.28); this.fillLight.position.set(0.8, 0.4, 0.5); this.scene.add(this.fillLight);
+
+    this.ground = new T.Mesh(new T.PlaneGeometry(1, 1), new T.ShadowMaterial({ opacity: 0.3 })); this.ground.receiveShadow = true; this.ground.visible = false; this.ground.userData.noPick = true; this.scene.add(this.ground);
     this.overlayScene = new T.Scene();         // grips and rubber bands, drawn over everything
     this.meshes = []; this.groups = new Map();
     this.cam = Object.assign({ azimuth: 225, elevation: 30, target: [6000, 4000, 1500] }, F.json(app.doc.element(viewId), "camera"));
@@ -204,6 +213,7 @@ export class View3D {
     const span = this.span(), asp = this.W / this.H;
     Object.assign(this.camera, { left: -span * asp / 2, right: span * asp / 2, top: span / 2, bottom: -span / 2 });
     this.camera.updateProjectionMatrix();
+    this.applySun();
     for (const [id, g] of this.groups) {
       const sel = this.app.selection.has(id), hov = this.hoverId === id;
       g.traverse(o => {
@@ -647,17 +657,53 @@ export class View3D {
     for (const r of [this.renderer, this.cube && this.cube.r]) if (r) { r.dispose(); if (r.forceContextLoss) r.forceContextLoss(); }
     this.renderer = null;
   }
+  /** Place the sun for this view's settings: aim it at the model, fit its shadow camera to the model's box, lay the
+   *  ground under the lowest body, and balance the lights so a shadowed face reads at the chosen strength. */
+  applySun() {
+    const T = this.T, v = this.doc.element(this.viewId), sun = sunOf(v && F.json(v, "sun")), on = !!sun.on && this.style !== "Wireframe" && this.style !== "Hidden Line";
+    const key = JSON.stringify(sun) + "|" + this.style + "|" + this.builtKey;
+    if (this.sunKey === key) return; this.sunKey = key;
+    this.sun.intensity = on ? 0.95 : 0; this.sun.castShadow = on; this.ground.visible = on;
+    this.key.intensity = on ? 0 : 0.72; this.fillLight.intensity = on ? 0.12 : 0.28;
+    // lit = ambient + sun·cosθ; in shadow = ambient: the opacity sets how far the shadow falls below the light
+    this.ambient.intensity = on ? Math.max(0.25, 0.95 * (1 - sun.opacity) + 0.15) : 0.58;
+    // shaders are compiled with or without the shadow code: switching needs them rebuilt
+    for (const g of this.groups.values()) g.traverse(o => { if (o.isMesh && !o.userData.edges) { if (o.receiveShadow !== on) [].concat(o.material).forEach(m => { m.needsUpdate = true; }); o.castShadow = on; o.receiveShadow = on; } });
+    this.ground.material.needsUpdate = true;
+    if (!on) return;
+    const box = new T.Box3(); for (const g of this.groups.values()) box.expandByObject(g);
+    if (box.isEmpty()) return;
+    const c = box.getCenter(new T.Vector3()), R = box.getSize(new T.Vector3()).length() / 2 + 1000, d = sunDirection(sun);
+    this.sun.target.position.copy(c); this.sun.position.set(c.x + d[0] * R * 2, c.y + d[1] * R * 2, c.z + d[2] * R * 2);
+    Object.assign(this.sun.shadow.camera, { left: -R, right: R, top: R, bottom: -R, near: 1, far: R * 4 }); this.sun.shadow.camera.updateProjectionMatrix();
+    this.sun.shadow.needsUpdate = true;
+    // the ground: a plane at the foot of the model, large enough to catch every shadow
+    const reach = R + (box.max.z - box.min.z) / Math.tan(Math.max(5, sun.altitude) * Math.PI / 180);
+    this.ground.scale.set(reach * 3, reach * 3, 1); this.ground.position.set(c.x, c.y, box.min.z + 0.5);
+    this.ground.material.opacity = sun.opacity; this.ground.material.color = new T.Color(sun.colour);
+  }
   saveCamera() { this.app.apply({ op: "set", id: this.viewId, key: "camera", value: roundCam(this.cam) }); }
   snapshot(pxW, pxH, cam, bbox) {
-    const T = this.T, B = cameraBasis(cam), r = new T.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
-    r.setPixelRatio(1); r.setSize(pxW, pxH);
+    // rendered by this view's own renderer into an off-screen target: a second WebGL context would have to
+    // rebuild every buffer and the sun's shadow map, and in practice drew the shading without the shadows
+    const T = this.T, B = cameraBasis(cam), R = this.renderer;
     const c = new T.OrthographicCamera(bbox[0], bbox[2], bbox[3], bbox[1], -1e6, 1e6);
     const t = new T.Vector3(...cam.target); c.position.copy(t.clone().add(new T.Vector3(...B.D).multiplyScalar(60000))); c.up.set(...B.up); c.lookAt(t);
     const bg = this.scene.background; this.scene.background = new T.Color(0xffffff);
     for (const g of this.groups.values()) g.children.forEach(o => { if (o.userData.edges) o.visible = false; });
-    r.render(this.scene, c);
-    const url = r.domElement.toDataURL("image/jpeg", 0.9);
-    this.scene.background = bg; for (const g of this.groups.values()) g.children.forEach(o => { o.visible = true; }); r.dispose();
+    this.applySun();
+    const max = R.capabilities.maxTextureSize || 4096, k = Math.min(1, max / Math.max(pxW, pxH)), W = Math.max(1, Math.round(pxW * k)), H = Math.max(1, Math.round(pxH * k));
+    const rt = new T.WebGLRenderTarget(W, H);
+    const clip = R.clippingPlanes; R.clippingPlanes = [];
+    R.setRenderTarget(rt); R.clear(); R.render(this.scene, c); R.setRenderTarget(null); R.clippingPlanes = clip;
+    const px = new Uint8Array(W * H * 4); R.readRenderTargetPixels(rt, 0, 0, W, H, px); rt.dispose();
+    const cv = document.createElement("canvas"); cv.width = W; cv.height = H;
+    const cx = cv.getContext("2d"), img = cx.createImageData(W, H);
+    for (let y = 0; y < H; y++) img.data.set(px.subarray((H - 1 - y) * W * 4, (H - y) * W * 4), y * W * 4);   // GL rows run bottom-up
+    cx.putImageData(img, 0, 0);
+    const url = cv.toDataURL("image/jpeg", 0.9);
+    this.scene.background = bg; for (const g of this.groups.values()) g.children.forEach(o => { o.visible = true; });
+    this.render();
     return url;
   }
 }

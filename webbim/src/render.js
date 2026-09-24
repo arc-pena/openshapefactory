@@ -45,7 +45,7 @@ export function drawScene(g, scene, view, opts = {}) {
     // was off-screen, depending on zoom (A-101's VP1, the one view also open in its own tab).
     let b = BBOX.get(p); if (!b) { b = primBBox(p); BBOX.set(p, b); }
     if (b[2] < vis[0] || b[0] > vis[2] || b[3] < vis[1] || b[1] > vis[3]) return;
-    if (p.t === "fill") { trace(p.path); g.fillStyle = selected.has(p.id) ? blend(p.colour) : p.colour; g.fill("evenodd"); }
+    if (p.t === "fill") { trace(p.path); g.fillStyle = selected.has(p.id) ? blend(p.colour) : p.colour; if (p.opacity != null && p.opacity < 1) { g.save(); g.globalAlpha = p.opacity; g.fill(p.nonzero ? "nonzero" : "evenodd"); g.restore(); } else g.fill(p.nonzero ? "nonzero" : "evenodd"); }
     else if (p.t === "stroke") {
       trace(p.path);
       g.strokeStyle = tint(p, p.colour);

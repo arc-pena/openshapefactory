@@ -1889,3 +1889,15 @@ testCase("M65", "A door in an inclined wall: following the wall it leans with it
   return R(follow && planOk && upright && reach && head && slid, "follow: top moved h·tanθ, plan at 1200 moved 1200·tanθ; plumb: upright leaf, shroud reaches both faces at the head; head-on-wall moves the leaf h·tanθ; Move slides the opening 500 along",
     `follow ${follow} (${dy.toFixed(2)} vs ${(k * (fr.z1 - fr.z0)).toFixed(2)}), plan ${planOk}, upright ${upright}, reach ${reach}, head ${head}, slid ${slid} (${doc.argValue(doc.element("OP"), "profile").at})`);
 });
+
+testCase("M66", "Sun and hard shadows in plan: a 3 m column under a 45° sun from due south throws its shadow 3 m north of its face; cut at 1200 only what stands below the cut casts; the shadow is one non-zero fill under the model", () => {
+  const { doc, ed } = fixture();
+  ed.apply({ op: "add", element: { id: "C1", type: "Column", args: { position: [0, 0], columnType: { ref: "T-COL400" }, baseLevel: { ref: "L0" }, height: 3000, rotation: 0 } } });
+  wall(doc, "A", [3000, 0], [6000, 0], "T-300"); doc.regenerate();
+  const reach = cast => { ed.apply({ op: "set", id: "V", key: "sun", value: { on: true, azimuth: 180, altitude: 45, cast } }); const sc = planScene(doc, doc.element("V")); const p = sc.prims.find(q => q.layer === "Shadow"); return { p, sc, maxY: p ? Math.max(...p.path.flatMap(g => [g.a[1], g.b[1]])) * 100 : null }; };
+  const whole = reach("Whole model"), cut = reach("Below cut");
+  // the column's shadow tip: its north face (y = 200) plus height / tan 45°; the wall is 3000 tall too
+  const ok = Math.abs(whole.maxY - 3200) < 1e-6 && Math.abs(cut.maxY - 1400) < 1e-6 && whole.p.nonzero && whole.p.opacity > 0 && whole.sc.prims.indexOf(whole.p) < whole.sc.prims.findIndex(q => (q.layer || "").startsWith("IfcWall"));
+  ed.apply({ op: "set", id: "V", key: "sun", value: { on: false } }); const off = !planScene(doc, doc.element("V")).prims.some(q => q.layer === "Shadow");
+  return R(ok && off, "shadow reaches y = 3200 (200 + 3000/tan 45°); below the 1200 cut, 1400; one non-zero fill drawn before the walls; sun off, none", `${whole.maxY}, ${cut.maxY}, off ${off}`);
+});

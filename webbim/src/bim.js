@@ -587,7 +587,8 @@ declare({ type: "PlanView", guid: "wb-0501", category: "View", kind: "view", idP
           json("viewRange", "View range", { top: 2300, cut: 1200, bottom: 0 }), choice("detailLevel", "Detail level", ["Coarse", "Medium", "Fine"], 2, { group: "Graphics" }),
           ref("style", "View style", ["viewStyle"], { group: "Graphics" }), json("filters", "Filters", [], { group: "Graphics" }),
           json("clip", "Crop region", { rect: [-3000, -3000, 20000, 14000], visible: false, active: false }, { group: "Extents" }),
-          json("overrides", "Element overrides", {}, { group: "Graphics" }), json("vg", "Visibility/Graphics", {}, { group: "Graphics" }) ] });
+          json("overrides", "Element overrides", {}, { group: "Graphics" }), json("vg", "Visibility/Graphics", {}, { group: "Graphics" }),
+          json("sun", "Sun & shadows", null, { group: "Graphics" }) ] });
 BUILDERS.PlanView = { precondition: (f) => F.reference(f, "level") ? null : "pick a level", build: () => ({ data: {} }) };
 
 /** What an elevation or section sees, in plan: the view line swept along its look direction to
@@ -634,7 +635,8 @@ declare({ type: "View3D", guid: "wb-0503", category: "View", kind: "view", idPre
           choice("detailLevel", "Detail level", ["Coarse", "Medium", "Fine"], 2, { group: "Graphics" }), json("vg", "Visibility/Graphics", {}, { group: "Graphics" }),
           json("render", "Render", { mode: "lines", hidden: false, rasterDPI: 300, silhouetteWeight: 0.35 }, { group: "Graphics" }),
           // Revit's Section Box: an axis-aligned box the view is clipped to; each face is pushed or pulled on its own
-          json("sectionBox", "Section box", { on: false, min: null, max: null }, { group: "Extents" }) ] });
+          json("sectionBox", "Section box", { on: false, min: null, max: null }, { group: "Extents" }),
+          json("sun", "Sun & shadows", null, { group: "Graphics" }) ] });
 BUILDERS.View3D = { build: () => ({ data: {} }) };
 
 declare({ type: "Schedule", guid: "wb-0504", category: "View", kind: "schedule", idPrefix: "SC",

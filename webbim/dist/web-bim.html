@@ -7350,7 +7350,8 @@ declare({ type: "PlanView", guid: "wb-0501", category: "View", kind: "view", idP
           json("viewRange", "View range", { top: 2300, cut: 1200, bottom: 0 }), choice("detailLevel", "Detail level", ["Coarse", "Medium", "Fine"], 2, { group: "Graphics" }),
           ref("style", "View style", ["viewStyle"], { group: "Graphics" }), json("filters", "Filters", [], { group: "Graphics" }),
           json("clip", "Crop region", { rect: [-3000, -3000, 20000, 14000], visible: false, active: false }, { group: "Extents" }),
-          json("overrides", "Element overrides", {}, { group: "Graphics" }), json("vg", "Visibility/Graphics", {}, { group: "Graphics" }) ] });
+          json("overrides", "Element overrides", {}, { group: "Graphics" }), json("vg", "Visibility/Graphics", {}, { group: "Graphics" }),
+          json("sun", "Sun & shadows", null, { group: "Graphics" }) ] });
 BUILDERS.PlanView = { precondition: (f) => F.reference(f, "level") ? null : "pick a level", build: () => ({ data: {} }) };
 
 /** What an elevation or section sees, in plan: the view line swept along its look direction to
@@ -7397,7 +7398,8 @@ declare({ type: "View3D", guid: "wb-0503", category: "View", kind: "view", idPre
           choice("detailLevel", "Detail level", ["Coarse", "Medium", "Fine"], 2, { group: "Graphics" }), json("vg", "Visibility/Graphics", {}, { group: "Graphics" }),
           json("render", "Render", { mode: "lines", hidden: false, rasterDPI: 300, silhouetteWeight: 0.35 }, { group: "Graphics" }),
           // Revit's Section Box: an axis-aligned box the view is clipped to; each face is pushed or pulled on its own
-          json("sectionBox", "Section box", { on: false, min: null, max: null }, { group: "Extents" }) ] });
+          json("sectionBox", "Section box", { on: false, min: null, max: null }, { group: "Extents" }),
+          json("sun", "Sun & shadows", null, { group: "Graphics" }) ] });
 BUILDERS.View3D = { build: () => ({ data: {} }) };
 
 declare({ type: "Schedule", guid: "wb-0504", category: "View", kind: "schedule", idPrefix: "SC",
@@ -7809,6 +7811,64 @@ function elementParts(doc, f) {
   if (t === "Column") return [{ foot: p.foot.length ? p.foot : samplePath(p.path).slice(0, -1), holes: p.holes || [], z0: p.z0, z1: p.z1, sub: "Column", smooth: p.foot.length === 16 || p.foot.length === 32, colour: p.colour }];
   if (t === "Door" || t === "Window" || t === "Floor" || t === "Beam" || t === "Generic") { const d = doc.data(f); return (d && d.parts) || (p.parts || []); }
   return [];
+}
+
+// ===== sun.js =====
+//! The sun and the hard shadows it casts. One definition of where the sun is, read by the plan (vector
+//! shadows swept onto the level's ground plane), the 3D view (a directional light with a shadow map)
+//! and the sheets that place them. Azimuth is clockwise from north (+y), altitude above the horizon.
+
+
+
+
+const SUN_DEFAULT = { on: false, azimuth: 135, altitude: 35, colour: "#23272e", opacity: 0.32, cast: "Below cut" };
+const sunOf = v => Object.assign({}, SUN_DEFAULT, v || {});
+
+/** Unit vector from the ground toward the sun. */
+function sunDirection(sun) {
+  const az = (sun.azimuth || 0) * Math.PI / 180, alt = Math.max(1, Math.min(89.9, sun.altitude || 35)) * Math.PI / 180;
+  return [Math.sin(az) * Math.cos(alt), Math.cos(az) * Math.cos(alt), Math.sin(alt)];
+}
+
+/** Every body as matched bottom and top rings in 3D: wall pieces (raking tops, leaning faces), columns, and the
+ *  parts families build (doors, windows, floors, beams, generic models; lofts keep their own top). */
+function bodies(doc, f) {
+  const t = doc.typeOf(f), out = [];
+  for (const pc of elementParts(doc, f)) {
+    if (!pc.foot || pc.foot.length < 3 || !(pc.z1 > pc.z0)) continue;
+    const k = pc.lean ? Math.tan(pc.lean) : 0, n2 = pc.n2 || [0, 0], zRef = pc.zRef ?? pc.z0;
+    const shift = (p, z) => k ? [p[0] + n2[0] * k * (z - zRef), p[1] + n2[1] * k * (z - zRef)] : p;
+    const bot = pc.foot.map(p => [...shift(p, pc.z0), pc.z0]);
+    const topRing = pc.topFoot && pc.topFoot.length === pc.foot.length ? pc.topFoot : pc.foot;
+    const top = topRing.map(p => { const z = pc.topAt ? pc.topAt(p) : pc.z1; return [...shift(p, z), z]; });
+    out.push({ bot, top });
+  }
+  return out;
+}
+
+/** Shadow outlines on the plane z = ground, cast by what stands on it: each body's rings and the quads
+ *  between them projected along the sun, all counter-clockwise so one non-zero fill unions them.
+ *  `below` (a plan's cut height) keeps only what is below it: the plan's own cut throws the shadow. */
+function planShadows(doc, sun, ground, { below = null, visible = null } = {}) {
+  const L = sunDirection(sun), t = Math.hypot(L[0], L[1]) / L[2], lx = L[0] / (Math.hypot(L[0], L[1]) || 1), ly = L[1] / (Math.hypot(L[0], L[1]) || 1);
+  const P = p => [p[0] - lx * t * (p[2] - ground), p[1] - ly * t * (p[2] - ground)];
+  const lerp3 = (a, b, s) => [a[0] + (b[0] - a[0]) * s, a[1] + (b[1] - a[1]) * s, a[2] + (b[2] - a[2]) * s];
+  const rings = [];
+  for (const f of doc.elements()) {
+    if (f.get("Integer") === 0 || doc.error(f) || (visible && !visible(f))) continue;
+    const ty = doc.typeOf(f); if (!["Wall", "Column", "Door", "Window", "Floor", "Beam", "Generic"].includes(ty)) continue;
+    for (let { bot, top } of bodies(doc, f)) {
+      const hi = Math.max(...top.map(p => p[2])), lo = Math.min(...bot.map(p => p[2]));
+      if (hi <= ground + 0.5 || (below !== null && lo >= below)) continue;
+      // standing on the ground: nothing below it casts; cut by the plan: nothing above the cut does
+      if (lo < ground) { const b2 = bot.map((p, i) => lerp3(p, top[i], Math.max(0, Math.min(1, (ground - p[2]) / ((top[i][2] - p[2]) || 1))))); bot = b2; }
+      if (below !== null && hi > below) { const t2 = top.map((p, i) => lerp3(bot[i], p, Math.max(0, Math.min(1, (below - bot[i][2]) / ((p[2] - bot[i][2]) || 1))))); top = t2; }
+      const B = bot.map(P), T = top.map(P), n = B.length;
+      for (const r of [B, T]) if (Math.abs(polyArea(r)) > 1) rings.push(ensureCCW(r));
+      for (let i = 0; i < n; i++) { const j = (i + 1) % n, q = [B[i], B[j], T[j], T[i]]; if (Math.abs(polyArea(q)) > 1) rings.push(ensureCCW(q)); }
+    }
+  }
+  return rings;
 }
 
 // ===== crop.js =====
@@ -10232,6 +10292,7 @@ function isPinned(doc, f) { const decl = f && doc.declOf(f); return !!(decl && d
 
 
 
+
 // ---------------------------------------------------------------- text metrics
 /** Text height is cap height in paper mm (the drafting convention); the em
  *  follows from the font's cap height, identically on canvas and in the PDF. */
@@ -10405,6 +10466,8 @@ function planScene(doc, v, opts = {}) {
 
   // 1. spaces first: fills sit under everything
   for (const f of els) if (doc.typeOf(f) === "Space" && vis(f) && F.refId(f, "level") === (lv && doc.idOf(lv))) drawSpace(doc, ctx, B, f);
+  // hard shadows go here, over the room fills and under everything drawn from the model (filled in at the end)
+  const shadowAt = B.prims.length;
   // 2. walls
   for (const f of els) if (doc.typeOf(f) === "Wall" && vis(f)) {
     const w = doc.plan(f); if (!w) continue;
@@ -10549,6 +10612,12 @@ function planScene(doc, v, opts = {}) {
   }
   if (categoryVisible(ctx, "Annotation")) drawConstraintGlyphs(doc, ctx, B);
   B.prims.push(...B.later);          // labels sit on top of fills and furniture
+  // the sun's hard shadows on this level's ground: one non-zero fill, so overlaps stay one tone
+  const sun = sunOf(doc.argValue(v, "sun"));
+  if (sun.on) {
+    const rings = planShadows(doc, sun, E, { below: sun.cast === "Whole model" ? null : cutZ, visible: vis });
+    if (rings.length) B.prims.splice(shadowAt, 0, { t: "fill", path: B.path(rings.flatMap(r => polyPath(r))), colour: sun.colour, opacity: sun.opacity, nonzero: true, layer: "Shadow" });
+  }
   const clip = doc.argValue(v, "clip");
   const scene = { prims: B.prims, hits: B.hits, links: B.links, scale: S, kind: "plan", mat: B.mat,
     stats: { walls: stat.walls, offsets: doc.stats.offsets - stat.offsetsBefore } };
@@ -12063,7 +12132,7 @@ function writePDF(pages, meta = {}) {
     const out = [];
     out.push(`${K} 0 0 ${K} 0 0 cm`);             // mm from here on; stroke widths are mm
     out.push("1 J 1 j");
-    const localPats = new Set(), localImgs = new Set(), localOC = new Set();
+    const localPats = new Set(), localImgs = new Set(), localOC = new Set(), localAlpha = new Set();
     const emit = (p) => {
       if (p.t === "group") {
         out.push("q");
@@ -12073,7 +12142,13 @@ function writePDF(pages, meta = {}) {
       }
       const oc = p.layer ? ocgOf[layerRoot(p.layer)] : null;
       if (oc) { out.push(`/OC /${oc} BDC`); localOC.add(oc); }
-      if (p.t === "fill") { out.push(col(p.colour, "rg")); out.push(pathOps(p.path)); out.push("f*"); }
+      if (p.t === "fill") {
+        // a translucent fill (the sun's shadows) through an ExtGState of its own opacity
+        const a = p.opacity != null && p.opacity < 1 ? Math.round(p.opacity * 100) : null;
+        if (a !== null) { localAlpha.add(a); out.push("q", `/GA${a} gs`); }
+        out.push(col(p.colour, "rg")); out.push(pathOps(p.path)); out.push(p.nonzero ? "f" : "f*");
+        if (a !== null) out.push("Q");
+      }
       else if (p.t === "stroke") {
         if (p.weight === "none" || p.weight == null) throw new Error("a stroke with no pen reached the PDF writer; `none` must be fill-only");
         out.push(col(p.colour, "RG")); out.push(`${n4(p.weight)} w`);
@@ -12113,6 +12188,7 @@ function writePDF(pages, meta = {}) {
     set(contentId, { dict: "", stream: content });
     const pageRes = `/Font << /F1 ${fontId} 0 R >>` +
       (localPats.size ? ` /Pattern << ${[...localPats].map(id => `/${id} ${patterns.find(p => p.id === id).obj} 0 R`).join(" ")} >>` : "") +
+      (localAlpha.size ? ` /ExtGState << ${[...localAlpha].map(a => `/GA${a} << /ca ${(a / 100).toFixed(2)} >>`).join(" ")} >>` : "") +
       (localImgs.size ? ` /XObject << ${[...localImgs].map(id => `/${id} ${images.find(p => p.id === id).obj} 0 R`).join(" ")} >>` : "") +
       (localOC.size ? ` /Properties << ${[...localOC].map(oc => `/${oc} ${ocgIds[layerNames.findIndex(l => ocgOf[l] === oc)]} 0 R`).join(" ")} >>` : "");
     // Internal links: a marker links to the sheet it refers to (§12.1).
@@ -12294,7 +12370,7 @@ function drawScene(g, scene, view, opts = {}) {
     // was off-screen, depending on zoom (A-101's VP1, the one view also open in its own tab).
     let b = BBOX.get(p); if (!b) { b = primBBox(p); BBOX.set(p, b); }
     if (b[2] < vis[0] || b[0] > vis[2] || b[3] < vis[1] || b[1] > vis[3]) return;
-    if (p.t === "fill") { trace(p.path); g.fillStyle = selected.has(p.id) ? blend(p.colour) : p.colour; g.fill("evenodd"); }
+    if (p.t === "fill") { trace(p.path); g.fillStyle = selected.has(p.id) ? blend(p.colour) : p.colour; if (p.opacity != null && p.opacity < 1) { g.save(); g.globalAlpha = p.opacity; g.fill(p.nonzero ? "nonzero" : "evenodd"); g.restore(); } else g.fill(p.nonzero ? "nonzero" : "evenodd"); }
     else if (p.t === "stroke") {
       trace(p.path);
       g.strokeStyle = tint(p, p.colour);
@@ -17459,6 +17535,18 @@ testCase("M65", "A door in an inclined wall: following the wall it leans with it
     `follow ${follow} (${dy.toFixed(2)} vs ${(k * (fr.z1 - fr.z0)).toFixed(2)}), plan ${planOk}, upright ${upright}, reach ${reach}, head ${head}, slid ${slid} (${doc.argValue(doc.element("OP"), "profile").at})`);
 });
 
+testCase("M66", "Sun and hard shadows in plan: a 3 m column under a 45° sun from due south throws its shadow 3 m north of its face; cut at 1200 only what stands below the cut casts; the shadow is one non-zero fill under the model", () => {
+  const { doc, ed } = fixture();
+  ed.apply({ op: "add", element: { id: "C1", type: "Column", args: { position: [0, 0], columnType: { ref: "T-COL400" }, baseLevel: { ref: "L0" }, height: 3000, rotation: 0 } } });
+  wall(doc, "A", [3000, 0], [6000, 0], "T-300"); doc.regenerate();
+  const reach = cast => { ed.apply({ op: "set", id: "V", key: "sun", value: { on: true, azimuth: 180, altitude: 45, cast } }); const sc = planScene(doc, doc.element("V")); const p = sc.prims.find(q => q.layer === "Shadow"); return { p, sc, maxY: p ? Math.max(...p.path.flatMap(g => [g.a[1], g.b[1]])) * 100 : null }; };
+  const whole = reach("Whole model"), cut = reach("Below cut");
+  // the column's shadow tip: its north face (y = 200) plus height / tan 45°; the wall is 3000 tall too
+  const ok = Math.abs(whole.maxY - 3200) < 1e-6 && Math.abs(cut.maxY - 1400) < 1e-6 && whole.p.nonzero && whole.p.opacity > 0 && whole.sc.prims.indexOf(whole.p) < whole.sc.prims.findIndex(q => (q.layer || "").startsWith("IfcWall"));
+  ed.apply({ op: "set", id: "V", key: "sun", value: { on: false } }); const off = !planScene(doc, doc.element("V")).prims.some(q => q.layer === "Shadow");
+  return R(ok && off, "shadow reaches y = 3200 (200 + 3000/tan 45°); below the 1200 cut, 1400; one non-zero fill drawn before the walls; sun off, none", `${whole.maxY}, ${cut.maxY}, off ${off}`);
+});
+
 // ===== ui_util.js =====
 //! Small DOM vocabulary shared by the interface modules. The interface only
 //! mirrors the document: nothing here owns model state.
@@ -21463,6 +21551,7 @@ class ViewCube {
 
 
 
+
 const VISUAL_STYLES = ["Wireframe", "Hidden Line", "Shaded", "Consistent Colors"];
 const GRIP_PX = 9;
 
@@ -21499,9 +21588,17 @@ class View3D {
     this.wrap.append(this.renderer.domElement);
     this.scene = new T.Scene();
     this.camera = new T.OrthographicCamera(-1, 1, 1, -1, -1e6, 1e6);
-    this.scene.add(new T.AmbientLight(0xffffff, 0.58));
-    const key = new T.DirectionalLight(0xffffff, 0.72); key.position.set(-0.6, -0.8, 1.2); this.scene.add(key);
-    const fill = new T.DirectionalLight(0xffffff, 0.28); fill.position.set(0.8, 0.4, 0.5); this.scene.add(fill);
+    // the sun (sun.js): a directional light with a hard shadow map, and a ground that only shows the shadow. It is
+    // added first: this three.js pairs the n-th shadow map with the n-th directional light in the scene, so a sun
+    // added after the key light had its shadows applied to the key light (switched off while the sun is on)
+    this.renderer.shadowMap.enabled = true; this.renderer.shadowMap.type = T.PCFShadowMap;
+    this.sun = new T.DirectionalLight(0xffffff, 0); this.sun.castShadow = true; this.sun.shadow.mapSize.set(4096, 4096);
+    this.sun.shadow.bias = -0.0002; this.sun.shadow.normalBias = 2; this.scene.add(this.sun); this.scene.add(this.sun.target);
+    this.ambient = new T.AmbientLight(0xffffff, 0.58); this.scene.add(this.ambient);
+    this.key = new T.DirectionalLight(0xffffff, 0.72); this.key.position.set(-0.6, -0.8, 1.2); this.scene.add(this.key);
+    this.fillLight = new T.DirectionalLight(0xffffff, 0.28); this.fillLight.position.set(0.8, 0.4, 0.5); this.scene.add(this.fillLight);
+
+    this.ground = new T.Mesh(new T.PlaneGeometry(1, 1), new T.ShadowMaterial({ opacity: 0.3 })); this.ground.receiveShadow = true; this.ground.visible = false; this.ground.userData.noPick = true; this.scene.add(this.ground);
     this.overlayScene = new T.Scene();         // grips and rubber bands, drawn over everything
     this.meshes = []; this.groups = new Map();
     this.cam = Object.assign({ azimuth: 225, elevation: 30, target: [6000, 4000, 1500] }, F.json(app.doc.element(viewId), "camera"));
@@ -21649,6 +21746,7 @@ class View3D {
     const span = this.span(), asp = this.W / this.H;
     Object.assign(this.camera, { left: -span * asp / 2, right: span * asp / 2, top: span / 2, bottom: -span / 2 });
     this.camera.updateProjectionMatrix();
+    this.applySun();
     for (const [id, g] of this.groups) {
       const sel = this.app.selection.has(id), hov = this.hoverId === id;
       g.traverse(o => {
@@ -22092,17 +22190,53 @@ class View3D {
     for (const r of [this.renderer, this.cube && this.cube.r]) if (r) { r.dispose(); if (r.forceContextLoss) r.forceContextLoss(); }
     this.renderer = null;
   }
+  /** Place the sun for this view's settings: aim it at the model, fit its shadow camera to the model's box, lay the
+   *  ground under the lowest body, and balance the lights so a shadowed face reads at the chosen strength. */
+  applySun() {
+    const T = this.T, v = this.doc.element(this.viewId), sun = sunOf(v && F.json(v, "sun")), on = !!sun.on && this.style !== "Wireframe" && this.style !== "Hidden Line";
+    const key = JSON.stringify(sun) + "|" + this.style + "|" + this.builtKey;
+    if (this.sunKey === key) return; this.sunKey = key;
+    this.sun.intensity = on ? 0.95 : 0; this.sun.castShadow = on; this.ground.visible = on;
+    this.key.intensity = on ? 0 : 0.72; this.fillLight.intensity = on ? 0.12 : 0.28;
+    // lit = ambient + sun·cosθ; in shadow = ambient: the opacity sets how far the shadow falls below the light
+    this.ambient.intensity = on ? Math.max(0.25, 0.95 * (1 - sun.opacity) + 0.15) : 0.58;
+    // shaders are compiled with or without the shadow code: switching needs them rebuilt
+    for (const g of this.groups.values()) g.traverse(o => { if (o.isMesh && !o.userData.edges) { if (o.receiveShadow !== on) [].concat(o.material).forEach(m => { m.needsUpdate = true; }); o.castShadow = on; o.receiveShadow = on; } });
+    this.ground.material.needsUpdate = true;
+    if (!on) return;
+    const box = new T.Box3(); for (const g of this.groups.values()) box.expandByObject(g);
+    if (box.isEmpty()) return;
+    const c = box.getCenter(new T.Vector3()), R = box.getSize(new T.Vector3()).length() / 2 + 1000, d = sunDirection(sun);
+    this.sun.target.position.copy(c); this.sun.position.set(c.x + d[0] * R * 2, c.y + d[1] * R * 2, c.z + d[2] * R * 2);
+    Object.assign(this.sun.shadow.camera, { left: -R, right: R, top: R, bottom: -R, near: 1, far: R * 4 }); this.sun.shadow.camera.updateProjectionMatrix();
+    this.sun.shadow.needsUpdate = true;
+    // the ground: a plane at the foot of the model, large enough to catch every shadow
+    const reach = R + (box.max.z - box.min.z) / Math.tan(Math.max(5, sun.altitude) * Math.PI / 180);
+    this.ground.scale.set(reach * 3, reach * 3, 1); this.ground.position.set(c.x, c.y, box.min.z + 0.5);
+    this.ground.material.opacity = sun.opacity; this.ground.material.color = new T.Color(sun.colour);
+  }
   saveCamera() { this.app.apply({ op: "set", id: this.viewId, key: "camera", value: roundCam(this.cam) }); }
   snapshot(pxW, pxH, cam, bbox) {
-    const T = this.T, B = cameraBasis(cam), r = new T.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
-    r.setPixelRatio(1); r.setSize(pxW, pxH);
+    // rendered by this view's own renderer into an off-screen target: a second WebGL context would have to
+    // rebuild every buffer and the sun's shadow map, and in practice drew the shading without the shadows
+    const T = this.T, B = cameraBasis(cam), R = this.renderer;
     const c = new T.OrthographicCamera(bbox[0], bbox[2], bbox[3], bbox[1], -1e6, 1e6);
     const t = new T.Vector3(...cam.target); c.position.copy(t.clone().add(new T.Vector3(...B.D).multiplyScalar(60000))); c.up.set(...B.up); c.lookAt(t);
     const bg = this.scene.background; this.scene.background = new T.Color(0xffffff);
     for (const g of this.groups.values()) g.children.forEach(o => { if (o.userData.edges) o.visible = false; });
-    r.render(this.scene, c);
-    const url = r.domElement.toDataURL("image/jpeg", 0.9);
-    this.scene.background = bg; for (const g of this.groups.values()) g.children.forEach(o => { o.visible = true; }); r.dispose();
+    this.applySun();
+    const max = R.capabilities.maxTextureSize || 4096, k = Math.min(1, max / Math.max(pxW, pxH)), W = Math.max(1, Math.round(pxW * k)), H = Math.max(1, Math.round(pxH * k));
+    const rt = new T.WebGLRenderTarget(W, H);
+    const clip = R.clippingPlanes; R.clippingPlanes = [];
+    R.setRenderTarget(rt); R.clear(); R.render(this.scene, c); R.setRenderTarget(null); R.clippingPlanes = clip;
+    const px = new Uint8Array(W * H * 4); R.readRenderTargetPixels(rt, 0, 0, W, H, px); rt.dispose();
+    const cv = document.createElement("canvas"); cv.width = W; cv.height = H;
+    const cx = cv.getContext("2d"), img = cx.createImageData(W, H);
+    for (let y = 0; y < H; y++) img.data.set(px.subarray((H - 1 - y) * W * 4, (H - y) * W * 4), y * W * 4);   // GL rows run bottom-up
+    cx.putImageData(img, 0, 0);
+    const url = cv.toDataURL("image/jpeg", 0.9);
+    this.scene.background = bg; for (const g of this.groups.values()) g.children.forEach(o => { o.visible = true; });
+    this.render();
     return url;
   }
 }
@@ -22192,6 +22326,7 @@ const roundCam = c => ({ azimuth: Math.round(((c.azimuth % 360) + 360) % 360 * 1
 //! left, document tabs over the view, a view control bar under it, and the
 //! status bar. The shell owns no model state: every command goes through one
 //! registry, and every edit through app.apply → the op pipeline → regenerate.
+
 
 
 
@@ -22670,6 +22805,31 @@ function renderQAT() {
     h("button", { class: "qbtn", title: "Export (PDF set, DXF)", "aria-label": "Export", onclick: () => exportDialog() }, icon("exportI", 16)),
     h("button", { class: "qswitch", title: "Switch to the parametric CAD interface (PC) - the same model", onclick: () => switchToCad() }, icon("view3d", 15), h("span", {}, "Parametric CAD")));
 }
+/** Sun & shadows for a view: altitude and azimuth (drag them and watch the shadows move), colour and strength;
+ *  a plan also chooses what casts - what its cut leaves standing, or the whole model. */
+function sunDialog(id) {
+  const doc = app.doc, v = doc.element(id), plan = doc.typeOf(v) === "PlanView";
+  const sun = sunOf(doc.argValue(v, "sun")), key = `sun:${id}:${Date.now()}`;
+  const put = patch => { Object.assign(sun, patch); app.apply({ op: "set", id, key: "sun", value: Object.assign({}, sun) }, { quiet: true, coalesce: key }); };
+  const fmt = (k, val) => k === "opacity" ? Math.round(val * 100) + "%" : Math.round(val) + "°";
+  const sliders = {};
+  const slider = (k, label, min, max) => {
+    const out = h("span", { class: "muted", style: { minWidth: "44px", textAlign: "right" } }, fmt(k, sun[k]));
+    const inp = h("input", { type: "range", min, max, step: k === "opacity" ? 0.01 : 1, value: sun[k], "aria-label": label, oninput: e => { const val = Number(e.target.value); out.textContent = fmt(k, val); put({ [k]: val }); } });
+    sliders[k] = val => { inp.value = val; out.textContent = fmt(k, val); };
+    return h("label", { style: { display: "grid", gridTemplateColumns: "92px 1fr 48px", gap: "8px", alignItems: "center" } }, label, inp, out); };
+  const onBox = h("input", { type: "checkbox", checked: !!sun.on, onchange: e => { put({ on: e.target.checked }); app.refresh(); } });
+  const presets = [["Morning", 95, 25], ["Noon", 180, 60], ["Afternoon", 235, 35], ["Long", 250, 15]];
+  dialog("Sun & shadows", h("div", { style: { display: "grid", gap: "10px", width: "min(360px, 80vw)" } },
+    h("label", {}, onBox, " Cast hard shadows in this view"),
+    slider("azimuth", "Azimuth", 0, 360), slider("altitude", "Altitude", 5, 85),
+    h("div", { style: { display: "flex", gap: "6px", flexWrap: "wrap" } }, presets.map(([n, az, alt]) => h("button", { class: "btn small", onclick: () => { put({ azimuth: az, altitude: alt, on: true }); onBox.checked = true; sliders.azimuth(az); sliders.altitude(alt); app.refresh(); } }, n))),
+    slider("opacity", "Strength", 0.05, 0.9),
+    h("label", { style: { display: "grid", gridTemplateColumns: "92px 1fr", gap: "8px", alignItems: "center" } }, "Colour", h("input", { type: "color", value: sun.colour, oninput: e => put({ colour: e.target.value }) })),
+    plan ? h("label", { style: { display: "grid", gridTemplateColumns: "92px 1fr", gap: "8px", alignItems: "center" } }, "Cast by", h("select", { onchange: e => put({ cast: e.target.value }) }, ["Below cut", "Whole model"].map(o => h("option", { selected: sun.cast === o }, o)))) : null,
+    h("div", { class: "muted", style: { fontSize: "11.5px" } }, plan ? "Plans: vector shadows on this level's ground - they print sharp in PDF. \"Below cut\" lets the plan's own cut walls throw them, as in a sectional plan." : "3D: a shadow map from a single sun, hard-edged. Keep the sun on the camera's side of the model to see the shadows; a sheet placing this view in \"lines over shaded\" carries them.")),
+    [{ label: "Done", primary: true, run: () => { app.refresh(); } }], { modeless: true });
+}
 app.renderOptions = () => renderOptionsBar();
 function renderOptionsBar() {
   const bar = clear(document.getElementById("options"));
@@ -22988,6 +23148,8 @@ function renderViewControl() {
     const view = app.views.get(id);
     if (view && view.saveCamera) bar.append(h("button", { class: "btn small", title: "Store this camera in the view (and its sheets)", onclick: () => view.saveCamera() }, "Save camera"));
   }
+  // the sun: hard shadows on plans (vector) and 3D views (shadow map), set per view
+  if (t === "PlanView" || t === "View3D") { const sn = sunOf(doc.argValue(v, "sun")); bar.append(h("button", { class: "btn small" + (sn.on ? " primary" : ""), title: "Sun & shadows: hard shadows cast by the model", onclick: () => sunDialog(id) }, sn.on ? "☀ Sun on" : "☀ Sun…")); }
   bar.append(ib("thin", "Thin lines (screen only)", app.thinLines, () => app.run("thin")));
   if (t !== "Schedule" && t !== "Sheet") bar.append(ib("vv", "Visibility/Graphics (VV)", undefined, () => app.run("vv")));
   bar.append(ib("fit", "Zoom to fit (ZF)", undefined, () => app.run("zoomfit")));

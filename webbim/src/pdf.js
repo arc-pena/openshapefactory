@@ -37,7 +37,7 @@ export function writePDF(pages, meta = {}) {
     const out = [];
     out.push(`${K} 0 0 ${K} 0 0 cm`);             // mm from here on; stroke widths are mm
     out.push("1 J 1 j");
-    const localPats = new Set(), localImgs = new Set(), localOC = new Set();
+    const localPats = new Set(), localImgs = new Set(), localOC = new Set(), localAlpha = new Set();
     const emit = (p) => {
       if (p.t === "group") {
         out.push("q");
@@ -47,7 +47,13 @@ export function writePDF(pages, meta = {}) {
       }
       const oc = p.layer ? ocgOf[layerRoot(p.layer)] : null;
       if (oc) { out.push(`/OC /${oc} BDC`); localOC.add(oc); }
-      if (p.t === "fill") { out.push(col(p.colour, "rg")); out.push(pathOps(p.path)); out.push("f*"); }
+      if (p.t === "fill") {
+        // a translucent fill (the sun's shadows) through an ExtGState of its own opacity
+        const a = p.opacity != null && p.opacity < 1 ? Math.round(p.opacity * 100) : null;
+        if (a !== null) { localAlpha.add(a); out.push("q", `/GA${a} gs`); }
+        out.push(col(p.colour, "rg")); out.push(pathOps(p.path)); out.push(p.nonzero ? "f" : "f*");
+        if (a !== null) out.push("Q");
+      }
       else if (p.t === "stroke") {
         if (p.weight === "none" || p.weight == null) throw new Error("a stroke with no pen reached the PDF writer; `none` must be fill-only");
         out.push(col(p.colour, "RG")); out.push(`${n4(p.weight)} w`);
@@ -87,6 +93,7 @@ export function writePDF(pages, meta = {}) {
     set(contentId, { dict: "", stream: content });
     const pageRes = `/Font << /F1 ${fontId} 0 R >>` +
       (localPats.size ? ` /Pattern << ${[...localPats].map(id => `/${id} ${patterns.find(p => p.id === id).obj} 0 R`).join(" ")} >>` : "") +
+      (localAlpha.size ? ` /ExtGState << ${[...localAlpha].map(a => `/GA${a} << /ca ${(a / 100).toFixed(2)} >>`).join(" ")} >>` : "") +
       (localImgs.size ? ` /XObject << ${[...localImgs].map(id => `/${id} ${images.find(p => p.id === id).obj} 0 R`).join(" ")} >>` : "") +
       (localOC.size ? ` /Properties << ${[...localOC].map(oc => `/${oc} ${ocgIds[layerNames.findIndex(l => ocgOf[l] === oc)]} 0 R`).join(" ")} >>` : "");
     // Internal links: a marker links to the sheet it refers to (§12.1).

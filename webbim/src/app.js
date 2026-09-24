@@ -22,6 +22,7 @@ import { writePDF } from "./pdf.js";
 import { writeDXF, readDXF, dxfDrawing, makeZip } from "./dxf.js";
 import { runAll, CASES } from "./acceptance.js";
 import { sectionPicker } from "./sectionui.js";
+import { sunOf } from "./sun.js";
 import { renderPanel, renderSchedule, typeEditor, vvDialog, viewStyleEditor, materialsEditor } from "./panel.js";
 import { renderSpaceGraph, importProgram, briefDialog, sheetDiagramUrl } from "./sgui.js";
 import { renderGraph } from "./graph.js";
@@ -482,6 +483,31 @@ function renderQAT() {
     h("button", { class: "qbtn", title: "Export (PDF set, DXF)", "aria-label": "Export", onclick: () => exportDialog() }, icon("exportI", 16)),
     h("button", { class: "qswitch", title: "Switch to the parametric CAD interface (PC) - the same model", onclick: () => switchToCad() }, icon("view3d", 15), h("span", {}, "Parametric CAD")));
 }
+/** Sun & shadows for a view: altitude and azimuth (drag them and watch the shadows move), colour and strength;
+ *  a plan also chooses what casts - what its cut leaves standing, or the whole model. */
+function sunDialog(id) {
+  const doc = app.doc, v = doc.element(id), plan = doc.typeOf(v) === "PlanView";
+  const sun = sunOf(doc.argValue(v, "sun")), key = `sun:${id}:${Date.now()}`;
+  const put = patch => { Object.assign(sun, patch); app.apply({ op: "set", id, key: "sun", value: Object.assign({}, sun) }, { quiet: true, coalesce: key }); };
+  const fmt = (k, val) => k === "opacity" ? Math.round(val * 100) + "%" : Math.round(val) + "°";
+  const sliders = {};
+  const slider = (k, label, min, max) => {
+    const out = h("span", { class: "muted", style: { minWidth: "44px", textAlign: "right" } }, fmt(k, sun[k]));
+    const inp = h("input", { type: "range", min, max, step: k === "opacity" ? 0.01 : 1, value: sun[k], "aria-label": label, oninput: e => { const val = Number(e.target.value); out.textContent = fmt(k, val); put({ [k]: val }); } });
+    sliders[k] = val => { inp.value = val; out.textContent = fmt(k, val); };
+    return h("label", { style: { display: "grid", gridTemplateColumns: "92px 1fr 48px", gap: "8px", alignItems: "center" } }, label, inp, out); };
+  const onBox = h("input", { type: "checkbox", checked: !!sun.on, onchange: e => { put({ on: e.target.checked }); app.refresh(); } });
+  const presets = [["Morning", 95, 25], ["Noon", 180, 60], ["Afternoon", 235, 35], ["Long", 250, 15]];
+  dialog("Sun & shadows", h("div", { style: { display: "grid", gap: "10px", width: "min(360px, 80vw)" } },
+    h("label", {}, onBox, " Cast hard shadows in this view"),
+    slider("azimuth", "Azimuth", 0, 360), slider("altitude", "Altitude", 5, 85),
+    h("div", { style: { display: "flex", gap: "6px", flexWrap: "wrap" } }, presets.map(([n, az, alt]) => h("button", { class: "btn small", onclick: () => { put({ azimuth: az, altitude: alt, on: true }); onBox.checked = true; sliders.azimuth(az); sliders.altitude(alt); app.refresh(); } }, n))),
+    slider("opacity", "Strength", 0.05, 0.9),
+    h("label", { style: { display: "grid", gridTemplateColumns: "92px 1fr", gap: "8px", alignItems: "center" } }, "Colour", h("input", { type: "color", value: sun.colour, oninput: e => put({ colour: e.target.value }) })),
+    plan ? h("label", { style: { display: "grid", gridTemplateColumns: "92px 1fr", gap: "8px", alignItems: "center" } }, "Cast by", h("select", { onchange: e => put({ cast: e.target.value }) }, ["Below cut", "Whole model"].map(o => h("option", { selected: sun.cast === o }, o)))) : null,
+    h("div", { class: "muted", style: { fontSize: "11.5px" } }, plan ? "Plans: vector shadows on this level's ground - they print sharp in PDF. \"Below cut\" lets the plan's own cut walls throw them, as in a sectional plan." : "3D: a shadow map from a single sun, hard-edged. Keep the sun on the camera's side of the model to see the shadows; a sheet placing this view in \"lines over shaded\" carries them.")),
+    [{ label: "Done", primary: true, run: () => { app.refresh(); } }], { modeless: true });
+}
 app.renderOptions = () => renderOptionsBar();
 function renderOptionsBar() {
   const bar = clear(document.getElementById("options"));
@@ -800,6 +826,8 @@ function renderViewControl() {
     const view = app.views.get(id);
     if (view && view.saveCamera) bar.append(h("button", { class: "btn small", title: "Store this camera in the view (and its sheets)", onclick: () => view.saveCamera() }, "Save camera"));
   }
+  // the sun: hard shadows on plans (vector) and 3D views (shadow map), set per view
+  if (t === "PlanView" || t === "View3D") { const sn = sunOf(doc.argValue(v, "sun")); bar.append(h("button", { class: "btn small" + (sn.on ? " primary" : ""), title: "Sun & shadows: hard shadows cast by the model", onclick: () => sunDialog(id) }, sn.on ? "☀ Sun on" : "☀ Sun…")); }
   bar.append(ib("thin", "Thin lines (screen only)", app.thinLines, () => app.run("thin")));
   if (t !== "Schedule" && t !== "Sheet") bar.append(ib("vv", "Visibility/Graphics (VV)", undefined, () => app.run("vv")));
   bar.append(ib("fit", "Zoom to fit (ZF)", undefined, () => app.run("zoomfit")));
