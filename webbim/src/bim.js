@@ -108,7 +108,11 @@ declare({ type: "Wall", guid: "wb-0101", category: "IfcWall", kind: "wall", idPr
     ref("wallType", "Type", ["wallType"]),
     ref("baseLevel", "Base level", ["level"]),
     real("baseOffset", "Base offset", 0, -10000, 10000, 1),
-    real("height", "Height", 3000, 1, 100000, 1, "mm", { group: "Dimensions" }),
+    // Revit's Top Constraint: a top level bounds the wall and the height follows it; none, and the
+    // wall is Unconnected and its height is the number below
+    ref("topLevel", "Top level", ["level"]),
+    real("topOffset", "Top offset", 0, -10000, 10000, 1),
+    real("height", "Unconnected height", 3000, 1, 100000, 1, "mm", { group: "Dimensions" }),
     bool("flipped", "Flipped", false),
     json("slope", "Inclination & top slope", { top: 0, lean: 0 }, { group: "Constraints" }),
   ],
@@ -132,8 +136,9 @@ BUILDERS.Wall = {
     const t = F.type(f, "wallType");
     if (!t.layers || !t.layers.length) throw new Error(`${t.name || t.id} has no layers`);
     const z0 = levelElev(doc, f) + F.real(f, "baseOffset");
-    const height = F.real(f, "height");
-    if (!(height > 0)) throw new Error(`a wall ${height}mm high has nothing to draw`);
+    const top = F.reference(f, "topLevel");
+    const height = top ? levelElev(doc, f, "topLevel") + (F.real(f, "topOffset") || 0) - z0 : F.real(f, "height");
+    if (!(height > 0)) throw new Error(top ? `its top (${F.text(top, "name") || doc.idOf(top)} ${(F.real(f, "topOffset") || 0) >= 0 ? "+" : ""}${F.real(f, "topOffset") || 0}) is not above its base: ${Math.round(height)}mm` : `a wall ${height}mm high has nothing to draw`);
     const w = wallRecord({ id: doc.idOf(f), centreline: F.json(f, "centreline"), type: t, mounting: F.choice(f, "mounting"),
       mountOffset: F.real(f, "mountOffset"), flipped: F.bool(f, "flipped"), z0, height, slope: F.json(f, "slope"), stats: doc.stats, zFloor: levelElev(doc, f) + ((F.json(f, "slope") || {}).pivotZ || 0) });
     if (w.L < TOL) throw new Error("the centreline has no length");
@@ -142,7 +147,8 @@ BUILDERS.Wall = {
     return {
       plan: w,
       data: { value: len, kind: "Length", refs: wallReferences(w), props: {
-        Length: L(len), Width: L(thick), Height: L(height), "Base elevation": L(z0),
+        Length: L(len), Width: L(thick), Height: L(height), "Base elevation": L(z0), "Top elevation": L(z0 + height),
+        "Top constraint": T(top ? `Up to ${F.text(top, "name") || doc.idOf(top)}` : "Unconnected"),
         Area: { kind: "Area", v: len * height }, Volume: { kind: "Volume", v: len * height * thick } } },
       note: lv ? null : (F.refId(f, "baseLevel") ? null : "no base level: built from z = 0"),
     };

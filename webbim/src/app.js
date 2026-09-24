@@ -492,6 +492,9 @@ function renderOptionsBar() {
   const num = (key, label) => h("label", {}, label + " ", h("input", { type: "text", value: fmtLen(o[key] ?? 0), style: { width: "80px" }, onchange: e => { try { o[key] = parseLength(e.target.value); } catch (err) { app.say(`${e.target.value}: ${err.message}`, "error"); } e.target.value = fmtLen(o[key] ?? 0); } }));
   const chk = (key, label) => h("label", {}, h("input", { type: "checkbox", checked: !!o[key], onchange: e => { o[key] = e.target.checked; } }), " " + label);
   const els = [...app.selection].filter(id => doc.element(id));
+  // a wall's Top Constraint: a level (the height follows it) or Unconnected (the height typed)
+  const topPicker = () => h("label", {}, "Top: ", h("select", { onchange: e => { o.wallTop = e.target.value; app.renderOptions(); } }, h("option", { value: "" }, "Unconnected"),
+    doc.elements().filter(g => doc.typeOf(g) === "Level").sort((a, b) => (F.real(a, "elevation") || 0) - (F.real(b, "elevation") || 0)).map(g => h("option", { value: doc.idOf(g), selected: o.wallTop === doc.idOf(g) }, "Up to " + (F.text(g, "name") || doc.idOf(g))))));
   let title, kids = [];
   if (app.sketch) { app.sketch.optionsBar(bar); return; }
   if (app.pickMode) { title = `Bind ${app.pickMode.label}`; kids = [h("span", {}, "Click an element in the view"), h("button", { class: "btn small", onclick: app.endPick }, "Cancel")]; }
@@ -501,7 +504,7 @@ function renderOptionsBar() {
     if (t === "wall") {
       // Revit's wall options: location line, offset from what is drawn, rounded chain corners
       const radiusOn = h("label", {}, h("input", { type: "checkbox", checked: !!o.wallRadiusOn, onchange: e => { o.wallRadiusOn = e.target.checked; } }), " Radius");
-      kids = [sel("wallType", typesOf("IfcWall").map(([id, x]) => [id, x.name]), "Type:"), sel("mounting", ["Centred", "Core centre", "Core exterior", "Core interior", "Finish exterior", "Finish interior"].map(x => [x, x]), "Location Line:"), num("height", "Height:"), levelPicker(),
+      kids = [sel("wallType", typesOf("IfcWall").map(([id, x]) => [id, x.name]), "Type:"), sel("mounting", ["Centred", "Core centre", "Core exterior", "Core interior", "Finish exterior", "Finish interior"].map(x => [x, x]), "Location Line:"), levelPicker(), topPicker(), ...(o.wallTop ? [num("wallTopOffset", "Top offset:")] : [num("height", "Height:")]),
         num("wallOffset", "Offset:"), radiusOn, num("wallRadius", ""), ...((o.wallShape || "line") === "polygon" ? [h("label", {}, "Sides ", h("input", { type: "text", value: o.wallSides || 6, style: { width: "40px" }, onchange: e => { o.wallSides = Math.max(3, Math.round(Number(e.target.value)) || 6); } }))] : [])];
     }
     if (t === "grid") kids = [h("label", { title: "Ticked: new grids run horizontal or vertical" }, h("input", { type: "checkbox", checked: o.gridOrtho !== false, onchange: e => { o.gridOrtho = e.target.checked; } }), " Orthogonal")];

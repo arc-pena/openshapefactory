@@ -1199,7 +1199,13 @@ const PARAM_SPEC_TAG = 51;
 const APPEARANCE_TAG = 52;
 const FRAME_TAG = 53;
 const PARENT_TAG = 54;
-const MAX_ARGS = PARAM_TAG0 - FIRST_ARG_TAG;   // 9: tag 10 is where parameters start
+const LOW_ARGS = PARAM_TAG0 - FIRST_ARG_TAG;   // 9: tag 10 is where parameters start
+// Arguments past the ninth go above the parameter range: tags 60–89. Appended, so the first nine keep the
+// tags they always had; saved files carry arguments by key, so neither range moves anything on disk.
+const ARG_TAG2 = 60;
+const MAX_ARGS = LOW_ARGS + 30;
+const argTag = i => i < LOW_ARGS ? FIRST_ARG_TAG + i : ARG_TAG2 + (i - LOW_ARGS);
+const isArgTag = t => (t >= FIRST_ARG_TAG && t < PARAM_TAG0) || (t >= ARG_TAG2 && t < ARG_TAG2 + 30);
 
 // ---------------------------------------------------------------- labels
 class Label {
@@ -1243,7 +1249,7 @@ const ATTRIBUTE_KINDS = ["Length", "Angle", "Number", "Integer", "Boolean", "Tex
 const CATALOGUE = new Map();   // type → declaration
 const BUILDERS = Object.create(null);
 function declare(entry) {
-  if (entry.args.length > MAX_ARGS) throw new Error(`${entry.type} declares ${entry.args.length} arguments; tags ${FIRST_ARG_TAG}–${MAX_ARGS} are all there is before the parameter range`);
+  if (entry.args.length > MAX_ARGS) throw new Error(`${entry.type} declares ${entry.args.length} arguments; there are tags for ${MAX_ARGS}`);
   CATALOGUE.set(entry.type, entry);
   return entry;
 }
@@ -1311,7 +1317,7 @@ class Document {
     f.set("Function", decl.guid);
     const args = rec.args || {};
     decl.args.forEach((a, i) => {
-      const lab = f.child(FIRST_ARG_TAG + i);
+      const lab = f.child(argTag(i));
       lab.set("Key", a.key).set("Kind", a.kind);
       lab.set("Value", args[a.key] !== undefined ? clone(args[a.key]) : clone(a.def));
     });
@@ -1349,7 +1355,7 @@ class Document {
   argLabel(f, key) {
     const decl = this.declOf(f); if (!decl) return null;
     const i = decl.args.findIndex(a => a.key === key);
-    return i < 0 ? null : f.child(FIRST_ARG_TAG + i, false);
+    return i < 0 ? null : f.child(argTag(i), false);
   }
   argValue(f, key) { const l = this.argLabel(f, key); return l ? l.get("Value") : undefined; }
   setArg(f, key, value) {
@@ -1384,7 +1390,7 @@ class Document {
     const out = [];
     decl.args.forEach((a, i) => {
       if (a.view) return;
-      const v = f.child(FIRST_ARG_TAG + i, false)?.get("Value");
+      const v = f.child(argTag(i), false)?.get("Value");
       collectRefs(v, out);
     });
     const extra = decl.dependsOn ? decl.dependsOn(f, this) : [];
@@ -1396,7 +1402,7 @@ class Document {
     const out = [];
     decl.args.forEach((a, i) => {
       if (a.kind !== "Reference" || a.view) return;
-      const v = f.child(FIRST_ARG_TAG + i, false)?.get("Value");
+      const v = f.child(argTag(i), false)?.get("Value");
       const id = v && v.ref;
       for (const lib of MODEL_LIBS) if (this.lib[lib][id]) out.push(this.defLabel(lib, id));
     });
@@ -1476,7 +1482,7 @@ class Document {
   mustExecute(f) {
     const log = this.log;
     if (log.isModified(f)) return true;
-    for (const l of f.kids.values()) if (l.tag < PARAM_TAG0 && log.isModified(l)) return true;
+    for (const l of f.kids.values()) if (isArgTag(l.tag) && log.isModified(l)) return true;
     for (const id of this.argumentIds(f)) if (log.isModified(this.byId.get(id))) return true;
     for (const d of this.argumentDefs(f)) if (log.isModified(d)) return true;
     return false;
@@ -1543,7 +1549,7 @@ class Document {
     const name = f.get("Name"); if (name && name !== rec.id) rec.name = name;
     if (f.get("Integer") === 0) rec.visible = false;
     const args = {};
-    decl.args.forEach((a, i) => { const v = f.child(FIRST_ARG_TAG + i, false)?.get("Value"); if (v !== undefined) args[a.key] = v; });
+    decl.args.forEach((a, i) => { const v = f.child(argTag(i), false)?.get("Value"); if (v !== undefined) args[a.key] = v; });
     Object.assign(args, f.get("ExtraArgs") || {});
     rec.args = args;
     const params = this.params(f); if (Object.keys(params).length) rec.params = params;
@@ -1603,7 +1609,7 @@ function danglingRefs(doc, f) {
   const decl = doc.declOf(f); if (!decl) return [];
   const out = [];
   decl.args.forEach((a, i) => {
-    const v = f.child(FIRST_ARG_TAG + i, false)?.get("Value");
+    const v = f.child(argTag(i), false)?.get("Value");
     const ids = []; collectRefs(v, ids);
     for (const id of ids) {
       const found = doc.byId.has(id) || Object.values(doc.lib).some(lib => lib[id]);
@@ -6865,7 +6871,11 @@ declare({ type: "Wall", guid: "wb-0101", category: "IfcWall", kind: "wall", idPr
     ref("wallType", "Type", ["wallType"]),
     ref("baseLevel", "Base level", ["level"]),
     real("baseOffset", "Base offset", 0, -10000, 10000, 1),
-    real("height", "Height", 3000, 1, 100000, 1, "mm", { group: "Dimensions" }),
+    // Revit's Top Constraint: a top level bounds the wall and the height follows it; none, and the
+    // wall is Unconnected and its height is the number below
+    ref("topLevel", "Top level", ["level"]),
+    real("topOffset", "Top offset", 0, -10000, 10000, 1),
+    real("height", "Unconnected height", 3000, 1, 100000, 1, "mm", { group: "Dimensions" }),
     bool("flipped", "Flipped", false),
     json("slope", "Inclination & top slope", { top: 0, lean: 0 }, { group: "Constraints" }),
   ],
@@ -6889,8 +6899,9 @@ BUILDERS.Wall = {
     const t = F.type(f, "wallType");
     if (!t.layers || !t.layers.length) throw new Error(`${t.name || t.id} has no layers`);
     const z0 = levelElev(doc, f) + F.real(f, "baseOffset");
-    const height = F.real(f, "height");
-    if (!(height > 0)) throw new Error(`a wall ${height}mm high has nothing to draw`);
+    const top = F.reference(f, "topLevel");
+    const height = top ? levelElev(doc, f, "topLevel") + (F.real(f, "topOffset") || 0) - z0 : F.real(f, "height");
+    if (!(height > 0)) throw new Error(top ? `its top (${F.text(top, "name") || doc.idOf(top)} ${(F.real(f, "topOffset") || 0) >= 0 ? "+" : ""}${F.real(f, "topOffset") || 0}) is not above its base: ${Math.round(height)}mm` : `a wall ${height}mm high has nothing to draw`);
     const w = wallRecord({ id: doc.idOf(f), centreline: F.json(f, "centreline"), type: t, mounting: F.choice(f, "mounting"),
       mountOffset: F.real(f, "mountOffset"), flipped: F.bool(f, "flipped"), z0, height, slope: F.json(f, "slope"), stats: doc.stats, zFloor: levelElev(doc, f) + ((F.json(f, "slope") || {}).pivotZ || 0) });
     if (w.L < TOL) throw new Error("the centreline has no length");
@@ -6899,7 +6910,8 @@ BUILDERS.Wall = {
     return {
       plan: w,
       data: { value: len, kind: "Length", refs: wallReferences(w), props: {
-        Length: L(len), Width: L(thick), Height: L(height), "Base elevation": L(z0),
+        Length: L(len), Width: L(thick), Height: L(height), "Base elevation": L(z0), "Top elevation": L(z0 + height),
+        "Top constraint": T(top ? `Up to ${F.text(top, "name") || doc.idOf(top)}` : "Unconnected"),
         Area: { kind: "Area", v: len * height }, Volume: { kind: "Volume", v: len * height * thick } } },
       note: lv ? null : (F.refId(f, "baseLevel") ? null : "no base level: built from z = 0"),
     };
@@ -17335,6 +17347,23 @@ testCase("M63", "Section catalogue: AISC, EN, BS and AS/NZS wide flange, rectang
     `counts ${counts}; dims ${dimsOk}; I ${pw && Math.round(Math.abs(polyArea(pw.foot)))} vs ${Math.round(Iarea)}; CHS ${Math.round(cArea)} vs ${Math.round(ring)}; HSS ${pb && pb.parts.length} parts, vol ${Math.round(vol / 1e6)} vs ${Math.round(want / 1e6)} (${doc.error(doc.element("CW")) || ""} ${doc.error(doc.element("BH")) || ""})`);
 });
 
+testCase("M64", "A wall's Top Constraint: bounded by a top level (plus a top offset) its height follows the level; unconnected it keeps its own height; a top below the base is refused", () => {
+  const { doc, ed } = fixture();
+  ed.apply({ op: "add", element: { id: "L1", type: "Level", args: { name: "Level 2", elevation: 3200 } } });
+  wall(doc, "A", [0, 0], [4000, 0], "T-300", { baseOffset: 100, topLevel: { ref: "L1" }, topOffset: -250, height: 9999 });
+  wall(doc, "U", [0, 3000], [4000, 3000], "T-300", { height: 2700 });
+  doc.regenerate();
+  const H = id => { const w = doc.plan(doc.element(id)); return w ? w.z1 - w.z0 : null; };
+  const h1 = H("A");                                                  // 3200 − 250 − 100
+  ed.apply({ op: "set", id: "L1", key: "elevation", value: 4000 }); const h2 = H("A"), hu = H("U");
+  const note = doc.data(doc.element("A")).props["Top constraint"];
+  ed.apply({ op: "set", id: "A", key: "topOffset", value: -4000 }); const bad = doc.error(doc.element("A"));
+  ed.apply({ op: "set", id: "A", key: "topLevel", value: null }); const h3 = H("A");
+  const ok = h1 === 2850 && h2 === 3650 && hu === 2700 && note && /Level 2/.test(note.v || note) && !!bad && /not above its base/.test(bad) && h3 === 9999;
+  return R(ok, "2850 (3200 − 250 − 100); level moved to 4000 → 3650; unconnected wall stays 2700; top below base refused; unbound → its own 9999",
+    `${h1}, ${h2}, ${hu}; ${JSON.stringify(note)}; ${bad}; ${h3}`);
+});
+
 // ===== ui_util.js =====
 //! Small DOM vocabulary shared by the interface modules. The interface only
 //! mirrors the document: nothing here owns model state.
@@ -20885,7 +20914,16 @@ class View2D {
   wallAt(p) {
     const [sx, sy] = this.toScreen(p);
     const hit = this.hitsAt(sx, sy).find(x => { const f = this.doc.element(x.id); return f && this.doc.typeOf(f) === "Wall"; });
-    return hit ? hit.id : null;
+    if (hit) return hit.id;
+    // a leaning wall is cut away from the line it was drawn on: its drawn line picks it too
+    let best = null, bd = Math.max(8 * this.modelPerPx(), 1);
+    for (const f of this.doc.elements()) {
+      if (this.doc.typeOf(f) !== "Wall") continue;
+      const c = this.doc.argValue(f, "centreline"), w = this.doc.plan(f); if (!c || c.type !== "line" || !w) continue;
+      const d = distToSeg(p, { k: "L", a: c.start, b: c.end }).d, tol = Math.max(bd, w.stack.T / 2 + 4 * this.modelPerPx());
+      if (d < tol && (!best || d < best.d)) best = { id: this.doc.idOf(f), d };
+    }
+    return best ? best.id : null;
   }
   splittableAt(p) {
     const [sx, sy] = this.toScreen(p), ok = new Set(["Wall", "Beam", "DetailLine", "RoomSeparator"]);
@@ -21113,7 +21151,7 @@ class View2D {
     for (const el of d.elements) {
       const c = toCentreline(el); if (!c) continue;
       let k = 1; while (this.doc.element("W" + k) || ids.includes("W" + k)) k++; const id = "W" + k;
-      ops.push({ op: "add", element: { id, type: "Wall", args: { centreline: c, mounting: o.mounting || "Centred", wallType: { ref: o.wallType }, baseLevel: level ? { ref: level } : null, height: o.height || 3000 } } }); ids.push(id);
+      ops.push({ op: "add", element: { id, type: "Wall", args: { centreline: c, mounting: o.mounting || "Centred", wallType: { ref: o.wallType }, baseLevel: level ? { ref: level } : null, height: o.height || 3000, ...(o.wallTop && o.wallTop !== level && this.doc.element(o.wallTop) ? { topLevel: { ref: o.wallTop }, topOffset: o.wallTopOffset || 0 } : {}) } } }); ids.push(id);
     }
     if (!ops.length) return;
     const ends = [];
@@ -21621,7 +21659,8 @@ class View3D {
         { key: "start", at: [...c.start, p.z0], kind: "end", writes: "centreline.start" },
         { key: "end", at: [...c.end, p.z0], kind: "end", writes: "centreline.end" },
         { key: "move", at: [...mid, p.z0], kind: "move", writes: "centreline" },
-        { key: "height", at: [...mid, p.z1], kind: "height", writes: "height" },
+        // a wall bounded by a top level is raised by its top offset; an unconnected one by its height
+        { key: "height", at: [...mid, p.z1], kind: "height", writes: F.refId(f, "topLevel") ? "topOffset" : "height" },
       ];
     }
     // a block of a massing study (or any generic mass): move it whole, pull its top
@@ -21838,6 +21877,7 @@ class View3D {
           const hgt = Math.max(100, Math.round((zz - plan.z0) / 10) * 10);
           // bound to "Top.elevation - Base.elevation": drive the top level, so every wall bound to it follows
           if (drv) { const z = drv.baseZ + hgt; send({ op: "set", id: drv.level, key: "elevation", value: z }); this.showHud(ev, `${F.text(doc.element(drv.level), "name")} → ${z} mm (height ${hgt})`); this.refresh(); return; }
+          if (g.writes === "topOffset") { const off = Math.round((plan.z0 + hgt - (plan.z1 - (F.real(f, "topOffset") || 0))) / 10) * 10; send({ op: "set", id, key: "topOffset", value: off }); this.showHud(ev, `top offset ${off} mm (height ${hgt})`); return; }
           send({ op: "set", id, key: "height", value: hgt }); this.showHud(ev, `height ${hgt} mm`); return;
         }
         if (g.kind === "along") {
@@ -21905,7 +21945,7 @@ class View3D {
     const pts = this.tool.pts.slice(); this.tool.pts = []; this.tool.cursor = null;
     if (pts.length < 2) return;
     const o = this.app.toolOpts, z = this.levelZ();
-    const r = this.app.apply({ op: "draw", points: pts, closed, wallType: o.wallType, level: z.id, height: o.height || 3000, mounting: o.mounting || "Centred", tol: 1 });
+    const r = this.app.apply({ op: "draw", points: pts, closed, wallType: o.wallType, level: z.id, height: o.height || 3000, mounting: o.mounting || "Centred", tol: 1, args: o.wallTop && o.wallTop !== z.id && this.doc.element(o.wallTop) ? { topLevel: { ref: o.wallTop }, topOffset: o.wallTopOffset || 0 } : undefined });
     if (r.ok) { this.app.say(`${r.ids.length} wall${r.ids.length > 1 ? "s" : ""} drawn and joined`, "ok"); this.app.select(r.ids); }
     this.refresh();
   }
@@ -22519,6 +22559,9 @@ function renderOptionsBar() {
   const num = (key, label) => h("label", {}, label + " ", h("input", { type: "text", value: fmtLen(o[key] ?? 0), style: { width: "80px" }, onchange: e => { try { o[key] = parseLength(e.target.value); } catch (err) { app.say(`${e.target.value}: ${err.message}`, "error"); } e.target.value = fmtLen(o[key] ?? 0); } }));
   const chk = (key, label) => h("label", {}, h("input", { type: "checkbox", checked: !!o[key], onchange: e => { o[key] = e.target.checked; } }), " " + label);
   const els = [...app.selection].filter(id => doc.element(id));
+  // a wall's Top Constraint: a level (the height follows it) or Unconnected (the height typed)
+  const topPicker = () => h("label", {}, "Top: ", h("select", { onchange: e => { o.wallTop = e.target.value; app.renderOptions(); } }, h("option", { value: "" }, "Unconnected"),
+    doc.elements().filter(g => doc.typeOf(g) === "Level").sort((a, b) => (F.real(a, "elevation") || 0) - (F.real(b, "elevation") || 0)).map(g => h("option", { value: doc.idOf(g), selected: o.wallTop === doc.idOf(g) }, "Up to " + (F.text(g, "name") || doc.idOf(g))))));
   let title, kids = [];
   if (app.sketch) { app.sketch.optionsBar(bar); return; }
   if (app.pickMode) { title = `Bind ${app.pickMode.label}`; kids = [h("span", {}, "Click an element in the view"), h("button", { class: "btn small", onclick: app.endPick }, "Cancel")]; }
@@ -22528,7 +22571,7 @@ function renderOptionsBar() {
     if (t === "wall") {
       // Revit's wall options: location line, offset from what is drawn, rounded chain corners
       const radiusOn = h("label", {}, h("input", { type: "checkbox", checked: !!o.wallRadiusOn, onchange: e => { o.wallRadiusOn = e.target.checked; } }), " Radius");
-      kids = [sel("wallType", typesOf("IfcWall").map(([id, x]) => [id, x.name]), "Type:"), sel("mounting", ["Centred", "Core centre", "Core exterior", "Core interior", "Finish exterior", "Finish interior"].map(x => [x, x]), "Location Line:"), num("height", "Height:"), levelPicker(),
+      kids = [sel("wallType", typesOf("IfcWall").map(([id, x]) => [id, x.name]), "Type:"), sel("mounting", ["Centred", "Core centre", "Core exterior", "Core interior", "Finish exterior", "Finish interior"].map(x => [x, x]), "Location Line:"), levelPicker(), topPicker(), ...(o.wallTop ? [num("wallTopOffset", "Top offset:")] : [num("height", "Height:")]),
         num("wallOffset", "Offset:"), radiusOn, num("wallRadius", ""), ...((o.wallShape || "line") === "polygon" ? [h("label", {}, "Sides ", h("input", { type: "text", value: o.wallSides || 6, style: { width: "40px" }, onchange: e => { o.wallSides = Math.max(3, Math.round(Number(e.target.value)) || 6); } }))] : [])];
     }
     if (t === "grid") kids = [h("label", { title: "Ticked: new grids run horizontal or vertical" }, h("input", { type: "checkbox", checked: o.gridOrtho !== false, onchange: e => { o.gridOrtho = e.target.checked; } }), " Orthogonal")];

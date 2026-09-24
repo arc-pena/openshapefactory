@@ -6,7 +6,7 @@
 
 import { h, clear, fmtLen, icon } from "./ui_util.js";
 import { parseLength, parseAngle, fmtArea } from "./units.js";
-import { TOL, add, sub, mul, dot, dist, perp, normalise, lerp, intersectLines, lineThrough, projectPoint, pointInPoly, samplePath, polyArea, bboxOf } from "./geom2d.js";
+import { TOL, add, sub, mul, dot, dist, perp, normalise, lerp, intersectLines, lineThrough, projectPoint, pointInPoly, samplePath, polyArea, bboxOf, distToSeg } from "./geom2d.js";
 import { deriveView, placements, dimensionGeometry, viewLineGeometry } from "./scene.js";
 import { drawScene, primsBBox } from "./render.js";
 import { F, CATALOGUE } from "./ocaf.js";
@@ -842,7 +842,16 @@ export class View2D {
   wallAt(p) {
     const [sx, sy] = this.toScreen(p);
     const hit = this.hitsAt(sx, sy).find(x => { const f = this.doc.element(x.id); return f && this.doc.typeOf(f) === "Wall"; });
-    return hit ? hit.id : null;
+    if (hit) return hit.id;
+    // a leaning wall is cut away from the line it was drawn on: its drawn line picks it too
+    let best = null, bd = Math.max(8 * this.modelPerPx(), 1);
+    for (const f of this.doc.elements()) {
+      if (this.doc.typeOf(f) !== "Wall") continue;
+      const c = this.doc.argValue(f, "centreline"), w = this.doc.plan(f); if (!c || c.type !== "line" || !w) continue;
+      const d = distToSeg(p, { k: "L", a: c.start, b: c.end }).d, tol = Math.max(bd, w.stack.T / 2 + 4 * this.modelPerPx());
+      if (d < tol && (!best || d < best.d)) best = { id: this.doc.idOf(f), d };
+    }
+    return best ? best.id : null;
   }
   splittableAt(p) {
     const [sx, sy] = this.toScreen(p), ok = new Set(["Wall", "Beam", "DetailLine", "RoomSeparator"]);
@@ -1070,7 +1079,7 @@ export class View2D {
     for (const el of d.elements) {
       const c = toCentreline(el); if (!c) continue;
       let k = 1; while (this.doc.element("W" + k) || ids.includes("W" + k)) k++; const id = "W" + k;
-      ops.push({ op: "add", element: { id, type: "Wall", args: { centreline: c, mounting: o.mounting || "Centred", wallType: { ref: o.wallType }, baseLevel: level ? { ref: level } : null, height: o.height || 3000 } } }); ids.push(id);
+      ops.push({ op: "add", element: { id, type: "Wall", args: { centreline: c, mounting: o.mounting || "Centred", wallType: { ref: o.wallType }, baseLevel: level ? { ref: level } : null, height: o.height || 3000, ...(o.wallTop && o.wallTop !== level && this.doc.element(o.wallTop) ? { topLevel: { ref: o.wallTop }, topOffset: o.wallTopOffset || 0 } : {}) } } }); ids.push(id);
     }
     if (!ops.length) return;
     const ends = [];

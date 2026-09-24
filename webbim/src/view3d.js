@@ -319,7 +319,8 @@ export class View3D {
         { key: "start", at: [...c.start, p.z0], kind: "end", writes: "centreline.start" },
         { key: "end", at: [...c.end, p.z0], kind: "end", writes: "centreline.end" },
         { key: "move", at: [...mid, p.z0], kind: "move", writes: "centreline" },
-        { key: "height", at: [...mid, p.z1], kind: "height", writes: "height" },
+        // a wall bounded by a top level is raised by its top offset; an unconnected one by its height
+        { key: "height", at: [...mid, p.z1], kind: "height", writes: F.refId(f, "topLevel") ? "topOffset" : "height" },
       ];
     }
     // a block of a massing study (or any generic mass): move it whole, pull its top
@@ -536,6 +537,7 @@ export class View3D {
           const hgt = Math.max(100, Math.round((zz - plan.z0) / 10) * 10);
           // bound to "Top.elevation - Base.elevation": drive the top level, so every wall bound to it follows
           if (drv) { const z = drv.baseZ + hgt; send({ op: "set", id: drv.level, key: "elevation", value: z }); this.showHud(ev, `${F.text(doc.element(drv.level), "name")} → ${z} mm (height ${hgt})`); this.refresh(); return; }
+          if (g.writes === "topOffset") { const off = Math.round((plan.z0 + hgt - (plan.z1 - (F.real(f, "topOffset") || 0))) / 10) * 10; send({ op: "set", id, key: "topOffset", value: off }); this.showHud(ev, `top offset ${off} mm (height ${hgt})`); return; }
           send({ op: "set", id, key: "height", value: hgt }); this.showHud(ev, `height ${hgt} mm`); return;
         }
         if (g.kind === "along") {
@@ -603,7 +605,7 @@ export class View3D {
     const pts = this.tool.pts.slice(); this.tool.pts = []; this.tool.cursor = null;
     if (pts.length < 2) return;
     const o = this.app.toolOpts, z = this.levelZ();
-    const r = this.app.apply({ op: "draw", points: pts, closed, wallType: o.wallType, level: z.id, height: o.height || 3000, mounting: o.mounting || "Centred", tol: 1 });
+    const r = this.app.apply({ op: "draw", points: pts, closed, wallType: o.wallType, level: z.id, height: o.height || 3000, mounting: o.mounting || "Centred", tol: 1, args: o.wallTop && o.wallTop !== z.id && this.doc.element(o.wallTop) ? { topLevel: { ref: o.wallTop }, topOffset: o.wallTopOffset || 0 } : undefined });
     if (r.ok) { this.app.say(`${r.ids.length} wall${r.ids.length > 1 ? "s" : ""} drawn and joined`, "ok"); this.app.select(r.ids); }
     this.refresh();
   }

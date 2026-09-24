@@ -26,7 +26,13 @@ export const PARAM_SPEC_TAG = 51;
 export const APPEARANCE_TAG = 52;
 export const FRAME_TAG = 53;
 export const PARENT_TAG = 54;
-const MAX_ARGS = PARAM_TAG0 - FIRST_ARG_TAG;   // 9: tag 10 is where parameters start
+const LOW_ARGS = PARAM_TAG0 - FIRST_ARG_TAG;   // 9: tag 10 is where parameters start
+// Arguments past the ninth go above the parameter range: tags 60–89. Appended, so the first nine keep the
+// tags they always had; saved files carry arguments by key, so neither range moves anything on disk.
+export const ARG_TAG2 = 60;
+const MAX_ARGS = LOW_ARGS + 30;
+export const argTag = i => i < LOW_ARGS ? FIRST_ARG_TAG + i : ARG_TAG2 + (i - LOW_ARGS);
+const isArgTag = t => (t >= FIRST_ARG_TAG && t < PARAM_TAG0) || (t >= ARG_TAG2 && t < ARG_TAG2 + 30);
 
 // ---------------------------------------------------------------- labels
 export class Label {
@@ -70,7 +76,7 @@ export const ATTRIBUTE_KINDS = ["Length", "Angle", "Number", "Integer", "Boolean
 export const CATALOGUE = new Map();   // type → declaration
 export const BUILDERS = Object.create(null);
 export function declare(entry) {
-  if (entry.args.length > MAX_ARGS) throw new Error(`${entry.type} declares ${entry.args.length} arguments; tags ${FIRST_ARG_TAG}–${MAX_ARGS} are all there is before the parameter range`);
+  if (entry.args.length > MAX_ARGS) throw new Error(`${entry.type} declares ${entry.args.length} arguments; there are tags for ${MAX_ARGS}`);
   CATALOGUE.set(entry.type, entry);
   return entry;
 }
@@ -138,7 +144,7 @@ export class Document {
     f.set("Function", decl.guid);
     const args = rec.args || {};
     decl.args.forEach((a, i) => {
-      const lab = f.child(FIRST_ARG_TAG + i);
+      const lab = f.child(argTag(i));
       lab.set("Key", a.key).set("Kind", a.kind);
       lab.set("Value", args[a.key] !== undefined ? clone(args[a.key]) : clone(a.def));
     });
@@ -176,7 +182,7 @@ export class Document {
   argLabel(f, key) {
     const decl = this.declOf(f); if (!decl) return null;
     const i = decl.args.findIndex(a => a.key === key);
-    return i < 0 ? null : f.child(FIRST_ARG_TAG + i, false);
+    return i < 0 ? null : f.child(argTag(i), false);
   }
   argValue(f, key) { const l = this.argLabel(f, key); return l ? l.get("Value") : undefined; }
   setArg(f, key, value) {
@@ -211,7 +217,7 @@ export class Document {
     const out = [];
     decl.args.forEach((a, i) => {
       if (a.view) return;
-      const v = f.child(FIRST_ARG_TAG + i, false)?.get("Value");
+      const v = f.child(argTag(i), false)?.get("Value");
       collectRefs(v, out);
     });
     const extra = decl.dependsOn ? decl.dependsOn(f, this) : [];
@@ -223,7 +229,7 @@ export class Document {
     const out = [];
     decl.args.forEach((a, i) => {
       if (a.kind !== "Reference" || a.view) return;
-      const v = f.child(FIRST_ARG_TAG + i, false)?.get("Value");
+      const v = f.child(argTag(i), false)?.get("Value");
       const id = v && v.ref;
       for (const lib of MODEL_LIBS) if (this.lib[lib][id]) out.push(this.defLabel(lib, id));
     });
@@ -303,7 +309,7 @@ export class Document {
   mustExecute(f) {
     const log = this.log;
     if (log.isModified(f)) return true;
-    for (const l of f.kids.values()) if (l.tag < PARAM_TAG0 && log.isModified(l)) return true;
+    for (const l of f.kids.values()) if (isArgTag(l.tag) && log.isModified(l)) return true;
     for (const id of this.argumentIds(f)) if (log.isModified(this.byId.get(id))) return true;
     for (const d of this.argumentDefs(f)) if (log.isModified(d)) return true;
     return false;
@@ -370,7 +376,7 @@ export class Document {
     const name = f.get("Name"); if (name && name !== rec.id) rec.name = name;
     if (f.get("Integer") === 0) rec.visible = false;
     const args = {};
-    decl.args.forEach((a, i) => { const v = f.child(FIRST_ARG_TAG + i, false)?.get("Value"); if (v !== undefined) args[a.key] = v; });
+    decl.args.forEach((a, i) => { const v = f.child(argTag(i), false)?.get("Value"); if (v !== undefined) args[a.key] = v; });
     Object.assign(args, f.get("ExtraArgs") || {});
     rec.args = args;
     const params = this.params(f); if (Object.keys(params).length) rec.params = params;
@@ -430,7 +436,7 @@ export function danglingRefs(doc, f) {
   const decl = doc.declOf(f); if (!decl) return [];
   const out = [];
   decl.args.forEach((a, i) => {
-    const v = f.child(FIRST_ARG_TAG + i, false)?.get("Value");
+    const v = f.child(argTag(i), false)?.get("Value");
     const ids = []; collectRefs(v, ids);
     for (const id of ids) {
       const found = doc.byId.has(id) || Object.values(doc.lib).some(lib => lib[id]);

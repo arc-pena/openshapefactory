@@ -1843,3 +1843,20 @@ testCase("M63", "Section catalogue: AISC, EN, BS and AS/NZS wide flange, rectang
   return R(ok, "catalogues loaded; W14x90 355.6 × 368.3 × 11.2 × 18.0; HEB300 300×300×11×19; I column area = 2·bf·tf + (d−2tf)·tw; CHS ring area; HSS beam volume = its steel",
     `counts ${counts}; dims ${dimsOk}; I ${pw && Math.round(Math.abs(polyArea(pw.foot)))} vs ${Math.round(Iarea)}; CHS ${Math.round(cArea)} vs ${Math.round(ring)}; HSS ${pb && pb.parts.length} parts, vol ${Math.round(vol / 1e6)} vs ${Math.round(want / 1e6)} (${doc.error(doc.element("CW")) || ""} ${doc.error(doc.element("BH")) || ""})`);
 });
+
+testCase("M64", "A wall's Top Constraint: bounded by a top level (plus a top offset) its height follows the level; unconnected it keeps its own height; a top below the base is refused", () => {
+  const { doc, ed } = fixture();
+  ed.apply({ op: "add", element: { id: "L1", type: "Level", args: { name: "Level 2", elevation: 3200 } } });
+  wall(doc, "A", [0, 0], [4000, 0], "T-300", { baseOffset: 100, topLevel: { ref: "L1" }, topOffset: -250, height: 9999 });
+  wall(doc, "U", [0, 3000], [4000, 3000], "T-300", { height: 2700 });
+  doc.regenerate();
+  const H = id => { const w = doc.plan(doc.element(id)); return w ? w.z1 - w.z0 : null; };
+  const h1 = H("A");                                                  // 3200 − 250 − 100
+  ed.apply({ op: "set", id: "L1", key: "elevation", value: 4000 }); const h2 = H("A"), hu = H("U");
+  const note = doc.data(doc.element("A")).props["Top constraint"];
+  ed.apply({ op: "set", id: "A", key: "topOffset", value: -4000 }); const bad = doc.error(doc.element("A"));
+  ed.apply({ op: "set", id: "A", key: "topLevel", value: null }); const h3 = H("A");
+  const ok = h1 === 2850 && h2 === 3650 && hu === 2700 && note && /Level 2/.test(note.v || note) && !!bad && /not above its base/.test(bad) && h3 === 9999;
+  return R(ok, "2850 (3200 − 250 − 100); level moved to 4000 → 3650; unconnected wall stays 2700; top below base refused; unbound → its own 9999",
+    `${h1}, ${h2}, ${hu}; ${JSON.stringify(note)}; ${bad}; ${h3}`);
+});
