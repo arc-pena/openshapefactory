@@ -112,11 +112,11 @@ app.hoverInfo = id => {
 };
 /** Placement shared by the plan and the 3D view: one path for "a door in this wall at u". */
 app.place = element => { const r = app.apply({ op: "add", element }); if (r.ok) { app.say(`Placed ${r.id}`, "ok"); } return r; };
-app.placeOpening = (tool, wallId, u) => {
+app.placeOpening = (tool, wallId, u, sillAt) => {
   const doc = app.doc, o = app.toolOpts;
   const t = tool === "door" ? doc.lib.types[o.doorType] : tool === "window" ? doc.lib.types[o.windowType] : null;
   const w = t ? t.width : o.width, hh = t ? t.height : o.height_;
-  const sill = tool === "door" ? 0 : tool === "window" ? (o.sill ?? 900) : (o.openSill ?? 0);
+  const sill = sillAt != null ? sillAt : tool === "door" ? 0 : tool === "window" ? (o.sill ?? 900) : (o.openSill ?? 0);
   const opId = doc.freshId("Opening");
   const ops = [{ op: "add", element: { id: opId, type: "Opening", args: { host: { ref: wallId }, profile: { kind: "rect", at: u, sill, w, h: hh }, farProfile: null, depth: "through" } } }];
   if (tool === "door") ops.push({ op: "add", element: { type: "Door", args: { fills: { ref: opId }, doorType: { ref: o.doorType } }, params: { Phase: "New" } } });
@@ -127,7 +127,7 @@ app.placeOpening = (tool, wallId, u) => {
 };
 const firstOf = type => { const f = app.doc.elements().find(g => app.doc.typeOf(g) === type); return f ? app.doc.idOf(f) : null; };
 const activeType = () => { const v = app.activeView && app.doc.element(app.activeView); return v ? app.doc.typeOf(v) : app.activeView; };
-const canUseTool = k => { const t = activeType(); if (t === "PlanView") return true; if (t === "ElevationView" || t === "SectionView") return k === "select" || k === "dim" || k === "mtag" || k === "move" || k === "copy"; if (t === "View3D") return ["wall", "door", "window", "opening", "column", "select"].includes(k); return k === "select"; };
+const canUseTool = k => { const t = activeType(); if (t === "PlanView") return true; if (t === "ElevationView" || t === "SectionView") return ["select", "dim", "mtag", "move", "copy", "door", "window", "opening"].includes(k); if (t === "View3D") return ["wall", "door", "window", "opening", "column", "select"].includes(k); return k === "select"; };
 
 // ---------------------------------------------------------------- documents
 /** There is always a {3D} view: the house button must have somewhere to go. */
@@ -917,6 +917,16 @@ function newPlanView(levelId, { open = true } = {}) {
   if (r.ok && open) app.openView(r.id);
   return r.ok ? r.id : null;
 }
+/** Paste: the copied elements selected and the Copy command started from their centre - the next click places
+ *  the copy (in an elevation or section a level, slab or door goes up or down; see elevModifyClick). */
+function pasteClipboard() {
+  const ids = (app.clipboard || []).filter(id => app.doc.element(id)); if (!ids.length) return app.say("nothing to paste: the copied elements are gone", "note");
+  const v = app.views.get(app.activeView); if (!v || !v.selectionCentre) return app.say("paste into a plan, elevation or section", "note");
+  app.select(ids); app.setTool("copy");
+  const c = v.selectionCentre(); if (!c) return app.say("the copied elements are not in this view - paste where they show", "note");
+  if (v.kind === "PlanView") { v.tool.pts = [c]; v.tool.cursor = c; } else v.elevTool = { base: c };
+  app.say(`Paste ${ids.length} element${ids.length > 1 ? "s" : ""}: click where they go (Esc cancels)`, "note"); v.draw();
+}
 function newLevel() {
   const lv = app.doc.elements().filter(f => app.doc.typeOf(f) === "Level");
   const top = Math.max(0, ...lv.map(f => F.real(f, "elevation")));
@@ -1336,6 +1346,9 @@ window.addEventListener("keydown", e => {
   // clicking a ribbon button to change shape must not leave Enter with nothing to do
   if (!mod && app.tool !== "select") { const av = app.views.get(app.activeView); if (av && av.key && !(av.canvas && document.activeElement === av.canvas) && av.key(e)) { e.preventDefault(); return; } }
   if (mod && e.key.toLowerCase() === "s") { e.preventDefault(); app.run("save"); return; }
+  // Ctrl+C / Ctrl+V: the selection remembered, then placed with the next click (in plan, elevation or section)
+  if (mod && e.key.toLowerCase() === "c" && app.selection.size) { const ids = [...app.selection].filter(id => app.doc.element(id)); if (ids.length) { e.preventDefault(); app.clipboard = ids; app.say(`Copied ${ids.length} element${ids.length > 1 ? "s" : ""} - Ctrl+V, then click where they go`, "note"); } return; }
+  if (mod && e.key.toLowerCase() === "v" && app.clipboard) { e.preventDefault(); pasteClipboard(); return; }
   if (e.key === "Escape") {
     keyBuf = ""; if (openMenu) { closeMenus(); return; }
     if (app.pickMode) { app.endPick(); return; }

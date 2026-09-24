@@ -201,6 +201,62 @@ const HANDLERS = {
   /** Split Element (SL): the element is cut where it was clicked into two of the same kind. A wall's
    *  halves are joined end to end; what was joined at its far end, T-joined along its second half or
    *  hosted there (doors, windows, openings) goes with the second half. */
+  /** Up or down, as an elevation or section sees it: move (or copy) by dz. A level changes elevation - a
+   *  copied one is a new level with a floor plan cloned from the source level's. Slabs, beams, columns, walls
+   *  and generic models shift by their offset from their level; landing exactly on another level they are
+   *  hosted there with no offset, as Revit re-hosts a copy that meets a level. `move` also slides them in plan. */
+  lift(doc, o) {
+    const dz = Math.round(o.dz || 0), ids = [].concat(o.ids || []).filter(id => doc.element(id));
+    const levels = doc.elements().filter(g => doc.typeOf(g) === "Level");
+    const elevOf = id => { const g = doc.element(id); return g ? (F.real(g, "elevation") || 0) : 0; };
+    const levelAt = z => levels.find(g => Math.abs((F.real(g, "elevation") || 0) - z) < 1);
+    const HOST = { Floor: ["level", "heightOffset"], Beam: ["level", "topOffset"], Column: ["baseLevel", "baseOffset"], Wall: ["baseLevel", "baseOffset"], Generic: ["level", "baseOffset"] };
+    const shift = (g, lk, ok) => {
+      const lv = F.refId(g, lk), z = (lv ? elevOf(lv) : 0) + (doc.argValue(g, ok) || 0) + dz, hit = levelAt(z);
+      if (hit) { doc.setArg(g, lk, { ref: doc.idOf(hit) }); doc.setArg(g, ok, 0); }
+      else doc.setArg(g, ok, z - (lv ? elevOf(lv) : 0));
+    };
+    const lvIds = ids.filter(id => doc.typeOf(doc.element(id)) === "Level"), bodies = ids.filter(id => HOST[doc.typeOf(doc.element(id))]);
+    const made = [];
+    // doors, windows and openings: along their wall by the sideways part, sill up or down by dz; a copy
+    // brings its own opening (a filler never shares one)
+    const fillOp = id => { const g = doc.element(id), t = doc.typeOf(g); return t === "Opening" ? id : (t === "Door" || t === "Window") ? F.refId(g, "fills") : null; };
+    const ops_ = [...new Set(ids.map(fillOp).filter(Boolean))];
+    if (ops_.length) {
+      let targetsOp = ops_;
+      if (o.copy) { const r = copyElements(doc, ops_, transformer({ move: [0, 0] })); targetsOp = r.copied.filter(id => doc.typeOf(doc.element(id)) === "Opening"); made.push(...r.copied); }
+      for (const id of targetsOp) {
+        const g = doc.element(id), pr = clone(doc.argValue(g, "profile")), hw = doc.plan(doc.element(F.refId(g, "host")));
+        if (hw && hw.d && o.move) pr.at = Math.max(0, Math.min(hw.L, pr.at + dot(o.move, hw.d)));
+        pr.sill = Math.max(0, (pr.sill || 0) + dz);
+        doc.setArg(g, "profile", pr);
+      }
+    }
+    // levels
+    for (const id of dz ? lvIds : []) {
+      const g = doc.element(id), z = elevOf(id) + dz;
+      if (!o.copy) { doc.setArg(g, "elevation", z); continue; }
+      let n = levels.length + made.length + 1, name; do { name = `Level ${n++}`; } while (doc.elements().some(h => doc.typeOf(h) === "Level" && F.text(h, "name") === name));
+      let k = 1; while (doc.element("L" + k)) k++;
+      const nid = "L" + k; doc.addElement({ id: nid, type: "Level", name, args: { name, elevation: z } }); made.push(nid);
+      // its floor plan: the source level's, cloned (style, range, crop), or a plain one
+      const src = doc.elements().find(h => doc.typeOf(h) === "PlanView" && F.refId(h, "level") === id);
+      const rec = src ? clone(doc.elementJSON(src)) : { type: "PlanView", args: { scale: 100, viewRange: { top: 2300, cut: 1200, bottom: 0 }, detailLevel: "Fine" } };
+      let m = 1; while (doc.element("V-P" + String(m).padStart(2, "0"))) m++;
+      rec.id = "V-P" + String(m).padStart(2, "0"); rec.name = name; rec.args = Object.assign({}, rec.args, { level: { ref: nid } });
+      doc.addElement(rec); made.push(rec.id);
+    }
+    // level-hosted bodies
+    let targets = bodies;
+    if (bodies.length && o.copy) { const r = copyElements(doc, bodies, transformer({ move: o.move || [0, 0] })); targets = r.copied.filter(id => HOST[doc.typeOf(doc.element(id))]); made.push(...r.copied); }
+    else if (bodies.length && o.move && (o.move[0] || o.move[1])) HANDLERS.transform(doc, { ids: bodies, move: o.move });
+    if (dz) for (const id of targets) {
+      const g = doc.element(id), t = doc.typeOf(g), [lk, ok] = HOST[t];
+      shift(g, lk, ok);
+      if (t === "Wall" && F.refId(g, "topLevel")) shift(g, "topLevel", "topOffset");     // a bound wall keeps its height
+    }
+    return { copied: o.copy ? made : undefined, moved: o.copy ? undefined : ids, ids: made };
+  },
   /** Trim/Extend to Corner (wall fillet): two walls picked in plan are trimmed or extended to where
    *  their lines cross, and joined there - so they are guaranteed to meet. The part of each wall on the
    *  side that was clicked is the part kept; with no click, the end nearer the corner moves. */

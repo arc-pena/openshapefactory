@@ -1963,3 +1963,27 @@ testCase("M69", "Everything that drives an element is a reference: a beam's side
   return R(refsOk && meas && foot && held, "references on beams, columns, floors and openings; beam side to column face 2711, floor corner to grid 1000, jambs 900; the point-to-line dimension ends on the line at (6000, 3000); the locked beam follows the grid 500",
     JSON.stringify({ refsOk, m1, m2, m3, foot, held, r: r.error || "", beam: doc.argValue(doc.element("B"), "axis") }));
 });
+
+testCase("M70", "In elevation and section: a level copied up is a new level with its own plan; a slab copied up a storey lands on that level (re-hosted, no offset), moved part-way keeps its level with an offset; a door copied brings its own opening, its sill raised and slid along the wall", () => {
+  const { doc, ed } = fixture();
+  ed.apply({ op: "set", id: "L0", key: "elevation", value: 0 });
+  wall(doc, "A", [0, 0], [6000, 0], "T-300");
+  ed.apply([{ op: "add", element: { id: "FL", type: "Floor", args: { boundary: [[0, 0], [6000, 0], [6000, 4000], [0, 4000]], floorType: { ref: "T-SLAB200" }, level: { ref: "L0" }, heightOffset: 0 } } },
+    { op: "add", element: { id: "OP", type: "Opening", args: { host: { ref: "A" }, profile: { kind: "rect", at: 2000, sill: 0, w: 900, h: 2100 }, farProfile: null, depth: "through" } } },
+    { op: "add", element: { id: "D", type: "Door", args: { fills: { ref: "OP" }, doorType: { ref: "T-DOOR915" } } } }]);
+  const nLv = () => doc.elements().filter(f => doc.typeOf(f) === "Level").length, nPlan = () => doc.elements().filter(f => doc.typeOf(f) === "PlanView").length;
+  const lv0 = nLv(), pl0 = nPlan();
+  const r1 = ed.apply({ op: "lift", ids: ["L0"], dz: 3200, copy: true });
+  const newLv = r1.copied.find(id => doc.typeOf(doc.element(id)) === "Level");
+  const lvOk = r1.ok && nLv() === lv0 + 1 && nPlan() === pl0 + 1 && F.real(doc.element(newLv), "elevation") === 3200;
+  const r2 = ed.apply({ op: "lift", ids: ["FL"], dz: 3200, copy: true }), fl2 = r2.copied.find(id => doc.typeOf(doc.element(id)) === "Floor");
+  const rehost = r2.ok && F.refId(doc.element(fl2), "level") === newLv && doc.argValue(doc.element(fl2), "heightOffset") === 0 && F.refId(doc.element("FL"), "level") === "L0";
+  ed.apply({ op: "lift", ids: ["FL"], dz: 1500 });
+  const part = F.refId(doc.element("FL"), "level") === "L0" && doc.argValue(doc.element("FL"), "heightOffset") === 1500;
+  const n0 = doc.elements().filter(f => doc.typeOf(f) === "Opening").length;
+  const r3 = ed.apply({ op: "lift", ids: ["D"], dz: 300, copy: true, move: [700, 0] });
+  const op2 = r3.copied.find(id => doc.typeOf(doc.element(id)) === "Opening"), pr = op2 && doc.argValue(doc.element(op2), "profile");
+  const door = r3.ok && doc.elements().filter(f => doc.typeOf(f) === "Opening").length === n0 + 1 && pr && pr.at === 2700 && pr.sill === 300 && doc.argValue(doc.element("OP"), "profile").at === 2000;
+  return R(lvOk && rehost && part && door, "new level at +3200 with a plan; the slab copy hosted on it with no offset; the original moved +1500 keeps L0 with a 1500 offset; the door copy in a new opening at 2700, sill 300; the original untouched",
+    JSON.stringify({ lvOk, rehost, part, door, pr }));
+});

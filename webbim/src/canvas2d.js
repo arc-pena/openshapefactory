@@ -682,6 +682,17 @@ export class View2D {
         this.drag.datum = { ids, grab: this.toModel(sx, sy), dir: viewLineGeometry(this.doc, this.view).d, done: 0 };
       }
     }
+    // in an elevation or section a door, window or opening drags along its wall and up or down (its sill)
+    if (hit && (this.kind === "ElevationView" || this.kind === "SectionView")) {
+      const f = this.doc.element(hit.id), t = f && this.doc.typeOf(f), opId = t === "Opening" ? hit.id : (t === "Door" || t === "Window") ? F.refId(f, "fills") : null;
+      const og = opId && this.doc.element(opId), hw = og && this.doc.plan(this.doc.element(F.refId(og, "host")));
+      if (og && hw && hw.d) {
+        if (!this.app.selection.has(hit.id)) { this.app.selection.clear(); this.app.selection.add(hit.id); this.pressSelected = true; }
+        const dir = viewLineGeometry(this.doc, this.view).d, pr = F.json(og, "profile") || {};
+        this.drag.elevFill = { op: opId, pr0: Object.assign({}, pr), grab: this.toModel(sx, sy), k: dot(dir, hw.d), L: hw.L };
+        return;
+      }
+    }
     // in an elevation or section a level line drags up and down: everything bound to it follows
     if (hit && (this.kind === "ElevationView" || this.kind === "SectionView")) {
       const f = this.doc.element(hit.id);
@@ -716,18 +727,44 @@ export class View2D {
     this.showHud(sx, sy, `move ${ds >= 0 ? "+" : ""}${fmtLen(ds)} along the view`);
   }
   /** Move or Copy in an elevation or section: grids and sections slide along the view, levels go up or down. */
+  /** A door, window or opening placed in an elevation or section, as in 3D: the wall under the click, the
+   *  click carried along the view's look direction onto the wall's line (where along it), and for a window
+   *  or an opening the height clicked is its centre (a door stands on the floor). */
+  elevPlaceFiller(p, sx, sy) {
+    const doc = this.doc, G = viewLineGeometry(doc, this.view);
+    const hit = this.hitsAt(sx, sy).find(x => { const f = doc.element(x.id); return f && doc.typeOf(f) === "Wall"; });
+    if (!hit) return this.app.say("click on a wall", "note");
+    const w = doc.plan(doc.element(hit.id)); if (!w || w.curve.type !== "line") return this.app.say("doors and windows go into straight walls from an elevation", "note");
+    const onView = add(G.c.start, mul(G.d, p[0])), X = intersectLines({ p: onView, d: G.look }, lineThrough(w.curve.start, w.curve.end));
+    if (!X) return this.app.say("that wall runs along the view: place its door in plan or 3D", "note");
+    const u = Math.max(0, Math.min(w.L, Math.round(uOf(w, X)))), z = p[1] + G.Z0, tool = this.app.tool, o = this.app.toolOpts;
+    const t = tool === "window" ? doc.lib.types[o.windowType] : null, h = t ? t.height : (o.height_ || 2100);
+    const sill = tool === "door" ? 0 : Math.max(0, Math.round((z - w.z0 - h / 2) / 10) * 10);
+    return this.app.placeOpening(tool, hit.id, u, tool === "door" ? undefined : sill);
+  }
   elevModifyClick(p) {
     const tool = this.app.tool, doc = this.doc, T = this.elevTool || (this.elevTool = { base: null });
-    const sel = [...this.app.selection].filter(id => doc.element(id));
-    const slide = sel.filter(id => doc.typeOf(doc.element(id)) === "Grid" || (doc.typeOf(doc.element(id)) === "SectionView" && id !== this.viewId)), lift = sel.filter(id => doc.typeOf(doc.element(id)) === "Level");
-    if (!slide.length && !lift.length) return this.app.say("select grids, sections or levels in this view first, then Move or Copy", "note");
+    const sel = [...this.app.selection].filter(id => doc.element(id)), ty = id => doc.typeOf(doc.element(id));
+    // grids and sections slide along the view; levels and what stands on them (slabs, beams, columns, walls,
+    // generic models) go up or down - and those slide along the view too
+    const slide = sel.filter(id => ty(id) === "Grid" || (ty(id) === "SectionView" && id !== this.viewId));
+    const lift = sel.filter(id => ["Level", "Floor", "Beam", "Column", "Wall", "Generic", "Door", "Window", "Opening"].includes(ty(id)));
+    if (!slide.length && !lift.length) return this.app.say("select levels, slabs, beams, columns, walls, doors, windows, grids or sections in this view first, then Move or Copy", "note");
     if (!T.base) { T.base = p; this.app.say(`${tool === "copy" ? "Copy" : "Move"}: click the point to ${tool === "copy" ? "copy" : "move"} to`, "note"); return; }
     const ds = Math.round((p[0] - T.base[0]) / 10) * 10, dz = Math.round((p[1] - T.base[1]) / 10) * 10, dir = viewLineGeometry(doc, this.view).d, ops = [];
-    if (slide.length && ds) ops.push({ op: "transform", ids: slide, move: [dir[0] * ds, dir[1] * ds], copy: tool === "copy" });
-    if (lift.length && dz && tool !== "copy") for (const id of lift) ops.push({ op: "set", id, key: "elevation", value: Math.round(F.real(doc.element(id), "elevation") + dz) });
+    const along = [Math.round(dir[0] * ds), Math.round(dir[1] * ds)], copy = tool === "copy";
+    if (slide.length && ds) ops.push({ op: "transform", ids: slide, move: along, copy });
+    // levels only rise or fall; bodies take the sideways part as well
+    const bodies = lift.filter(id => ty(id) !== "Level"), ids = lift.filter(id => ty(id) !== "Level" || dz);
+    if (ids.length && (dz || (ds && bodies.length))) ops.push({ op: "lift", ids, dz, copy, move: along });
     this.elevTool = null;
     if (!ops.length) return this.app.say("nothing to move: a grid or section moves sideways here, a level up or down", "note");
-    const r = this.app.apply(ops); if (r.ok) { this.app.say(`${tool === "copy" ? "Copied" : "Moved"}${slide.length && ds ? ` ${slide.length} grid/section ${fmtLen(ds)} along the view` : ""}${lift.length && dz && tool !== "copy" ? ` ${lift.length} level${lift.length > 1 ? "s" : ""} ${dz > 0 ? "+" : ""}${fmtLen(dz)}` : ""}`, "ok"); this.app.setTool ? this.app.setTool("select") : (this.app.tool = "select"); this.app.refresh({ keepMain: true }); }
+    const r = this.app.apply(ops);
+    if (r.ok) {
+      this.app.say(`${copy ? "Copied" : "Moved"} ${lift.length + slide.length} element${lift.length + slide.length > 1 ? "s" : ""}${dz ? ` ${dz > 0 ? "+" : ""}${fmtLen(dz)} vertically` : ""}${ds && (slide.length || bodies.length) ? `, ${fmtLen(ds)} along the view` : ""}`, "ok");
+      const made = r.copied || []; if (copy && made.length) this.app.select(made.filter(id => doc.element(id) && doc.typeOf(doc.element(id)) !== "PlanView"));
+      this.app.setTool ? this.app.setTool("select") : (this.app.tool = "select"); this.app.refresh({ keepMain: true });
+    } else this.app.say(r.error, "error");
   }
   dragLevel(d, sx, sy) {
     const p = this.toModel(sx, sy), dz = Math.round((p[1] - d.level.grab[1]) / 10) * 10, z = d.level.z0 + dz;
@@ -749,6 +786,12 @@ export class View2D {
       if (d.viewport && d.moved) return this.dragViewport(d, sx, sy);
       if (d.pan && d.moved) { this.cam.x = d.cam.x - (sx - d.start[0]) / this.cam.z; this.cam.y = d.cam.y + (sy - d.start[1]) / this.cam.z; this.draw(); return; }
       if (d.body && d.moved) return this.dragBody(d, sx, sy, e);
+      if (d.elevFill && d.moved) {
+        const E = d.elevFill, p = this.toModel(sx, sy), ds = p[0] - E.grab[0], dz = p[1] - E.grab[1];
+        const pr = Object.assign({}, E.pr0, { at: Math.max(0, Math.min(E.L, Math.round((E.pr0.at + ds * E.k) / 10) * 10)), sill: Math.max(0, Math.round(((E.pr0.sill || 0) + dz) / 10) * 10) });
+        const r = this.app.apply({ op: "set", id: E.op, key: "profile", value: pr }, { quiet: true, coalesce: `elevfill:${E.op}:${d.start.join(",")}` });
+        this.showHud(sx, sy, r.ok ? `along ${fmtLen(pr.at)} · sill ${fmtLen(pr.sill)}` : r.error); return;
+      }
       if (d.slide && d.moved) {
         const w = this.doc.plan(this.doc.element(d.slide.host)); if (!w) return;
         const du = uOf(w, this.toModel(sx, sy)) - d.slide.u0, at = Math.round((d.slide.at0 + du) / 10) * 10;
@@ -787,6 +830,7 @@ export class View2D {
     if (this.app.tool === "dim" && (this.kind === "ElevationView" || this.kind === "SectionView")) return this.levelDimClick(sx, sy);
     if (this.app.sketch && this.app.sketch.view === this) return this.app.sketch.click(this.toModel(sx, sy), e);
     if ((this.app.tool === "move" || this.app.tool === "copy") && (this.kind === "SectionView" || this.kind === "ElevationView")) return this.elevModifyClick(this.toModel(sx, sy));
+    if (["door", "window", "opening"].includes(this.app.tool) && (this.kind === "SectionView" || this.kind === "ElevationView")) return this.elevPlaceFiller(this.toModel(sx, sy), sx, sy);
     if (this.app.tool !== "select" && (this.kind === "PlanView" || (this.app.tool === "mtag" && (this.kind === "SectionView" || this.kind === "ElevationView")))) return this.toolClick(this.toModel(sx, sy), e);
     const hit = this.hitAt(sx, sy);
     if (this.kind === "Sheet") { this.app.select(hit ? [this.viewId + ":" + hit.id] : [], e.shiftKey, true); return; }
