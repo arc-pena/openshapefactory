@@ -1163,7 +1163,8 @@ export function legendColour(legend, nd, by = "dept") {
 
 /** The analysis laid out on an A1 sheet: every diagram, the site analysis and the figures. */
 export function diagramSheetLayout(W = 841, H = 594) {
-  const border = 10, tbw = Math.min(180, W * 0.22), x0 = border + 8, x1 = W - border - tbw - 8, y0 = border + 8, y1 = H - border - 6;
+  // the title block is a band along the foot of the sheet (scene.js sheetScene): clear it, and use the full width
+  const border = 5, band = Math.max(14, Math.min(24, H * 0.04)), x0 = border + 8, x1 = W - border - 8, y0 = border + band + 12, y1 = H - border - 6;
   const cols = 3, rows = 2, gx = 10, gy = 20, cw = (x1 - x0 - gx * (cols - 1)) / cols, ch = (y1 - y0 - gy * rows) / rows;
   const kinds = [["site", "Site analysis", {}], ["bubbles", "Bubble diagram · functional adjacencies", { by: "fn" }], ["matrix", "Adjacency matrix", { by: "fn" }], ["pies", "Programme shares", { by: "fn" }], ["plan", "First massing attempt · functional adjacencies", { by: "fn" }], ["summary", "Programme summary and colour keys", {}]];
   return kinds.map(([kind, title, o], i) => { const c = i % cols, r = Math.floor(i / cols); return { id: `D${i + 1}`, title, rect: [Math.round(x0 + c * (cw + gx)), Math.round(y1 - (r + 1) * ch - r * gy), Math.round(cw), Math.round(ch)], diagram: Object.assign({ kind }, o) }; });

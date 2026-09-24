@@ -1188,29 +1188,35 @@ export const SHEET_DIAGRAMS = { url: null };
 export function sheetScene(doc, sh, opts = {}) {
   const size = sheetSize(sh), [W, H] = size;
   const prims = [], links = [];
-  const border = 10;
-  const g = (w) => ({ weight: w, colour: "#000" });
-  const put = (path, w) => prims.push({ t: "stroke", path, weight: w, colour: "#000000", layer: "TitleBlock" });
-  const txt = (at, text, h, o = {}) => prims.push(Object.assign({ t: "text", at, text: String(text), height: h, rot: 0, align: "left", valign: "baseline", colour: "#000", layer: "TitleBlock" }, o));
+  // A quiet title block: a 5 mm margin, one fine border, and a slim band along the foot of the sheet -
+  // project, drawing, scale, revision - closed on the right by the sheet number, set large.
+  const border = 5, ink = "#1b1f24", grey = "#7a828c";
+  const put = (path, w, colour = ink) => prims.push({ t: "stroke", path, weight: w, colour, layer: "TitleBlock" });
+  const txt = (at, text, h, o = {}) => prims.push(Object.assign({ t: "text", at, text: String(text ?? ""), height: h, rot: 0, align: "left", valign: "baseline", colour: ink, layer: "TitleBlock" }, o));
   prims.push({ t: "fill", path: rectPath(0, 0, W, H), colour: "#ffffff", layer: "Paper" });
-  put(rectPath(border, border, W - border, H - border), 0.7);
-  // Title block: a strip down the right-hand side, scaled to the sheet.
-  const tbw = Math.min(180, W * 0.22), tx = W - border - tbw;
-  put([lineSeg([tx, border], [tx, H - border])], 0.5);
-  const fields = [["Project", doc.meta.name], ["Sheet", doc.argValue(sh, "sheetName")], ["Number", doc.argValue(sh, "number")], ["Revision", doc.argValue(sh, "revision")], ["Scale", viewportScales(doc, sh)], ["Size", `${doc.argValue(sh, "size")} ${doc.argValue(sh, "orientation")}`]];
-  let y = border + 8;
-  for (let i = fields.length - 1; i >= 0; i--) {
-    const [k, v] = fields[i], big = k === "Number" || k === "Sheet";
-    const rowH = big ? 16 : 11;
-    put([lineSeg([tx, y + rowH], [W - border, y + rowH])], 0.25);
-    txt([tx + 3, y + rowH - 4], k.toUpperCase(), 1.8, { colour: "#555" });
-    // shrink a long value to fit the title block rather than let it run off the sheet
-    const hh = Math.min(big ? 5 : 3, (tbw - 6) / Math.max(1, textWidth(String(v), 1)));
-    txt([tx + 3, y + 3], v, hh, {});
-    y += rowH;
-  }
-  txt([tx + 3, H - border - 8], "WEB BIM", 5, {});
-  txt([tx + 3, H - border - 13], "Drawn from the model. Line weights in paper mm.", 1.8, { colour: "#555" });
+  put(rectPath(border, border, W - border, H - border), 0.35);
+  const bh = Math.max(14, Math.min(24, H * 0.04)), y0 = border, y1 = border + bh, k = bh / 22;   // band height, and a text scale that follows it
+  put([lineSeg([border, y1], [W - border, y1])], 0.35);
+  const fit = (v, h, room) => Math.min(h, room / Math.max(1, textWidth(String(v ?? ""), 1)));
+  // cells, right to left: number | revision & date | scale & size | drawing | project (takes the rest)
+  const numW = Math.max(36, 70 * k), revW = 42 * k + 8, scW = 48 * k + 8, dwgW = Math.min(150, (W - 2 * border) * 0.3);
+  const xs = [W - border - numW, W - border - numW - revW, W - border - numW - revW - scW, W - border - numW - revW - scW - dwgW];
+  for (const x of xs) put([lineSeg([x, y0 + 2 * k], [x, y1 - 2 * k])], 0.13, "#9aa1a9");
+  const label = (x, t) => txt([x + 3 * k, y1 - 4.2 * k], t.toUpperCase(), 1.6 * Math.max(1, k), { colour: grey });
+  const value = (x, v, h, room) => txt([x + 3 * k, y0 + 5 * k], v, fit(v, h * k, room - 6 * k));
+  const px = border;
+  label(px, "Project"); value(px, doc.meta.name || "Untitled", 7, xs[3] - px);
+  label(xs[3], "Drawing"); value(xs[3], doc.argValue(sh, "sheetName"), 5, dwgW);
+  label(xs[2], "Scale"); txt([xs[2] + 3 * k, y0 + 9 * k], viewportScales(doc, sh) || "-", fit(viewportScales(doc, sh) || "-", 3.2 * k, scW - 6 * k));
+  txt([xs[2] + 3 * k, y0 + 4 * k], `${doc.argValue(sh, "size")} ${doc.argValue(sh, "orientation") || ""}`, 2.2 * k, { colour: grey });
+  label(xs[1], "Revision"); txt([xs[1] + 3 * k, y0 + 9 * k], doc.argValue(sh, "revision") || "-", 3.2 * k);
+  txt([xs[1] + 3 * k, y0 + 4 * k], new Date().toISOString().slice(0, 10), 2.2 * k, { colour: grey });
+  // the sheet number: the one thing read from across the room
+  const num = doc.argValue(sh, "number") || "";
+  txt([W - border - 3 * k, y1 - 4.2 * k], "SHEET", 1.6 * Math.max(1, k), { colour: grey, align: "right" });
+  txt([W - border - 3 * k, y0 + 4 * k], num, fit(num, 11 * k, numW - 6 * k), { align: "right" });
+  // a short dark rule over the number: the one accent
+  prims.push({ t: "fill", path: rectPath(xs[0], y1 - 0.9 * k, W - border, y1), colour: ink, layer: "TitleBlock" });
   // Viewports: a frame holding a view, positioned in paper mm (§11).
   const vps = doc.argValue(sh, "viewports") || [];
   vps.forEach((vp, i) => {

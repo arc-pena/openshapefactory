@@ -9278,7 +9278,8 @@ function legendColour(legend, nd, by = "dept") {
 
 /** The analysis laid out on an A1 sheet: every diagram, the site analysis and the figures. */
 function diagramSheetLayout(W = 841, H = 594) {
-  const border = 10, tbw = Math.min(180, W * 0.22), x0 = border + 8, x1 = W - border - tbw - 8, y0 = border + 8, y1 = H - border - 6;
+  // the title block is a band along the foot of the sheet (scene.js sheetScene): clear it, and use the full width
+  const border = 5, band = Math.max(14, Math.min(24, H * 0.04)), x0 = border + 8, x1 = W - border - 8, y0 = border + band + 12, y1 = H - border - 6;
   const cols = 3, rows = 2, gx = 10, gy = 20, cw = (x1 - x0 - gx * (cols - 1)) / cols, ch = (y1 - y0 - gy * rows) / rows;
   const kinds = [["site", "Site analysis", {}], ["bubbles", "Bubble diagram · functional adjacencies", { by: "fn" }], ["matrix", "Adjacency matrix", { by: "fn" }], ["pies", "Programme shares", { by: "fn" }], ["plan", "First massing attempt · functional adjacencies", { by: "fn" }], ["summary", "Programme summary and colour keys", {}]];
   return kinds.map(([kind, title, o], i) => { const c = i % cols, r = Math.floor(i / cols); return { id: `D${i + 1}`, title, rect: [Math.round(x0 + c * (cw + gx)), Math.round(y1 - (r + 1) * ch - r * gy), Math.round(cw), Math.round(ch)], diagram: Object.assign({ kind }, o) }; });
@@ -11392,29 +11393,35 @@ const SHEET_DIAGRAMS = { url: null };
 function sheetScene(doc, sh, opts = {}) {
   const size = sheetSize(sh), [W, H] = size;
   const prims = [], links = [];
-  const border = 10;
-  const g = (w) => ({ weight: w, colour: "#000" });
-  const put = (path, w) => prims.push({ t: "stroke", path, weight: w, colour: "#000000", layer: "TitleBlock" });
-  const txt = (at, text, h, o = {}) => prims.push(Object.assign({ t: "text", at, text: String(text), height: h, rot: 0, align: "left", valign: "baseline", colour: "#000", layer: "TitleBlock" }, o));
+  // A quiet title block: a 5 mm margin, one fine border, and a slim band along the foot of the sheet -
+  // project, drawing, scale, revision - closed on the right by the sheet number, set large.
+  const border = 5, ink = "#1b1f24", grey = "#7a828c";
+  const put = (path, w, colour = ink) => prims.push({ t: "stroke", path, weight: w, colour, layer: "TitleBlock" });
+  const txt = (at, text, h, o = {}) => prims.push(Object.assign({ t: "text", at, text: String(text ?? ""), height: h, rot: 0, align: "left", valign: "baseline", colour: ink, layer: "TitleBlock" }, o));
   prims.push({ t: "fill", path: rectPath(0, 0, W, H), colour: "#ffffff", layer: "Paper" });
-  put(rectPath(border, border, W - border, H - border), 0.7);
-  // Title block: a strip down the right-hand side, scaled to the sheet.
-  const tbw = Math.min(180, W * 0.22), tx = W - border - tbw;
-  put([lineSeg([tx, border], [tx, H - border])], 0.5);
-  const fields = [["Project", doc.meta.name], ["Sheet", doc.argValue(sh, "sheetName")], ["Number", doc.argValue(sh, "number")], ["Revision", doc.argValue(sh, "revision")], ["Scale", viewportScales(doc, sh)], ["Size", `${doc.argValue(sh, "size")} ${doc.argValue(sh, "orientation")}`]];
-  let y = border + 8;
-  for (let i = fields.length - 1; i >= 0; i--) {
-    const [k, v] = fields[i], big = k === "Number" || k === "Sheet";
-    const rowH = big ? 16 : 11;
-    put([lineSeg([tx, y + rowH], [W - border, y + rowH])], 0.25);
-    txt([tx + 3, y + rowH - 4], k.toUpperCase(), 1.8, { colour: "#555" });
-    // shrink a long value to fit the title block rather than let it run off the sheet
-    const hh = Math.min(big ? 5 : 3, (tbw - 6) / Math.max(1, textWidth(String(v), 1)));
-    txt([tx + 3, y + 3], v, hh, {});
-    y += rowH;
-  }
-  txt([tx + 3, H - border - 8], "WEB BIM", 5, {});
-  txt([tx + 3, H - border - 13], "Drawn from the model. Line weights in paper mm.", 1.8, { colour: "#555" });
+  put(rectPath(border, border, W - border, H - border), 0.35);
+  const bh = Math.max(14, Math.min(24, H * 0.04)), y0 = border, y1 = border + bh, k = bh / 22;   // band height, and a text scale that follows it
+  put([lineSeg([border, y1], [W - border, y1])], 0.35);
+  const fit = (v, h, room) => Math.min(h, room / Math.max(1, textWidth(String(v ?? ""), 1)));
+  // cells, right to left: number | revision & date | scale & size | drawing | project (takes the rest)
+  const numW = Math.max(36, 70 * k), revW = 42 * k + 8, scW = 48 * k + 8, dwgW = Math.min(150, (W - 2 * border) * 0.3);
+  const xs = [W - border - numW, W - border - numW - revW, W - border - numW - revW - scW, W - border - numW - revW - scW - dwgW];
+  for (const x of xs) put([lineSeg([x, y0 + 2 * k], [x, y1 - 2 * k])], 0.13, "#9aa1a9");
+  const label = (x, t) => txt([x + 3 * k, y1 - 4.2 * k], t.toUpperCase(), 1.6 * Math.max(1, k), { colour: grey });
+  const value = (x, v, h, room) => txt([x + 3 * k, y0 + 5 * k], v, fit(v, h * k, room - 6 * k));
+  const px = border;
+  label(px, "Project"); value(px, doc.meta.name || "Untitled", 7, xs[3] - px);
+  label(xs[3], "Drawing"); value(xs[3], doc.argValue(sh, "sheetName"), 5, dwgW);
+  label(xs[2], "Scale"); txt([xs[2] + 3 * k, y0 + 9 * k], viewportScales(doc, sh) || "-", fit(viewportScales(doc, sh) || "-", 3.2 * k, scW - 6 * k));
+  txt([xs[2] + 3 * k, y0 + 4 * k], `${doc.argValue(sh, "size")} ${doc.argValue(sh, "orientation") || ""}`, 2.2 * k, { colour: grey });
+  label(xs[1], "Revision"); txt([xs[1] + 3 * k, y0 + 9 * k], doc.argValue(sh, "revision") || "-", 3.2 * k);
+  txt([xs[1] + 3 * k, y0 + 4 * k], new Date().toISOString().slice(0, 10), 2.2 * k, { colour: grey });
+  // the sheet number: the one thing read from across the room
+  const num = doc.argValue(sh, "number") || "";
+  txt([W - border - 3 * k, y1 - 4.2 * k], "SHEET", 1.6 * Math.max(1, k), { colour: grey, align: "right" });
+  txt([W - border - 3 * k, y0 + 4 * k], num, fit(num, 11 * k, numW - 6 * k), { align: "right" });
+  // a short dark rule over the number: the one accent
+  prims.push({ t: "fill", path: rectPath(xs[0], y1 - 0.9 * k, W - border, y1), colour: ink, layer: "TitleBlock" });
   // Viewports: a frame holding a view, positioned in paper mm (§11).
   const vps = doc.argValue(sh, "viewports") || [];
   vps.forEach((vp, i) => {
@@ -12467,9 +12474,9 @@ function buildSample() {
   ed.apply({ op: "relate", store: "constraints", row: { id: "C1", kind: "distance", of: ["W4:core.exterior", "P1:centreline"], value: 6000, locked: false } }, { regenerate: false });
   // sheets
   add({ id: "SH-A101", type: "Sheet", name: "A-101 Ground Floor Plan", args: { number: "A-101", sheetName: "Ground Floor Plan", size: "A1", orientation: "landscape", titleBlock: { ref: "SY-TB-A1" },
-    viewports: [{ id: "VP1", view: { ref: "V-P00" }, at: [250, 360], clipVisible: false }, { id: "VP2", view: { ref: "V-E01" }, at: [250, 110], clipVisible: false }, { id: "VP3", view: { ref: "SC3" }, at: [560, 470], clipVisible: false }, { id: "VP4", view: { ref: "V-E02" }, at: [540, 170], clipVisible: false }], revision: "P01" } });
+    viewports: [{ id: "VP1", view: { ref: "V-P00" }, at: [340, 360], clipVisible: false }, { id: "VP2", view: { ref: "V-E01" }, at: [340, 110], clipVisible: false }, { id: "VP3", view: { ref: "SC3" }, at: [650, 470], clipVisible: false }, { id: "VP4", view: { ref: "V-E02" }, at: [630, 170], clipVisible: false }], revision: "P01" } });
   add({ id: "SH-A102", type: "Sheet", name: "A-102 Presentation Plan", args: { number: "A-102", sheetName: "Presentation Plan", size: "A3", orientation: "landscape", titleBlock: { ref: "SY-TB-A1" },
-    viewports: [{ id: "VP1", view: { ref: "V-P00P" }, at: [170, 160], clipVisible: false }], revision: "P01" } });
+    viewports: [{ id: "VP1", view: { ref: "V-P00P" }, at: [205, 160], clipVisible: false }], revision: "P01" } });
   add({ id: "SH-A501", type: "Sheet", name: "A-501 Details", args: { number: "A-501", sheetName: "Corner Detail & Axonometric", size: "A3", orientation: "landscape", titleBlock: { ref: "SY-TB-A1" },
     viewports: [{ id: "VP1", view: { ref: "V-P00D" }, at: [95, 170], clipVisible: true }, { id: "VP2", view: { ref: "V-3D01" }, at: [245, 160], clipVisible: false }, { id: "VP3", view: { ref: "SC2" }, at: [165, 45], clipVisible: false }], revision: "P01" } });
   doc.graph.layout = {};
@@ -12645,11 +12652,11 @@ function buildPavilionSample() {
 
   // ---------------------------------------------------------------- the sheets (A1 landscape)
   const sheet = (id, number, name, vps) => add({ id, type: "Sheet", name: `${number} ${name}`, args: { number, sheetName: name, size: "A1", orientation: "landscape", titleBlock: { ref: "SY-TB-A1" }, viewports: vps.map(([view, at], i) => ({ id: `VP${i + 1}`, view: { ref: view }, at, clipVisible: false })), revision: "P01" } });
-  sheet("SH-A000", "A-000", "Cover — Axonometric", [["V-3D", [320, 370]], ["V-3D2", [470, 115]], ["SC3", [120, 90]]]);
-  sheet("SH-A100", "A-100", "Podium Plan", [["V-PLAN", [330, 330]], ["V-ROOF", [180, 95]], ["V-DET", [520, 95]]]);
-  sheet("SH-A101", "A-101", "Presentation Plan", [["V-PRES", [330, 300]]]);
-  sheet("SH-A200", "A-200", "Elevations", [["V-E-S", [330, 480]], ["V-E-N", [330, 350]], ["V-E-E", [330, 220]], ["V-E-W", [330, 90]]]);
-  sheet("SH-A300", "A-300", "Sections & Schedules", [["V-S-A", [330, 470]], ["V-S-B", [220, 250]], ["SC1", [510, 280]], ["SC2", [510, 120]], ["SC4", [220, 90]]]);
+  sheet("SH-A000", "A-000", "Cover — Axonometric", [["V-3D", [410, 370]], ["V-3D2", [560, 115]], ["SC3", [210, 90]]]);
+  sheet("SH-A100", "A-100", "Podium Plan", [["V-PLAN", [420, 350]], ["V-ROOF", [270, 115]], ["V-DET", [610, 115]]]);
+  sheet("SH-A101", "A-101", "Presentation Plan", [["V-PRES", [420, 300]]]);
+  sheet("SH-A200", "A-200", "Elevations", [["V-E-S", [420, 480]], ["V-E-N", [420, 350]], ["V-E-E", [420, 220]], ["V-E-W", [420, 90]]]);
+  sheet("SH-A300", "A-300", "Sections & Schedules", [["V-S-A", [420, 470]], ["V-S-B", [310, 250]], ["SC1", [600, 280]], ["SC2", [600, 120]], ["SC4", [310, 90]]]);
 
   doc.graph.layout = {};
   doc.browser = { organisation: "by-discipline", expanded: ["Views", "Sheets"] };

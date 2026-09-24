@@ -88,9 +88,9 @@ export function buildSample() {
   ed.apply({ op: "relate", store: "constraints", row: { id: "C1", kind: "distance", of: ["W4:core.exterior", "P1:centreline"], value: 6000, locked: false } }, { regenerate: false });
   // sheets
   add({ id: "SH-A101", type: "Sheet", name: "A-101 Ground Floor Plan", args: { number: "A-101", sheetName: "Ground Floor Plan", size: "A1", orientation: "landscape", titleBlock: { ref: "SY-TB-A1" },
-    viewports: [{ id: "VP1", view: { ref: "V-P00" }, at: [250, 360], clipVisible: false }, { id: "VP2", view: { ref: "V-E01" }, at: [250, 110], clipVisible: false }, { id: "VP3", view: { ref: "SC3" }, at: [560, 470], clipVisible: false }, { id: "VP4", view: { ref: "V-E02" }, at: [540, 170], clipVisible: false }], revision: "P01" } });
+    viewports: [{ id: "VP1", view: { ref: "V-P00" }, at: [340, 360], clipVisible: false }, { id: "VP2", view: { ref: "V-E01" }, at: [340, 110], clipVisible: false }, { id: "VP3", view: { ref: "SC3" }, at: [650, 470], clipVisible: false }, { id: "VP4", view: { ref: "V-E02" }, at: [630, 170], clipVisible: false }], revision: "P01" } });
   add({ id: "SH-A102", type: "Sheet", name: "A-102 Presentation Plan", args: { number: "A-102", sheetName: "Presentation Plan", size: "A3", orientation: "landscape", titleBlock: { ref: "SY-TB-A1" },
-    viewports: [{ id: "VP1", view: { ref: "V-P00P" }, at: [170, 160], clipVisible: false }], revision: "P01" } });
+    viewports: [{ id: "VP1", view: { ref: "V-P00P" }, at: [205, 160], clipVisible: false }], revision: "P01" } });
   add({ id: "SH-A501", type: "Sheet", name: "A-501 Details", args: { number: "A-501", sheetName: "Corner Detail & Axonometric", size: "A3", orientation: "landscape", titleBlock: { ref: "SY-TB-A1" },
     viewports: [{ id: "VP1", view: { ref: "V-P00D" }, at: [95, 170], clipVisible: true }, { id: "VP2", view: { ref: "V-3D01" }, at: [245, 160], clipVisible: false }, { id: "VP3", view: { ref: "SC2" }, at: [165, 45], clipVisible: false }], revision: "P01" } });
   doc.graph.layout = {};

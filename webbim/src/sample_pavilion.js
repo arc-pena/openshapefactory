@@ -119,11 +119,11 @@ export function buildPavilionSample() {
 
   // ---------------------------------------------------------------- the sheets (A1 landscape)
   const sheet = (id, number, name, vps) => add({ id, type: "Sheet", name: `${number} ${name}`, args: { number, sheetName: name, size: "A1", orientation: "landscape", titleBlock: { ref: "SY-TB-A1" }, viewports: vps.map(([view, at], i) => ({ id: `VP${i + 1}`, view: { ref: view }, at, clipVisible: false })), revision: "P01" } });
-  sheet("SH-A000", "A-000", "Cover — Axonometric", [["V-3D", [320, 370]], ["V-3D2", [470, 115]], ["SC3", [120, 90]]]);
-  sheet("SH-A100", "A-100", "Podium Plan", [["V-PLAN", [330, 330]], ["V-ROOF", [180, 95]], ["V-DET", [520, 95]]]);
-  sheet("SH-A101", "A-101", "Presentation Plan", [["V-PRES", [330, 300]]]);
-  sheet("SH-A200", "A-200", "Elevations", [["V-E-S", [330, 480]], ["V-E-N", [330, 350]], ["V-E-E", [330, 220]], ["V-E-W", [330, 90]]]);
-  sheet("SH-A300", "A-300", "Sections & Schedules", [["V-S-A", [330, 470]], ["V-S-B", [220, 250]], ["SC1", [510, 280]], ["SC2", [510, 120]], ["SC4", [220, 90]]]);
+  sheet("SH-A000", "A-000", "Cover — Axonometric", [["V-3D", [410, 370]], ["V-3D2", [560, 115]], ["SC3", [210, 90]]]);
+  sheet("SH-A100", "A-100", "Podium Plan", [["V-PLAN", [420, 350]], ["V-ROOF", [270, 115]], ["V-DET", [610, 115]]]);
+  sheet("SH-A101", "A-101", "Presentation Plan", [["V-PRES", [420, 300]]]);
+  sheet("SH-A200", "A-200", "Elevations", [["V-E-S", [420, 480]], ["V-E-N", [420, 350]], ["V-E-E", [420, 220]], ["V-E-W", [420, 90]]]);
+  sheet("SH-A300", "A-300", "Sections & Schedules", [["V-S-A", [420, 470]], ["V-S-B", [310, 250]], ["SC1", [600, 280]], ["SC2", [600, 120]], ["SC4", [310, 90]]]);
 
   doc.graph.layout = {};
   doc.browser = { organisation: "by-discipline", expanded: ["Views", "Sheets"] };
