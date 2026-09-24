@@ -9,7 +9,7 @@ import { CATALOGUE, F, loadDocument, danglingRefs, clone } from "./ocaf.js";
 import { wallRegions, solidSpans } from "./joins.js";
 import { pointAt, uOf, boundary, wallPieces } from "./walls.js";
 import { newDocument, openDocument, measureRefs, resolveReference, importPlacer } from "./bim.js";
-import { Editor, propagate, massingStoreys } from "./ops.js";
+import { Editor, propagate, massingStoreys, geomKey } from "./ops.js";
 import { viewLineGeometry, viewContext, sectionBoxKey, dimText, deriveView, planScene, elevationScene, placements, textWidth, sheetScene, visibilityKey, sectionCut, cutOutline } from "./scene.js";
 import { chainLoop } from "./crop.js";
 import { importIfc } from "./ifcimport.js";
@@ -1750,4 +1750,26 @@ testCase("M59", "A leaning wall stays mitred to the wall it joins, all the way u
   const fa = fills("A"), fb = fills("B"), shared = fa.filter(p => fb.some(q => dist(p, q) < 0.5)).length;
   const ok = base && top && Math.abs(mid - shift) < 1 && shared >= 2;
   return R(ok, `mitre closed at floor and top; A's top ${shift.toFixed(1)} mm across; the cut at 2 m shares the joint`, `floor ${base}, top ${top}, A's top at ${mid.toFixed(1)}; ${shared} shared cut points`);
+});
+
+testCase("M60", "Detail items move: Move, Rotate and drag carry a repeating detail's path, a sketched filled region and a material tag (leader and tag), and a copy keeps the original", () => {
+  const doc = buildSample(), ed = new Editor(doc);
+  const vid = doc.idOf(doc.elements().find(f => doc.typeOf(f) === "PlanView"));
+  const line = { elements: [{ id: "a", type: "line", a: [0, -5000], b: [3000, -5000] }, { id: "b", type: "arc", c: [3000, -4000], r: 1000, a0: -Math.PI / 2, a1: 0 }], constraints: [], dims: [] };
+  const rd = ed.apply({ op: "add", element: { type: "RepeatingDetail", args: { path: line, component: "Batt insulation", width: 100, view: { ref: vid } } } }).id;
+  const sq = { elements: [[0, 0, 1000, 0], [1000, 0, 1000, 1000], [1000, 1000, 0, 1000], [0, 1000, 0, 0]].map((q, k) => ({ id: "e" + k, type: "line", a: [q[0] - 6000, q[1]], b: [q[2] - 6000, q[3]] })), constraints: [], dims: [] };
+  const fr = ed.apply({ op: "add", element: { type: "FilledRegion", args: { boundary: [[-6000, 0], [-5000, 0], [-5000, 1000], [-6000, 1000]], sketch: sq, view: { ref: vid } } } }).id;
+  const mt = ed.apply({ op: "add", element: { type: "MaterialTag", args: { target: [0, 0], position: [800, 800], view: { ref: vid } } } }).id;
+  const r1 = ed.apply({ op: "transform", ids: [rd, fr, mt], move: [500, 200] });
+  const P = doc.argValue(doc.element(rd), "path").elements, S = doc.argValue(doc.element(fr), "sketch").elements;
+  const moved = r1.ok && dist(P[0].a, [500, -4800]) < 1e-6 && dist(P[1].c, [3500, -3800]) < 1e-6 && dist(S[0].a, [-5500, 200]) < 1e-6
+    && dist(doc.argValue(doc.element(mt), "target"), [500, 200]) < 1e-6 && dist(doc.argValue(doc.element(mt), "position"), [1300, 1000]) < 1e-6;
+  // a quarter turn about the origin turns the arc's angles with it
+  ed.apply({ op: "transform", ids: [rd], rotate: { c: [0, 0], a: Math.PI / 2 } });
+  const arc = doc.argValue(doc.element(rd), "path").elements[1], turned = Math.abs(arc.a0 - 0) < 1e-9 && Math.abs(arc.a1 - Math.PI / 2) < 1e-9 && dist(arc.c, [3800, 3500]) < 1e-6;
+  const n0 = doc.elements().length, rc = ed.apply({ op: "transform", ids: [mt], move: [0, 1000], copy: true });
+  const copied = rc.ok && doc.elements().length === n0 + 1 && dist(doc.argValue(doc.element(mt), "target"), [500, 200]) < 1e-6;
+  const draggable = [rd, fr, mt].every(id => geomKey(doc.element(id), doc));
+  return R(moved && turned && copied && draggable, "path, sketch, leader and tag all moved 500,200; the arc turned 90°; copy leaves the original; all three draggable",
+    `moved ${moved}, turned ${turned}, copied ${copied}, draggable ${draggable}`);
 });

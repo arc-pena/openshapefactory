@@ -667,7 +667,8 @@ export function geomKey(f, doc) { return geomKeyOf(doc.typeOf(f)); }
 export function geomKeyOf(t) {
   return t === "Wall" ? "centreline" : t === "Grid" || t === "RoomSeparator" || t === "ElevationView" || t === "SectionView" ? "line"
     : t === "Column" || t === "Furniture" || t === "Text" || t === "SymbolInstance" ? "position" : t === "Space" ? "anchor"
-    : t === "DetailLine" ? "curve" : t === "FilledRegion" || t === "Generic" ? "boundary" : t === "CADImport" ? "offsetX" : null;
+    : t === "DetailLine" ? "curve" : t === "FilledRegion" || t === "Generic" ? "boundary" : t === "CADImport" ? "offsetX"
+    : t === "RepeatingDetail" ? "path" : t === "MaterialTag" ? "position" : null;
 }
 
 // ---------------------------------------------------------------- transforms
@@ -679,6 +680,8 @@ export function transformer(o) {
   else if (o.rotate) { const { c, a } = o.rotate, cs = Math.cos(a), sn = Math.sin(a); P = p => { const x = p[0] - c[0], y = p[1] - c[1]; return [c[0] + x * cs - y * sn, c[1] + x * sn + y * cs]; }; A = deg => deg + a * 180 / Math.PI; }
   else if (o.mirror) { const { p: m, d } = o.mirror, u = normalise(d); mirror = true; P = p => { const v = sub(p, m), t = dot(v, u); return add(m, sub(mul(u, 2 * t), v)); }; const th = Math.atan2(u[1], u[0]) * 180 / Math.PI; A = deg => 2 * th - deg; }
   else return null;
+  // an arc's angles (radians) through the same transform
+  const arc = (a0, a1) => o.rotate ? [a0 + o.rotate.a, a1 + o.rotate.a] : mirror ? (th2 => [th2 - a1, th2 - a0])(2 * Math.atan2(o.mirror.d[1], o.mirror.d[0])) : [a0, a1];
   const geom = (g) => {
     if (!g) return g;
     if (Array.isArray(g) && typeof g[0] === "number") return P(g);
@@ -690,10 +693,26 @@ export function transformer(o) {
     else if (g.type === "spline") { out.points = g.points.map(P); if (mirror) out.points.reverse(); }
     return out;
   };
-  return { P, A, geom, mirror };
+  return { P, A, geom, mirror, arc };
+}
+/** A sketch (a repeating detail's path, a region's boundary sketch) through a rigid transform. */
+function sketchThrough(sk, T) {
+  if (!sk || !Array.isArray(sk.elements)) return sk;
+  const out = clone(sk);
+  for (const el of out.elements) {
+    if (el.a) el.a = T.P(el.a); if (el.b) el.b = T.P(el.b); if (el.c) el.c = T.P(el.c);
+    if (el.pts) el.pts = el.pts.map(T.P); if (el.ctrl) el.ctrl = el.ctrl.map(T.P);
+    if (el.type === "arc") [el.a0, el.a1] = T.arc(el.a0, el.a1);
+    if (el.type === "ellipse") el.rot = (T.A((el.rot || 0) * 180 / Math.PI) * Math.PI / 180);
+  }
+  return out;
 }
 function transformExtras(doc, f, T) {
   const t = doc.typeOf(f);
+  // detail items: a repeating detail moves by its path, a filled region by its sketch too, a material tag by its leader point
+  if (t === "RepeatingDetail") doc.setArg(f, "path", sketchThrough(doc.argValue(f, "path"), T));
+  if (t === "FilledRegion" && doc.argValue(f, "sketch")) doc.setArg(f, "sketch", sketchThrough(doc.argValue(f, "sketch"), T));
+  if (t === "MaterialTag") doc.setArg(f, "target", T.P(doc.argValue(f, "target")));
   // a body of its own shape moves with its outline: its placing frame is carried through the same transform
   if (t === "Generic") { const m = doc.argValue(f, "mesh"); if (m && m.frame) doc.setArg(f, "mesh", Object.assign({}, m, { frame: moveFrame(m.frame, T.P) })); }
   if ((t === "Column" || t === "Furniture" || t === "Text" || t === "SymbolInstance") && doc.argValue(f, "rotation") !== undefined)
