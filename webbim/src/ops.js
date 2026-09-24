@@ -201,6 +201,36 @@ const HANDLERS = {
   /** Split Element (SL): the element is cut where it was clicked into two of the same kind. A wall's
    *  halves are joined end to end; what was joined at its far end, T-joined along its second half or
    *  hosted there (doors, windows, openings) goes with the second half. */
+  /** Trim/Extend to Corner (wall fillet): two walls picked in plan are trimmed or extended to where
+   *  their lines cross, and joined there - so they are guaranteed to meet. The part of each wall on the
+   *  side that was clicked is the part kept; with no click, the end nearer the corner moves. */
+  corner(doc, o) {
+    if (o.a === o.b) throw new Error("pick two different walls");
+    const W = id => { const f = doc.element(id); if (!f) throw new Error(`there is no element ${id}`); if (doc.typeOf(f) !== "Wall") throw new Error(`${id} is a ${doc.typeOf(f)}, not a wall`); if (isPinned(doc, f)) throw new Error(`${id} is pinned - unpin it first`); const c = doc.argValue(f, "centreline"); if (!c || c.type !== "line") throw new Error(`${id} is not straight: only straight walls trim to a corner`); return { f, c }; };
+    const A = W(o.a), B = W(o.b);
+    const X = intersectLines(lineThrough(A.c.start, A.c.end), lineThrough(B.c.start, B.c.end));
+    if (!X) throw new Error(`${o.a} and ${o.b} are parallel: their lines never cross`);
+    // which end moves: the one on the far side of the corner from the click (the clicked part is kept)
+    const endOf = (c, click) => {
+      const d = normalise(sub(c.end, c.start)), L = dist(c.start, c.end), tX = dot(sub(X, c.start), d);
+      if (click) return dot(sub(click, c.start), d) < tX ? "end" : "start";
+      return Math.abs(tX) < Math.abs(tX - L) ? "start" : "end";
+    };
+    const ea = endOf(A.c, o.pa), eb = endOf(B.c, o.pb), before = new Map();
+    for (const [id, W_, e] of [[o.a, A, ea], [o.b, B, eb]]) {
+      const c = clone(W_.c); c[e] = [X[0], X[1]];
+      if (dist(c.start, c.end) < 10) throw new Error(`${id} would have no length left: pick the part of it to keep`);
+      before.set(id, clone(W_.c)); doc.setArg(W_.f, "centreline", c);
+    }
+    // walls already joined at a moved end come along with it
+    followJoins(doc, new Set([o.a, o.b]), before);
+    const has = doc.joins.some(j => j.b && j.b.end && ((j.a.of === o.a && j.a.end === ea && j.b.of === o.b && j.b.end === eb) || (j.a.of === o.b && j.a.end === eb && j.b.of === o.a && j.b.end === ea)));
+    // a T row between the two becomes the corner
+    for (let i = doc.joins.length - 1; i >= 0; i--) { const j = doc.joins[i]; if (!j.b.end && ((j.a.of === o.a && j.b.of === o.b) || (j.a.of === o.b && j.b.of === o.a))) doc.joins.splice(i, 1); }
+    if (!has) HANDLERS.relate(doc, { store: "joins", row: { a: { of: o.a, end: ea }, b: { of: o.b, end: eb }, kind: "auto", order: 0, allowed: true } });
+    for (const j of doc.joins) if (j.allowed === false && [j.a.of, j.b.of].includes(o.a) && [j.a.of, j.b.of].includes(o.b)) j.allowed = true;
+    return { ids: [o.a, o.b], at: X, ends: [ea, eb] };
+  },
   split(doc, o) {
     const f = doc.element(o.id); if (!f) throw new Error(`there is no element ${o.id}`);
     if (isPinned(doc, f)) throw new Error(`${o.id} is pinned - unpin it to split it`);

@@ -20,7 +20,7 @@ import { shapeFromClicks, SHAPE_CLICKS, filletCorners, toCentreline, weld, offse
 export const SNAP_PX = 8;
 export const SNAP_KINDS = ["endpoint", "midpoint", "centre", "intersection", "perpendicular", "nearest", "grid", "angle"];
 const SNAP_SHORT = { endpoint: "end", midpoint: "mid", centre: "cen", intersection: "int", perpendicular: "perp", nearest: "near", grid: "grid", angle: "ang" };
-const TOOLS_NEED_PLAN = new Set(["section", "floor", "beam", "wall", "opening", "door", "window", "column", "grid", "text", "dim", "space", "elev", "sep", "move", "copy", "rotate", "mirror", "split"]);
+const TOOLS_NEED_PLAN = new Set(["section", "floor", "beam", "wall", "opening", "door", "window", "column", "grid", "text", "dim", "space", "elev", "sep", "move", "copy", "rotate", "mirror", "split", "corner"]);
 export const MODIFY_TOOLS = new Set(["move", "copy", "rotate", "mirror"]);
 
 export class View2D {
@@ -839,6 +839,11 @@ export class View2D {
 
   // ---------------------------------------------------------------- tools
   /** The splittable element under a model point: nearest of walls, beams, detail lines, separators. */
+  wallAt(p) {
+    const [sx, sy] = this.toScreen(p);
+    const hit = this.hitsAt(sx, sy).find(x => { const f = this.doc.element(x.id); return f && this.doc.typeOf(f) === "Wall"; });
+    return hit ? hit.id : null;
+  }
   splittableAt(p) {
     const [sx, sy] = this.toScreen(p), ok = new Set(["Wall", "Beam", "DetailLine", "RoomSeparator"]);
     const hit = this.hitsAt(sx, sy).find(x => { const f = this.doc.element(x.id); return f && ok.has(this.doc.typeOf(f)); });
@@ -847,6 +852,14 @@ export class View2D {
   toolHover(p, sx, sy, e) {
     const T = this.tool, tool = this.app.tool;
     if (MODIFY_TOOLS.has(tool)) return this.modifyHover(p, sx, sy, e);
+    if (tool === "corner") {
+      // Trim/Extend to Corner: first wall, then the second; the parts under the clicks are kept
+      const id = this.wallAt(p); this.hover = id;
+      const first = T.corner && T.corner.id;
+      this.showHud(sx, sy, !id ? (first ? `${first} picked · now the wall it meets` : "click the first wall, on the part to keep")
+        : first ? (id === first ? "pick a different wall" : `${first} + ${id} → corner`) : `${id} · click it, on the part to keep`);
+      this.draw(); return;
+    }
     if (tool === "split") {
       const id = this.splittableAt(p), f = id && this.doc.element(id);
       const key = f && { Wall: "centreline", Beam: "axis", DetailLine: "curve", RoomSeparator: "line" }[this.doc.typeOf(f)], c = f && this.doc.argValue(f, key);
@@ -890,6 +903,14 @@ export class View2D {
   toolClick(p, e) {
     const T = this.tool, tool = this.app.tool, o = this.app.toolOpts, doc = this.doc;
     if (MODIFY_TOOLS.has(tool)) return this.modifyClick();
+    if (tool === "corner") {
+      const id = this.wallAt(p); if (!id) return this.app.say("click on a wall", "note");
+      if (!T.corner || T.corner.id === id) { T.corner = { id, p }; this.app.select([id]); return this.app.say(`${id} picked: now click the wall it should meet`, "note"); }
+      const a = T.corner; T.corner = null;
+      const r = this.app.apply({ op: "corner", a: a.id, pa: a.p, b: id, pb: p });
+      if (r.ok) { this.app.select([a.id, id]); this.app.say(`${a.id} and ${id} meet at a corner, joined`, "ok"); }
+      return;
+    }
     if (tool === "split") {
       // cut what is under the click, where it was clicked; the tool stays on for the next cut
       const hit = this.splittableAt(p); if (!hit) return this.app.say("click on a wall, beam, detail line or room separator", "note");
@@ -1091,7 +1112,7 @@ export class View2D {
       this.hudInput = true; this.hud.hidden = false; this.hud.textContent = `${tool === "rotate" ? "angle" : "distance"} ${this.typed} ${tool === "rotate" ? "°" : ""} ⏎`;
       return true;
     }
-    if (e.key === "Escape") { if (T.pts.length || T.refs || T.ghost) { T.pts = []; T.refs = []; T.ghost = null; T.centre = null; this.hideHud(); this.draw(); return true; } return false; }
+    if (e.key === "Escape") { if (T.corner) { T.corner = null; this.hideHud(); this.draw(); return true; } if (T.pts.length || T.refs || T.ghost) { T.pts = []; T.refs = []; T.ghost = null; T.centre = null; this.hideHud(); this.draw(); return true; } return false; }
     if (tool === "floor" && T.pts.length && e.key === "Enter") { this.finishFloor(); return true; }
     if (tool === "wall" && T.pts.length) {
       if (e.key === "Enter" && !this.typed) { this.finishWall(false); return true; }

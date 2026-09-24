@@ -1793,3 +1793,25 @@ testCase("M61", "Inclined walls about their centre, leaning opposite ways, still
   return R(joined && floor && top && onPlane, "all three joins resolve; each pair's end faces coincide at the floor and at the top; the top corner lies on W3's tilted face",
     `joins ${joined} (${["W1", "W2", "W3", "W4"].map(id => P(id).joinNotes.join("")).join("|")}), floor ${floor}, top ${top}, on plane ${onPlane}`);
 });
+
+testCase("M62", "Trim/Extend to Corner: two walls that do not touch, picked in plan, are extended (or trimmed, keeping the clicked part) to where their lines cross and joined there", () => {
+  const { doc, ed } = fixture();
+  // the reported pair: W4 stops short of W5; W5 runs past where W4's line meets it
+  wall(doc, "W4", [6350, 4725], [3255.88, 2835.67], "T-300", { slope: { top: 0, lean: -15, pivot: "centre" } }); wall(doc, "W5", [-2625, 4125], [3175, 3200], "T-300");
+  doc.regenerate();
+  const r = ed.apply({ op: "corner", a: "W4", pa: [5000, 3900], b: "W5", pb: [0, 3700] });
+  const c4 = doc.argValue(doc.element("W4"), "centreline"), c5 = doc.argValue(doc.element("W5"), "centreline");
+  const X = intersectLines(lineThrough([6350, 4725], [3255.88, 2835.67]), lineThrough([-2625, 4125], [3175, 3200]));
+  const meet = r.ok && dist(c4.end, X) < 1e-6 && dist(c5.end, X) < 1e-6 && dist(c4.start, [6350, 4725]) < 1e-6 && dist(c5.start, [-2625, 4125]) < 1e-6;
+  const w4 = doc.plan(doc.element("W4")), w5 = doc.plan(doc.element("W5"));
+  const joined = w4.ends.end.k === "node" && w5.ends.end.k === "node" && !w4.joinNotes.length;
+  // trimming: a wall that runs past the corner loses the part beyond it, not the clicked part
+  const { doc: d2, ed: e2 } = fixture();
+  wall(d2, "A", [0, 0], [6000, 0], "T-300"); wall(d2, "B", [4000, -2000], [4000, 3000], "T-300"); d2.regenerate();
+  const r2 = e2.apply({ op: "corner", a: "A", pa: [1000, 0], b: "B", pb: [4000, 2000] });
+  const a2 = d2.argValue(d2.element("A"), "centreline"), b2 = d2.argValue(d2.element("B"), "centreline");
+  const trimmed = r2.ok && dist(a2.end, [4000, 0]) < 1e-6 && dist(a2.start, [0, 0]) < 1e-6 && dist(b2.start, [4000, 0]) < 1e-6 && dist(b2.end, [4000, 3000]) < 1e-6;
+  const par = e2.apply({ op: "corner", a: "A", b: "A" }).ok === false;
+  return R(meet && joined && trimmed && par, "W4 and W5 extended to their crossing and joined; A trimmed back to B and B's far stub removed, clicked parts kept; same wall refused",
+    `meet ${meet}, joined ${joined} (${w4.joinNotes}), trimmed ${trimmed}, refused ${par}`);
+});

@@ -217,6 +217,7 @@ const COMMANDS = {
   rotate: tool("rotate", "Rotate", "rotate", "RO", "Click the start of the angle, then its end (or type degrees + Enter)."),
   mirror: tool("mirror", "Mirror", "mirror", "MM", "Click two points on the mirror axis."),
   split: tool("split", "Split Element", "split", "SL", "Click anywhere on a wall, beam, detail line or room separator: it is cut in two there, joins and hosted doors kept."),
+  corner: tool("corner", "Trim/Extend to Corner", "skfillet", "TR", "Click a wall on the part to keep, then the wall it should meet: both are trimmed or extended to where they cross, and joined."),
   del: { label: "Delete", icon: "del", key: "DE", run: () => deleteSelection() },
   undo: { label: "Undo", icon: "undo", run: () => { app.editor.undo(); app.refresh(); saveDraftSoon(); } },
   redo: { label: "Redo", icon: "redo", run: () => { app.editor.redo(); app.refresh(); saveDraftSoon(); } },
@@ -265,7 +266,7 @@ app.setTool = k => {
   if (!canUseTool(k)) { if (PLACE_TOOLS.has(k) || MODIFY_TOOLS.has(k)) { const plan = firstOf("PlanView"); if (plan) app.openView(plan); } }
   if (PLACE_TOOLS.has(k)) app.selection.clear(); // placing starts from a clean selection, as in Revit
   app.tool = k; app.pickMode = null; app.lastCommand = k !== "select" ? k : app.lastCommand;
-  const v = app.views.get(app.activeView); if (v && v.tool) { v.tool.pts = []; v.tool.refs = []; v.tool.preview = null; v.tool.ghost = null; v.tool.centre = null; }
+  const v = app.views.get(app.activeView); if (v && v.tool) { v.tool.pts = []; v.tool.refs = []; v.tool.preview = null; v.tool.ghost = null; v.tool.centre = null; v.tool.corner = null; }
   if (k !== "select" && app.ribbonTab === "__context" && !MODIFY_TOOLS.has(k)) { app.ribbonTab = app.ribbonAuto || "Architecture"; }
   // the wall tool brings up its own tab (Modify | Place Wall), with the sketcher's draw shapes
   if (k === "wall") { app.ribbonAuto = app.ribbonTab === "__context" ? app.ribbonAuto : app.ribbonTab; app.ribbonTab = "__context"; }
@@ -313,7 +314,7 @@ const RIBBON = [
   { tab: "Modify", panels: [
     { title: "Select", items: [big("select")] },
     { title: "Properties", items: [big("props"), big("edittype")] },
-    { title: "Modify", items: [small("move"), small("copy"), small("rotate"), small("mirror"), small("split"), small("del"), small("selectall")] },
+    { title: "Modify", items: [small("move"), small("copy"), small("rotate"), small("mirror"), small("split"), small("corner"), small("del"), small("selectall")] },
     { title: "View", items: [small("zoomfit"), small("thin")] },
   ] },
 ];
@@ -333,7 +334,7 @@ function contextTab() {
   const hasWall = els.some(f => ["Wall", "Door"].includes(app.doc.typeOf(f)));
   return { tab: "__context", label: `Modify | ${cats.length === 1 ? cats[0] : "Multi-Select"}`, panels: [
     { title: "Properties", items: [big("props"), big("edittype")] },
-    { title: "Modify", items: [big("move"), big("copy"), big("rotate"), big("mirror"), big("split"), big("del")] },
+    { title: "Modify", items: [big("move"), big("copy"), big("rotate"), big("mirror"), big("split"), big("corner"), big("del")] },
     ...(hasWall ? [{ title: "Mode", items: [big("flip")] }] : []),
     ...(els.length === 1 && app.doc.typeOf(els[0]) === "Floor" ? [{ title: "Mode", items: [big("editboundary")] }] : []),
     ...(els.some(f => app.doc.typeOf(f) === "CADImport") ? [{ title: "Import CAD", items: [big("explode")] }] : []),
