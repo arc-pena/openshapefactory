@@ -865,12 +865,54 @@ BUILDERS.Dimension = { build: () => ({ data: {} }) };   // measured at derive ti
 export function resolveReference(doc, key) {
   const [id, rk] = String(key).split(":");
   const f = doc.element(id); if (!f) return null;
-  const d = doc.data(f); const refs = d && d.refs;
-  if (!refs) {
-    if (doc.typeOf(f) === "Level" && rk === "plane") return { key: rk, kind: "plane", z: d ? d.value : 0 };
-    return null;
+  if (doc.typeOf(f) === "Level" && rk === "plane") { const d = doc.data(f); return { key: rk, kind: "plane", z: d ? d.value : 0 }; }
+  return elementRefs(doc, f).find(r => r.key === rk) || null;
+}
+/** Everything that drives an element, as named references: lines (with the segment they run along, a-b)
+ *  and points. Dimensions bind to them, snaps find them, padlocks hold them. A wall's centreline, its
+ *  faces and core faces and its ends; a beam's axis, sides and ends; a column's centre, axes and faces;
+ *  a floor's or generic model's edges and corners; an opening's jambs and centre; a line's line and ends.
+ *  Keys are stable names, so a dimension survives every rebuild. */
+export function elementRefs(doc, f) {
+  const t = doc.typeOf(f), d = doc.data(f), p = doc.plan(f), out = [];
+  const line = (key, a, b) => { if (a && b && dist(a, b) > 1e-6) out.push({ key, kind: "line", geom: lineThrough(a, b), a, b }); };
+  const point = (key, q) => { if (q) out.push({ key, kind: "point", geom: q }); };
+  const ring = pts => { if (!pts || pts.length < 3) return; pts.forEach((q, i) => { line(`edge.${i}`, q, pts[(i + 1) % pts.length]); point(`corner.${i}`, q); }); };
+  if (t === "Wall" && p && d && d.refs) {
+    for (const r of d.refs) {
+      if (r.kind === "line" && p.curve.type === "line") { const a = add(p.curve.start, mul(perp(p.d), r.s || 0)), b = add(p.curve.end, mul(perp(p.d), r.s || 0)); out.push(Object.assign({}, r, { a, b })); }
+      else out.push(r);
+    }
+    return out;
   }
-  return refs.find(r => r.key === rk) || null;
+  if (t === "Grid") { const c = F.json(f, "line"); line("line", c.start, c.end); point("end.start", c.start); point("end.end", c.end); return out; }
+  if (t === "DetailLine" || t === "RoomSeparator") { const c = F.json(f, t === "DetailLine" ? "curve" : "line"); if (c && c.type === "line") { line("line", c.start, c.end); point("end.start", c.start); point("end.end", c.end); } return out; }
+  if (t === "Beam" && p && p.axis) {
+    const c = p.axis, [a0, a1, b1, b0] = p.foot;   // foot: start and end on one side, then back along the other
+    line("axis", c.start, c.end); line("face.right", a0, a1); line("face.left", b0, b1);
+    point("end.start", c.start); point("end.end", c.end); return out;
+  }
+  if (t === "Column" && p) {
+    const ty = F.type(f, "columnType") || {}, c = F.point(f, "position"), r = (F.real(f, "rotation") || 0) * Math.PI / 180;
+    const ux = [Math.cos(r), Math.sin(r)], uy = [-Math.sin(r), Math.cos(r)], hw = (ty.width || 400) / 2, hd = (ty.shape === "CHS" || ty.round ? ty.width : (ty.depth || ty.width || 400)) / 2;
+    point("centre", c);
+    line("axis.x", sub(c, mul(ux, hw)), add(c, mul(ux, hw))); line("axis.y", sub(c, mul(uy, hd)), add(c, mul(uy, hd)));
+    const P = (x, y) => add(c, add(mul(ux, x), mul(uy, y)));
+    line("face.left", P(-hw, -hd), P(-hw, hd)); line("face.right", P(hw, -hd), P(hw, hd)); line("face.front", P(-hw, -hd), P(hw, -hd)); line("face.back", P(-hw, hd), P(hw, hd));
+    return out;
+  }
+  if ((t === "Floor" || t === "Generic" || t === "SiteBoundary") && p) { ring(p.foot && p.foot.length >= 3 ? p.foot : p.pts); return out; }
+  if (t === "FilledRegion") { ring(F.json(f, "boundary")); return out; }
+  if (t === "Opening" || t === "Door" || t === "Window") {
+    const fr = d && d.frame, host = fr && doc.element(fr.host), w = host && doc.plan(host);
+    if (w && w.curve.type === "line") {
+      const n = w.stack.s.length - 1, s0 = w.stack.s[0], s1 = w.stack.s[n];
+      for (const [key, u] of [["jamb.start", fr.u0], ["jamb.end", fr.u1], ["centre", (fr.u0 + fr.u1) / 2]]) line(key, pointAt(w, s0, u), pointAt(w, s1, u));
+    }
+    return out;
+  }
+  if (d && d.refs) for (const r of d.refs) out.push(r);
+  return out;
 }
 /** A dimension's value between two references, measured on the analytic geometry. */
 export function measureRefs(doc, keys) {

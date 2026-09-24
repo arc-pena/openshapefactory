@@ -1309,6 +1309,9 @@ window.addEventListener("keydown", e => {
   if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) {
     // Esc in a field of the options bar, the ribbon or the properties still ends the command: the field lets go
     // first (a dialog's own fields are the dialog's: it closes itself)
+    // Delete with a dropdown, tick box or button focused (not a field being typed in) still deletes the selection
+    const typing = t.tagName === "TEXTAREA" || t.isContentEditable || (t.tagName === "INPUT" && !/^(checkbox|radio|button|range|color)$/i.test(t.type || ""));
+    if ((e.key === "Delete" || e.key === "Backspace") && !typing && !t.closest(".dialog") && app.selection.size) { e.preventDefault(); t.blur(); deleteSelection(); return; }
     if (e.key !== "Escape" || t.closest(".dialog")) return;
     t.blur();
   }

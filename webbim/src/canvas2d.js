@@ -7,12 +7,12 @@
 import { h, clear, fmtLen, icon } from "./ui_util.js";
 import { parseLength, parseAngle, fmtArea } from "./units.js";
 import { TOL, add, sub, mul, dot, dist, perp, normalise, lerp, intersectLines, lineThrough, projectPoint, pointInPoly, samplePath, polyArea, bboxOf, distToSeg } from "./geom2d.js";
-import { deriveView, placements, dimensionGeometry, viewLineGeometry } from "./scene.js";
+import { deriveView, placements, dimensionGeometry, viewLineGeometry, dimAxis } from "./scene.js";
 import { drawScene, primsBBox } from "./render.js";
 import { F, CATALOGUE } from "./ocaf.js";
 import { uOf, pointAt } from "./walls.js";
 import { listeningDimensions, dimensionMove, pickCandidates } from "./props.js";
-import { resolveReference, measureRefs, sheetSize, viewExtent, orthoLine } from "./bim.js";
+import { resolveReference, measureRefs, sheetSize, viewExtent, orthoLine, elementRefs } from "./bim.js";
 import { getPath, geomKey, wallEnds } from "./ops.js";
 import { cropLoop, loopBBox, ANNOTATION_CROP } from "./crop.js";
 import { shapeFromClicks, SHAPE_CLICKS, filletCorners, toCentreline, weld, offsetChain, outline } from "./bimsketch.js";
@@ -253,6 +253,17 @@ export class View2D {
       }
     }
     this.drawViewExtents(g);
+    if (this.app.tool === "dim" && this.kind === "PlanView") {
+      // the reference the click will take (orange), and the one already taken (blue)
+      const T = this.tool, mark = (r, colour) => {
+        if (!r) return; g.strokeStyle = colour; g.fillStyle = colour; g.lineWidth = 3; g.setLineDash([]);
+        if (r.kind === "point") { const q = this.toScreen(r.geom); g.beginPath(); g.arc(q[0], q[1], 6, 0, 7); g.stroke(); return; }
+        const a = r.a || add(r.geom.p, mul(r.geom.d, -2000)), b = r.b || add(r.geom.p, mul(r.geom.d, 2000)), A = this.toScreen(a), B = this.toScreen(b);
+        g.beginPath(); g.moveTo(A[0], A[1]); g.lineTo(B[0], B[1]); g.stroke();
+      };
+      for (const r of T.refs || []) mark(r, "#1d6fd8");
+      if (T.refCands && T.refCands.length) mark(T.refCands[(T.refIdx || 0) % T.refCands.length], "#e8591a");
+    }
     if (this.app.tool === "split" && this.tool.cursor) {
       // the cut, shown where it will fall
       const q = this.toScreen(this.tool.cursor); g.strokeStyle = "#d11f1f"; g.lineWidth = 2; g.beginPath(); g.moveTo(q[0] - 6, q[1] + 10); g.lineTo(q[0] + 6, q[1] - 10); g.stroke();
@@ -443,6 +454,14 @@ export class View2D {
       }
       if (t === "Grid") { const c = F.json(f, "line"); lines.push([lineThrough(c.start, c.end), id, c.start, c.end, "grid"]); points.push(["endpoint", c.start, id], ["endpoint", c.end, id]); }
       if (t === "Column") points.push(["centre", F.point(f, "position"), id]);
+      // everything else that drives an element snaps too: a beam's axis, sides and ends, a column's faces,
+      // a floor's edges and corners, an opening's jambs, a detail line (elementRefs - the dimension tool's list)
+      if (t !== "Wall" && t !== "Grid" && !(F.refId(f, "view") && F.refId(f, "view") !== this.viewId)) {
+        for (const r of elementRefs(doc, f)) {
+          if (r.kind === "point") { if (dist(r.geom, p) < 3000) points.push([/centre/.test(r.key) ? "centre" : "endpoint", r.geom, id]); }
+          else if (r.kind === "line" && r.a && r.b && (dist(r.a, p) < dist(r.a, r.b) + 3000)) { lines.push([r.geom, id, r.a, r.b]); points.push(["midpoint", lerp(r.a, r.b, 0.5), id]); }
+        }
+      }
     }
     for (const [k, q, id] of points) if (on[k] && dist(q, p) < tol) cands.push({ kind: k, point: q, of: id, d: dist(q, p) });
     if (on.intersection) for (let i = 0; i < lines.length; i++) for (let j = i + 1; j < lines.length; j++) {
@@ -849,6 +868,11 @@ export class View2D {
 
   // ---------------------------------------------------------------- tools
   /** The splittable element under a model point: nearest of walls, beams, detail lines, separators. */
+  showRefHud() {
+    const T = this.tool, c = T.refCands && T.refCands.length ? T.refCands[(T.refIdx || 0) % T.refCands.length] : null, [sx, sy] = T.refAt || [0, 0];
+    const lead = T.refs && T.refs.length ? "second reference" : "first reference";
+    this.showHud(sx, sy, c ? `${lead}: ${c.of} · ${c.name.replace(".", " ")}${T.refCands.length > 1 ? `  (${(T.refIdx || 0) % T.refCands.length + 1}/${T.refCands.length} · Tab)` : ""}` : "hover a face, centreline, axis, edge, end or corner");
+  }
   wallAt(p) {
     const [sx, sy] = this.toScreen(p);
     const hit = this.hitsAt(sx, sy).find(x => { const f = this.doc.element(x.id); return f && this.doc.typeOf(f) === "Wall"; });
@@ -871,6 +895,11 @@ export class View2D {
   toolHover(p, sx, sy, e) {
     const T = this.tool, tool = this.app.tool;
     if (MODIFY_TOOLS.has(tool)) return this.modifyHover(p, sx, sy, e);
+    if (tool === "dim" && this.kind === "PlanView") {
+      const cands = this.refCandidates(p), keys = cands.map(c => c.key).join("|");
+      if (keys !== T.refKeys) { T.refKeys = keys; T.refIdx = 0; }
+      T.refCands = cands; T.refAt = [sx, sy]; this.showRefHud(); this.draw(); return;
+    }
     if (tool === "corner") {
       // Trim/Extend to Corner: first wall, then the second; the parts under the clicks are kept
       const id = this.wallAt(p); this.hover = id;
@@ -995,13 +1024,15 @@ export class View2D {
       return;
     }
     if (tool === "dim") {
-      const r = this.nearestRef(q); if (!r) { this.app.say("click near a wall face, centreline or grid", "note"); return; }
+      // the reference under the cursor - the one Tab chose when several lie within reach
+      const cands = this.refCandidates(p), r = cands.length ? cands[(T.refIdx || 0) % cands.length] : null;
+      if (!r) { this.app.say("click near a face, centreline, axis, edge, end or corner", "note"); return; }
       T.refs = (T.refs || []).concat([r]);
       if (T.refs.length === 1) { this.app.say(`First reference ${r.key}; now a parallel one`, "note"); return; }
       const [a, b] = T.refs; T.refs = [];
       const m = measureRefs(doc, [a.key, b.key]);
       if (m.value == null) { this.app.say(m.why || "cannot dimension those", "error"); return; }
-      const off = Math.round(dot(sub(q, a.geom.p), a.geom.d));
+      const ax = dimAxis(m), off = Math.round(dot(sub(q, ax.a), perp(ax.dir)));
       addEl({ type: "Dimension", args: { of: [a.key, b.key], offset: off, view: { ref: this.viewId }, locked: false } }, `Dimension ${fmtLen(m.value)} bound to ${a.key} and ${b.key}`);
     }
   }
@@ -1054,13 +1085,32 @@ export class View2D {
     if (r.ok) { this.app.say(`${tool === "copy" || op.copy ? "Copied" : tool[0].toUpperCase() + tool.slice(1) + "d"} ${(r.copied || r.moved || []).length} element(s)`, "ok"); if (r.copied) this.app.select(r.copied); }
     this.app.setTool("select");
   }
-  nearestRef(p) {
-    let best = null; const tol = 10 * this.modelPerPx();
+  nearestRef(p) { return this.refCandidates(p)[0] || null; }
+  /** Every reference within reach of p - ends, corners and centres first, then lines by distance - for the
+   *  dimension tool to offer (Tab steps through them, as a centreline and a face can lie a hair apart). */
+  refCandidates(p) {
+    const tol = 10 * this.modelPerPx(), pts = [], lns = [];
     for (const f of this.doc.elements()) {
-      const d = this.doc.data(f); if (!d || !d.refs) continue;
-      for (const r of d.refs) if (r.kind === "line") { const q = projectPoint(r.geom, p), dd = dist(p, q); if (dd < tol && (!best || dd < best.d)) best = { key: this.doc.idOf(f) + ":" + r.key, geom: r.geom, d: dd }; }
+      if (f.get("Integer") === 0 || this.doc.error(f)) continue;
+      const vr = F.refId(f, "view"); if (vr && vr !== this.viewId) continue;
+      const id = this.doc.idOf(f);
+      for (const r of elementRefs(this.doc, f)) {
+        if (r.kind === "point") { const dd = dist(p, r.geom); if (dd < tol) pts.push({ key: id + ":" + r.key, geom: r.geom, kind: "point", d: dd, of: id, name: r.key }); continue; }
+        if (r.kind !== "line") continue;
+        const q = projectPoint(r.geom, p), dd = dist(p, q);
+        if (dd >= tol) continue;
+        if (r.a && r.b) { const t = dot(sub(q, r.a), r.geom.d), L = dist(r.a, r.b), ext = Math.max(tol, L * 0.1); if (t < -ext || t > L + ext) continue; }
+        lns.push({ key: id + ":" + r.key, geom: r.geom, kind: "line", a: r.a, b: r.b, d: dd, of: id, name: r.key });
+      }
     }
-    return best;
+    pts.sort((x, y) => x.d - y.d); lns.sort((x, y) => x.d - y.d);
+    // a door and the opening it fills offer the same jambs: one stop per place, the filler first
+    const seen = [], out = [];
+    for (const c of [...pts, ...lns].sort((x, y) => (x.kind !== y.kind ? (x.kind === "point" ? -1 : 1) : 0) || x.d - y.d || (/^OP/.test(x.of) ? 1 : 0) - (/^OP/.test(y.of) ? 1 : 0))) {
+      const same = seen.some(q => q.kind === c.kind && (c.kind === "point" ? dist(q.geom, c.geom) < 0.5 : q.a && c.a && ((dist(q.a, c.a) < 0.5 && dist(q.b, c.b) < 0.5) || (dist(q.a, c.b) < 0.5 && dist(q.b, c.a) < 0.5))));
+      if (!same) { seen.push(c); out.push(c); }
+    }
+    return out;
   }
   finishWall(closed) {
     const T = this.tool, o = this.app.toolOpts, shape = o.wallShape || "line";
@@ -1131,6 +1181,7 @@ export class View2D {
       this.hudInput = true; this.hud.hidden = false; this.hud.textContent = `${tool === "rotate" ? "angle" : "distance"} ${this.typed} ${tool === "rotate" ? "°" : ""} ⏎`;
       return true;
     }
+    if (tool === "dim" && e.key === "Tab" && T.refCands && T.refCands.length > 1) { T.refIdx = ((T.refIdx || 0) + (e.shiftKey ? -1 : 1) + T.refCands.length) % T.refCands.length; this.showRefHud(); this.draw(); return true; }
     // Esc drops what is half-done and lets the window's handler end the command (one press, back to Select)
     if (e.key === "Escape") { T.corner = null; T.pts = []; T.refs = []; T.ghost = null; T.centre = null; this.typed = ""; this.hudInput = null; this.hideHud(); this.draw(); return false; }
     if (tool === "floor" && T.pts.length && e.key === "Enter") { this.finishFloor(); return true; }

@@ -11,7 +11,8 @@ import { pointAt, uOf, boundary, wallPieces } from "./walls.js";
 import { newDocument, openDocument, measureRefs, resolveReference, importPlacer } from "./bim.js";
 import { Editor, propagate, massingStoreys, geomKey } from "./ops.js";
 import { sectionRows, findSection, sectionType } from "./sectionlib.js";
-import { viewLineGeometry, viewContext, sectionBoxKey, dimText, deriveView, planScene, elevationScene, placements, textWidth, sheetScene, visibilityKey, sectionCut, cutOutline, SHEET_DISPLAYS, sheetDisplayOf } from "./scene.js";
+import { elementRefs } from "./bim.js";
+import { viewLineGeometry, viewContext, sectionBoxKey, dimText, deriveView, planScene, elevationScene, placements, textWidth, sheetScene, visibilityKey, sectionCut, cutOutline, SHEET_DISPLAYS, sheetDisplayOf, dimensionGeometry } from "./scene.js";
 import { chainLoop } from "./crop.js";
 import { importIfc } from "./ifcimport.js";
 import { writePDF, pathOps, PT_PER_MM } from "./pdf.js";
@@ -1935,4 +1936,30 @@ testCase("M68", "Moving a wall keeps planes: moved whole it keeps its angle and 
   const bent = near(C("S").start, [-500, -1500]) && near(C("Wt").end, [-500, -1500]) && near(C("Wt").start, [0, 4700]);
   return R(s1 && sides && stem && n1 && bent, "south wall moved (500, −1000): still 0…6000 at y −1000; east and west stay vertical and stretch; the T stem stays at x 3000 and reaches it; north by its grip likewise; an end dragged bends the west wall",
     JSON.stringify({ s1, sides, stem, n1, bent, S: C("S"), E: C("E"), T: C("T") }));
+});
+
+testCase("M69", "Everything that drives an element is a reference: a beam's sides and ends, a column's faces and axes, a floor's edges and corners, an opening's jambs; dimensions measure them (a point square to a line), snaps find them, a padlock holds a beam's face to a grid", () => {
+  const { doc, ed } = fixture();
+  wall(doc, "A", [0, 0], [6000, 0], "T-300");
+  ed.apply([{ op: "add", element: { id: "G", type: "Grid", args: { name: "A", line: { type: "line", start: [-1000, 3000], end: [8000, 3000] } } } },
+    { op: "add", element: { id: "B", type: "Beam", args: { axis: { type: "line", start: [0, 2000], end: [6000, 2000] }, beamType: { ref: "T-UB406" }, level: { ref: "L0" }, topOffset: 3000 } } },
+    { op: "add", element: { id: "C", type: "Column", args: { position: [3000, 5000], columnType: { ref: "T-COL400" }, baseLevel: { ref: "L0" }, height: 3000, rotation: 0 } } },
+    { op: "add", element: { id: "FL", type: "Floor", args: { boundary: [[0, 0], [6000, 0], [6000, 4000], [0, 4000]], floorType: { ref: "T-SLAB200" }, level: { ref: "L0" }, heightOffset: 0 } } },
+    { op: "add", element: { id: "OP", type: "Opening", args: { host: { ref: "A" }, profile: { kind: "rect", at: 3000, sill: 0, w: 900, h: 2100 }, farProfile: null, depth: "through" } } }]);
+  const keys = id => elementRefs(doc, doc.element(id)).map(r => r.key);
+  const has = (id, ks) => ks.every(k => keys(id).includes(k));
+  const refsOk = has("B", ["axis", "face.left", "face.right", "end.start", "end.end"]) && has("C", ["centre", "axis.x", "axis.y", "face.left", "face.right", "face.front", "face.back"])
+    && has("FL", ["edge.0", "edge.3", "corner.2"]) && has("OP", ["jamb.start", "jamb.end", "centre"]) && has("A", ["centreline", "face.exterior", "face.interior", "end.start"]);
+  // measured: the beam's left side (y = 2000 + 178/2) to the column's front face (y = 5000 − 200); the floor corner to the grid, square to it
+  const m1 = measureRefs(doc, ["B:face.left", "C:face.front"]).value, m2 = measureRefs(doc, ["FL:corner.2", "G:line"]).value, m3 = measureRefs(doc, ["OP:jamb.start", "OP:jamb.end"]).value;
+  const meas = Math.abs(m1 - (4800 - 2089)) < 1e-6 && Math.abs(m2 - 1000) < 1e-6 && Math.abs(m3 - 900) < 1e-6;
+  // a point to a line is drawn from the point to its foot on the line
+  const dim = ed.apply({ op: "add", element: { type: "Dimension", args: { of: ["FL:corner.2", "G:line"], offset: 0, view: { ref: "V" }, locked: false } } });
+  const g = dimensionGeometry(doc, doc.element(dim.id)), foot = g && Math.abs(g.b[1] - 3000) < 1e-6 && Math.abs(g.b[0] - 6000) < 1e-6;
+  // a padlock between the grid and the beam's left side: moving the grid carries the beam
+  doc.constraints.push({ id: "CB", kind: "distance", of: ["G:line", "B:face.left"], value: 911, locked: true });
+  const r = ed.apply({ op: "transform", ids: ["G"], move: [0, 500] });
+  const held = r.ok && Math.abs(doc.argValue(doc.element("B"), "axis").start[1] - 2500) < 1e-6;
+  return R(refsOk && meas && foot && held, "references on beams, columns, floors and openings; beam side to column face 2711, floor corner to grid 1000, jambs 900; the point-to-line dimension ends on the line at (6000, 3000); the locked beam follows the grid 500",
+    JSON.stringify({ refsOk, m1, m2, m3, foot, held, r: r.error || "", beam: doc.argValue(doc.element("B"), "axis") }));
 });

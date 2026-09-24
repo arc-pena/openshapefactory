@@ -719,11 +719,18 @@ function drawViewAnnotations(doc, ctx, B, v) {
 export function dimensionGeometry(doc, f, m = measureRefs(doc, F.json(f, "of") || [])) {
   if (!m || m.lost || m.value == null || m.kind === "levels") return null;
   const off = F.real(f, "offset");
-  let a, b, dir;
-  if (m.kind === "parallel") { const L = m.a.geom; dir = perp(L.d); a = L.p; b = add(a, mul(dir, dot(sub(m.b.geom.p, a), dir))); }
-  else { a = m.a.kind === "point" ? m.a.geom : m.a.geom.p; b = m.b.kind === "point" ? m.b.geom : m.b.geom.p; dir = normalise(sub(b, a)); }
+  const { a, b, dir } = dimAxis(m);
   const along = perp(dir), shift = mul(along, off);
   return { a, b, dir, along, off, A: add(a, shift), Bp: add(b, shift), value: m.value, signed: dot(sub(b, a), dir) };
+}
+/** Where a measurement runs: from a to b along dir (before its offset). */
+export function dimAxis(m) {
+  let a, b, dir;
+  if (m.kind === "parallel") { const L = m.a.geom; dir = perp(L.d); a = L.p; b = add(a, mul(dir, dot(sub(m.b.geom.p, a), dir))); }
+  // a point to a line is measured square to the line, from the point to its foot
+  else if (m.kind === "pointLine") { const P = m.a.kind === "point" ? m.a.geom : m.b.geom, L = m.a.kind === "line" ? m.a.geom : m.b.geom, Q = add(L.p, mul(L.d, dot(sub(P, L.p), L.d))); [a, b] = m.a.kind === "point" ? [P, Q] : [Q, P]; dir = normalise(sub(b, a)); if (!Number.isFinite(dir[0])) dir = perp(L.d); }
+  else { a = m.a.kind === "point" ? m.a.geom : m.a.geom.p; b = m.b.kind === "point" ? m.b.geom : m.b.geom.p; dir = normalise(sub(b, a)); }
+  return { a, b, dir };
 }
 function drawDimension(doc, ctx, B, f) {
   const id = doc.idOf(f), keys = F.json(f, "of") || [];

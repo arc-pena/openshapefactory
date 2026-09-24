@@ -704,7 +704,7 @@ export function geomKeyOf(t) {
   return t === "Wall" ? "centreline" : t === "Grid" || t === "RoomSeparator" || t === "ElevationView" || t === "SectionView" ? "line"
     : t === "Column" || t === "Furniture" || t === "Text" || t === "SymbolInstance" ? "position" : t === "Space" ? "anchor"
     : t === "DetailLine" ? "curve" : t === "FilledRegion" || t === "Generic" ? "boundary" : t === "CADImport" ? "offsetX"
-    : t === "RepeatingDetail" ? "path" : t === "MaterialTag" ? "position" : null;
+    : t === "RepeatingDetail" ? "path" : t === "MaterialTag" ? "position" : t === "Beam" ? "axis" : t === "Floor" ? "boundary" : null;
 }
 
 // ---------------------------------------------------------------- transforms
@@ -747,7 +747,7 @@ function transformExtras(doc, f, T) {
   const t = doc.typeOf(f);
   // detail items: a repeating detail moves by its path, a filled region by its sketch too, a material tag by its leader point
   if (t === "RepeatingDetail") doc.setArg(f, "path", sketchThrough(doc.argValue(f, "path"), T));
-  if (t === "FilledRegion" && doc.argValue(f, "sketch")) doc.setArg(f, "sketch", sketchThrough(doc.argValue(f, "sketch"), T));
+  if ((t === "FilledRegion" || t === "Floor") && doc.argValue(f, "sketch")) doc.setArg(f, "sketch", sketchThrough(doc.argValue(f, "sketch"), T));
   if (t === "MaterialTag") doc.setArg(f, "target", T.P(doc.argValue(f, "target")));
   // a body of its own shape moves with its outline: its placing frame is carried through the same transform
   if (t === "Generic") { const m = doc.argValue(f, "mesh"); if (m && m.frame) doc.setArg(f, "mesh", Object.assign({}, m, { frame: moveFrame(m.frame, T.P) })); }
@@ -848,10 +848,17 @@ function refLine(doc, f, rk, geom) {
     return { line: offsetLine(base, r.s || 0) };
   }
   if (t === "Grid") return { line: lineThrough(geom.start, geom.end) };
-  if (t === "Column") return { point: geom };
+  // anything else: its reference as built now, carried by the move from where it is to the position asked about
+  const r = resolveReference(doc, doc.idOf(f) + ":" + rk), cur = doc.argValue(f, geomKey(f, doc));
+  if (!r || !cur) return null;
+  const rep = g => Array.isArray(g) ? (Array.isArray(g[0]) ? g[0] : g) : g.start || g.centre || (g.points && g.points[0]) || null;
+  const a = rep(cur), b = rep(geom); if (!a || !b) return null;
+  const d = sub(b, a);
+  if (r.kind === "point") return { point: add(r.geom, d) };
+  if (r.kind === "line") return { line: { p: add(r.geom.p, d), d: r.geom.d } };
   return null;
 }
-const translate = (geom, d) => Array.isArray(geom) ? add(geom, d) : Object.assign({}, geom, geom.start ? { start: add(geom.start, d), end: add(geom.end, d) } : {}, geom.centre ? { centre: add(geom.centre, d) } : {}, geom.points ? { points: geom.points.map(p => add(p, d)) } : {});
+const translate = (geom, d) => Array.isArray(geom) ? (Array.isArray(geom[0]) ? geom.map(p => add(p, d)) : add(geom, d)) : Object.assign({}, geom, geom.start ? { start: add(geom.start, d), end: add(geom.end, d) } : {}, geom.centre ? { centre: add(geom.centre, d) } : {}, geom.points ? { points: geom.points.map(p => add(p, d)) } : {});
 
 /** Breadth-first from the pinned element; one closed-form computation per
  *  constraint edge. A revisit either agrees (a consistent cycle) or names
