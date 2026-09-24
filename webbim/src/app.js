@@ -21,6 +21,7 @@ import { elementsBox } from "./hlr.js";
 import { writePDF } from "./pdf.js";
 import { writeDXF, readDXF, dxfDrawing, makeZip } from "./dxf.js";
 import { runAll, CASES } from "./acceptance.js";
+import { sectionPicker } from "./sectionui.js";
 import { renderPanel, renderSchedule, typeEditor, vvDialog, viewStyleEditor, materialsEditor } from "./panel.js";
 import { renderSpaceGraph, importProgram, briefDialog, sheetDiagramUrl } from "./sgui.js";
 import { renderGraph } from "./graph.js";
@@ -508,8 +509,10 @@ function renderOptionsBar() {
     if (t === "window") kids = [sel("windowType", typesOf("IfcWindow").map(([id, x]) => [id, x.name]), "Type:"), num("sill", "Sill Height:")];
     if (t === "opening") kids = [num("width", "Width:"), num("height_", "Height:"), num("openSill", "Sill:")];
     if (t === "floor") kids = [sel("floorType", typesOf("IfcSlab").map(([id, x]) => [id, x.name]), "Type:"), num("floorOffset", "Height offset:")];
-    if (t === "beam") kids = [sel("beamType", typesOf("IfcBeam").map(([id, x]) => [id, x.name]), "Type:"), num("beamTop", "Top offset:")];
-    if (t === "column") kids = [sel("columnType", typesOf("IfcColumn").map(([id, x]) => [id, x.name]), "Type:"), levelPicker()];
+    // a catalogue section (American, European, British, Australian) loads as a type and is picked at once
+    const loadSec = (key, cat) => h("button", { class: "btn small", title: "Wide flange, rectangular and circular hollow sections from the AISC, EN, BS and AS/NZS catalogues", onclick: () => sectionPicker(app, cat, id => { o[key] = id; app.refresh(); }) }, "Load section…");
+    if (t === "beam") kids = [sel("beamType", typesOf("IfcBeam").map(([id, x]) => [id, x.name]), "Type:"), loadSec("beamType", "IfcBeam"), num("beamTop", "Top offset:")];
+    if (t === "column") kids = [sel("columnType", typesOf("IfcColumn").map(([id, x]) => [id, x.name]), "Type:"), loadSec("columnType", "IfcColumn"), levelPicker()];
     if (t === "space") kids = [h("label", {}, "Name: ", h("input", { type: "text", value: o.spaceName, style: { width: "110px" }, onchange: e => { o.spaceName = e.target.value; } })), sel("boundaryAt", [["finishFace", "Finish face (net)"], ["coreFace", "Core face"], ["coreCentre", "Core centre"], ["wallCentre", "Wall centre (gross)"]], "Boundary:")];
     if (t === "move") kids = [chk("moveCopy", "Copy")];
     if (t === "rotate") kids = [chk("rotateCopy", "Copy"), h("span", { class: "muted" }, "rotates about the selection's centre")];

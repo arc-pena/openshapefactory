@@ -5,6 +5,7 @@
 
 import { parseLength, parseNumber, bareFactor, fmtArea, fmtVolume } from "./units.js";
 import { h, clear, icon, dialog, fmtLen } from "./ui_util.js";
+import { sectionPicker } from "./sectionui.js";
 import { propertyModel, referenceOptions, specsFor, TYPE_KEYS } from "./props.js";
 import { readValue, formatValue, parse, evaluate, ExprError } from "./expr.js";
 import { documentLookup, F, CATALOGUE, clone } from "./ocaf.js";
@@ -58,7 +59,9 @@ export function renderPanel(app, root) {
     const sel = h("select", { id: "pp-type", "aria-label": "Type", onchange: e => app.apply({ op: "set", ids, key: m.typeKey, value: { ref: e.target.value } }) },
       cur ? null : h("option", { value: "" }, "<varies>"), opts.map(o => h("option", { value: o.value, selected: o.value === cur }, o.label)));
     pp.append(h("div", { class: "pp-head", style: { paddingTop: "8px" } },
-      h("div", { class: "typebar" }, sel, h("button", { class: "btn small", disabled: !cur, onclick: () => typeEditor(app, cur) }, "Edit Type")),
+      h("div", { class: "typebar" }, sel, h("button", { class: "btn small", disabled: !cur, onclick: () => typeEditor(app, cur) }, "Edit Type"),
+        // beams and columns take any catalogue section: loaded as a type, then given to the selection
+        m.typeKey === "beamType" || m.typeKey === "columnType" ? h("button", { class: "btn small", title: "Load a section from the AISC, EN, BS or AS/NZS catalogue", onclick: () => sectionPicker(app, m.typeKey === "beamType" ? "IfcBeam" : "IfcColumn", id => app.apply({ op: "set", ids, key: m.typeKey, value: { ref: id } })) }, "Sections…") : null),
       cur ? h("div", { class: "muted", style: { fontSize: "11.5px" } }, `Type parameters change every element of this type (${countUsers(doc, cur)} use it). Instance parameters below change only ${ids.length === 1 ? "this one" : "these"}.`) : null));
   }
   // ---- grouped rows

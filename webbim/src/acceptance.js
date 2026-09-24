@@ -10,6 +10,7 @@ import { wallRegions, solidSpans } from "./joins.js";
 import { pointAt, uOf, boundary, wallPieces } from "./walls.js";
 import { newDocument, openDocument, measureRefs, resolveReference, importPlacer } from "./bim.js";
 import { Editor, propagate, massingStoreys, geomKey } from "./ops.js";
+import { sectionRows, findSection, sectionType } from "./sectionlib.js";
 import { viewLineGeometry, viewContext, sectionBoxKey, dimText, deriveView, planScene, elevationScene, placements, textWidth, sheetScene, visibilityKey, sectionCut, cutOutline } from "./scene.js";
 import { chainLoop } from "./crop.js";
 import { importIfc } from "./ifcimport.js";
@@ -1814,4 +1815,31 @@ testCase("M62", "Trim/Extend to Corner: two walls that do not touch, picked in p
   const par = e2.apply({ op: "corner", a: "A", b: "A" }).ok === false;
   return R(meet && joined && trimmed && par, "W4 and W5 extended to their crossing and joined; A trimmed back to B and B's far stub removed, clicked parts kept; same wall refused",
     `meet ${meet}, joined ${joined} (${w4.joinNotes}), trimmed ${trimmed}, refused ${par}`);
+});
+
+testCase("M63", "Section catalogue: AISC, EN, BS and AS/NZS wide flange, rectangular and circular hollow sections load as beam and column types and build their true profile", () => {
+  const { doc, ed } = fixture();
+  const rows = sectionRows(), by = std => rows.filter(r => r.std === std).length;
+  const W = findSection("American (AISC)", "W14x90"), HEB = findSection("European (EN)", "HEB300"), UC = findSection("Australian (AS/NZS)", "310UC158"), HS = findSection("American (AISC)", "HSS12x8x1/2"), CH = findSection("European (EN)", "CHS219.1x8");
+  // hand values: W14x90 = 14.0 x 14.5 in, tw 0.44, tf 0.71 in; HEB300 = 300 x 300, tw 11, tf 19
+  const dimsOk = W && Math.abs(W.dims[0] - 355.6) < 0.1 && Math.abs(W.dims[1] - 368.3) < 0.1 && Math.abs(W.dims[2] - 11.2) < 0.1 && Math.abs(W.dims[3] - 18.0) < 0.1
+    && HEB && HEB.dims.join() === "300,300,11,19" && UC && UC.dims[0] === 327 && HS && HS.shape === "RHS" && CH && CH.shape === "CHS";
+  const add = (sec, cat) => { const T = sectionType(sec, cat); ed.apply({ op: "type", lib: "types", id: T.id, value: T.value }); return T.id; };
+  const cW = add(W, "IfcColumn"), bH = add(HS, "IfcBeam"), cC = add(CH, "IfcColumn");
+  ed.apply([{ op: "add", element: { id: "CW", type: "Column", args: { position: [0, 0], columnType: { ref: cW }, baseLevel: { ref: "L0" }, height: 3000, rotation: 0 } } },
+    { op: "add", element: { id: "CC", type: "Column", args: { position: [2000, 0], columnType: { ref: cC }, baseLevel: { ref: "L0" }, height: 3000, rotation: 0 } } },
+    { op: "add", element: { id: "BH", type: "Beam", args: { axis: { type: "line", start: [0, 0], end: [6000, 0] }, beamType: { ref: bH }, level: { ref: "L0" }, topOffset: 3000 } } }]);
+  const pw = doc.plan(doc.element("CW")), pc = doc.plan(doc.element("CC")), pb = doc.plan(doc.element("BH"));
+  const [d, bf, tw, tf] = W.dims, Iarea = 2 * bf * tf + (d - 2 * tf) * tw;
+  const iOk = pw && pw.foot.length === 12 && Math.abs(Math.abs(polyArea(pw.foot)) - Iarea) < 1;
+  // a hollow tube: its ring, not a disc (32-gon: within 1 %)
+  const ring = Math.PI * (219.1 ** 2 - (219.1 - 16) ** 2) / 4, cArea = pc ? Math.abs(polyArea(pc.foot)) - pc.holes.reduce((a, hl) => a + Math.abs(polyArea(hl)), 0) : 0;
+  const cOk = pc && pc.holes.length === 1 && Math.abs(cArea - ring) / ring < 0.01;
+  // the HSS beam: two flanges and two webs, 12 in deep; its volume is the tube's steel
+  const [hd, hb, ht] = HS.dims, vol = doc.data(doc.element("BH")).parts.reduce((a, q) => a + Math.abs(polyArea(q.foot)) * (q.z1 - q.z0), 0), want = (hd * hb - (hd - 2 * ht) * (hb - 2 * ht)) * 6000;
+  const bOk = pb && pb.parts.length === 4 && Math.abs(pb.z1 - pb.z0 - hd) < 1e-6 && Math.abs(vol - want) / want < 1e-6;
+  const counts = ["American (AISC)", "European (EN)", "British (BS 4)", "Australian (AS/NZS)"].map(by);
+  const ok = dimsOk && iOk && cOk && bOk && counts[0] > 1000 && counts[1] > 700 && counts[2] > 100 && counts[3] > 250 && !doc.error(doc.element("CW")) && !doc.error(doc.element("BH"));
+  return R(ok, "catalogues loaded; W14x90 355.6 × 368.3 × 11.2 × 18.0; HEB300 300×300×11×19; I column area = 2·bf·tf + (d−2tf)·tw; CHS ring area; HSS beam volume = its steel",
+    `counts ${counts}; dims ${dimsOk}; I ${pw && Math.round(Math.abs(polyArea(pw.foot)))} vs ${Math.round(Iarea)}; CHS ${Math.round(cArea)} vs ${Math.round(ring)}; HSS ${pb && pb.parts.length} parts, vol ${Math.round(vol / 1e6)} vs ${Math.round(want / 1e6)} (${doc.error(doc.element("CW")) || ""} ${doc.error(doc.element("BH")) || ""})`);
 });

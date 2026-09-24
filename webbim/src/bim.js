@@ -351,18 +351,44 @@ declare({ type: "Column", guid: "wb-0301", category: "IfcColumn", kind: "column"
           real("height", "Height", 3000, 1, 100000, 1, "mm", { group: "Dimensions" }), real("rotation", "Rotation", 0, -360, 360, 1, "°"),
           real("baseOffset", "Base offset", 0, -100000, 100000, 1, "mm", { group: "Constraints" }) ],
   handles: (f) => [{ key: "move", at: F.point(f, "position"), constraint: "free2d", writes: "position" }] });
+/** A catalogue section's outline in its own frame: x across the flanges (width), y along the web (depth).
+ *  I: the twelve corners of a wide flange; RHS: a rectangle with its wall-thick hole; CHS: two circles. */
+export function profileLoops(t) {
+  const w = t.width / 2, d = (t.shape === "CHS" ? t.width : t.depth) / 2;
+  if (t.shape === "I") { const tw = (t.web || 8) / 2, tf = t.flange || 12; return { outer: [[-w, -d], [w, -d], [w, -d + tf], [tw, -d + tf], [tw, d - tf], [w, d - tf], [w, d], [-w, d], [-w, d - tf], [-tw, d - tf], [-tw, -d + tf], [-w, -d + tf]], holes: [] }; }
+  if (t.shape === "RHS") { const k = t.thick || 6; return { outer: [[-w, -d], [w, -d], [w, d], [-w, d]], holes: k * 2 < Math.min(w, d) * 2 ? [[[-w + k, -d + k], [-w + k, d - k], [w - k, d - k], [w - k, -d + k]]] : [] }; }
+  const ring = (r, rev) => { const o = []; for (let i = 0; i < 32; i++) { const a = (rev ? -i : i) / 32 * TAU; o.push([Math.cos(a) * r, Math.sin(a) * r]); } return o; };
+  return { outer: ring(w, false), holes: t.thick && t.thick < w ? [ring(w - t.thick, true)] : [] };
+}
+/** A round beam hung from `top` as horizontal slices: [half width, half width of the bore, z0, z1] each. */
+function roundSlices(R, thick, top, n = 12) {
+  const out = [], ri = thick ? R - thick : 0;
+  for (let k = 0; k < n; k++) {
+    const z1 = top - 2 * R * k / n, z0 = top - 2 * R * (k + 1) / n, y = (z0 + z1) / 2 - (top - R);
+    const hw = Math.sqrt(Math.max(0, R * R - y * y)), hi = Math.abs(y) < ri ? Math.sqrt(ri * ri - y * y) : 0;
+    out.push([hw, hi, z0, z1]);
+  }
+  return out;
+}
 BUILDERS.Column = {
   precondition: (f) => F.type(f, "columnType") ? null : "pick a column type",
   build: (f, doc) => {
     const t = F.type(f, "columnType"), c = F.point(f, "position"), rot = F.real(f, "rotation") * Math.PI / 180;
     const z0 = levelElev(doc, f) + (F.real(f, "baseOffset") || 0), h = F.real(f, "height");
-    let path, foot;
+    let path, foot, holes = [];
     // a cruciform (Mies' chrome cross): two flat bars crossing, arm thickness `arm`
     if (t.shape === "cross") { const a = (t.arm || 40) / 2, w = t.width / 2, d = t.depth / 2; foot = [[a, -d], [a, -a], [w, -a], [w, a], [a, a], [a, d], [-a, d], [-a, a], [-w, a], [-w, -a], [-a, -a], [-a, -d]].map(p => add(c, [p[0] * Math.cos(rot) - p[1] * Math.sin(rot), p[0] * Math.sin(rot) + p[1] * Math.cos(rot)])); path = polyPath(foot); }
+    else if (t.shape === "I" || t.shape === "RHS" || t.shape === "CHS") {
+      // a catalogue section (sections.js): wide flange, rectangular hollow or circular hollow, in its own frame
+      const L = profileLoops(t), place = q => add(c, [q[0] * Math.cos(rot) - q[1] * Math.sin(rot), q[0] * Math.sin(rot) + q[1] * Math.cos(rot)]);
+      foot = L.outer.map(place); holes = L.holes.map(hl => hl.map(place));
+      path = t.shape === "CHS" ? [{ k: "A", c, r: t.width / 2, a0: 0, a1: TAU }, ...(t.thick ? [{ k: "A", c, r: t.width / 2 - t.thick, a0: 0, a1: TAU }] : [])] : [...polyPath(foot), ...holes.flatMap(hl => polyPath(hl))];
+    }
     else if (t.round) { path = [{ k: "A", c, r: t.width / 2, a0: 0, a1: TAU }]; foot = []; for (let i = 0; i < 16; i++) foot.push(add(c, [Math.cos(i / 16 * TAU) * t.width / 2, Math.sin(i / 16 * TAU) * t.width / 2])); }
     else { foot = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([x, y]) => { const p = [x * t.width / 2, y * t.depth / 2]; return add(c, [p[0] * Math.cos(rot) - p[1] * Math.sin(rot), p[0] * Math.sin(rot) + p[1] * Math.cos(rot)]); }); path = polyPath(foot); }
-    return { plan: { path, foot, material: t.material, z0, z1: z0 + h }, data: { value: h, kind: "Length",
-      refs: [{ key: "centre", kind: "point", geom: c }], props: { Height: L(h), Width: L(t.width), Depth: L(t.round ? t.width : t.depth), "Base elevation": L(z0), "Top elevation": L(z0 + h), Volume: { kind: "Volume", v: Math.abs(polyArea(foot)) * h }, TypeMark: T(t.mark || t.id) } } };
+    const area = Math.abs(polyArea(foot)) - holes.reduce((a, hl) => a + Math.abs(polyArea(hl)), 0);
+    return { plan: { path, foot, holes, material: t.material, z0, z1: z0 + h }, data: { value: h, kind: "Length",
+      refs: [{ key: "centre", kind: "point", geom: c }], props: { Height: L(h), Width: L(t.width), Depth: L(t.round ? t.width : t.depth), "Base elevation": L(z0), "Top elevation": L(z0 + h), Volume: { kind: "Volume", v: area * h }, ...(t.section ? { Section: T(t.section) } : {}), TypeMark: T(t.mark || t.id) } } };
   },
 };
 
@@ -424,8 +450,14 @@ BUILDERS.Beam = {
     const t = F.type(f, "beamType"), c = F.json(f, "axis"), top = levelElev(doc, f, "level") + F.real(f, "topOffset");
     const d = normalise(sub(c.end, c.start)), n = perp(d);
     const band = (w, z0, z1, sub_) => ({ foot: [add(c.start, mul(n, -w / 2)), add(c.end, mul(n, -w / 2)), add(c.end, mul(n, w / 2)), add(c.start, mul(n, w / 2))], z0, z1, sub: sub_, material: t.material });
-    const D = t.depth || 600, W = t.width || 300;
-    const parts = t.shape === "I" ? [band(W, top - (t.flange || 12), top, "Flange"), band(t.web || 8, top - D + (t.flange || 12), top - (t.flange || 12), "Web"), band(W, top - D, top - D + (t.flange || 12), "Flange")] : [band(W, top - D, top, "Beam")];
+    const W = t.width || 300, D = t.shape === "CHS" ? W : (t.depth || 600);
+    // a band off the axis by `off` across it: the webs of a hollow section, the slices of a round one
+    const bandAt = (w, off, z0, z1, sub_) => { const b = band(w, z0, z1, sub_); b.foot = b.foot.map(q => add(q, mul(n, off))); return b; };
+    const tk = t.thick || 6;
+    const parts = t.shape === "I" ? [band(W, top - (t.flange || 12), top, "Flange"), band(t.web || 8, top - D + (t.flange || 12), top - (t.flange || 12), "Web"), band(W, top - D, top - D + (t.flange || 12), "Flange")]
+      : t.shape === "RHS" ? [band(W, top - tk, top, "Flange"), band(W, top - D, top - D + tk, "Flange"), bandAt(tk, -(W - tk) / 2, top - D + tk, top - tk, "Web"), bandAt(tk, (W - tk) / 2, top - D + tk, top - tk, "Web")]
+      : t.shape === "CHS" ? roundSlices(W / 2, t.thick || 0, top).flatMap(([hw, hi, z0, z1]) => hi > 0 ? [bandAt(hw - hi, -(hw + hi) / 2, z0, z1, "Beam"), bandAt(hw - hi, (hw + hi) / 2, z0, z1, "Beam")] : [bandAt(2 * hw, 0, z0, z1, "Beam")])
+      : [band(W, top - D, top, "Beam")];
     const foot = band(W, 0, 0).foot, len = dist(c.start, c.end);
     return { plan: { path: polyPath(foot), foot, axis: c, z0: top - D, z1: top, parts },
       data: { value: len, kind: "Length", parts, refs: [{ key: "axis", kind: "line", geom: lineThrough(c.start, c.end) }], props: { Length: L(len), Depth: L(D), Width: L(W), "Top elevation": L(top), "Bottom elevation": L(top - D), Volume: { kind: "Volume", v: parts.reduce((s, q) => s + Math.abs(polyArea(q.foot)) * (q.z1 - q.z0), 0) }, TypeMark: T(t.mark || t.id) } } };

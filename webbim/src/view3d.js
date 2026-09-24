@@ -97,7 +97,8 @@ export class View3D {
       if (vw && !shownInView(doc, vw, f)) continue;          // Visibility/Graphics is data: the 3D view obeys it too
       const t = doc.typeOf(f), p = doc.plan(f);
       if (p && (p.mesh3d || (t === "Massing" && p.mesh))) { this.addMeshes(f, p.mesh3d || [{ positions: p.mesh.positions, index: p.mesh.index, colour: "#7fa7d8", opacity: 0.28 }], style); continue; }
-      if (p && PART_TYPES.has(t)) { this.addParts(f, t, style); continue; }
+      // a hollow column (a catalogue tube) is drawn as a part: the prism path has no holes
+      if (p && (PART_TYPES.has(t) || (t === "Column" && p.holes && p.holes.length))) { this.addParts(f, t, style); continue; }
       if (!p || (t !== "Wall" && t !== "Column")) continue;
       const id = doc.idOf(f);
       const m = one(f, p, t);
@@ -661,7 +662,7 @@ function clear3(scene) { for (const o of scene.children.slice()) { scene.remove(
 const vdot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const v3sub3 = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const PART_TYPES = new Set(["Door", "Window", "Floor", "Beam", "Generic"]);
-const PART_COLOURS = { Frame: "#eeeeec", Panel: "#9c7650", Glass: "#9fd0ee", Handle: "#b8bcc4", Sill: "#d9d6cf", Door: "#9c7650", Window: "#eeeeec", Floor: "#c9c7c1", Beam: "#8f9aa8", Generic: "#b9b2a6", Body: "#b9b2a6" };
+const PART_COLOURS = { Frame: "#eeeeec", Panel: "#9c7650", Glass: "#9fd0ee", Handle: "#b8bcc4", Sill: "#d9d6cf", Door: "#9c7650", Window: "#eeeeec", Floor: "#c9c7c1", Beam: "#8f9aa8", Column: "#8f9aa8", Generic: "#b9b2a6", Body: "#b9b2a6" };
 /** Triangles of a prism: a plan footprint between two heights, any winding. */
 /** A prism with smooth sides where its outline is a curve: caps flat, each side vertex shaded with the
  *  average of its two faces' normals unless the outline turns a real corner there (> 25°), so a spline
