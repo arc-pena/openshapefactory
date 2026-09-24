@@ -2096,6 +2096,7 @@ function wallRecord({ id, centreline, type, mounting, mountOffset, flipped, z0, 
   let curve = curveOf(centreline);
   const stack = layerStack(type, mounting, mountOffset, flipped);
   const lean = ((slope && slope.lean) || 0) * Math.PI / 180;
+  const drawn = { start: curve.start, end: curve.end };    // where the user drew it: joins find each other here
   // Inclination about the wall's centreline where it meets the top of the floor finish (the level), not
   // about its location line at its base. Rotating about a parallel axis is the same rotation followed by
   // a shift; for infinite face planes only the shift across them matters, and it is the same for every
@@ -2121,7 +2122,7 @@ function wallRecord({ id, centreline, type, mounting, mountOffset, flipped, z0, 
     id, curve, type, stack, z0, z1: z0 + height, height, lean, topSlope, fast,
     zLo: z0, zHi: z0 + height + Math.max(0, rise), zTopMin: z0 + height + Math.min(0, rise),
     a: curve.start, d: curve.type === "line" ? curve.tangentAt(0) : null, L: curve.length,
-    offsets: new Map(), stats,
+    offsets: new Map(), stats, drawn,
   };
   return rec;
 }
@@ -2636,10 +2637,11 @@ function resolveJoins(walls, rows) {
 
   for (const keys of clusters.values()) {
     if (keys.length < 2) continue;
-    const ends = keys.map(k => { const [id, e] = k.split(":"); const w = walls.get(id); return { id, e, w, p: e === "start" ? w.curve.start : w.curve.end }; });
-    const P0 = ends[0].p;
-    const far = ends.find(x => dist(x.p, P0) > JOIN_TOL);
-    if (far) { ends.forEach(x => say(x.id, `join at ${x.e} not resolved: the ends are ${Math.round(dist(far.p, P0))}mm apart, drawn as free ends`)); continue; }
+    const ends = keys.map(k => { const [id, e] = k.split(":"); const w = walls.get(id); return { id, e, w, p: e === "start" ? w.curve.start : w.curve.end, q: drawnEnd(w, e) }; });
+    // ends meet where they were drawn; a wall inclined about its centre has its line moved off that point
+    const Q0 = ends[0].q;
+    const far = ends.find(x => dist(x.q, Q0) > JOIN_TOL);
+    if (far) { ends.forEach(x => say(x.id, `join at ${x.e} not resolved: the ends are ${Math.round(dist(far.q, Q0))}mm apart, drawn as free ends`)); continue; }
     const fitted = ends.find(x => !boundaryGeom(x.w, 0));
     if (fitted) { ends.forEach(x => say(x.id, `joins on a ${fitted.w.curve.type} centreline are drawn as free ends`)); continue; }
     const row = kindOf.get(keys[0]), members = ends.map(x => ({ id: x.id, e: x.e }));
@@ -2654,7 +2656,9 @@ function resolveJoins(walls, rows) {
     const A = walls.get(j.a.of), B = walls.get(j.b.of);
     if (!A || !B) continue;
     const p = j.a.end === "start" ? A.curve.start : A.curve.end;
-    const u = uOf(B, p), off = Math.abs(sideOf(B, p));
+    // measured on B's line as drawn: B inclined about its centre has its line moved across
+    const Bd = B.drawn && B.curve.type === "line" ? Object.assign({}, B, { a: B.drawn.start }) : B;
+    const pd = drawnEnd(A, j.a.end), u = uOf(Bd, pd), off = Math.abs(sideOf(Bd, pd));
     if (off > JOIN_TOL || u < -JOIN_TOL || u > B.L + JOIN_TOL) { say(A.id, `T join onto ${B.id} not resolved: the end is ${Math.round(off)}mm off its centreline`); continue; }
     if (!boundaryGeom(A, 0) || !boundaryGeom(B, 0)) { say(A.id, `T joins on fitted curves are drawn as free ends`); continue; }
     // Which side of B does A arrive from? Probe one wall-thickness back into A.
@@ -2667,8 +2671,10 @@ function resolveJoins(walls, rows) {
   return notes;
 }
 
-function resolveNode(ends, row, say) {
-  const P = ends.map(x => x.p).reduce((a, b) => add(a, b)).map(v => v / ends.length);
+const drawnEnd = (w, e) => (w.drawn || w.curve)[e];
+
+function resolveNode(ends, row, say, P = null) {
+  P = P || ends.map(x => x.p).reduce((a, b) => add(a, b)).map(v => v / ends.length);
   for (const x of ends) {
     const t = x.e === "start" ? 0 : 1;
     const tan = x.w.curve.tangentAt(t);
@@ -2726,6 +2732,18 @@ function wallAt(w, z) {
   let m = ctx.cache.get(z); if (!m) { m = new Map(); ctx.cache.set(z, m); }
   return proxyAt(ctx, m, w, z);
 }
+/** Where walls' axes meet at a height: once leaning walls have moved across, their ends no longer
+ *  share a point, but their lines still cross — the point nearest every axis (least squares). */
+function axesMeet(ends) {
+  let a = 0, b = 0, c = 0, r0 = 0, r1 = 0;
+  for (const x of ends) {
+    const t = x.e === "start" ? 0 : 1, d = x.w.curve.tangentAt(t), n = [-d[1], d[0]], k = n[0] * x.p[0] + n[1] * x.p[1];
+    a += n[0] * n[0]; b += n[0] * n[1]; c += n[1] * n[1]; r0 += n[0] * k; r1 += n[1] * k;
+  }
+  const det = a * c - b * b;
+  if (Math.abs(det) < 1e-6 * (a * c || 1)) return null;          // parallel: the ends' average will do
+  return [(r0 * c - b * r1) / det, (a * r1 - b * r0) / det];
+}
 function proxyAt(ctx, m, w, z) {
   let p = m.get(w.id); if (p) return p;
   const leans = !!w.lean && w.curve.type === "line";
@@ -2744,7 +2762,7 @@ function proxyAt(ctx, m, w, z) {
       if (E.k === "T") out[e] = Object.assign({}, E, { through: P(E.through) });
       else if (E.k === "node" && E.node) {
         const ends = E.node.members.map(({ id, e: ee }) => { const pw = P({ id }); return { id, e: ee, w: pw, p: ee === "start" ? pw.curve.start : pw.curve.end }; });
-        resolveNode(ends, E.node.row, () => {});
+        resolveNode(ends, E.node.row, () => {}, axesMeet(ends));
         const me = ends.find(x => x.id === w.id && x.e === e);
         out[e] = me ? Object.assign(me.out, { node: E.node }) : E;
       } else out[e] = E;
@@ -17139,6 +17157,26 @@ testCase("M60", "Detail items move: Move, Rotate and drag carry a repeating deta
   const draggable = [rd, fr, mt].every(id => geomKey(doc.element(id), doc));
   return R(moved && turned && copied && draggable, "path, sketch, leader and tag all moved 500,200; the arc turned 90°; copy leaves the original; all three draggable",
     `moved ${moved}, turned ${turned}, copied ${copied}, draggable ${draggable}`);
+});
+
+testCase("M61", "Inclined walls about their centre, leaning opposite ways, still join: the ends meet where they were drawn, and at the top the mitres are where the tilted planes cross", () => {
+  const { doc } = fixture();
+  // the user's four-wall run: W2 leans +5°, W3 −15°, both about the centre; W1 and W4 upright
+  wall(doc, "W1", [-2000, 3700], [-2300, 6900], "T-300"); wall(doc, "W2", [-2300, 6900], [3000, 6500], "T-300", { slope: { top: 0, lean: 5, pivot: "centre" } });
+  wall(doc, "W3", [3000, 6500], [6500, 3900], "T-300", { slope: { top: 0, lean: -15, pivot: "centre" } }); wall(doc, "W4", [6500, 3900], [2900, 2800], "T-300");
+  joinEE(doc, "W1", "end", "W2", "start"); joinEE(doc, "W2", "end", "W3", "start"); joinEE(doc, "W3", "end", "W4", "start"); doc.regenerate();
+  const P = id => doc.plan(doc.element(id)), pc = id => P(id).pieces[0];
+  const same = (A, B) => A.every(p => B.some(q => dist(p, q) < 0.5));
+  const cap = (id, e, top) => { const f = top ? pc(id).topFoot || pc(id).foot : pc(id).foot; return e === "end" ? [f[1], f[2]] : [f[0], f[3]]; };
+  const pairs = [["W1", "W2"], ["W2", "W3"], ["W3", "W4"]];
+  const joined = ["W1", "W2", "W3", "W4"].every(id => !P(id).joinNotes.length);
+  const floor = pairs.every(([a, b]) => same(cap(a, "end", false), cap(b, "start", false)));
+  const top = pairs.every(([a, b]) => same(cap(a, "end", true), cap(b, "start", true)));
+  // the W2/W3 corner at the top lies on both tilted outer planes: check it against W3's leaning face
+  const w3 = P("W3"), S3 = wallSurfaces(w3, w3.stack.s[0], w3.stack.s[w3.stack.s.length - 1]), c = cap("W2", "end", true);
+  const onPlane = c.some(p => Math.abs(S3.outer.n[0] * p[0] + S3.outer.n[1] * p[1] + S3.outer.n[2] * w3.z1 - S3.outer.c) < 0.5);
+  return R(joined && floor && top && onPlane, "all three joins resolve; each pair's end faces coincide at the floor and at the top; the top corner lies on W3's tilted face",
+    `joins ${joined} (${["W1", "W2", "W3", "W4"].map(id => P(id).joinNotes.join("")).join("|")}), floor ${floor}, top ${top}, on plane ${onPlane}`);
 });
 
 // ===== ui_util.js =====

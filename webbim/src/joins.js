@@ -67,10 +67,11 @@ export function resolveJoins(walls, rows) {
 
   for (const keys of clusters.values()) {
     if (keys.length < 2) continue;
-    const ends = keys.map(k => { const [id, e] = k.split(":"); const w = walls.get(id); return { id, e, w, p: e === "start" ? w.curve.start : w.curve.end }; });
-    const P0 = ends[0].p;
-    const far = ends.find(x => dist(x.p, P0) > JOIN_TOL);
-    if (far) { ends.forEach(x => say(x.id, `join at ${x.e} not resolved: the ends are ${Math.round(dist(far.p, P0))}mm apart, drawn as free ends`)); continue; }
+    const ends = keys.map(k => { const [id, e] = k.split(":"); const w = walls.get(id); return { id, e, w, p: e === "start" ? w.curve.start : w.curve.end, q: drawnEnd(w, e) }; });
+    // ends meet where they were drawn; a wall inclined about its centre has its line moved off that point
+    const Q0 = ends[0].q;
+    const far = ends.find(x => dist(x.q, Q0) > JOIN_TOL);
+    if (far) { ends.forEach(x => say(x.id, `join at ${x.e} not resolved: the ends are ${Math.round(dist(far.q, Q0))}mm apart, drawn as free ends`)); continue; }
     const fitted = ends.find(x => !boundaryGeom(x.w, 0));
     if (fitted) { ends.forEach(x => say(x.id, `joins on a ${fitted.w.curve.type} centreline are drawn as free ends`)); continue; }
     const row = kindOf.get(keys[0]), members = ends.map(x => ({ id: x.id, e: x.e }));
@@ -85,7 +86,9 @@ export function resolveJoins(walls, rows) {
     const A = walls.get(j.a.of), B = walls.get(j.b.of);
     if (!A || !B) continue;
     const p = j.a.end === "start" ? A.curve.start : A.curve.end;
-    const u = uOf(B, p), off = Math.abs(sideOf(B, p));
+    // measured on B's line as drawn: B inclined about its centre has its line moved across
+    const Bd = B.drawn && B.curve.type === "line" ? Object.assign({}, B, { a: B.drawn.start }) : B;
+    const pd = drawnEnd(A, j.a.end), u = uOf(Bd, pd), off = Math.abs(sideOf(Bd, pd));
     if (off > JOIN_TOL || u < -JOIN_TOL || u > B.L + JOIN_TOL) { say(A.id, `T join onto ${B.id} not resolved: the end is ${Math.round(off)}mm off its centreline`); continue; }
     if (!boundaryGeom(A, 0) || !boundaryGeom(B, 0)) { say(A.id, `T joins on fitted curves are drawn as free ends`); continue; }
     // Which side of B does A arrive from? Probe one wall-thickness back into A.
@@ -98,8 +101,10 @@ export function resolveJoins(walls, rows) {
   return notes;
 }
 
-function resolveNode(ends, row, say) {
-  const P = ends.map(x => x.p).reduce((a, b) => add(a, b)).map(v => v / ends.length);
+const drawnEnd = (w, e) => (w.drawn || w.curve)[e];
+
+function resolveNode(ends, row, say, P = null) {
+  P = P || ends.map(x => x.p).reduce((a, b) => add(a, b)).map(v => v / ends.length);
   for (const x of ends) {
     const t = x.e === "start" ? 0 : 1;
     const tan = x.w.curve.tangentAt(t);
@@ -157,6 +162,18 @@ export function wallAt(w, z) {
   let m = ctx.cache.get(z); if (!m) { m = new Map(); ctx.cache.set(z, m); }
   return proxyAt(ctx, m, w, z);
 }
+/** Where walls' axes meet at a height: once leaning walls have moved across, their ends no longer
+ *  share a point, but their lines still cross — the point nearest every axis (least squares). */
+function axesMeet(ends) {
+  let a = 0, b = 0, c = 0, r0 = 0, r1 = 0;
+  for (const x of ends) {
+    const t = x.e === "start" ? 0 : 1, d = x.w.curve.tangentAt(t), n = [-d[1], d[0]], k = n[0] * x.p[0] + n[1] * x.p[1];
+    a += n[0] * n[0]; b += n[0] * n[1]; c += n[1] * n[1]; r0 += n[0] * k; r1 += n[1] * k;
+  }
+  const det = a * c - b * b;
+  if (Math.abs(det) < 1e-6 * (a * c || 1)) return null;          // parallel: the ends' average will do
+  return [(r0 * c - b * r1) / det, (a * r1 - b * r0) / det];
+}
 function proxyAt(ctx, m, w, z) {
   let p = m.get(w.id); if (p) return p;
   const leans = !!w.lean && w.curve.type === "line";
@@ -175,7 +192,7 @@ function proxyAt(ctx, m, w, z) {
       if (E.k === "T") out[e] = Object.assign({}, E, { through: P(E.through) });
       else if (E.k === "node" && E.node) {
         const ends = E.node.members.map(({ id, e: ee }) => { const pw = P({ id }); return { id, e: ee, w: pw, p: ee === "start" ? pw.curve.start : pw.curve.end }; });
-        resolveNode(ends, E.node.row, () => {});
+        resolveNode(ends, E.node.row, () => {}, axesMeet(ends));
         const me = ends.find(x => x.id === w.id && x.e === e);
         out[e] = me ? Object.assign(me.out, { node: E.node }) : E;
       } else out[e] = E;

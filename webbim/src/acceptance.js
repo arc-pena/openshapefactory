@@ -1773,3 +1773,23 @@ testCase("M60", "Detail items move: Move, Rotate and drag carry a repeating deta
   return R(moved && turned && copied && draggable, "path, sketch, leader and tag all moved 500,200; the arc turned 90°; copy leaves the original; all three draggable",
     `moved ${moved}, turned ${turned}, copied ${copied}, draggable ${draggable}`);
 });
+
+testCase("M61", "Inclined walls about their centre, leaning opposite ways, still join: the ends meet where they were drawn, and at the top the mitres are where the tilted planes cross", () => {
+  const { doc } = fixture();
+  // the user's four-wall run: W2 leans +5°, W3 −15°, both about the centre; W1 and W4 upright
+  wall(doc, "W1", [-2000, 3700], [-2300, 6900], "T-300"); wall(doc, "W2", [-2300, 6900], [3000, 6500], "T-300", { slope: { top: 0, lean: 5, pivot: "centre" } });
+  wall(doc, "W3", [3000, 6500], [6500, 3900], "T-300", { slope: { top: 0, lean: -15, pivot: "centre" } }); wall(doc, "W4", [6500, 3900], [2900, 2800], "T-300");
+  joinEE(doc, "W1", "end", "W2", "start"); joinEE(doc, "W2", "end", "W3", "start"); joinEE(doc, "W3", "end", "W4", "start"); doc.regenerate();
+  const P = id => doc.plan(doc.element(id)), pc = id => P(id).pieces[0];
+  const same = (A, B) => A.every(p => B.some(q => dist(p, q) < 0.5));
+  const cap = (id, e, top) => { const f = top ? pc(id).topFoot || pc(id).foot : pc(id).foot; return e === "end" ? [f[1], f[2]] : [f[0], f[3]]; };
+  const pairs = [["W1", "W2"], ["W2", "W3"], ["W3", "W4"]];
+  const joined = ["W1", "W2", "W3", "W4"].every(id => !P(id).joinNotes.length);
+  const floor = pairs.every(([a, b]) => same(cap(a, "end", false), cap(b, "start", false)));
+  const top = pairs.every(([a, b]) => same(cap(a, "end", true), cap(b, "start", true)));
+  // the W2/W3 corner at the top lies on both tilted outer planes: check it against W3's leaning face
+  const w3 = P("W3"), S3 = wallSurfaces(w3, w3.stack.s[0], w3.stack.s[w3.stack.s.length - 1]), c = cap("W2", "end", true);
+  const onPlane = c.some(p => Math.abs(S3.outer.n[0] * p[0] + S3.outer.n[1] * p[1] + S3.outer.n[2] * w3.z1 - S3.outer.c) < 0.5);
+  return R(joined && floor && top && onPlane, "all three joins resolve; each pair's end faces coincide at the floor and at the top; the top corner lies on W3's tilted face",
+    `joins ${joined} (${["W1", "W2", "W3", "W4"].map(id => P(id).joinNotes.join("")).join("|")}), floor ${floor}, top ${top}, on plane ${onPlane}`);
+});

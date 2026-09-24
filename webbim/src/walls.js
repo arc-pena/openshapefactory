@@ -117,6 +117,7 @@ export function wallRecord({ id, centreline, type, mounting, mountOffset, flippe
   let curve = curveOf(centreline);
   const stack = layerStack(type, mounting, mountOffset, flipped);
   const lean = ((slope && slope.lean) || 0) * Math.PI / 180;
+  const drawn = { start: curve.start, end: curve.end };    // where the user drew it: joins find each other here
   // Inclination about the wall's centreline where it meets the top of the floor finish (the level), not
   // about its location line at its base. Rotating about a parallel axis is the same rotation followed by
   // a shift; for infinite face planes only the shift across them matters, and it is the same for every
@@ -142,7 +143,7 @@ export function wallRecord({ id, centreline, type, mounting, mountOffset, flippe
     id, curve, type, stack, z0, z1: z0 + height, height, lean, topSlope, fast,
     zLo: z0, zHi: z0 + height + Math.max(0, rise), zTopMin: z0 + height + Math.min(0, rise),
     a: curve.start, d: curve.type === "line" ? curve.tangentAt(0) : null, L: curve.length,
-    offsets: new Map(), stats,
+    offsets: new Map(), stats, drawn,
   };
   return rec;
 }
