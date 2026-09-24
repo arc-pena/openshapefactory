@@ -21423,7 +21423,8 @@ class View2D {
       this.hudInput = true; this.hud.hidden = false; this.hud.textContent = `${tool === "rotate" ? "angle" : "distance"} ${this.typed} ${tool === "rotate" ? "°" : ""} ⏎`;
       return true;
     }
-    if (e.key === "Escape") { if (T.corner) { T.corner = null; this.hideHud(); this.draw(); return true; } if (T.pts.length || T.refs || T.ghost) { T.pts = []; T.refs = []; T.ghost = null; T.centre = null; this.hideHud(); this.draw(); return true; } return false; }
+    // Esc drops what is half-done and lets the window's handler end the command (one press, back to Select)
+    if (e.key === "Escape") { T.corner = null; T.pts = []; T.refs = []; T.ghost = null; T.centre = null; this.typed = ""; this.hudInput = null; this.hideHud(); this.draw(); return false; }
     if (tool === "floor" && T.pts.length && e.key === "Enter") { this.finishFloor(); return true; }
     if (tool === "wall" && T.pts.length) {
       if (e.key === "Enter" && !this.typed) { this.finishWall(false); return true; }
@@ -21632,7 +21633,7 @@ class View3D {
     this.sun = new T.DirectionalLight(0xffffff, 0); this.sun.castShadow = true; this.sun.shadow.mapSize.set(4096, 4096);
     this.sun.shadow.bias = -0.0002; this.sun.shadow.normalBias = 2; this.scene.add(this.sun); this.scene.add(this.sun.target);
     this.ambient = new T.AmbientLight(0xffffff, 0.58); this.scene.add(this.ambient);
-    this.key = new T.DirectionalLight(0xffffff, 0.72); this.key.position.set(-0.6, -0.8, 1.2); this.scene.add(this.key);
+    this.keyLight = new T.DirectionalLight(0xffffff, 0.72); this.keyLight.position.set(-0.6, -0.8, 1.2); this.scene.add(this.keyLight);
     this.fillLight = new T.DirectionalLight(0xffffff, 0.28); this.fillLight.position.set(0.8, 0.4, 0.5); this.scene.add(this.fillLight);
 
     this.ground = new T.Mesh(new T.PlaneGeometry(1, 1), new T.ShadowMaterial({ opacity: 0.3 })); this.ground.receiveShadow = true; this.ground.visible = false; this.ground.userData.noPick = true; this.scene.add(this.ground);
@@ -22192,7 +22193,7 @@ class View3D {
     this.refresh();
   }
   key(e) {
-    if (e.key === "Escape" && this.tool.pts.length) { this.tool.pts = []; this.tool.cursor = null; this.render(); return true; }
+    if (e.key === "Escape") { this.tool.pts = []; this.tool.cursor = null; this.render(); return false; }      // and the window ends the command
     if (this.app.tool === "wall" && this.tool.pts.length) {
       if (e.key === "Enter") { this.finishWall(false); return true; }
       if (e.key.toLowerCase() === "c" && this.tool.pts.length >= 3) { this.finishWall(true); return true; }
@@ -22240,7 +22241,7 @@ class View3D {
     const key = JSON.stringify(sun) + "|" + this.style + "|" + this.builtKey;
     if (this.sunKey === key) return; this.sunKey = key;
     this.sun.intensity = on ? 0.95 : 0; this.sun.castShadow = on; this.ground.visible = on;
-    this.key.intensity = on ? 0 : 0.72; this.fillLight.intensity = on ? 0.12 : 0.28;
+    this.keyLight.intensity = on ? 0 : 0.72; this.fillLight.intensity = on ? 0.12 : 0.28;
     // lit = ambient + sun·cosθ; in shadow = ambient: the opacity sets how far the shadow falls below the light
     this.ambient.intensity = on ? Math.max(0.25, 0.95 * (1 - sun.opacity) + 0.15) : 0.58;
     // shaders are compiled with or without the shadow code: switching needs them rebuilt
@@ -22634,7 +22635,8 @@ app.setTool = k => {
   if (!canUseTool(k)) { if (PLACE_TOOLS.has(k) || MODIFY_TOOLS.has(k)) { const plan = firstOf("PlanView"); if (plan) app.openView(plan); } }
   if (PLACE_TOOLS.has(k)) app.selection.clear(); // placing starts from a clean selection, as in Revit
   app.tool = k; app.pickMode = null; app.lastCommand = k !== "select" ? k : app.lastCommand;
-  const v = app.views.get(app.activeView); if (v && v.tool) { v.tool.pts = []; v.tool.refs = []; v.tool.preview = null; v.tool.ghost = null; v.tool.centre = null; v.tool.corner = null; }
+  // every view drops what a tool left half-done: its points, its typed length, its heads-up
+  for (const v of app.views.values()) if (v && v.tool) { v.tool.pts = []; v.tool.refs = []; v.tool.preview = null; v.tool.ghost = null; v.tool.centre = null; v.tool.corner = null; v.tool.cursor = null; v.typed = ""; v.hudInput = null; if (v.hideHud) v.hideHud(); else if (v.hud) v.hud.hidden = true; if (v.draw) v.draw(); else if (v.render) v.render(); }
   if (k !== "select" && app.ribbonTab === "__context" && !MODIFY_TOOLS.has(k)) { app.ribbonTab = app.ribbonAuto || "Architecture"; }
   // the wall tool brings up its own tab (Modify | Place Wall), with the sketcher's draw shapes
   if (k === "wall") { app.ribbonAuto = app.ribbonTab === "__context" ? app.ribbonAuto : app.ribbonTab; app.ribbonTab = "__context"; }
@@ -23670,7 +23672,13 @@ app.kernelMesh = async ({ format, name, data, encoding }) => { const b = await b
 const SHORTCUTS = Object.fromEntries(Object.entries(COMMANDS).filter(([, c]) => c.key).map(([id, c]) => [c.key.toUpperCase(), id]));
 let keyBuf = "", keyTimer = null;
 window.addEventListener("keydown", e => {
-  const t = e.target; if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
+  const t = e.target;
+  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) {
+    // Esc in a field of the options bar, the ribbon or the properties still ends the command: the field lets go
+    // first (a dialog's own fields are the dialog's: it closes itself)
+    if (e.key !== "Escape" || t.closest(".dialog")) return;
+    t.blur();
+  }
   const mod = e.ctrlKey || e.metaKey;
   if (app.sketch) {
     // sketch mode: its own undo, its own keys and a few of Revit's two-letter shortcuts
@@ -23696,7 +23704,7 @@ window.addEventListener("keydown", e => {
     keyBuf = ""; if (openMenu) { closeMenus(); return; }
     if (app.pickMode) { app.endPick(); return; }
     if (app.sketch) { app.sketch.escape(); return; }
-    if (app.tool !== "select") { app.setTool("select"); return; }
+    if (app.tool !== "select") { app.setTool("select"); app.say("Select", "note"); return; }
     if (app.selection.size) app.select([]); return;
   }
   if ((e.key === "Delete" || e.key === "Backspace") && app.selection.size && app.activeView !== "__graph") { e.preventDefault(); deleteSelection(); return; }

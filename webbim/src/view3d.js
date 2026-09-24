@@ -62,7 +62,7 @@ export class View3D {
     this.sun = new T.DirectionalLight(0xffffff, 0); this.sun.castShadow = true; this.sun.shadow.mapSize.set(4096, 4096);
     this.sun.shadow.bias = -0.0002; this.sun.shadow.normalBias = 2; this.scene.add(this.sun); this.scene.add(this.sun.target);
     this.ambient = new T.AmbientLight(0xffffff, 0.58); this.scene.add(this.ambient);
-    this.key = new T.DirectionalLight(0xffffff, 0.72); this.key.position.set(-0.6, -0.8, 1.2); this.scene.add(this.key);
+    this.keyLight = new T.DirectionalLight(0xffffff, 0.72); this.keyLight.position.set(-0.6, -0.8, 1.2); this.scene.add(this.keyLight);
     this.fillLight = new T.DirectionalLight(0xffffff, 0.28); this.fillLight.position.set(0.8, 0.4, 0.5); this.scene.add(this.fillLight);
 
     this.ground = new T.Mesh(new T.PlaneGeometry(1, 1), new T.ShadowMaterial({ opacity: 0.3 })); this.ground.receiveShadow = true; this.ground.visible = false; this.ground.userData.noPick = true; this.scene.add(this.ground);
@@ -622,7 +622,7 @@ export class View3D {
     this.refresh();
   }
   key(e) {
-    if (e.key === "Escape" && this.tool.pts.length) { this.tool.pts = []; this.tool.cursor = null; this.render(); return true; }
+    if (e.key === "Escape") { this.tool.pts = []; this.tool.cursor = null; this.render(); return false; }      // and the window ends the command
     if (this.app.tool === "wall" && this.tool.pts.length) {
       if (e.key === "Enter") { this.finishWall(false); return true; }
       if (e.key.toLowerCase() === "c" && this.tool.pts.length >= 3) { this.finishWall(true); return true; }
@@ -670,7 +670,7 @@ export class View3D {
     const key = JSON.stringify(sun) + "|" + this.style + "|" + this.builtKey;
     if (this.sunKey === key) return; this.sunKey = key;
     this.sun.intensity = on ? 0.95 : 0; this.sun.castShadow = on; this.ground.visible = on;
-    this.key.intensity = on ? 0 : 0.72; this.fillLight.intensity = on ? 0.12 : 0.28;
+    this.keyLight.intensity = on ? 0 : 0.72; this.fillLight.intensity = on ? 0.12 : 0.28;
     // lit = ambient + sun·cosθ; in shadow = ambient: the opacity sets how far the shadow falls below the light
     this.ambient.intensity = on ? Math.max(0.25, 0.95 * (1 - sun.opacity) + 0.15) : 0.58;
     // shaders are compiled with or without the shadow code: switching needs them rebuilt

@@ -1131,7 +1131,8 @@ export class View2D {
       this.hudInput = true; this.hud.hidden = false; this.hud.textContent = `${tool === "rotate" ? "angle" : "distance"} ${this.typed} ${tool === "rotate" ? "°" : ""} ⏎`;
       return true;
     }
-    if (e.key === "Escape") { if (T.corner) { T.corner = null; this.hideHud(); this.draw(); return true; } if (T.pts.length || T.refs || T.ghost) { T.pts = []; T.refs = []; T.ghost = null; T.centre = null; this.hideHud(); this.draw(); return true; } return false; }
+    // Esc drops what is half-done and lets the window's handler end the command (one press, back to Select)
+    if (e.key === "Escape") { T.corner = null; T.pts = []; T.refs = []; T.ghost = null; T.centre = null; this.typed = ""; this.hudInput = null; this.hideHud(); this.draw(); return false; }
     if (tool === "floor" && T.pts.length && e.key === "Enter") { this.finishFloor(); return true; }
     if (tool === "wall" && T.pts.length) {
       if (e.key === "Enter" && !this.typed) { this.finishWall(false); return true; }

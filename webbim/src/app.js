@@ -268,7 +268,8 @@ app.setTool = k => {
   if (!canUseTool(k)) { if (PLACE_TOOLS.has(k) || MODIFY_TOOLS.has(k)) { const plan = firstOf("PlanView"); if (plan) app.openView(plan); } }
   if (PLACE_TOOLS.has(k)) app.selection.clear(); // placing starts from a clean selection, as in Revit
   app.tool = k; app.pickMode = null; app.lastCommand = k !== "select" ? k : app.lastCommand;
-  const v = app.views.get(app.activeView); if (v && v.tool) { v.tool.pts = []; v.tool.refs = []; v.tool.preview = null; v.tool.ghost = null; v.tool.centre = null; v.tool.corner = null; }
+  // every view drops what a tool left half-done: its points, its typed length, its heads-up
+  for (const v of app.views.values()) if (v && v.tool) { v.tool.pts = []; v.tool.refs = []; v.tool.preview = null; v.tool.ghost = null; v.tool.centre = null; v.tool.corner = null; v.tool.cursor = null; v.typed = ""; v.hudInput = null; if (v.hideHud) v.hideHud(); else if (v.hud) v.hud.hidden = true; if (v.draw) v.draw(); else if (v.render) v.render(); }
   if (k !== "select" && app.ribbonTab === "__context" && !MODIFY_TOOLS.has(k)) { app.ribbonTab = app.ribbonAuto || "Architecture"; }
   // the wall tool brings up its own tab (Modify | Place Wall), with the sketcher's draw shapes
   if (k === "wall") { app.ribbonAuto = app.ribbonTab === "__context" ? app.ribbonAuto : app.ribbonTab; app.ribbonTab = "__context"; }
@@ -1304,7 +1305,13 @@ app.kernelMesh = async ({ format, name, data, encoding }) => { const b = await b
 const SHORTCUTS = Object.fromEntries(Object.entries(COMMANDS).filter(([, c]) => c.key).map(([id, c]) => [c.key.toUpperCase(), id]));
 let keyBuf = "", keyTimer = null;
 window.addEventListener("keydown", e => {
-  const t = e.target; if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
+  const t = e.target;
+  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) {
+    // Esc in a field of the options bar, the ribbon or the properties still ends the command: the field lets go
+    // first (a dialog's own fields are the dialog's: it closes itself)
+    if (e.key !== "Escape" || t.closest(".dialog")) return;
+    t.blur();
+  }
   const mod = e.ctrlKey || e.metaKey;
   if (app.sketch) {
     // sketch mode: its own undo, its own keys and a few of Revit's two-letter shortcuts
@@ -1330,7 +1337,7 @@ window.addEventListener("keydown", e => {
     keyBuf = ""; if (openMenu) { closeMenus(); return; }
     if (app.pickMode) { app.endPick(); return; }
     if (app.sketch) { app.sketch.escape(); return; }
-    if (app.tool !== "select") { app.setTool("select"); return; }
+    if (app.tool !== "select") { app.setTool("select"); app.say("Select", "note"); return; }
     if (app.selection.size) app.select([]); return;
   }
   if ((e.key === "Delete" || e.key === "Backspace") && app.selection.size && app.activeView !== "__graph") { e.preventDefault(); deleteSelection(); return; }
