@@ -7219,8 +7219,8 @@ declare({ type: "Floor", guid: "wb-0401", category: "IfcSlab", kind: "floor", id
   args: [ json("boundary", "Boundary", [[0, 0], [6000, 0], [6000, 4000], [0, 4000]]), ref("floorType", "Type", ["floorType"]), ref("level", "Level", ["level"]),
           real("heightOffset", "Height offset from level", 0, -10000, 10000, 1, "mm", { group: "Constraints" }),
           json("sketch", "Boundary sketch", null, { group: "Constraints" }) ],
-  // a sketched floor is edited in its sketch (Edit Boundary), where its loops stay closed; a plain one by its corners
-  handles: (f) => { if (hasSketch(F.json(f, "sketch"))) return []; const b = F.json(f, "boundary") || []; return b.map((p, i) => ({ key: "v" + i, at: p, constraint: "free2d", writes: `boundary.${i}` })); } });
+  // no grips: a floor's boundary is edited only in its sketch (Edit Boundary), where its loops stay closed
+  handles: () => [] });
 const hasSketch = s => !!(s && Array.isArray(s.elements) && s.elements.length);
 /** A floor's areas: the sketch's closed loops with their holes, or the plain boundary. */
 function floorRegions(f) {
@@ -9606,7 +9606,9 @@ const HANDLERS = {
       if (hit) { doc.setArg(g, lk, { ref: doc.idOf(hit) }); doc.setArg(g, ok, 0); }
       else doc.setArg(g, ok, z - (lv ? elevOf(lv) : 0));
     };
-    const lvIds = ids.filter(id => doc.typeOf(doc.element(id)) === "Level"), bodies = ids.filter(id => HOST[doc.typeOf(doc.element(id))]);
+    const sketched = o.copy ? [] : ids.filter(id => sketchBound(doc.typeOf(doc.element(id))));
+    if (sketched.length && sketched.length === ids.length) throw new Error(sketchOnly(sketched) + " (Copy still works; its height is its level and offset)");
+    const lvIds = ids.filter(id => doc.typeOf(doc.element(id)) === "Level"), bodies = ids.filter(id => HOST[doc.typeOf(doc.element(id))] && !sketched.includes(id));
     const made = [];
     // doors, windows and openings: along their wall by the sideways part, sill up or down by dz; a copy
     // brings its own opening (a filler never shares one)
@@ -9645,7 +9647,7 @@ const HANDLERS = {
       shift(g, lk, ok);
       if (t === "Wall" && F.refId(g, "topLevel")) shift(g, "topLevel", "topOffset");     // a bound wall keeps its height
     }
-    return { copied: o.copy ? made : undefined, moved: o.copy ? undefined : ids, ids: made };
+    return { copied: o.copy ? made : undefined, moved: o.copy ? undefined : ids.filter(id => !sketched.includes(id)), ids: made, said: sketched.length ? sketchOnly(sketched) + " - left where it is" : undefined };
   },
   /** Trim/Extend to Corner (wall fillet): two walls picked in plan are trimmed or extended to where
    *  their lines cross, and joined there - so they are guaranteed to meet. The part of each wall on the
@@ -9889,11 +9891,12 @@ const HANDLERS = {
     if (!T) throw new Error("transform needs move, rotate or mirror");
     const skipped = [];
     if (o.copy) return copyElements(doc, ids, T);
-    const before = new Map(), pinned = [];
+    const before = new Map(), pinned = [], sketched = [];
     for (const id of ids) {
       const f = doc.element(id), k = geomKey(f, doc);
       // a pinned element stays where it is: Move, Rotate, Mirror and dragging all leave it
       if (isPinned(doc, f)) { pinned.push(id); continue; }
+      if (sketchBound(doc.typeOf(f))) { sketched.push(id); continue; }
       if (doc.typeOf(f) === "CADImport") {
         // an import moves by its origin: the offset follows the transform, a rotation turns it too
         const o0 = [F.real(f, "offsetX") || 0, F.real(f, "offsetY") || 0], o1 = T.P(o0);
@@ -9915,13 +9918,15 @@ const HANDLERS = {
     }
     followJoins(doc, new Set(ids), before);
     // padlocked dimensions hold: what is locked to the moved elements comes along (§10.5)
-    const movedIds = ids.filter(id => !skipped.includes(id) && !pinned.includes(id));
+    const movedIds = ids.filter(id => !skipped.includes(id) && !pinned.includes(id) && !sketched.includes(id));
+    if (sketched.length && !movedIds.length) throw new Error(sketchOnly(sketched));
     if (movedIds.length) {
       const res = propagate(doc, movedIds);
       if (res.conflicts.length) return { conflicts: res.conflicts, error: res.conflicts.map(c => c.say).join("; ") };
       for (const [id, cl] of res.set) if (!movedIds.includes(id)) { const g = doc.element(id), bw = doc.typeOf(g) === "Wall" ? clone(doc.argValue(g, "centreline")) : null; doc.setArg(g, geomKey(g, doc), cl); if (bw) followJoins(doc, new Set([id]), new Map([[id, bw]])); movedIds.push(id); }
     }
     if (pinned.length && !movedIds.length && ids.every(id => pinned.includes(id) || skipped.includes(id))) throw new Error(`${pinned.join(", ")} ${pinned.length > 1 ? "are" : "is"} pinned - unpin ${pinned.length > 1 ? "them" : "it"} to move (UP, or the pin)`);
+    if (sketched.length) return { moved: movedIds, said: sketchOnly(sketched) + " - left where it is" };
     return { moved: movedIds, said: pinned.length ? `${pinned.join(", ")} pinned: left where ${pinned.length > 1 ? "they are" : "it is"}` : skipped.length ? `${skipped.join(", ")} move with their host — drag their handle instead` : undefined };
   },
   /** Node positions ride in the file, so undo restores layout too. */
@@ -9931,6 +9936,7 @@ const HANDLERS = {
   drag(doc, o) {
     const f = doc.element(o.id);
     if (isPinned(doc, f)) throw new Error(`${o.id} is pinned - unpin it to move it (UP, or click its pin)`);
+    if (sketchBound(doc.typeOf(f)) && /^boundary\b/.test(o.key)) throw new Error(sketchOnly([o.id]));
     // an outline moved whole by its centre grip
     if (o.key === "boundary.@centre") { const b = clone(doc.argValue(f, "boundary")), c = b.reduce((a, p) => add(a, p), [0, 0]).map(v => v / b.length), d = sub(o.value, c); doc.setArg(f, "boundary", b.map(p => [Math.round(p[0] + d[0]), Math.round(p[1] + d[1])]));
       const m = doc.argValue(f, "mesh"); if (m && m.frame) doc.setArg(f, "mesh", Object.assign({}, m, { frame: moveFrame(m.frame, p => [p[0] + d[0], p[1] + d[1]]) })); return {}; }
@@ -10393,6 +10399,11 @@ function solveFor(doc, C, fm, mk, gm, fo, ok, go) {
 }
 
 /** Is this element pinned? Only what declares a Pinned argument can be. */
+/** A slab's outline belongs to its sketch: it changes there (Edit Boundary), never by a drag, Move, Rotate or
+ *  Mirror in plan, 3D or elevation - a slab dragged by accident off its walls is a model error nobody sees.
+ *  Copies are still made (Copy, paste); its height changes by its level and offset. */
+const sketchBound = t => t === "Floor";
+const sketchOnly = ids => `${ids.join(", ")}: a slab's boundary is edited only in its sketch - Edit Boundary, or double-click it`;
 function isPinned(doc, f) { const decl = f && doc.declOf(f); return !!(decl && decl.args.some(a => a.key === "pinned") && F.bool(f, "pinned")); }
 
 // ===== scene.js =====
@@ -17770,7 +17781,7 @@ testCase("M69", "Everything that drives an element is a reference: a beam's side
     JSON.stringify({ refsOk, m1, m2, m3, foot, held, r: r.error || "", beam: doc.argValue(doc.element("B"), "axis") }));
 });
 
-testCase("M70", "In elevation and section: a level copied up is a new level with its own plan; a slab copied up a storey lands on that level (re-hosted, no offset), moved part-way keeps its level with an offset; a door copied brings its own opening, its sill raised and slid along the wall", () => {
+testCase("M70", "In elevation and section: a level copied up is a new level with its own plan; a slab copied up a storey lands on that level (re-hosted, no offset), a beam moved part-way keeps its level with an offset; a door copied brings its own opening, its sill raised and slid along the wall", () => {
   const { doc, ed } = fixture();
   ed.apply({ op: "set", id: "L0", key: "elevation", value: 0 });
   wall(doc, "A", [0, 0], [6000, 0], "T-300");
@@ -17784,14 +17795,40 @@ testCase("M70", "In elevation and section: a level copied up is a new level with
   const lvOk = r1.ok && nLv() === lv0 + 1 && nPlan() === pl0 + 1 && F.real(doc.element(newLv), "elevation") === 3200;
   const r2 = ed.apply({ op: "lift", ids: ["FL"], dz: 3200, copy: true }), fl2 = r2.copied.find(id => doc.typeOf(doc.element(id)) === "Floor");
   const rehost = r2.ok && F.refId(doc.element(fl2), "level") === newLv && doc.argValue(doc.element(fl2), "heightOffset") === 0 && F.refId(doc.element("FL"), "level") === "L0";
-  ed.apply({ op: "lift", ids: ["FL"], dz: 1500 });
-  const part = F.refId(doc.element("FL"), "level") === "L0" && doc.argValue(doc.element("FL"), "heightOffset") === 1500;
+  ed.apply({ op: "add", element: { id: "B", type: "Beam", args: { axis: { type: "line", start: [0, 2000], end: [6000, 2000] }, beamType: { ref: "T-UB406" }, level: { ref: "L0" }, topOffset: 3000 } } });
+  ed.apply({ op: "lift", ids: ["B"], dz: 1500 });
+  const part = F.refId(doc.element("B"), "level") === "L0" && doc.argValue(doc.element("B"), "topOffset") === 4500;
   const n0 = doc.elements().filter(f => doc.typeOf(f) === "Opening").length;
   const r3 = ed.apply({ op: "lift", ids: ["D"], dz: 300, copy: true, move: [700, 0] });
   const op2 = r3.copied.find(id => doc.typeOf(doc.element(id)) === "Opening"), pr = op2 && doc.argValue(doc.element(op2), "profile");
   const door = r3.ok && doc.elements().filter(f => doc.typeOf(f) === "Opening").length === n0 + 1 && pr && pr.at === 2700 && pr.sill === 300 && doc.argValue(doc.element("OP"), "profile").at === 2000;
-  return R(lvOk && rehost && part && door, "new level at +3200 with a plan; the slab copy hosted on it with no offset; the original moved +1500 keeps L0 with a 1500 offset; the door copy in a new opening at 2700, sill 300; the original untouched",
+  return R(lvOk && rehost && part && door, "new level at +3200 with a plan; the slab copy hosted on it with no offset; the beam moved +1500 keeps L0 with a 4500 offset; the door copy in a new opening at 2700, sill 300; the original untouched",
     JSON.stringify({ lvOk, rehost, part, door, pr }));
+});
+testCase("M71", "A slab's boundary is edited only in its sketch: Move, Rotate, Mirror, a boundary drag and a vertical move in elevation are all refused with that reason and leave it where it is; a wall moved with it still moves; Copy and paste still make slabs; it offers no grips", () => {
+  const { doc, ed } = fixture();
+  wall(doc, "A", [0, 0], [6000, 0], "T-300");
+  const B0 = [[0, 0], [6000, 0], [6000, 4000], [0, 4000]];
+  ed.apply({ op: "add", element: { id: "FL", type: "Floor", args: { boundary: B0, floorType: { ref: "T-SLAB200" }, level: { ref: "L0" }, heightOffset: 0 } } });
+  const same = () => JSON.stringify(doc.argValue(doc.element("FL"), "boundary")) === JSON.stringify(B0) && F.refId(doc.element("FL"), "level") === "L0" && doc.argValue(doc.element("FL"), "heightOffset") === 0;
+  const refused = r => !r.ok && /edited only in its sketch/.test(r.error || "");
+  const tries = [
+    ed.apply({ op: "transform", ids: ["FL"], move: [500, 0] }),
+    ed.apply({ op: "transform", ids: ["FL"], rotate: { c: [0, 0], a: 0.3 } }),
+    ed.apply({ op: "transform", ids: ["FL"], mirror: { p: [0, 0], d: [0, 1] } }),
+    ed.apply({ op: "drag", id: "FL", key: "boundary.1", value: [7000, 0] }),
+    ed.apply({ op: "drag", id: "FL", key: "boundary.@centre", value: [4000, 2000] }),
+    ed.apply({ op: "lift", ids: ["FL"], dz: 1500 }),
+  ];
+  const allRefused = tries.every(refused) && same();
+  const mixed = ed.apply({ op: "transform", ids: ["A", "FL"], move: [0, 500] });
+  const wallMoved = mixed.ok && doc.argValue(doc.element("A"), "centreline").start[1] === 500 && same();
+  const n0 = doc.elements().filter(f => doc.typeOf(f) === "Floor").length;
+  const c1 = ed.apply({ op: "transform", ids: ["FL"], move: [8000, 0], copy: true }), c2 = ed.apply({ op: "lift", ids: ["FL"], dz: 3000, copy: true });
+  const copies = c1.ok && c2.ok && doc.elements().filter(f => doc.typeOf(f) === "Floor").length === n0 + 2 && same();
+  const grips = (doc.declOf(doc.element("FL")).handles || (() => []))(doc.element("FL")).length === 0;
+  return R(allRefused && wallMoved && copies && grips, "six moves refused, slab untouched; the wall beside it moved +500; two copies made; no grips",
+    JSON.stringify({ tries: tries.map(r => r.ok ? "ok" : r.error), wallMoved, copies, grips }));
 });
 
 // ===== ui_util.js =====
@@ -21159,7 +21196,7 @@ class View2D {
       if (!this.app.selection.has(hit.id) && !e.shiftKey) { this.app.selection.clear(); this.app.selection.add(hit.id); this.pressSelected = true; }
       const hf = this.doc.element(hit.id);
       if (hf && this.doc.typeOf(hf) === "Dimension") { const g = dimensionGeometry(this.doc, hf); if (g) this.drag.dim = { id: hit.id, g, grab: this.toModel(sx, sy) }; return; }
-      const movable = [...this.app.selection].filter(id => this.doc.element(id) && geomKey(this.doc.element(id), this.doc));
+      const movable = [...this.app.selection].filter(id => this.doc.element(id) && geomKey(this.doc.element(id), this.doc) && !sketchBound(this.doc.typeOf(this.doc.element(id))));
       // a door, window or opening slides along its host wall (as its 3D grip does)
       const hostOp = id => { const g = this.doc.element(id), t = g && this.doc.typeOf(g); return t === "Opening" ? id : (t === "Door" || t === "Window") ? F.refId(g, "fills") : null; };
       const op = hostOp(hit.id), od = op && this.doc.data(this.doc.element(op));
@@ -21263,9 +21300,10 @@ class View2D {
     if (!ops.length) return this.app.say("nothing to move: a grid or section moves sideways here, a level up or down", "note");
     const r = this.app.apply(ops);
     if (r.ok) {
-      this.app.say(`${copy ? "Copied" : "Moved"} ${lift.length + slide.length} element${lift.length + slide.length > 1 ? "s" : ""}${dz ? ` ${dz > 0 ? "+" : ""}${fmtLen(dz)} vertically` : ""}${ds && (slide.length || bodies.length) ? `, ${fmtLen(ds)} along the view` : ""}`, "ok");
       const made = r.copied || []; if (copy && made.length) this.app.select(made.filter(id => doc.element(id) && doc.typeOf(doc.element(id)) !== "PlanView"));
       this.app.setTool ? this.app.setTool("select") : (this.app.tool = "select"); this.app.refresh({ keepMain: true });
+      const n = copy ? lift.length + slide.length : (r.moved || []).length + slide.length;
+      this.app.say(`${copy ? "Copied" : "Moved"} ${n} element${n > 1 ? "s" : ""}${dz ? ` ${dz > 0 ? "+" : ""}${fmtLen(dz)} vertically` : ""}${ds && (slide.length || bodies.length) ? `, ${fmtLen(ds)} along the view` : ""}${r.said ? " · " + r.said : ""}`, r.said ? "note" : "ok");
     } else this.app.say(r.error, "error");
   }
   dragLevel(d, sx, sy) {
@@ -21628,8 +21666,11 @@ class View2D {
     const r = this.app.apply(op, { coalesce: key });
     if (r.ok) { const ends = wallEnds(this.doc, r.copied || r.moved || []); if (ends.length) this.app.apply({ op: "autojoin", ends }, { quiet: true, coalesce: key }); this.app.editor.seal(); }
     T.pts = []; T.ghost = null; T.centre = null; this.hideHud();
-    if (r.ok) { this.app.say(`${tool === "copy" || op.copy ? "Copied" : tool[0].toUpperCase() + tool.slice(1) + "d"} ${(r.copied || r.moved || []).length} element(s)`, "ok"); if (r.copied) this.app.select(r.copied); }
+    if (r.ok) { if (r.copied) this.app.select(r.copied); }
     this.app.setTool("select");
+    // said after the tool is put down, which resets the status line: why nothing moved, or what stayed put
+    if (!r.ok) this.app.say(r.error || (r.conflicts || []).map(c => c.say).join("; "), "error");
+    else this.app.say(`${tool === "copy" || op.copy ? "Copied" : tool[0].toUpperCase() + tool.slice(1) + "d"} ${(r.copied || r.moved || []).length} element(s)${r.said ? " · " + r.said : ""}`, r.said ? "note" : "ok");
   }
   nearestRef(p) { return this.refCandidates(p)[0] || null; }
   /** Every reference within reach of p - ends, corners and centres first, then lines by distance - for the
@@ -22451,11 +22492,12 @@ class View3D {
   /** Dragging the body of a selected element: a translation of its placement, one undo step, in the
    *  plane of the point grabbed. A block of a massing study re-packs the rest around where it lands. */
   startBody(e) {
-    const hit = this.pickElement(e); if (!hit || !this.doc.element(hit.id) || !geomKeyOf(this.doc.typeOf(this.doc.element(hit.id)))) return null;
+    const draggable = id => { const t = this.doc.element(id) && this.doc.typeOf(this.doc.element(id)); return !!t && !!geomKeyOf(t) && !sketchBound(t); };
+    const hit = this.pickElement(e); if (!hit || !draggable(hit.id)) return null;
     // pressing on something not yet selected moves just it (as in plan); a click without a drag selects it
     const pressed = !this.app.selection.has(hit.id) && !e.shiftKey && !e.ctrlKey && !e.metaKey;
     if (!pressed && !this.app.selection.has(hit.id)) return null;
-    const ids = pressed ? [hit.id] : [...this.app.selection].filter(id => this.doc.element(id) && geomKeyOf(this.doc.typeOf(this.doc.element(id))));
+    const ids = pressed ? [hit.id] : [...this.app.selection].filter(draggable);
     const z = hit.point[2], grab = this.onPlane(e, z); if (!grab) return null;
     const key = `move3d:${ids.join(",")}:${Date.now()}`; let done = [0, 0], moved = false;
     return {

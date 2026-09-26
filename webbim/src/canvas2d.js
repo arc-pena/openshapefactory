@@ -13,7 +13,7 @@ import { F, CATALOGUE } from "./ocaf.js";
 import { uOf, pointAt } from "./walls.js";
 import { listeningDimensions, dimensionMove, pickCandidates } from "./props.js";
 import { resolveReference, measureRefs, sheetSize, viewExtent, orthoLine, elementRefs } from "./bim.js";
-import { getPath, geomKey, wallEnds } from "./ops.js";
+import { getPath, geomKey, wallEnds, sketchBound } from "./ops.js";
 import { cropLoop, loopBBox, ANNOTATION_CROP } from "./crop.js";
 import { shapeFromClicks, SHAPE_CLICKS, filletCorners, toCentreline, weld, offsetChain, outline } from "./bimsketch.js";
 
@@ -657,7 +657,7 @@ export class View2D {
       if (!this.app.selection.has(hit.id) && !e.shiftKey) { this.app.selection.clear(); this.app.selection.add(hit.id); this.pressSelected = true; }
       const hf = this.doc.element(hit.id);
       if (hf && this.doc.typeOf(hf) === "Dimension") { const g = dimensionGeometry(this.doc, hf); if (g) this.drag.dim = { id: hit.id, g, grab: this.toModel(sx, sy) }; return; }
-      const movable = [...this.app.selection].filter(id => this.doc.element(id) && geomKey(this.doc.element(id), this.doc));
+      const movable = [...this.app.selection].filter(id => this.doc.element(id) && geomKey(this.doc.element(id), this.doc) && !sketchBound(this.doc.typeOf(this.doc.element(id))));
       // a door, window or opening slides along its host wall (as its 3D grip does)
       const hostOp = id => { const g = this.doc.element(id), t = g && this.doc.typeOf(g); return t === "Opening" ? id : (t === "Door" || t === "Window") ? F.refId(g, "fills") : null; };
       const op = hostOp(hit.id), od = op && this.doc.data(this.doc.element(op));
@@ -761,9 +761,10 @@ export class View2D {
     if (!ops.length) return this.app.say("nothing to move: a grid or section moves sideways here, a level up or down", "note");
     const r = this.app.apply(ops);
     if (r.ok) {
-      this.app.say(`${copy ? "Copied" : "Moved"} ${lift.length + slide.length} element${lift.length + slide.length > 1 ? "s" : ""}${dz ? ` ${dz > 0 ? "+" : ""}${fmtLen(dz)} vertically` : ""}${ds && (slide.length || bodies.length) ? `, ${fmtLen(ds)} along the view` : ""}`, "ok");
       const made = r.copied || []; if (copy && made.length) this.app.select(made.filter(id => doc.element(id) && doc.typeOf(doc.element(id)) !== "PlanView"));
       this.app.setTool ? this.app.setTool("select") : (this.app.tool = "select"); this.app.refresh({ keepMain: true });
+      const n = copy ? lift.length + slide.length : (r.moved || []).length + slide.length;
+      this.app.say(`${copy ? "Copied" : "Moved"} ${n} element${n > 1 ? "s" : ""}${dz ? ` ${dz > 0 ? "+" : ""}${fmtLen(dz)} vertically` : ""}${ds && (slide.length || bodies.length) ? `, ${fmtLen(ds)} along the view` : ""}${r.said ? " · " + r.said : ""}`, r.said ? "note" : "ok");
     } else this.app.say(r.error, "error");
   }
   dragLevel(d, sx, sy) {
@@ -1126,8 +1127,11 @@ export class View2D {
     const r = this.app.apply(op, { coalesce: key });
     if (r.ok) { const ends = wallEnds(this.doc, r.copied || r.moved || []); if (ends.length) this.app.apply({ op: "autojoin", ends }, { quiet: true, coalesce: key }); this.app.editor.seal(); }
     T.pts = []; T.ghost = null; T.centre = null; this.hideHud();
-    if (r.ok) { this.app.say(`${tool === "copy" || op.copy ? "Copied" : tool[0].toUpperCase() + tool.slice(1) + "d"} ${(r.copied || r.moved || []).length} element(s)`, "ok"); if (r.copied) this.app.select(r.copied); }
+    if (r.ok) { if (r.copied) this.app.select(r.copied); }
     this.app.setTool("select");
+    // said after the tool is put down, which resets the status line: why nothing moved, or what stayed put
+    if (!r.ok) this.app.say(r.error || (r.conflicts || []).map(c => c.say).join("; "), "error");
+    else this.app.say(`${tool === "copy" || op.copy ? "Copied" : tool[0].toUpperCase() + tool.slice(1) + "d"} ${(r.copied || r.moved || []).length} element(s)${r.said ? " · " + r.said : ""}`, r.said ? "note" : "ok");
   }
   nearestRef(p) { return this.refCandidates(p)[0] || null; }
   /** Every reference within reach of p - ends, corners and centres first, then lines by distance - for the

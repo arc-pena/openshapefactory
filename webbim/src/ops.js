@@ -216,7 +216,9 @@ const HANDLERS = {
       if (hit) { doc.setArg(g, lk, { ref: doc.idOf(hit) }); doc.setArg(g, ok, 0); }
       else doc.setArg(g, ok, z - (lv ? elevOf(lv) : 0));
     };
-    const lvIds = ids.filter(id => doc.typeOf(doc.element(id)) === "Level"), bodies = ids.filter(id => HOST[doc.typeOf(doc.element(id))]);
+    const sketched = o.copy ? [] : ids.filter(id => sketchBound(doc.typeOf(doc.element(id))));
+    if (sketched.length && sketched.length === ids.length) throw new Error(sketchOnly(sketched) + " (Copy still works; its height is its level and offset)");
+    const lvIds = ids.filter(id => doc.typeOf(doc.element(id)) === "Level"), bodies = ids.filter(id => HOST[doc.typeOf(doc.element(id))] && !sketched.includes(id));
     const made = [];
     // doors, windows and openings: along their wall by the sideways part, sill up or down by dz; a copy
     // brings its own opening (a filler never shares one)
@@ -255,7 +257,7 @@ const HANDLERS = {
       shift(g, lk, ok);
       if (t === "Wall" && F.refId(g, "topLevel")) shift(g, "topLevel", "topOffset");     // a bound wall keeps its height
     }
-    return { copied: o.copy ? made : undefined, moved: o.copy ? undefined : ids, ids: made };
+    return { copied: o.copy ? made : undefined, moved: o.copy ? undefined : ids.filter(id => !sketched.includes(id)), ids: made, said: sketched.length ? sketchOnly(sketched) + " - left where it is" : undefined };
   },
   /** Trim/Extend to Corner (wall fillet): two walls picked in plan are trimmed or extended to where
    *  their lines cross, and joined there - so they are guaranteed to meet. The part of each wall on the
@@ -499,11 +501,12 @@ const HANDLERS = {
     if (!T) throw new Error("transform needs move, rotate or mirror");
     const skipped = [];
     if (o.copy) return copyElements(doc, ids, T);
-    const before = new Map(), pinned = [];
+    const before = new Map(), pinned = [], sketched = [];
     for (const id of ids) {
       const f = doc.element(id), k = geomKey(f, doc);
       // a pinned element stays where it is: Move, Rotate, Mirror and dragging all leave it
       if (isPinned(doc, f)) { pinned.push(id); continue; }
+      if (sketchBound(doc.typeOf(f))) { sketched.push(id); continue; }
       if (doc.typeOf(f) === "CADImport") {
         // an import moves by its origin: the offset follows the transform, a rotation turns it too
         const o0 = [F.real(f, "offsetX") || 0, F.real(f, "offsetY") || 0], o1 = T.P(o0);
@@ -525,13 +528,15 @@ const HANDLERS = {
     }
     followJoins(doc, new Set(ids), before);
     // padlocked dimensions hold: what is locked to the moved elements comes along (§10.5)
-    const movedIds = ids.filter(id => !skipped.includes(id) && !pinned.includes(id));
+    const movedIds = ids.filter(id => !skipped.includes(id) && !pinned.includes(id) && !sketched.includes(id));
+    if (sketched.length && !movedIds.length) throw new Error(sketchOnly(sketched));
     if (movedIds.length) {
       const res = propagate(doc, movedIds);
       if (res.conflicts.length) return { conflicts: res.conflicts, error: res.conflicts.map(c => c.say).join("; ") };
       for (const [id, cl] of res.set) if (!movedIds.includes(id)) { const g = doc.element(id), bw = doc.typeOf(g) === "Wall" ? clone(doc.argValue(g, "centreline")) : null; doc.setArg(g, geomKey(g, doc), cl); if (bw) followJoins(doc, new Set([id]), new Map([[id, bw]])); movedIds.push(id); }
     }
     if (pinned.length && !movedIds.length && ids.every(id => pinned.includes(id) || skipped.includes(id))) throw new Error(`${pinned.join(", ")} ${pinned.length > 1 ? "are" : "is"} pinned - unpin ${pinned.length > 1 ? "them" : "it"} to move (UP, or the pin)`);
+    if (sketched.length) return { moved: movedIds, said: sketchOnly(sketched) + " - left where it is" };
     return { moved: movedIds, said: pinned.length ? `${pinned.join(", ")} pinned: left where ${pinned.length > 1 ? "they are" : "it is"}` : skipped.length ? `${skipped.join(", ")} move with their host — drag their handle instead` : undefined };
   },
   /** Node positions ride in the file, so undo restores layout too. */
@@ -541,6 +546,7 @@ const HANDLERS = {
   drag(doc, o) {
     const f = doc.element(o.id);
     if (isPinned(doc, f)) throw new Error(`${o.id} is pinned - unpin it to move it (UP, or click its pin)`);
+    if (sketchBound(doc.typeOf(f)) && /^boundary\b/.test(o.key)) throw new Error(sketchOnly([o.id]));
     // an outline moved whole by its centre grip
     if (o.key === "boundary.@centre") { const b = clone(doc.argValue(f, "boundary")), c = b.reduce((a, p) => add(a, p), [0, 0]).map(v => v / b.length), d = sub(o.value, c); doc.setArg(f, "boundary", b.map(p => [Math.round(p[0] + d[0]), Math.round(p[1] + d[1])]));
       const m = doc.argValue(f, "mesh"); if (m && m.frame) doc.setArg(f, "mesh", Object.assign({}, m, { frame: moveFrame(m.frame, p => [p[0] + d[0], p[1] + d[1]]) })); return {}; }
@@ -1003,4 +1009,9 @@ function solveFor(doc, C, fm, mk, gm, fo, ok, go) {
 }
 
 /** Is this element pinned? Only what declares a Pinned argument can be. */
+/** A slab's outline belongs to its sketch: it changes there (Edit Boundary), never by a drag, Move, Rotate or
+ *  Mirror in plan, 3D or elevation - a slab dragged by accident off its walls is a model error nobody sees.
+ *  Copies are still made (Copy, paste); its height changes by its level and offset. */
+export const sketchBound = t => t === "Floor";
+const sketchOnly = ids => `${ids.join(", ")}: a slab's boundary is edited only in its sketch - Edit Boundary, or double-click it`;
 export function isPinned(doc, f) { const decl = f && doc.declOf(f); return !!(decl && decl.args.some(a => a.key === "pinned") && F.bool(f, "pinned")); }

@@ -1964,7 +1964,7 @@ testCase("M69", "Everything that drives an element is a reference: a beam's side
     JSON.stringify({ refsOk, m1, m2, m3, foot, held, r: r.error || "", beam: doc.argValue(doc.element("B"), "axis") }));
 });
 
-testCase("M70", "In elevation and section: a level copied up is a new level with its own plan; a slab copied up a storey lands on that level (re-hosted, no offset), moved part-way keeps its level with an offset; a door copied brings its own opening, its sill raised and slid along the wall", () => {
+testCase("M70", "In elevation and section: a level copied up is a new level with its own plan; a slab copied up a storey lands on that level (re-hosted, no offset), a beam moved part-way keeps its level with an offset; a door copied brings its own opening, its sill raised and slid along the wall", () => {
   const { doc, ed } = fixture();
   ed.apply({ op: "set", id: "L0", key: "elevation", value: 0 });
   wall(doc, "A", [0, 0], [6000, 0], "T-300");
@@ -1978,12 +1978,38 @@ testCase("M70", "In elevation and section: a level copied up is a new level with
   const lvOk = r1.ok && nLv() === lv0 + 1 && nPlan() === pl0 + 1 && F.real(doc.element(newLv), "elevation") === 3200;
   const r2 = ed.apply({ op: "lift", ids: ["FL"], dz: 3200, copy: true }), fl2 = r2.copied.find(id => doc.typeOf(doc.element(id)) === "Floor");
   const rehost = r2.ok && F.refId(doc.element(fl2), "level") === newLv && doc.argValue(doc.element(fl2), "heightOffset") === 0 && F.refId(doc.element("FL"), "level") === "L0";
-  ed.apply({ op: "lift", ids: ["FL"], dz: 1500 });
-  const part = F.refId(doc.element("FL"), "level") === "L0" && doc.argValue(doc.element("FL"), "heightOffset") === 1500;
+  ed.apply({ op: "add", element: { id: "B", type: "Beam", args: { axis: { type: "line", start: [0, 2000], end: [6000, 2000] }, beamType: { ref: "T-UB406" }, level: { ref: "L0" }, topOffset: 3000 } } });
+  ed.apply({ op: "lift", ids: ["B"], dz: 1500 });
+  const part = F.refId(doc.element("B"), "level") === "L0" && doc.argValue(doc.element("B"), "topOffset") === 4500;
   const n0 = doc.elements().filter(f => doc.typeOf(f) === "Opening").length;
   const r3 = ed.apply({ op: "lift", ids: ["D"], dz: 300, copy: true, move: [700, 0] });
   const op2 = r3.copied.find(id => doc.typeOf(doc.element(id)) === "Opening"), pr = op2 && doc.argValue(doc.element(op2), "profile");
   const door = r3.ok && doc.elements().filter(f => doc.typeOf(f) === "Opening").length === n0 + 1 && pr && pr.at === 2700 && pr.sill === 300 && doc.argValue(doc.element("OP"), "profile").at === 2000;
-  return R(lvOk && rehost && part && door, "new level at +3200 with a plan; the slab copy hosted on it with no offset; the original moved +1500 keeps L0 with a 1500 offset; the door copy in a new opening at 2700, sill 300; the original untouched",
+  return R(lvOk && rehost && part && door, "new level at +3200 with a plan; the slab copy hosted on it with no offset; the beam moved +1500 keeps L0 with a 4500 offset; the door copy in a new opening at 2700, sill 300; the original untouched",
     JSON.stringify({ lvOk, rehost, part, door, pr }));
+});
+testCase("M71", "A slab's boundary is edited only in its sketch: Move, Rotate, Mirror, a boundary drag and a vertical move in elevation are all refused with that reason and leave it where it is; a wall moved with it still moves; Copy and paste still make slabs; it offers no grips", () => {
+  const { doc, ed } = fixture();
+  wall(doc, "A", [0, 0], [6000, 0], "T-300");
+  const B0 = [[0, 0], [6000, 0], [6000, 4000], [0, 4000]];
+  ed.apply({ op: "add", element: { id: "FL", type: "Floor", args: { boundary: B0, floorType: { ref: "T-SLAB200" }, level: { ref: "L0" }, heightOffset: 0 } } });
+  const same = () => JSON.stringify(doc.argValue(doc.element("FL"), "boundary")) === JSON.stringify(B0) && F.refId(doc.element("FL"), "level") === "L0" && doc.argValue(doc.element("FL"), "heightOffset") === 0;
+  const refused = r => !r.ok && /edited only in its sketch/.test(r.error || "");
+  const tries = [
+    ed.apply({ op: "transform", ids: ["FL"], move: [500, 0] }),
+    ed.apply({ op: "transform", ids: ["FL"], rotate: { c: [0, 0], a: 0.3 } }),
+    ed.apply({ op: "transform", ids: ["FL"], mirror: { p: [0, 0], d: [0, 1] } }),
+    ed.apply({ op: "drag", id: "FL", key: "boundary.1", value: [7000, 0] }),
+    ed.apply({ op: "drag", id: "FL", key: "boundary.@centre", value: [4000, 2000] }),
+    ed.apply({ op: "lift", ids: ["FL"], dz: 1500 }),
+  ];
+  const allRefused = tries.every(refused) && same();
+  const mixed = ed.apply({ op: "transform", ids: ["A", "FL"], move: [0, 500] });
+  const wallMoved = mixed.ok && doc.argValue(doc.element("A"), "centreline").start[1] === 500 && same();
+  const n0 = doc.elements().filter(f => doc.typeOf(f) === "Floor").length;
+  const c1 = ed.apply({ op: "transform", ids: ["FL"], move: [8000, 0], copy: true }), c2 = ed.apply({ op: "lift", ids: ["FL"], dz: 3000, copy: true });
+  const copies = c1.ok && c2.ok && doc.elements().filter(f => doc.typeOf(f) === "Floor").length === n0 + 2 && same();
+  const grips = (doc.declOf(doc.element("FL")).handles || (() => []))(doc.element("FL")).length === 0;
+  return R(allRefused && wallMoved && copies && grips, "six moves refused, slab untouched; the wall beside it moved +500; two copies made; no grips",
+    JSON.stringify({ tries: tries.map(r => r.ok ? "ok" : r.error), wallMoved, copies, grips }));
 });

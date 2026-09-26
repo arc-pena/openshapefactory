@@ -456,8 +456,8 @@ declare({ type: "Floor", guid: "wb-0401", category: "IfcSlab", kind: "floor", id
   args: [ json("boundary", "Boundary", [[0, 0], [6000, 0], [6000, 4000], [0, 4000]]), ref("floorType", "Type", ["floorType"]), ref("level", "Level", ["level"]),
           real("heightOffset", "Height offset from level", 0, -10000, 10000, 1, "mm", { group: "Constraints" }),
           json("sketch", "Boundary sketch", null, { group: "Constraints" }) ],
-  // a sketched floor is edited in its sketch (Edit Boundary), where its loops stay closed; a plain one by its corners
-  handles: (f) => { if (hasSketch(F.json(f, "sketch"))) return []; const b = F.json(f, "boundary") || []; return b.map((p, i) => ({ key: "v" + i, at: p, constraint: "free2d", writes: `boundary.${i}` })); } });
+  // no grips: a floor's boundary is edited only in its sketch (Edit Boundary), where its loops stay closed
+  handles: () => [] });
 const hasSketch = s => !!(s && Array.isArray(s.elements) && s.elements.length);
 /** A floor's areas: the sketch's closed loops with their holes, or the plain boundary. */
 export function floorRegions(f) {

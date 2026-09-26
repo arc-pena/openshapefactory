@@ -10,7 +10,7 @@ import { h, clear, icon, fmtLen } from "./ui_util.js";
 import { buildHLRModel, hlrSteps, cameraBasis } from "./hlr.js";
 import { sectionBoxKey, sheetDisplayOf } from "./scene.js";
 import { F } from "./ocaf.js";
-import { geomKeyOf } from "./ops.js";
+import { geomKeyOf, sketchBound } from "./ops.js";
 import { add, sub, mul, dot, dist, normalise, lerp } from "./geom2d.js";
 import { rasterPixels } from "./acceptance.js";
 import { uOf, pointAt } from "./walls.js";
@@ -575,11 +575,12 @@ export class View3D {
   /** Dragging the body of a selected element: a translation of its placement, one undo step, in the
    *  plane of the point grabbed. A block of a massing study re-packs the rest around where it lands. */
   startBody(e) {
-    const hit = this.pickElement(e); if (!hit || !this.doc.element(hit.id) || !geomKeyOf(this.doc.typeOf(this.doc.element(hit.id)))) return null;
+    const draggable = id => { const t = this.doc.element(id) && this.doc.typeOf(this.doc.element(id)); return !!t && !!geomKeyOf(t) && !sketchBound(t); };
+    const hit = this.pickElement(e); if (!hit || !draggable(hit.id)) return null;
     // pressing on something not yet selected moves just it (as in plan); a click without a drag selects it
     const pressed = !this.app.selection.has(hit.id) && !e.shiftKey && !e.ctrlKey && !e.metaKey;
     if (!pressed && !this.app.selection.has(hit.id)) return null;
-    const ids = pressed ? [hit.id] : [...this.app.selection].filter(id => this.doc.element(id) && geomKeyOf(this.doc.typeOf(this.doc.element(id))));
+    const ids = pressed ? [hit.id] : [...this.app.selection].filter(draggable);
     const z = hit.point[2], grab = this.onPlane(e, z); if (!grab) return null;
     const key = `move3d:${ids.join(",")}:${Date.now()}`; let done = [0, 0], moved = false;
     return {

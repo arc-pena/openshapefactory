@@ -42,6 +42,21 @@ A filler (door, window) moves **along its host**:
 A copied filler needs its own new Opening. Copying a door that points at the
 original's opening puts two doors in one hole.
 
+### Slabs are edited only in their sketch
+
+A slab's boundary is changed only in its sketch (Edit Boundary, or
+double-click). It has no corner grips. Dragging it in plan, 3D or elevation,
+Move, Rotate, Mirror and a vertical move are all refused, and the refusal
+names the reason. Its height comes from its level and offset. Copy and paste
+still make new slabs.
+
+Enforce this in the ops layer (`sketchBound(type)` in `transform`, `drag` and
+`lift`), so no view can get round it. The views then simply don't start a
+body drag on a slab. In a mixed selection, the other elements still move and
+the message says the slab stayed put. When a tool puts itself down (which
+resets the status line), say the refusal *after* that, or the user sees
+nothing happen and no reason.
+
 ## References: one list drives dimensions, snaps, locks and Tab
 
 Users expect to dimension or snap to *anything that drives an element*: a
