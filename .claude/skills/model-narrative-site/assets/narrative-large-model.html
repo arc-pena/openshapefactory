@@ -1,0 +1,768 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Tower C</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62,700;62,800;100,500&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<style>
+/* One look on purpose: a white massing model standing in fog. Monochrome,
+   so the only thing that carries emphasis is how dark the ink is. */
+:root {
+  color-scheme: light;
+  --ground: #e9ebec;
+  --ink: #15181a;
+  --ink-2: #4b5357;
+  --ink-3: #868f93;
+  --line: rgba(21, 24, 26, .14);
+  --display: "Archivo", "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
+  --sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --gutter: clamp(16px, 5vw, 64px);
+}
+* { box-sizing: border-box; }
+html { background: var(--ground); }
+body {
+  margin: 0; background: var(--ground); color: var(--ink);
+  font: 400 16px/1.6 var(--sans); -webkit-font-smoothing: antialiased;
+}
+a { color: var(--ink); text-decoration-color: var(--ink-3); text-underline-offset: 3px; }
+a:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; border-radius: 2px; }
+
+#stage { position: fixed; inset: 0; z-index: 0; }
+#stage canvas { display: block; width: 100%; height: 100%; }
+/* Mist over the model on the reading side, and film grain over everything. */
+#stage::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background:
+    linear-gradient(90deg, rgba(233,235,236,.92) 0%, rgba(233,235,236,.5) 30%, rgba(233,235,236,0) 52%),
+    radial-gradient(ellipse at 62% 50%, rgba(233,235,236,0) 45%, rgba(233,235,236,.7) 100%);
+}
+.grain {
+  position: fixed; inset: -50%; z-index: 1; pointer-events: none; opacity: .22; mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/></filter><rect width='160' height='160' filter='url(%23n)' opacity='0.5'/></svg>");
+  animation: grain .9s steps(3) infinite;
+}
+@keyframes grain { 33% { transform: translate3d(-2%, 1.5%, 0); } 66% { transform: translate3d(1.5%, -2%, 0); } }
+
+main { position: relative; z-index: 2; padding-inline: var(--gutter); }
+.chapter { min-height: 100svh; display: flex; align-items: center; padding-block: 12vh; }
+.copy { max-width: 30rem; display: grid; gap: 14px; }
+.kicker { font: 500 11.5px/1.4 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); }
+h1, h2 {
+  margin: 0; font-family: var(--display); font-stretch: 62%; font-weight: 800;
+  text-transform: uppercase; letter-spacing: .005em; line-height: .92; text-wrap: balance;
+}
+h1 { font-size: clamp(72px, 13vw, 180px); }
+h2 { font-size: clamp(40px, 5.6vw, 76px); font-weight: 700; }
+.copy p { margin: 0; color: var(--ink-2); max-width: 62ch; }
+.copy p strong { color: var(--ink); font-weight: 500; }
+.lede { font-size: 18px; }
+.figures {
+  display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 4px;
+  font: 400 12px/1.5 var(--mono); color: var(--ink-3); font-variant-numeric: tabular-nums;
+}
+.figures b { color: var(--ink); font-weight: 500; }
+code { font: 500 .88em var(--mono); color: var(--ink); }
+
+#status { display: flex; align-items: center; gap: 10px; font: 400 12px/1.4 var(--mono); color: var(--ink-2); }
+#status i { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--ink-3); animation: pulse 1.2s ease-in-out infinite; }
+#status.ready i { background: var(--ink); animation: none; }
+#status.failed i { background: #a2412f; animation: none; }
+@keyframes pulse { 50% { opacity: .3; } }
+.cue { font: 500 11px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); }
+
+/* The section's elevation staff: every level in the file at its real height,
+   dark once the kernel has built it. */
+#staff {
+  position: fixed; z-index: 3; right: var(--gutter); top: 12vh; bottom: 12vh; width: 92px;
+  font: 400 10px/1 var(--mono); color: var(--ink-3); font-variant-numeric: tabular-nums;
+}
+#staff .rule { position: absolute; right: 0; top: 0; bottom: 0; width: 1px; background: var(--line); }
+#staff .tick { position: absolute; right: 0; width: 8px; height: 1px; background: rgba(21,24,26,.18); transition: background .4s, width .4s; }
+#staff .tick.built { background: var(--ink); }
+#staff .tick.on { width: 18px; }
+#staff .label { position: absolute; right: 24px; transform: translateY(-50%); white-space: nowrap; }
+#staff .marker {
+  position: absolute; right: -4px; width: 9px; height: 9px; border: 1px solid var(--ink); border-radius: 50%;
+  transform: translateY(-50%); background: var(--ground); transition: top .2s linear;
+}
+
+#readout {
+  position: fixed; z-index: 3; left: var(--gutter); bottom: max(18px, env(safe-area-inset-bottom, 0px));
+  font: 400 11.5px/1.5 var(--mono); color: var(--ink-3); font-variant-numeric: tabular-nums;
+  display: flex; gap: 18px; flex-wrap: wrap; max-width: calc(100% - 2 * var(--gutter)); pointer-events: none;
+}
+#readout b { color: var(--ink); font-weight: 500; }
+
+.back {
+  position: fixed; z-index: 4; left: var(--gutter); top: max(18px, env(safe-area-inset-top, 0px));
+  font: 500 11px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase;
+  color: var(--ink-2); text-decoration: none; padding: 8px 0;
+}
+.back:hover { color: var(--ink); }
+.veil { position: fixed; inset: 0; z-index: 10; background: #eef0f1; pointer-events: none; opacity: 0; transition: opacity .7s ease; }
+.veil.arriving { animation: veil-out 1.1s ease forwards; }
+.veil.leaving { opacity: 1; pointer-events: auto; }
+@keyframes veil-out { from { opacity: 1; } to { opacity: 0; } }
+.end-links { display: flex; flex-wrap: wrap; gap: 10px 22px; margin-top: 6px; }
+.end-links a { font: 500 13px var(--mono); }
+
+@media (max-width: 900px) {
+  #staff { display: none; }
+  #stage::after { background: linear-gradient(0deg, rgba(233,235,236,.95) 0%, rgba(233,235,236,.6) 42%, rgba(233,235,236,0) 70%); }
+  .chapter { align-items: flex-end; padding-block: 50vh 14vh; }
+  .chapter:first-child { padding-top: 46vh; }
+  body { font-size: 15px; }
+  .lede { font-size: 16px; }
+}
+@media (prefers-reduced-motion: reduce) { .grain, #status i { animation: none; } }
+</style>
+</head>
+<body>
+<div id="stage" aria-hidden="true"></div>
+<div class="grain" aria-hidden="true"></div>
+<div id="staff" aria-hidden="true"><div class="rule"></div></div>
+<div id="readout" aria-live="polite"></div>
+<a class="back" href="../index.html#towerc" data-leave>← Samples</a>
+<div class="veil arriving" id="veil" aria-hidden="true"></div>
+
+<main>
+  <section class="chapter">
+    <div class="copy">
+      <div class="kicker">Shenzhen · Tower C · structure</div>
+      <h1>Tower C</h1>
+      <p class="lede">Behind this text the Feature Modeller's OpenCascade kernel is rebuilding a 380&nbsp;m tower from its parametric file, one band of levels at a time. It rises as fast as your browser can model it.</p>
+      <div id="status"><i></i><span>starting the kernel</span></div>
+      <div class="cue">Scroll through the building</div>
+    </div>
+  </section>
+
+  <section class="chapter">
+    <div class="copy">
+      <div class="kicker">3399-ZHA-M3-A-1000 · ocaf-parametric-model v1</div>
+      <h2>One file, 1,426 features</h2>
+      <p>The structure came out of a BIM model as plain features: points and planes to stand on, sketches traced from each slab edge, extrudes, Booleans and placements. No meshes are stored. Everything you see is rebuilt from those definitions.</p>
+      <div class="figures"><span><b>77</b> levels</span><span><b>129</b> floor plates</span><span><b>40</b> columns</span><span><b>27,860</b> sketch segments</span></div>
+    </div>
+  </section>
+
+  <section class="chapter">
+    <div class="copy">
+      <div class="kicker">Circle · Extrude · AR_Concrete_Round 1600 mm</div>
+      <h2>Forty round columns</h2>
+      <p>Each column is a 1,600&nbsp;mm circle on its own plane at &minus;19.4&nbsp;m, extruded straight up. The shortest stops after 7.2&nbsp;m; the longest runs 375.5&nbsp;m to the eastern roof.</p>
+      <div class="figures"><span>shortest <b>7.2 m</b></span><span>longest <b>375.5 m</b></span><span>base <b>&minus;19.4 m</b></span></div>
+    </div>
+  </section>
+
+  <section class="chapter">
+    <div class="copy">
+      <div class="kicker" data-typical="kicker">Sketch · floor plate</div>
+      <h2>A floor is a sketch</h2>
+      <p>Every slab starts as a closed outline drawn in the plane of its level, traced edge by edge from the source model. A second sketch on the same plane marks the core opening.</p>
+      <div class="figures" data-typical="figures"><span>…</span></div>
+    </div>
+  </section>
+
+  <section class="chapter">
+    <div class="copy">
+      <div class="kicker">Extrude · Boolean difference</div>
+      <h2>One metre down, the core cut out</h2>
+      <p>The outline is extruded 1,000&nbsp;mm below its level, the opening is extruded the same way, and a Boolean difference subtracts one from the other. That's three features per floor, repeated 129 times.</p>
+    </div>
+  </section>
+
+  <section class="chapter">
+    <div class="copy">
+      <div class="kicker">Levels F9 → RFE</div>
+      <h2>Stacked by elevation</h2>
+      <p>Floor plates climb from level F9 at 43.4&nbsp;m to the eastern roof at 379.4&nbsp;m. Keep scrolling to lay them in order.</p>
+    </div>
+  </section>
+
+  <section class="chapter">
+    <div class="copy">
+      <div class="kicker">F65E · F65W → RFE · RFW</div>
+      <h2>Above level 65 it splits</h2>
+      <p>At 309&nbsp;m the plan divides into an east and a west crown. The west crown stops at its roof, 327.5&nbsp;m; the east carries on another 52&nbsp;m to 379.4&nbsp;m.</p>
+      <div class="figures"><span>east <b>14</b> levels</span><span>west <b>5</b> levels</span></div>
+    </div>
+  </section>
+
+  <section class="chapter">
+    <div class="copy">
+      <div class="kicker">AxisSystem · AxisToAxis ×40</div>
+      <h2>Where it really stands</h2>
+      <p>The columns were drawn on a local grid. Forty placement features move them onto the survey grid: a 0.978° turn and a shift to <code>E 496,509.976&nbsp;m</code>, <code>N 2,492,062.527&nbsp;m</code>. The fine grid is the survey grid; the one turning away from it is the local grid.</p>
+      <p>Those coordinates are too large for the 32-bit numbers a GPU draws with, so this page moves the survey origin to the tower before the model is built. The shapes don't change.</p>
+    </div>
+  </section>
+
+  <section class="chapter">
+    <div class="copy">
+      <div class="kicker">ocaf-parametric-model · 8.3 MB</div>
+      <h2>Rebuilt, not replayed</h2>
+      <p id="final-line">Every slab, cut and column on this page was modelled in this tab from the file's definitions.</p>
+      <div class="end-links">
+        <a href="../index.html#towerc" data-leave>← Back to samples</a>
+        <a href="https://github.com/arc-pena/openshapefactory/tree/claude/gallant-curie-kn5iaf/web/towerc" target="_blank" rel="noopener">Source ↗</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script src="../kernel/kernel.js"></script>
+<script>
+"use strict";
+(function () {
+  const statusEl = document.getElementById("status");
+  const say = (text, cls) => { statusEl.querySelector("span").textContent = text; statusEl.className = cls || ""; };
+  if (typeof THREE === "undefined") { say("three.js did not load, so there is nothing to draw with", "failed"); return; }
+
+  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const sections = Array.from(document.querySelectorAll(".chapter"));
+  const LAST = sections.length - 1;
+  const fmt = n => Number(n).toLocaleString("en-GB");
+  const metres = mm => (mm / 1000).toLocaleString("en-GB", { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + " m";
+
+  /* --------------------------------------------------- the file itself */
+
+  // Walks a feature's arguments for {ref: id} links.
+  function refsOf(f) {
+    const out = [];
+    (function walk(o) {
+      if (Array.isArray(o)) o.forEach(walk);
+      else if (o && typeof o === "object") {
+        if (typeof o.ref === "string") out.push(o.ref);
+        for (const k in o) if (k !== "ref") walk(o[k]);
+      }
+    })(f.args);
+    return out;
+  }
+
+  // The file stores the slabs at survey coordinates, about 2.49e9 mm north.
+  // Float32 steps at that size are 256 mm, which is what the kernel's meshes
+  // and the GPU both use, so every point is moved by the survey origin the
+  // placement features target before anything is built. Sketches are in
+  // their planes' own coordinates and move with them.
+  function rebase(model) {
+    const byId = new Map(model.features.map(f => [f.id, f]));
+    let origin = null;
+    for (const f of model.features) {
+      if (f.type !== "AxisSystem" || !f.args.origin) continue;
+      const p = byId.get(f.args.origin.ref);
+      if (p && Math.max(Math.abs(p.args.x || 0), Math.abs(p.args.y || 0)) > 1e7) { origin = [p.args.x, p.args.y]; break; }
+    }
+    if (!origin) return { dx: 0, dy: 0, angle: 0 };
+    for (const f of model.features) {
+      if (f.type === "Point" && f.args.kind === "Coordinates" &&
+          Math.max(Math.abs(f.args.x), Math.abs(f.args.y)) > 1e6) {
+        f.args.x -= origin[0]; f.args.y -= origin[1];
+      }
+    }
+    // The survey placement's x direction, for the placement chapter.
+    const place = model.features.find(f => f.type === "AxisSystem" && byId.get(f.args.origin.ref).args.x === 0 && f.args.xdir &&
+      Math.abs(byId.get(f.args.xdir.ref).args.dy) > 1e-6);
+    const xd = place ? byId.get(place.args.xdir.ref).args : { dx: 1, dy: 0 };
+    return { dx: origin[0], dy: origin[1], angle: Math.atan2(xd.dy, xd.dx) };
+  }
+
+  // Splits the document into pieces that can each be built on their own: a
+  // set of level folders, everything inside them, everything they reference,
+  // and the folders above them so the tree still hangs together.
+  function planChunks(model) {
+    const byId = new Map(model.features.map(f => [f.id, f]));
+    const kids = new Map();
+    for (const f of model.features) {
+      const k = f.parent || null;
+      if (!kids.has(k)) kids.set(k, []);
+      kids.get(k).push(f.id);
+    }
+    const used = new Set();
+    for (const f of model.features) for (const r of refsOf(f)) used.add(r);
+    const hidden = new Set(model.hidden || []);
+
+    // The level folders: the one set whose children carry level names.
+    let levelsParent = null, best = 0;
+    for (const [pid, ids] of kids) {
+      const n = ids.filter(id => /^(B\d|F\d|RF)/.test(byId.get(id).name)).length;
+      if (n > best) { best = n; levelsParent = pid; }
+    }
+    const levelOf = new Map();       // feature id -> level name
+    const levels = kids.get(levelsParent).map(id => {
+      const lv = { id, name: byId.get(id).name, z: null, ids: [] };
+      (function down(pid) {
+        for (const c of kids.get(pid) || []) {
+          lv.ids.push(c); levelOf.set(c, lv.name);
+          const f = byId.get(c);
+          if (f.type === "Sketch" && !/^Opening/.test(f.name) && lv.z === null) {
+            const pl = byId.get(f.args.plane.ref), o = pl && byId.get(pl.args.origin.ref);
+            if (o) lv.z = o.args.z;
+          }
+          down(c);
+        }
+      })(id);
+      return lv;
+    });
+    // Features that feed a placement (the column extrudes and their circles)
+    // take the level of what they feed.
+    const closure = roots => {
+      const set = new Set();
+      const add = id => {
+        if (set.has(id) || !byId.has(id)) return;
+        set.add(id);
+        for (const r of refsOf(byId.get(id))) add(r);
+        for (const c of kids.get(id) || []) add(c);
+      };
+      roots.forEach(add);
+      for (const id of Array.from(set)) {             // folders above, without their other contents
+        let p = byId.get(id).parent;
+        while (p && !set.has(p)) { set.add(p); p = byId.get(p).parent; }
+      }
+      return set;
+    };
+
+    const columns = levels.filter(l => l.z === null);
+    const floors = levels.filter(l => l.z !== null).sort((a, b) => a.z - b.z);
+    const groups = [columns];
+    const BAND = 9;
+    for (let i = 0; i < floors.length; i += BAND) groups.push(floors.slice(i, i + BAND));
+
+    const chunks = groups.map(g => {
+      const set = closure(g.map(l => l.id));
+      const features = model.features.filter(f => set.has(f.id));
+      return {
+        levels: g,
+        model: { ...model, features, hidden: (model.hidden || []).filter(id => set.has(id)) },
+        // What is drawn: solids nothing else consumes, and never the hidden ones.
+        leaves: features.filter(f => /^(Extrude|Boolean|AxisToAxis)$/.test(f.type) && !used.has(f.id) && !hidden.has(f.id)).map(f => f.id),
+      };
+    });
+
+    // A typical floor for the sketch chapters: the middle level with one opening.
+    const typical = (() => {
+      const mid = floors[Math.floor(floors.length * 0.35)];
+      for (const lv of [mid].concat(floors)) {
+        const f = lv.ids.map(id => byId.get(id));
+        const sk = f.find(x => x.type === "Sketch" && !/^Opening/.test(x.name));
+        const op = f.find(x => x.type === "Sketch" && /^Opening/.test(x.name));
+        if (!sk || !op) continue;
+        const ex = f.find(x => x.type === "Extrude" && x.args.profile.ref === sk.id);
+        const exo = f.find(x => x.type === "Extrude" && x.args.profile.ref === op.id);
+        const bo = f.find(x => x.type === "Boolean" && x.args.a.ref === ex.id);
+        if (ex && exo && bo) return { level: lv, sk: sk.id, op: op.id, ex: ex.id, exo: exo.id, bo: bo.id, segments: sk.args.drawing.elements.length };
+      }
+      return null;
+    })();
+
+    // The local, unplaced column extrudes, for the placement chapter.
+    const localColumns = model.features.filter(f => f.type === "AxisToAxis").map(f => f.args.shape.ref);
+    return { chunks, levels: floors, columns, levelOf, typical, localColumns, total: model.features.length };
+  }
+
+  /* ------------------------------------------------------------- scene */
+  const stage = document.getElementById("stage");
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.1;
+  const FOG = 0xe9ebec;
+  renderer.setClearColor(FOG, 1);
+  stage.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  scene.fog = new THREE.Fog(FOG, 600, 2400);
+  const camera = new THREE.PerspectiveCamera(30, 1, 1, 8000);
+  camera.up.set(0, 0, 1);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x9aa2a6, 0.85));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.75);
+  sun.position.set(-400, -700, 900);
+  scene.add(sun);
+
+  // Millimetres in the file, metres on screen.
+  const model = new THREE.Group();
+  model.scale.setScalar(0.001);
+  scene.add(model);
+
+  const M = {
+    floor: new THREE.MeshStandardMaterial({ color: 0xcfd3d5, roughness: 0.92, metalness: 0, side: THREE.DoubleSide }),
+    floorW: new THREE.MeshStandardMaterial({ color: 0x9aa1a4, roughness: 0.92, metalness: 0, side: THREE.DoubleSide }),
+    ghost: new THREE.MeshStandardMaterial({ color: 0xdcdfe0, roughness: 1, transparent: true, opacity: 0.12, depthWrite: false, side: THREE.DoubleSide }),
+    column: new THREE.MeshStandardMaterial({ color: 0xc9cdcf, roughness: 0.85, metalness: 0 }),
+    edge: new THREE.LineBasicMaterial({ color: 0x2b3134, transparent: true, opacity: 0.5 }),
+    ink: new THREE.LineBasicMaterial({ color: 0x15181a, transparent: true, opacity: 1 }),
+    inkSoft: new THREE.LineBasicMaterial({ color: 0x15181a, transparent: true, opacity: 0.45 }),
+    slab: new THREE.MeshStandardMaterial({ color: 0xbfc4c6, roughness: 0.9, transparent: true, side: THREE.DoubleSide }),
+    cut: new THREE.MeshStandardMaterial({ color: 0x15181a, roughness: 1, transparent: true, opacity: 0.25, depthWrite: false, side: THREE.DoubleSide }),
+  };
+
+  function geometryOf(f) {
+    if (!f || !f.positions) return null;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(f.positions, 3));
+    if (f.normals && f.normals.length === f.positions.length) g.setAttribute("normal", new THREE.Float32BufferAttribute(f.normals, 3));
+    if (f.index) g.setIndex(Array.from(f.index));
+    if (!g.getAttribute("normal")) g.computeVertexNormals();
+    return g;
+  }
+  function linesOf(f, mat) {
+    if (!f || !f.edges || !f.edges.length) return null;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(f.edges, 3));
+    return new THREE.LineSegments(g, mat);
+  }
+
+  const floors = [];     // { mesh, edges, z, name, side }
+  const columns = [];
+  const localCols = [];
+  const typicalParts = {};
+  const box = new THREE.Box3();
+  const grids = new THREE.Group();
+  scene.add(grids);
+
+  /* ------------------------------------------------------ the story */
+  const smooth = x => x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x);
+  const ramp = (c, a, b) => smooth((c - a) / (b - a));
+  const band = (c, a, b, d, e) => ramp(c, a, b) * (1 - ramp(c, d, e));
+
+  let chapter = 0;
+  function measure() {
+    const mid = scrollY + innerHeight / 2;
+    const centres = sections.map(s => s.offsetTop + s.offsetHeight / 2);
+    if (mid <= centres[0]) { chapter = 0; return; }
+    for (let i = 0; i < LAST; i++) if (mid < centres[i + 1]) { chapter = i + (mid - centres[i]) / (centres[i + 1] - centres[i]); return; }
+    chapter = LAST;
+  }
+
+  // Shots are written against the tower's own size once it is known, in
+  // metres: C the centre of the columns' footprint at mid height, H the height.
+  let shots = null;
+  function planShots(plan) {
+    const C = new THREE.Vector3(), size = new THREE.Vector3();
+    box.getCenter(C); box.getSize(size);
+    const H = Math.max(size.z, 100), S = H;
+    const T = plan.typical ? typicalCentre : C.clone();
+    const top = new THREE.Vector3(C.x, C.y, 330);
+    const v = (b, x, y, z) => new THREE.Vector3(b.x + x, b.y + y, b.z + z);
+    shots = [
+      { at: v(C, -1.35 * S, -1.95 * S, -0.3 * S), look: v(C, 0, 0, 0.04 * S) },
+      { at: v(C, 1.6 * S, -1.65 * S, 0.35 * S), look: v(C, 0, 0, 0) },
+      { at: v(C, -0.34 * S, -0.5 * S, -0.44 * S), look: v(C, 0, 0, 0.12 * S) },
+      { at: v(T, 0, -12, 190), look: v(T, 0, 0, 0) },
+      { at: v(T, -95, -120, 70), look: v(T, 0, 0, -1) },
+      { at: v(C, 1.8 * S, -1.3 * S, 0.08 * S), look: v(C, 0, 0, 0) },
+      { at: v(top, -230, -260, 110), look: v(top, 0, 0, 0) },
+      { at: v(C, 0.15 * S, -0.55 * S, 1.45 * S), look: v(C, 0, 0, -0.45 * S) },
+      { at: v(C, -1.65 * S, -2.1 * S, 0.12 * S), look: v(C, 0, 0, 0.05 * S) },
+    ];
+    scene.fog.near = S * 1.6; scene.fog.far = S * 6;
+  }
+  let typicalCentre = new THREE.Vector3();
+
+  /* ---------------------------------------------------- the staff */
+  const staff = document.getElementById("staff");
+  const staffTicks = new Map();
+  let zRange = [-19400, 379400];
+  const yOf = z => (1 - (z - zRange[0]) / (zRange[1] - zRange[0])) * 100;
+  let marker;
+  function buildStaff(plan) {
+    const labels = new Set(["F9", "F30", "F50", "F65E", "RFW", "RFE"]);
+    for (const lv of plan.levels) {
+      const t = document.createElement("div");
+      t.className = "tick"; t.style.top = yOf(lv.z) + "%";
+      staff.appendChild(t); staffTicks.set(lv.name, t);
+      if (labels.has(lv.name)) {
+        const l = document.createElement("div");
+        l.className = "label"; l.style.top = yOf(lv.z) + "%";
+        l.textContent = lv.name + " " + metres(lv.z);
+        staff.appendChild(l);
+      }
+    }
+    marker = document.createElement("div");
+    marker.className = "marker"; marker.style.top = yOf(0) + "%";
+    staff.appendChild(marker);
+  }
+
+  /* ------------------------------------------------------- the kernel */
+  const readoutEl = document.getElementById("readout");
+  let lastReadout = "";
+  const readout = html => { if (html !== lastReadout) { lastReadout = html; readoutEl.innerHTML = html; } };
+  let plan = null, place = null, builtFeatures = 0, buildMs = 0, triangles = 0, done = false;
+
+  async function boot() {
+    let doc;
+    try {
+      say("reading tower.model.json · 8.3 MB");
+      doc = await (await fetch("tower.model.json")).json();
+    } catch (err) { say("could not read tower.model.json: " + err.message, "failed"); return; }
+    place = rebase(doc);
+    plan = planChunks(doc);
+    buildStaff(plan);
+    if (plan.typical) {
+      const t = plan.typical;
+      document.querySelector('[data-typical="kicker"]').textContent = "Sketch · " + t.level.name + " floor plate · " + metres(t.level.z);
+      document.querySelector('[data-typical="figures"]').innerHTML =
+        "<span><b>" + fmt(t.segments) + "</b> segments</span><span>level <b>" + t.level.name + "</b></span><span>plane at <b>" + metres(t.level.z) + "</b></span>";
+    }
+
+    let kernel;
+    let chunkBase = 0;
+    try {
+      say("unpacking the OpenCascade kernel · 7.2 MB");
+      kernel = await startKernel({
+        base: "../kernel/",
+        onProgress: text => { if (text !== "ready") say(text); },
+        onBuild: step => {
+          if (step && step.total) say("building · " + fmt(Math.min(plan.total, chunkBase + step.done)) + " of " + fmt(plan.total) + " features");
+        },
+      });
+    } catch (err) { say("the kernel could not start here: " + err.message, "failed"); return; }
+
+    const t0 = performance.now();
+    const localIds = new Set(plan.localColumns);
+    for (const chunk of plan.chunks) {
+      try {
+        await kernel.loadModel(chunk.model);
+        const extra = [];
+        if (plan.typical && chunk.levels.includes(plan.typical.level))
+          extra.push(plan.typical.sk, plan.typical.op, plan.typical.ex, plan.typical.exo);
+        for (const f of chunk.model.features) if (localIds.has(f.id)) extra.push(f.id);
+        const meshed = await kernel.mesh(chunk.leaves.concat(extra));
+        for (const f of meshed.features) addFeature(f, chunk);
+      } catch (err) {
+        say("a band of levels failed to build: " + err.message, "failed");
+      }
+      // Shared datums are rebuilt with every band, so the count is capped
+      // at the file's own total rather than summed past it.
+      chunkBase += chunk.model.features.length;
+      builtFeatures = Math.min(plan.total, builtFeatures + chunk.model.features.length);
+      for (const lv of chunk.levels) { const t = staffTicks.get(lv.name); if (t) t.classList.add("built"); }
+      if (columns.length || floors.length) planShots(plan);
+    }
+    buildMs = performance.now() - t0;
+    done = true;
+    planShots(plan);
+    drawGrids();
+    say(fmt(plan.total) + " features built in " + (buildMs / 1000).toFixed(1) + " s, in this tab · " + fmt(triangles) + " triangles", "ready");
+    document.getElementById("final-line").textContent =
+      "Every slab, cut and column on this page was modelled in this tab: " + fmt(plan.total) + " features in " +
+      (buildMs / 1000).toFixed(1) + " s, " + fmt(triangles) + " triangles, " + plan.chunks.length + " bands of levels.";
+  }
+
+  function addFeature(f, chunk) {
+    const t = plan.typical;
+    const level = plan.levelOf.get(f.id) || "";
+    const lv = plan.levels.find(l => l.name === level);
+    if (t && (f.id === t.sk || f.id === t.op)) {
+      const ink = linesOf(f, f.id === t.sk ? M.ink.clone() : M.inkSoft.clone());
+      if (ink) { ink.visible = false; model.add(ink); typicalParts[f.id === t.sk ? "sk" : "op"] = ink; }
+      return;
+    }
+    if (t && (f.id === t.ex || f.id === t.exo)) {
+      const g = geometryOf(f); if (!g) return;
+      // Grown from the level's plane, downwards.
+      const holder = new THREE.Group(), inner = new THREE.Mesh(g, f.id === t.ex ? M.slab.clone() : M.cut.clone());
+      holder.position.z = t.level.z; inner.position.z = -t.level.z;
+      holder.add(inner); holder.visible = false; model.add(holder);
+      const e = linesOf(f, M.edge); if (e) { e.position.z = -t.level.z; holder.add(e); }
+      typicalParts[f.id === t.ex ? "ex" : "exo"] = holder;
+      return;
+    }
+    if (plan.localColumns.includes(f.id)) {
+      const e = linesOf(f, M.inkSoft.clone());
+      if (e) { e.visible = false; model.add(e); localCols.push(e); }
+      return;
+    }
+    const g = geometryOf(f);
+    if (!g) return;
+    triangles += f.triangles || 0;
+    if (f.type === "AxisToAxis") {
+      const mesh = new THREE.Mesh(g, M.column);
+      model.add(mesh);
+      columns.push({ mesh });
+      g.computeBoundingBox();
+      const b = g.boundingBox.clone(); b.min.multiplyScalar(0.001); b.max.multiplyScalar(0.001);
+      box.union(b);
+      return;
+    }
+    const mesh = new THREE.Mesh(g, M.floor);
+    const edges = linesOf(f, M.edge);
+    model.add(mesh); if (edges) model.add(edges);
+    const z = lv ? lv.z : 0;
+    const side = /E$/.test(level) ? "E" : /W$/.test(level) ? "W" : "";
+    floors.push({ mesh, edges, z, name: level, side, typical: t && f.id === t.bo });
+    if (t && f.id === t.bo) {
+      g.computeBoundingBox();
+      g.boundingBox.getCenter(typicalCentre).multiplyScalar(0.001);
+      typicalCentre.z = t.level.z / 1000;
+    }
+    if (!columns.length) { g.computeBoundingBox(); const b = g.boundingBox.clone(); b.min.multiplyScalar(0.001); b.max.multiplyScalar(0.001); box.union(b); }
+  }
+
+  // The survey grid and the local grid the columns were drawn on, 10 m
+  // apart, the local one turned by the placement's angle.
+  function drawGrids() {
+    const C = new THREE.Vector3(); box.getCenter(C);
+    const span = 420, step = 10, pts = [], ptsL = [];
+    for (let i = -span / 2; i <= span / 2; i += step) {
+      pts.push(C.x + i, C.y - span / 2, 0, C.x + i, C.y + span / 2, 0, C.x - span / 2, C.y + i, 0, C.x + span / 2, C.y + i, 0);
+    }
+    const a = place.angle, ca = Math.cos(a), sa = Math.sin(a);
+    const R = (x, y) => [x * ca - y * sa, x * sa + y * ca];
+    // The local grid runs through the local origin, which after the rebase is (0, 0).
+    const L = 900;
+    for (let i = -L; i <= L; i += step * 4) {
+      const p = R(i, -L), q = R(i, L), r = R(-L, i), s = R(L, i);
+      ptsL.push(p[0], p[1], 0.05, q[0], q[1], 0.05, r[0], r[1], 0.05, s[0], s[1], 0.05);
+    }
+    const mk = (arr, op) => {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", new THREE.Float32BufferAttribute(arr, 3));
+      return new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0x15181a, transparent: true, opacity: op, depthWrite: false }));
+    };
+    grids.add(mk(pts, 0.14), mk(ptsL, 0.4));
+    grids.children[1].userData.base = 0.4; grids.children[0].userData.base = 0.14;
+    grids.visible = false;
+  }
+
+  /* ------------------------------------------------------------ frame */
+  const pointer = { x: 0, y: 0, sx: 0, sy: 0 };
+  addEventListener("pointermove", e => { pointer.x = e.clientX / innerWidth - 0.5; pointer.y = e.clientY / innerHeight - 0.5; }, { passive: true });
+  function resize() {
+    const w = innerWidth, h = innerHeight;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    camera.fov = w < 900 ? 42 : 30;
+    camera.setViewOffset(w, h, w < 900 ? 0 : -w * 0.08, w < 900 ? h * 0.18 : 0, w, h);
+    camera.updateProjectionMatrix();
+    measure();
+  }
+  addEventListener("resize", resize);
+  addEventListener("scroll", measure, { passive: true });
+  resize();
+
+  const pos = new THREE.Vector3(), look = new THREE.Vector3(), tmp = new THREE.Vector3();
+  const clock = new THREE.Clock();
+  camera.position.set(-600, -900, 200); camera.lookAt(0, 0, 150);
+
+  function frame() {
+    const time = clock.getElapsedTime();
+    const c = chapter;
+    if (shots) {
+      const i = Math.min(LAST - 1, Math.floor(c)), f = smooth(c - i);
+      pos.lerpVectors(shots[i].at, shots[i + 1].at, f);
+      look.lerpVectors(shots[i].look, shots[i + 1].look, f);
+      if (!reduced) {
+        const sway = (1 - ramp(c, 0, 0.8)) + ramp(c, LAST - 0.8, LAST) + band(c, 4.6, 5, 5.4, 5.8) * 0.5;
+        tmp.copy(pos).sub(look).applyAxisAngle(camera.up, sway * 0.35 * Math.sin(time * 0.12));
+        pos.copy(look).add(tmp);
+        pointer.sx += (pointer.x - pointer.sx) * 0.05; pointer.sy += (pointer.y - pointer.sy) * 0.05;
+        const d = pos.distanceTo(look);
+        tmp.set(-pointer.sx, 0, 0).applyQuaternion(camera.quaternion).multiplyScalar(d * 0.05);
+        pos.add(tmp); pos.z += pointer.sy * d * 0.04;
+      }
+      camera.position.copy(pos); camera.lookAt(look);
+    }
+
+    // Floors: whole tower, then ghosted behind the columns, hidden round the
+    // typical floor, laid in order by elevation, split by crown.
+    const ghost = Math.max(band(c, 1.5, 1.9, 2.5, 2.9), band(c, 2.5, 2.9, 4.4, 4.8));
+    const reveal = c < 4.5 ? 1 : ramp(c, 4.6, 5.4);
+    const zTop = zRange[0] + (zRange[1] - zRange[0]) * reveal;
+    const split = band(c, 5.5, 5.9, 6.4, 6.8);
+    M.ghost.opacity = 0.14;
+    for (const fl of floors) {
+      const typicalHidden = fl.typical && c > 2.5 && c < 4.55 && ramp(c, 3.4, 3.9) < 0.99;
+      // While one floor is being drawn, everything above it is cut away like
+      // a section, or sixty ghosted slabs would stack into a white wall.
+      const above = plan.typical && ghost > 0.01 && c > 2.45 && c < 4.8 && fl.z > plan.typical.level.z;
+      const show = fl.z <= zTop + 1 && !typicalHidden && !above;
+      fl.mesh.visible = show;
+      fl.mesh.material = ghost > 0.5 && !fl.typical ? M.ghost : split > 0.5 && fl.side === "W" ? M.floorW : M.floor;
+      if (fl.edges) { fl.edges.visible = show && ghost < 0.5; }
+    }
+    M.edge.opacity = 0.5 * (1 - ghost) + 0.05;
+
+    // The typical floor: sketch drawn on, then extruded and cut.
+    const t = typicalParts;
+    const sketchOn = band(c, 2.5, 2.8, 3.8, 4.3);
+    if (t.sk) {
+      t.sk.visible = sketchOn > 0.01;
+      t.sk.material.opacity = sketchOn;
+      const n = t.sk.geometry.getAttribute("position").count;
+      t.sk.geometry.setDrawRange(0, Math.floor(n * ramp(c, 2.55, 3.05) / 2) * 2);
+    }
+    if (t.op) { t.op.visible = sketchOn > 0.01; t.op.material.opacity = 0.6 * sketchOn * ramp(c, 2.95, 3.1); }
+    if (t.ex) {
+      const grow = ramp(c, 3.35, 3.75);
+      t.ex.visible = grow > 0.01 && c < 4.55;
+      t.ex.scale.z = Math.max(0.001, grow);
+      t.ex.children[0].material.opacity = 1 - ramp(c, 3.95, 4.25);
+    }
+    if (t.exo) {
+      const g2 = ramp(c, 3.6, 3.9);
+      t.exo.visible = g2 > 0.01 && c < 4.3;
+      t.exo.scale.z = Math.max(0.001, g2);
+      t.exo.children[0].material.opacity = 0.35 * (1 - ramp(c, 3.95, 4.2));
+    }
+
+    // Columns: always there, darker while they are the subject, and out of
+    // the way while one floor is drawn in plan.
+    M.column.color.setScalar(0.72 - 0.3 * band(c, 1.5, 1.9, 2.5, 2.9));
+    const colsAway = band(c, 2.45, 2.75, 3.3, 3.6);
+    for (const col of columns) col.mesh.visible = colsAway < 0.5;
+
+    // Placement: the local columns and the two grids.
+    const placing = band(c, 6.5, 6.9, 7.4, 7.8);
+    grids.visible = placing > 0.01;
+    grids.children.forEach(g => { g.material.opacity = (g.userData.base || 0.2) * placing; });
+    grids.rotation.z = 0;
+    localCols.forEach(l => { l.visible = placing > 0.01; l.material.opacity = 0.6 * placing; });
+
+    // Staff marker at the camera's target height, or the reveal line.
+    if (marker) {
+      const z = c >= 4.5 && c < 5.5 ? zTop : look.z * 1000;
+      marker.style.top = Math.max(0, Math.min(100, yOf(z))) + "%";
+      const r = Math.round(c);
+      staffTicks.forEach((tk, name) => {
+        const fl = plan.levels.find(l => l.name === name);
+        tk.classList.toggle("on", (r === 5 && fl.z <= zTop) || (r === 6 && /[EW]$/.test(name)) || (r === 3 && plan.typical && name === plan.typical.level.name));
+      });
+    }
+
+    if (plan) {
+      const r = Math.round(c);
+      let html;
+      if (!done && r === 0) html = "<span><b>" + fmt(floors.length) + "</b> floor plates</span><span><b>" + fmt(columns.length) + "</b> columns</span><span><b>" + fmt(triangles) + "</b> triangles so far</span>";
+      else if (r === 2) html = "<span><b>" + columns.length + "</b> AxisToAxis columns</span><span>Ø <b>1,600 mm</b></span>";
+      else if ((r === 3 || r === 4) && plan.typical) html = "<span><b>" + plan.typical.level.name + "</b> " + metres(plan.typical.level.z) + "</span><span>" + (r === 3 ? "<b>" + fmt(plan.typical.segments) + "</b> sketch segments" : "Extrude <b>1,000 mm</b> · Boolean <b>difference</b>") + "</span>";
+      else if (r === 5) {
+        const top = plan.levels.filter(l => l.z <= zTop).pop();
+        html = top ? "<span>top level <b>" + top.name + "</b></span><span><b>" + metres(top.z) + "</b></span><span><b>" + floors.filter(fl => fl.z <= zTop).length + "</b> plates</span>" : "<span>columns only</span>";
+      }
+      else if (r === 6) html = "<span>east crown to <b>RFE 379.4 m</b></span><span>west crown to <b>RFW 327.5 m</b></span>";
+      else if (r === 7) html = "<span>E <b>" + (place.dx / 1000).toLocaleString("en-GB", { minimumFractionDigits: 3 }) + " m</b></span><span>N <b>" + (place.dy / 1000).toLocaleString("en-GB", { minimumFractionDigits: 3 }) + " m</b></span><span>turn <b>" + (place.angle * 180 / Math.PI).toFixed(3) + "°</b></span>";
+      else html = "<span><b>" + fmt(floors.length) + "</b> floor plates</span><span><b>" + fmt(columns.length) + "</b> columns</span><span><b>" + fmt(triangles) + "</b> triangles</span>";
+      readout(html);
+    }
+
+    renderer.render(scene, camera);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+  boot();
+
+  document.querySelectorAll("[data-leave]").forEach(a => a.addEventListener("click", e => {
+    e.preventDefault();
+    const veil = document.getElementById("veil");
+    veil.classList.remove("arriving"); veil.classList.add("leaving");
+    setTimeout(() => { location.href = a.getAttribute("href"); }, reduced ? 0 : 650);
+  }));
+})();
+</script>
+</body>
+</html>

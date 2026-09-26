@@ -1,0 +1,40 @@
+<!doctype html>
+<!-- Headless probe: builds a model with the kernel and prints what came out.
+     Served next to kernel.js; the model path comes from the #hash, e.g.
+     probe.html#../sketcher-narrative/sketcher.json  (driven by probe_model.mjs). -->
+<meta charset="utf-8">
+<script src="kernel.js"></script>
+<script>
+(async () => {
+  const log = (...a) => console.log(a.map(x => typeof x === "string" ? x : JSON.stringify(x)).join(" "));
+  try {
+    const modelUrl = decodeURIComponent(location.hash.slice(1));
+    const base = new URLSearchParams(location.search).get("base") || "";
+    const k = await startKernel({ base, onBuild: b => { if (b.total && b.done % 250 === 0) log("build", b.done, "/", b.total); } });
+    const model = await (await fetch(modelUrl)).json();
+    const types = {};
+    for (const f of model.features) types[f.type] = (types[f.type] || 0) + 1;
+    log("features", model.features.length, "types", types, "hidden", (model.hidden || []).length);
+    let big = 0;
+    for (const f of model.features) if (f.type === "Point" && Math.max(Math.abs(f.args.x || 0), Math.abs(f.args.y || 0)) > 1e6) big++;
+    if (big) log("WARNING", big, "points beyond 1e6 mm - rebase before building (float32 meshes lose precision)");
+    let t = performance.now();
+    const r = await k.loadModel(model);
+    log("loadModel ms", Math.round(performance.now() - t), "executed", r.report.executed.length, "failed", r.report.failed || []);
+    t = performance.now();
+    const m = await k.mesh();
+    log("mesh ms", Math.round(performance.now() - t));
+    let tris = 0;
+    const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+    for (const f of m.features) {
+      tris += f.triangles || 0;
+      const p = f.positions || f.edges;
+      if (p) for (let i = 0; i < p.length; i += 3) for (let j = 0; j < 3; j++) { lo[j] = Math.min(lo[j], p[i + j]); hi[j] = Math.max(hi[j], p[i + j]); }
+      if (model.features.length <= 60)
+        log(f.id, f.type, f.name, f.shape || "", "tris", f.triangles || 0, "edgeSegs", f.edges ? f.edges.length / 6 : 0, f.point ? "point " + f.point.join(",") : "", f.meshError || "");
+    }
+    log("triangles", tris, "bbox", lo.map(Math.round), hi.map(Math.round));
+    log("DONE");
+  } catch (e) { log("ERR", e.message); }
+})();
+</script>
