@@ -294,6 +294,9 @@ table.sched td.a-right, table.sched th.a-right { text-align: right; } table.sche
 table.sched td.a-right input { text-align: right; }
 .schedbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 0 8px; }
 .schedbar .sep { width: 1px; height: 20px; background: var(--rule); margin: 0 4px; }
+.schednote { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 12.5px; padding: 6px 10px; margin-bottom: 6px; border-radius: 5px; background: var(--panel-2); border: 1px solid var(--rule-2); }
+.schednote.warn { background: color-mix(in srgb, #e0a100 16%, var(--panel)); border-color: color-mix(in srgb, #e0a100 55%, var(--panel)); color: var(--ink); }
+.schedbar input[type=search] { flex: 1; min-width: 200px; max-width: 420px; }
 .schedchips { display: flex; flex-wrap: wrap; gap: 6px; padding-bottom: 8px; }
 .schedchips .chip { cursor: pointer; border: 0; font: inherit; font-size: 12px; }
 .schedmenu { position: fixed; z-index: 60; background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; box-shadow: 0 6px 24px rgba(0,0,0,.18); padding: 4px; display: grid; min-width: 220px; }

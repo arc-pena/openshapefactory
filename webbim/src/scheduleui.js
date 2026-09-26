@@ -6,7 +6,7 @@ import { h, clear, dialog, saveFile } from "./ui_util.js";
 import { F, clone } from "./ocaf.js";
 import { specsFor } from "./props.js";
 import { SCHEDULE_CATEGORIES, SCHEDULE_KINDS, categoryName } from "./bim.js";
-import { scheduleTable, scheduleCSV, scheduleSettings, availableFields, prettyField, defaultFields, scheduledElements, fieldValue,
+import { scheduleTable, scheduleCSV, scheduleSettings, availableFields, prettyField, findInSchedule, failText, defaultFields, scheduledElements, fieldValue,
   FILTER_OPS, FOOTER_MODES, TOTAL_MODES, CALC_KINDS, APPEARANCE_DEFAULT } from "./schedules.js";
 
 const TABS = ["Fields", "Filter", "Sorting/Grouping", "Formatting", "Appearance"];
@@ -20,7 +20,7 @@ export function renderSchedule(app, root, v) {
   const nSort = S.sort.filter(s => s && s.field).length, nFilt = S.filters.filter(r => r && r.field).length;
   card.append(h("header", {},
     h("h2", {}, v.get("Name")),
-    h("span", { class: "muted" }, `${categoryName(S.cat)} · ${S.kind} · ${T.count} ${T.count === 1 ? "element" : "elements"}${S.itemize ? "" : ` in ${T.rows.filter(r => r.kind === "merged").length} rows`} · editing a cell edits the model`),
+    h("span", { class: "muted" }, `${categoryName(S.cat)} · ${S.kind} · ${T.excluded.size ? `${T.total - T.excluded.size} of ${T.total}` : T.total} ${T.total === 1 ? "element" : "elements"}${S.itemize ? "" : ` in ${T.rows.filter(r => r.kind === "merged").length} rows`} · editing a cell edits the model`),
     S.cat === "IfcSpace" ? h("span", { class: "chip" }, "areas to the boundary each space states") : null));
   card.append(h("div", { class: "schedbar", role: "toolbar", "aria-label": "Schedule tools" },
     h("span", { class: "muted small" }, "Properties:"), tabBtn("Fields", String(S.fields.length)), tabBtn("Filter", nFilt ? String(nFilt) : ""), tabBtn("Sorting/Grouping", nSort ? String(nSort) : ""), tabBtn("Formatting"), tabBtn("Appearance"),
@@ -32,6 +32,35 @@ export function renderSchedule(app, root, v) {
     S.filters.filter(r => r && r.field).map((r, i) => h("button", { class: "chip", title: "Edit the filter", onclick: () => scheduleProperties(app, id, "Filter") }, `${i ? (S.filterAny ? "or " : "and ") : "where "}${prettyField(r.field)} ${r.op}${/value/.test(r.op) ? "" : " " + (r.value ?? "")}`)),
     S.sort.filter(s => s && s.field).map((s, i) => h("button", { class: "chip", title: "Edit sorting and grouping", onclick: () => scheduleProperties(app, id, "Sorting/Grouping") }, `${i ? "then" : "sort by"} ${prettyField(s.field)} ${s.desc ? "↓" : "↑"}${s.header || s.footer ? " · grouped" : ""}`))));
   for (const n of T.notes) card.append(h("div", { class: "under err" }, n));
+  // what the filter leaves out is said, never silent: how many, and for a selected element, which rule
+  if (T.excluded.size) {
+    const clearF = () => app.apply({ op: "set", id, key: "filters", value: [] });
+    card.append(h("div", { class: "schednote" }, `${T.excluded.size} ${T.excluded.size === 1 ? "element is" : "elements are"} left out by the filter.`,
+      h("button", { class: "btn small", onclick: () => scheduleProperties(app, id, "Filter") }, "Edit filter"), h("button", { class: "btn small", onclick: clearF }, "Show all (clear filter)")));
+    for (const sid of [...app.selection].filter(x => T.excluded.has(x)).slice(0, 3)) {
+      const x = T.excluded.get(sid);
+      card.append(h("div", { class: "schednote warn" }, `Selected ${sid} “${x.name}” is not listed: ${x.fails.map(failText).join("; ")}.`,
+        ...x.fails.map(fl => h("button", { class: "btn small", onclick: () => { const fs = clone(S.filters); fs.splice(fl.rule, 1); app.apply({ op: "set", id, key: "filters", value: fs }); } }, `Remove the ${prettyField(fl.field)} rule`))));
+    }
+  }
+  // material fields only have values in a material takeoff: say so rather than show empty columns
+  if (S.kind !== "Material Takeoff" && S.fields.some(k => /^Material: /.test(k))) card.append(h("div", { class: "schednote warn" },
+    `The Material columns are empty: this schedule's type is ${S.kind}, and material rows exist only in a Material Takeoff.`,
+    h("button", { class: "btn small", onclick: () => app.apply({ op: "set", id, key: "kind", value: "Material Takeoff" }) }, "Make it a Material Takeoff")));
+  // find any element: where it is in this schedule, or why it is not
+  const found = h("div", { class: "schedfind", "aria-live": "polite" });
+  const find = h("input", { type: "search", placeholder: "Find an element (name, mark or id)…", "aria-label": "Find an element in this schedule", value: app.schedFind || "",
+    oninput: e => { app.schedFind = e.target.value; showFound(); } });
+  const showFound = () => {
+    clear(found);
+    for (const r of findInSchedule(doc, T, find.value)) found.append(h("div", { class: "schednote" + (r.status === "shown" ? "" : " warn") },
+      r.status === "shown" ? `${r.id} “${r.name}” is listed.` : r.status === "filtered" ? `${r.id} “${r.name}” is left out by the filter: ${r.fails.map(failText).join("; ")}.`
+        : r.status === "other" ? `${r.id} “${r.name}” is a ${r.category.replace(/s$/, "").toLowerCase()}, not in ${categoryName(S.cat)}.` : `${r.id} “${r.name}” is not listed.`,
+      r.status === "shown" ? h("button", { class: "btn small", onclick: () => { app.select([r.id]); const tr = root.querySelector(`tr[data-ids~="${r.id}"]`); if (tr) tr.scrollIntoView({ block: "center" }); } }, "Select row") : null,
+      r.status === "filtered" ? r.fails.map(fl => h("button", { class: "btn small", onclick: () => { const fs = clone(S.filters); fs.splice(fl.rule, 1); app.apply({ op: "set", id, key: "filters", value: fs }); } }, `Remove the ${prettyField(fl.field)} rule`)) : null));
+    if (find.value.trim() && !found.childNodes.length) found.append(h("div", { class: "schednote warn" }, `Nothing in the model is called “${find.value.trim()}”.`));
+  };
+  card.append(h("div", { class: "schedbar" }, find), found); showFound();
   const cols = T.visible.map(i => T.columns[i]);
   const table = h("table", { class: "sched" + (A.gridlines ? " grid" : "") + (A.stripes ? " stripes" : "") + (A.outline ? " outline" : "") });
   if (A.headers) {
@@ -53,7 +82,7 @@ export function renderSchedule(app, root, v) {
     if (r.kind === "blank") { tb.append(h("tr", { class: "blank" }, h("td", { colspan: cols.length || 1 }))); continue; }
     if (r.kind === "header") { tb.append(h("tr", { class: "grouphead d" + r.depth, onclick: e => app.select(r.ids, e.shiftKey) }, h("td", { colspan: cols.length || 1 }, r.text))); continue; }
     const sel = r.ids && r.ids.length && r.ids.every(x => app.selection.has(x));
-    const tr = h("tr", { class: [r.kind, sel ? "sel" : ""].join(" "), onclick: e => { if (!/INPUT|SELECT|OPTION/.test(e.target.tagName)) app.select(r.ids || [], e.shiftKey || e.ctrlKey || e.metaKey); } });
+    const tr = h("tr", { class: [r.kind, sel ? "sel" : ""].join(" "), "data-ids": (r.ids || []).join(" "), onclick: e => { if (!/INPUT|SELECT|OPTION/.test(e.target.tagName)) app.select(r.ids || [], e.shiftKey || e.ctrlKey || e.metaKey); } });
     T.visible.forEach((i, n) => {
       const c = r.cells[i], col = T.columns[i];
       const td = (r.kind === "item" || r.kind === "merged") ? cellEditor(app, r, col, c) : h("td", {}, n === 0 && r.text && !c.text ? r.text : c.text || "");
@@ -218,7 +247,7 @@ export function scheduleProperties(app, id, tab = "Fields", opts = {}) {
       W.calculated = W.calculated.filter(c => c.name !== n).concat([cType.value === "formula" ? { name: n, type: "formula", formula: cFormula.value.trim() || "0", kind: cKind.value } : { name: n, type: "percentage", of: cOf.value, by: cBy.value }]);
       if (!W.fields.includes(n)) W.fields.push(n); cName.value = ""; cFormula.value = ""; fillCalc(); fillLeft(); fillRight(); };
     pane.append(
-      h("div", { class: "row2" }, h("label", {}, "Category ", cat), h("label", {}, "Type ", kind)),
+      h("div", { class: "row2" }, h("label", {}, "Category ", cat), h("label", {}, "Schedule type ", kind)),
       h("div", { class: "fieldpick" },
         h("div", {}, h("div", { class: "cap" }, "Available fields"), q, left),
         h("div", { class: "mid" }, h("button", { class: "btn small", onclick: addF, "aria-label": "Add field" }, "Add →"), h("button", { class: "btn small", onclick: remF, "aria-label": "Remove field" }, "← Remove")),

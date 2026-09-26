@@ -22,7 +22,7 @@ import { drawScene } from "./render.js";
 import { resolveGraphics, penWeight, categoryOf } from "./styles.js";
 import { propertyModel, pickCandidates, graphModel, listeningDimensions, dimensionMove, editorFor, referenceOptions } from "./props.js";
 import { buildSample } from "./sample.js";
-import { scheduleTable, scheduleCSV, availableFields } from "./schedules.js";
+import { scheduleTable, scheduleCSV, availableFields, findInSchedule, failText } from "./schedules.js";
 import { parseLength, setLengthUnit } from "./units.js";
 import { bimToCad, cadEditsToOps } from "./cadbridge.js";
 import { fromPolygon, addElements, fillet, toggleLock, measureDim, dragHandle, regionsOf, shapeFromClicks, filletCorners, toCentreline, elementSegs, splitElement, bsplineAt, bsplineDomain } from "./bimsketch.js";
@@ -2045,4 +2045,17 @@ testCase("M72", "Schedules as Revit: filters (And, Or, on a field not shown), so
   const pass = ids(tAnd) === "C" && ids(tOr) === "A,B,D" && grpOk && mergeOk && calcOk && matOk && multiOk && csvOk && fieldsOk;
   return R(pass, "And → C; Or → A,B,D; grouped Solid 400 (C, D, 2 = 7000) then Solid 300 (A, B, 2 = 10000), grand 4 = 17000; merged rows per type with count and total; A doubled 8000, 23.5 %; B shaded; A's block 3.6 m³; floors 1, walls 4; CSV",
     JSON.stringify({ and: ids(tAnd), or: ids(tOr), shape, m, calc: [rowA.cells.map(c => c.text), rowB.cells[1].fill], mat: tMat.rows.map(r => r.cells.map(c => c.text)), multi: tMulti.rows.map(r => r.cells.map(c => c.text)), csv: csv.split("\n").slice(0, 3), fieldsOk }));
+});
+testCase("M73", "A schedule says what its filter leaves out: the count of all and of those shown, and, asked for an element by name, that it is left out and by which rule (Length 7250 mm is not less than 2921 mm) - or that it is listed, or filed under another category", () => {
+  const { doc, ed } = fixture();
+  wall(doc, "A", [0, 0], [2000, 0], "T-300"); wall(doc, "B", [0, 5000], [7250, 5000], "T-300");
+  doc.element("B").set("Name", "mybaby");
+  ed.apply({ op: "add", element: { id: "FL", type: "Floor", name: "slab one", args: { boundary: [[0, 0], [1000, 0], [1000, 1000], [0, 1000]], floorType: { ref: "T-SLAB200" }, level: { ref: "L0" }, heightOffset: 0 } } });
+  doc.regenerate();
+  ed.apply({ op: "add", element: { id: "S", type: "Schedule", name: "Walls", args: { of: "IfcWall", fields: ["Id", "Length"], filters: [{ field: "Length", op: "is less than", value: "2921 mm" }] } } });
+  const T = scheduleTable(doc, doc.element("S"));
+  const [b] = findInSchedule(doc, T, "mybaby"), [a] = findInSchedule(doc, T, "A"), [fl] = findInSchedule(doc, T, "slab one");
+  const why = b && b.fails ? b.fails.map(failText).join("; ") : "";
+  const pass = T.total === 2 && T.count === 1 && T.excluded.has("B") && !T.excluded.has("A") && b.status === "filtered" && why === "Length 7250 mm does not satisfy “is less than 2921 mm”" && a.status === "shown" && fl.status === "other" && fl.category === "Floors";
+  return R(pass, "2 walls, 1 shown; mybaby left out by the Length rule, said in words; A listed; the slab is a floor", JSON.stringify({ total: T.total, count: T.count, b, why, a: a && a.status, fl }));
 });

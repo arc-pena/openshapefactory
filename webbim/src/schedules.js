@@ -242,8 +242,15 @@ export function scheduleTable(doc, v) {
     it.vals.set(key, out); return out;
   };
   // filters (all must pass, or any with "Or")
-  const rules = S.filters.filter(r => r && r.field && r.op);
-  if (rules.length) items = items.filter(it => { const ok = rules.map(r => passes(val(it, r.field), r.op, r.value)); return S.filterAny ? ok.some(Boolean) : ok.every(Boolean); });
+  const rules = S.filters.filter(r => r && r.field && r.op), total = new Set(items.map(it => it.id)).size;
+  // what the filter leaves out is remembered with the rules it failed, so the view can say why an element is missing
+  const excluded = new Map();
+  if (rules.length) items = items.filter(it => {
+    const ok = rules.map(r => passes(val(it, r.field), r.op, r.value)), keep = S.filterAny ? ok.some(Boolean) : ok.every(Boolean);
+    if (!keep && !excluded.has(it.id)) excluded.set(it.id, { id: it.id, name: it.f.get("Name"), fails: rules.map((r, i) => ok[i] ? null : { rule: S.filters.indexOf(r), field: r.field, op: r.op, value: r.value, text: val(it, r.field).text }).filter(Boolean) });
+    return keep;
+  });
+  for (const it of items) excluded.delete(it.id);        // a material row kept keeps its element
   // sorting: each level in turn, the element order last so a schedule never reshuffles between rebuilds
   const levels = S.sort.filter(s => s && s.field);
   items.sort((x, y) => { for (const L of levels) { const c = cmpCells(val(x, L.field), val(y, L.field)); if (c) return L.desc ? -c : c; } return x.order - y.order; });
@@ -293,7 +300,28 @@ export function scheduleTable(doc, v) {
   if (S.grandTotals.on) rows.push(summary(items, S.grandTotals.mode || FOOTER_MODES[0], S.grandTotals.title || "Grand total", "grand", 0));
   for (const r of S.filters) if (r && r.field && !availableFields(doc, S.cat, S.kind, S.calculated).some(a => a.key === r.field)) notes.push(`filter on ${r.field}: no ${S.cat} has that field`);
   const visible = columns.map((c, i) => c.hidden ? -1 : i).filter(i => i >= 0);
-  return { settings: S, columns, visible, rows, count: items.length, title: v.get("Name"), notes };
+  return { settings: S, columns, visible, rows, count: items.length, total, excluded, title: v.get("Name"), notes };
+}
+
+/** Why a failed rule dropped an element, in words: "Length 7250.5 mm is not less than 2921 mm". */
+export const failText = x => `${prettyField(x.field)} ${x.text === "" ? "(no value)" : x.text} ${x.op === "has a value" ? "has no value" : x.op === "has no value" ? "has a value" : "does not satisfy “" + x.op + " " + (x.value ?? "") + "”"}`;
+/** Where is an element in a schedule? Looks up by name, mark, id or type: shown, left out by the filter
+ *  (with the rules it fails), filed under another category, or not in the model. */
+export function findInSchedule(doc, table, query) {
+  const q = String(query || "").trim().toLowerCase(); if (!q) return [];
+  const S = table.settings, shown = new Set(table.rows.flatMap(r => r.kind === "item" || r.kind === "merged" ? r.ids : []));
+  const inCat = new Set(scheduledElements(doc, S.cat).map(f => doc.idOf(f)));
+  // exact id, mark or name first, then names that contain what was typed
+  const rank = f => { const id = doc.idOf(f).toLowerCase(), n = (f.get("Name") || "").toLowerCase(), m = doc.getParam(f, "Mark"), mk = m != null ? String(m).toLowerCase() : null;
+    return id === q || mk === q || n === q ? 0 : n.includes(q) ? 1 : -1; };
+  const hits = doc.elements().map(f => [f, rank(f)]).filter(x => x[1] >= 0).sort((x, y) => x[1] - y[1]).map(x => x[0]).slice(0, 12);
+  return hits.map(f => {
+    const id = doc.idOf(f), name = f.get("Name") || id;
+    if (shown.has(id)) return { id, name, status: "shown" };
+    if (table.excluded.has(id)) return { id, name, status: "filtered", fails: table.excluded.get(id).fails };
+    if (!inCat.has(id)) return { id, name, status: "other", category: categoryName(categoryOf(doc, f)) };
+    return { id, name, status: "missing" };
+  });
 }
 
 /** The table as CSV (what Revit's Export › Reports › Schedule writes): visible columns, header rows as
