@@ -24,6 +24,7 @@ import { cropLoop, loopBBox, annotationRect, isAnnotationLayer } from "./crop.js
 import { resolveGraphics, categoryOf, penWeight, rulesFor, categoryVisible, mix, LINE_TYPES, matches, effectiveStyle } from "./styles.js";
 import { measureRefs, resolveReference, sheetSize, regionAreas, importPlacer, importLayerMap, sketchPath } from "./bim.js";
 import { FONT_WIDTHS, FONT_METRICS } from "./fontdata.js";
+import { paramText, scheduleTable } from "./schedules.js";
 import { readDXF } from "./dxf.js";
 import { sunOf, planShadows } from "./sun.js";
 import { NORTH_DXF } from "./library.js";
@@ -452,12 +453,6 @@ function drawSpace(doc, ctx, B, f) {
   B.hit(id, [add(anchor, [-600, -600]), add(anchor, [600, -600]), add(anchor, [600, 600]), add(anchor, [-600, 600])]);
 }
 function ruleMatch(doc, f, rule) { try { return matches(doc, f, rule.when); } catch (e) { return false; } }
-export function paramText(doc, f, k) {
-  if (k === "Name") return f.get("Name");
-  if (k === "Area") { const d = doc.data(f); return d && d.props && d.props.Area ? fmtArea(d.props.Area.v, (doc.meta && doc.meta.displayUnits) || "mm") : "—"; }
-  const p = doc.getParam(f, k); if (p !== undefined) return displayParam(doc, f, p);
-  const v = propertyOf(doc, f, k); return v && !v.error ? formatValue(v) : "";
-}
 const DEPT = ["#dce9f7", "#f8e3cf", "#dff1e2", "#f3dcec", "#fff2c4", "#e4e0f7", "#d8f0f0"];
 export function departmentColour(v) { let h = 0; for (const c of v) h = (h * 31 + c.charCodeAt(0)) >>> 0; return DEPT[h % DEPT.length]; }
 
@@ -1199,24 +1194,40 @@ export function view3dScene(doc, v, opts = {}) {
 }
 
 // ---------------------------------------------------------------- schedules
-export function scheduleRows(doc, v) {
-  const cat = F.choice(v, "of"), fields = F.json(v, "fields") || [];
-  const rows = doc.elements().filter(f => categoryOf(doc, f) === cat && !doc.declOf(f)?.category?.startsWith("View")).map(f => ({ id: doc.idOf(f), f,
-    cells: fields.map(k => k === "Id" ? doc.idOf(f) : k === "Name" ? f.get("Name") : paramText(doc, f, k)) }));
-  return { fields, rows, cat };
-}
+/** A schedule as a drawing (on a sheet): the same table the schedule view shows - title, grouped column
+ *  headings, group headers and footers, totals, hidden columns left out, cells aligned and shaded as
+ *  formatted. Paper millimetres. */
 export function scheduleScene(doc, v) {
-  const B = new SceneBuilder(1), { fields, rows } = scheduleRows(doc, v);
-  const h = 2.5, rowH = 6, colW = fields.map(k => Math.max(textWidth(k, h), ...rows.map(r => textWidth(r.cells[fields.indexOf(k)] || "", h))) + 4);
-  const W = colW.reduce((a, b) => a + b, 0), H = (rows.length + 2) * rowH;
-  B.text([0, H + 2], v.get("Name"), 3.5, {});
+  const B = new SceneBuilder(1), T = scheduleTable(doc, v), A = T.settings.appearance, cols = T.visible.map(i => T.columns[i]);
+  const h = 2.5, rowH = 6, pad = 2;
+  const shown = r => r.kind === "header" || r.kind === "blank" ? [] : T.visible.map(i => r.cells[i].text || "");
+  const colW = cols.map((c, n) => Math.max(textWidth(c.heading, h), ...T.rows.map(r => textWidth(shown(r)[n] || (n === 0 && r.text ? r.text : ""), h)), 6) + 2 * pad);
+  const W = colW.reduce((a, b) => a + b, 0), xs = colW.reduce((acc, w) => (acc.push(acc[acc.length - 1] + w), acc), [0]);
+  const groups = cols.some(c => c.group);
+  const nRows = T.rows.length + (A.headers ? 1 : 0) + (A.headers && groups ? 1 : 0) + (A.blankRow ? 1 : 0);
+  const H = nRows * rowH;
+  const stroke = (a, b, w = 0.18) => B.prims.push({ t: "stroke", path: [lineSeg(a, b)], weight: w, colour: "#000", layer: "Schedule" });
+  const fill = (x0, y0, x1, y1, colour) => B.prims.push({ t: "fill", path: rectPath(x0, y0, x1, y1), colour, layer: "Schedule" });
+  const put = (x0, w, y, s, align, opts = {}) => { const tw = textWidth(s, opts.h || h), x = align === "right" ? x0 + w - pad - tw : align === "center" ? x0 + (w - tw) / 2 : x0 + pad; B.text([x, y + 2], s, opts.h || h, opts); };
+  if (A.title) put(0, W, H + 1, T.title, "center", { h: 3.5 });
   let y = H;
-  const line = (y) => B.prims.push({ t: "stroke", path: [lineSeg([0, y], [W, y])], weight: 0.18, colour: "#000", layer: "Schedule" });
-  line(y);
-  let x = 0; fields.forEach((k, i) => { B.text([x + 2, y - rowH + 2], k, h, {}); x += colW[i]; });
-  y -= rowH; line(y);
-  for (const r of rows) { x = 0; r.cells.forEach((c, i) => { B.text([x + 2, y - rowH + 2], c, h, {}); x += colW[i]; }); y -= rowH; line(y); }
-  let xx = 0; for (const cw of [0, ...colW]) { xx += cw; B.prims.push({ t: "stroke", path: [lineSeg([xx, y], [xx, H])], weight: 0.18, colour: "#000", layer: "Schedule" }); }
+  if (A.headers && groups) {
+    y -= rowH;
+    for (let i = 0; i < cols.length;) { let j = i; while (j + 1 < cols.length && cols[j + 1].group === cols[i].group) j++; if (cols[i].group) { put(xs[i], xs[j + 1] - xs[i], y, cols[i].group, "center"); stroke([xs[i], y], [xs[j + 1], y]); } i = j + 1; }
+  }
+  if (A.headers) { y -= rowH; cols.forEach((c, n) => put(xs[n], colW[n], y, c.heading, c.align || "center")); stroke([0, y], [W, y], 0.35); }
+  if (A.blankRow) y -= rowH;
+  T.rows.forEach((r, k) => {
+    y -= rowH;
+    if (r.kind === "blank") return;
+    if (r.kind === "header") { put(0, W, y, r.text, "left"); if (A.gridlines) stroke([0, y], [W, y]); return; }
+    if (A.stripes && k % 2) fill(0, y, W, y + rowH, "#f2f2f2");
+    T.visible.forEach((i, n) => { const c = r.cells[i]; if (c.fill) fill(xs[n], y, xs[n + 1], y + rowH, c.fill); const s = n === 0 && r.text && !c.text ? r.text : c.text || ""; if (s) put(xs[n], colW[n], y, s, T.columns[i].align || (c.num != null ? "right" : "left")); });
+    if (r.kind === "footer" || r.kind === "grand") stroke([0, y + rowH], [W, y + rowH], 0.25);
+    if (A.gridlines) stroke([0, y], [W, y]);
+  });
+  if (A.gridlines) for (const x of xs.slice(1, -1)) stroke([x, y], [x, H - (A.headers && groups ? rowH : 0)]);
+  if (A.outline) { stroke([0, y], [W, y], 0.35); stroke([0, H], [W, H], 0.35); stroke([0, y], [0, H], 0.35); stroke([W, y], [W, H], 0.35); }
   const scene = { prims: B.prims, hits: [], links: [], scale: 1, kind: "schedule" };
   scene.bbox = sceneBBox(B.prims);
   return scene;

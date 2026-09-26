@@ -639,9 +639,23 @@ declare({ type: "View3D", guid: "wb-0503", category: "View", kind: "view", idPre
           json("sun", "Sun & shadows", null, { group: "Graphics" }) ] });
 BUILDERS.View3D = { build: () => ({ data: {} }) };
 
+/** What a schedule can list, in the order the New Schedule dialog shows it. Append only: files store the key. */
+export const SCHEDULE_CATEGORIES = ["IfcWall", "IfcDoor", "IfcWindow", "IfcSpace", "IfcColumn", "IfcSlab", "IfcBeam", "IfcOpeningElement",
+  "IfcBuildingElementProxy", "Furniture", "IfcStair", "IfcRamp", "IfcRailing", "IfcPlate", "IfcFlowTerminal", "IfcTransportElement",
+  "IfcBuildingStorey", "IfcGrid", "Multi-Category", "Sheet", "View"];
+export const SCHEDULE_KINDS = ["Schedule/Quantities", "Material Takeoff"];
+export const categoryName = c => c === "Multi-Category" ? "Multi-Category" : c === "Sheet" ? "Sheets (Sheet List)" : c === "View" ? "Views (View List)" : (CATEGORIES[c] && CATEGORIES[c].name) || c;
+// Revit's Schedule Properties, one argument per tab: each opens its tab of the dialog from the Properties panel
 declare({ type: "Schedule", guid: "wb-0504", category: "View", kind: "schedule", idPrefix: "SC",
-  summary: "The property panel, transposed: one row per element. Editing a cell edits the model.",
-  args: [ choice("of", "Category", ["IfcWall", "IfcDoor", "IfcWindow", "IfcSpace", "IfcColumn"], 0), json("fields", "Fields", ["Id", "TypeMark", "Length", "Height", "FireRating", "Phase"]) ] });
+  summary: "Revit's Schedule/Quantities: elements of a category as rows - fields, filters, sorting and grouping, formatting and appearance. Editing a cell edits the model.",
+  args: [ choice("of", "Category", SCHEDULE_CATEGORIES, 0, { group: "Other", labels: Object.fromEntries(SCHEDULE_CATEGORIES.map(c => [c, categoryName(c)])) }), json("fields", "Fields", ["Id", "TypeMark", "Length", "Height", "FireRating", "Phase"], { group: "Other", dialog: "Fields" }),
+          choice("kind", "Schedule type", SCHEDULE_KINDS, 0, { group: "Other" }),
+          json("filters", "Filter", [], { group: "Other", dialog: "Filter" }), bool("filterAny", "Filter: match any rule (Or)", false, { group: "Other" }),
+          json("sort", "Sorting/Grouping", [], { group: "Other", dialog: "Sorting/Grouping" }), bool("itemize", "Itemize every instance", true, { group: "Other" }),
+          json("grandTotals", "Grand totals", { on: false, mode: "Title, count, and totals", title: "Grand total" }, { group: "Other", dialog: "Sorting/Grouping" }),
+          json("format", "Formatting", {}, { group: "Other", dialog: "Formatting" }),
+          json("appearance", "Appearance", { title: true, headers: true, gridlines: true, outline: true, stripes: false, blankRow: false }, { group: "Other", dialog: "Appearance" }),
+          json("calculated", "Calculated values", [], { group: "Other", dialog: "Fields" }) ] });
 BUILDERS.Schedule = { build: () => ({ data: {} }) };
 
 export const PAPER = { A0: [1189, 841], A1: [841, 594], A2: [594, 420], A3: [420, 297], A4: [297, 210], "ARCH D": [914.4, 609.6], "ANSI D": [863.6, 558.8] };

@@ -23,7 +23,8 @@ import { writeDXF, readDXF, dxfDrawing, makeZip } from "./dxf.js";
 import { runAll, CASES } from "./acceptance.js";
 import { sectionPicker } from "./sectionui.js";
 import { sunOf } from "./sun.js";
-import { renderPanel, renderSchedule, typeEditor, vvDialog, viewStyleEditor, materialsEditor } from "./panel.js";
+import { renderPanel, typeEditor, vvDialog, viewStyleEditor, materialsEditor } from "./panel.js";
+import { renderSchedule, newScheduleDialog, scheduleProperties } from "./scheduleui.js";
 import { renderSpaceGraph, importProgram, briefDialog, sheetDiagramUrl } from "./sgui.js";
 import { renderGraph } from "./graph.js";
 import { View2D, SNAP_KINDS, MODIFY_TOOLS } from "./canvas2d.js";
@@ -934,7 +935,9 @@ function newLevel() {
   const r = app.apply({ op: "add", element: { type: "Level", name, args: { name, elevation: lv.length ? top + 3000 : 0 } } });
   if (r.ok) { app.workLevel = r.id; newPlanView(r.id); app.say(`${name} at +${((lv.length ? top + 3000 : 0) / 1000).toFixed(3)} with its floor plan — set the elevation in Properties`, "ok"); }
 }
-function newSchedule() { const r = app.apply({ op: "add", element: { type: "Schedule", name: "Wall Schedule " + (app.doc.elements().filter(f => app.doc.typeOf(f) === "Schedule").length + 1), args: { of: "IfcWall", fields: ["Id", "TypeMark", "Length", "Height", "FireRating", "Phase"] } } }); if (r.ok) app.openView(r.id); }
+/** Revit's View › Schedules › Schedule/Quantities: pick a category, then its Schedule Properties. */
+function newSchedule() { newScheduleDialog(app); }
+app.scheduleProperties = (id, tab, opts) => scheduleProperties(app, id, tab, opts);
 function newSheet() {
   const n = app.doc.elements().filter(f => app.doc.typeOf(f) === "Sheet").length + 1;
   const r = app.apply({ op: "add", element: { type: "Sheet", name: `A-${100 + n} Unnamed`, args: { number: `A-${100 + n}`, sheetName: "Unnamed", size: "A1", orientation: "landscape", viewports: [], revision: "P01" } } });

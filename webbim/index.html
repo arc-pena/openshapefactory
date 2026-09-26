@@ -279,6 +279,49 @@ table.sched td input, table.sched td select { width: 100%; min-width: 80px; bord
 table.sched td input:hover, table.sched td select:hover, table.sched td input:focus { border-color: var(--rule); background: var(--panel); }
 table.sched tr.sel td { background: var(--accent-2); }
 table.sched td.id { font: 11.5px var(--mono); color: var(--ink-3); }
+table.sched th { cursor: pointer; user-select: none; }
+table.sched th .sortmark { color: var(--accent); }
+table.sched tr.grouphdr th { text-align: center; border-bottom: 1px solid var(--rule); }
+table.sched.grid td, table.sched.grid th { border-right: 1px solid var(--rule-2); }
+table.sched.outline { outline: 1px solid var(--rule); }
+table.sched.stripes tbody tr.item:nth-child(even) td { background: var(--panel-2); }
+table.sched tr.grouphead td { font-weight: 600; background: var(--panel-3); cursor: pointer; }
+table.sched tr.grouphead.d1 td { padding-left: 22px; } table.sched tr.grouphead.d2 td { padding-left: 34px; }
+table.sched tr.footer td, table.sched tr.grand td { font-weight: 600; border-top: 1px solid var(--rule); }
+table.sched tr.grand td { border-top: 2px solid var(--ink-2); }
+table.sched tr.blank td { height: 12px; border: 0; }
+table.sched td.a-right, table.sched th.a-right { text-align: right; } table.sched td.a-center, table.sched th.a-center { text-align: center; }
+table.sched td.a-right input { text-align: right; }
+.schedbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 0 8px; }
+.schedbar .sep { width: 1px; height: 20px; background: var(--rule); margin: 0 4px; }
+.schedchips { display: flex; flex-wrap: wrap; gap: 6px; padding-bottom: 8px; }
+.schedchips .chip { cursor: pointer; border: 0; font: inherit; font-size: 12px; }
+.schedmenu { position: fixed; z-index: 60; background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; box-shadow: 0 6px 24px rgba(0,0,0,.18); padding: 4px; display: grid; min-width: 220px; }
+.schedmenu button { text-align: left; background: none; border: 0; padding: 6px 10px; font: inherit; font-size: 13px; color: var(--ink); border-radius: 4px; cursor: pointer; }
+.schedmenu button:hover, .schedmenu button:focus { background: var(--accent-2); outline: none; }
+.schedprops { width: min(700px, 84vw); display: grid; gap: 8px; }
+.schedprops .tabpane { display: grid; gap: 10px; min-height: 380px; align-content: start; }
+.schedprops fieldset { border: 1px solid var(--rule-2); border-radius: 6px; padding: 8px 10px; display: grid; gap: 6px; min-width: 0; }
+.schedprops .fmtform, .schedprops .fmtgrid > div { min-width: 0; }
+.schedprops legend { font-size: 12px; color: var(--ink-2); padding: 0 4px; }
+.schedprops .row2 { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.schedprops .cap { font-size: 12px; color: var(--ink-2); margin-bottom: 4px; }
+.schedprops .fieldpick { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 10px; align-items: start; }
+.schedprops .fieldpick > div { min-width: 0; }
+.schedprops select[size], .newsched select[size] { height: auto; min-height: 280px; width: 100%; }
+.newsched select[size] { min-height: 240px; }
+.schedprops .fieldpick input[type=search] { width: 100%; margin-bottom: 4px; }
+.schedprops .fieldpick .mid { display: grid; gap: 6px; align-self: center; }
+.schedprops .frow { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.schedprops .frow input[type=text] { flex: 1; min-width: 110px; }
+.schedprops .fmtgrid { display: grid; grid-template-columns: 220px 1fr; gap: 12px; }
+.schedprops .fmtgrid select[size] { width: 100%; }
+.schedprops .fmtform { display: grid; gap: 8px; align-content: start; }
+.schedprops .calclist { margin: 4px 0 0; padding-left: 18px; font-size: 12.5px; }
+.schedprops label.blk { display: block; }
+.newsched { display: grid; grid-template-columns: auto 1fr; gap: 8px 12px; align-items: start; width: min(520px, 86vw); }
+.newsched input[type=search] { width: 100%; margin-bottom: 4px; }
+@media (max-width: 640px) { .schedprops .fieldpick, .schedprops .fmtgrid { grid-template-columns: 1fr; } .schedprops .fieldpick .mid { display: flex; } }
 .results { padding: 0 0 12px; }
 .result { display: grid; grid-template-columns: 52px 1fr; gap: 10px; padding: 8px 18px; border-bottom: 1px solid var(--rule-2); }
 .result .st { font: 600 11px var(--mono); padding: 2px 0; text-align: center; border-radius: 3px; height: 20px; }

@@ -61,7 +61,7 @@ export function propertyModel(doc, ids) {
         row.bound = { id: v.value.ref, expr: ex ? (doc.argValue(ex, "formula") ?? ex.get("Name")) : "?", result: ex && doc.data(ex) ? formatValue({ kind: doc.data(ex).kind, v: doc.data(ex).value }) : "—", error: ex ? doc.error(ex) : "missing" };
       }
       if (a.kind === "Reference") row.options = referenceOptions(doc, a, els[0]);
-      if (a.kind === "Choice") row.options = a.options.map(o => ({ value: o, label: o }));
+      if (a.kind === "Choice") row.options = a.options.map(o => ({ value: o, label: (a.labels && a.labels[o]) || o }));
       push(row);
     });
   }

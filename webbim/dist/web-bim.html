@@ -279,6 +279,49 @@ table.sched td input, table.sched td select { width: 100%; min-width: 80px; bord
 table.sched td input:hover, table.sched td select:hover, table.sched td input:focus { border-color: var(--rule); background: var(--panel); }
 table.sched tr.sel td { background: var(--accent-2); }
 table.sched td.id { font: 11.5px var(--mono); color: var(--ink-3); }
+table.sched th { cursor: pointer; user-select: none; }
+table.sched th .sortmark { color: var(--accent); }
+table.sched tr.grouphdr th { text-align: center; border-bottom: 1px solid var(--rule); }
+table.sched.grid td, table.sched.grid th { border-right: 1px solid var(--rule-2); }
+table.sched.outline { outline: 1px solid var(--rule); }
+table.sched.stripes tbody tr.item:nth-child(even) td { background: var(--panel-2); }
+table.sched tr.grouphead td { font-weight: 600; background: var(--panel-3); cursor: pointer; }
+table.sched tr.grouphead.d1 td { padding-left: 22px; } table.sched tr.grouphead.d2 td { padding-left: 34px; }
+table.sched tr.footer td, table.sched tr.grand td { font-weight: 600; border-top: 1px solid var(--rule); }
+table.sched tr.grand td { border-top: 2px solid var(--ink-2); }
+table.sched tr.blank td { height: 12px; border: 0; }
+table.sched td.a-right, table.sched th.a-right { text-align: right; } table.sched td.a-center, table.sched th.a-center { text-align: center; }
+table.sched td.a-right input { text-align: right; }
+.schedbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 0 8px; }
+.schedbar .sep { width: 1px; height: 20px; background: var(--rule); margin: 0 4px; }
+.schedchips { display: flex; flex-wrap: wrap; gap: 6px; padding-bottom: 8px; }
+.schedchips .chip { cursor: pointer; border: 0; font: inherit; font-size: 12px; }
+.schedmenu { position: fixed; z-index: 60; background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; box-shadow: 0 6px 24px rgba(0,0,0,.18); padding: 4px; display: grid; min-width: 220px; }
+.schedmenu button { text-align: left; background: none; border: 0; padding: 6px 10px; font: inherit; font-size: 13px; color: var(--ink); border-radius: 4px; cursor: pointer; }
+.schedmenu button:hover, .schedmenu button:focus { background: var(--accent-2); outline: none; }
+.schedprops { width: min(700px, 84vw); display: grid; gap: 8px; }
+.schedprops .tabpane { display: grid; gap: 10px; min-height: 380px; align-content: start; }
+.schedprops fieldset { border: 1px solid var(--rule-2); border-radius: 6px; padding: 8px 10px; display: grid; gap: 6px; min-width: 0; }
+.schedprops .fmtform, .schedprops .fmtgrid > div { min-width: 0; }
+.schedprops legend { font-size: 12px; color: var(--ink-2); padding: 0 4px; }
+.schedprops .row2 { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.schedprops .cap { font-size: 12px; color: var(--ink-2); margin-bottom: 4px; }
+.schedprops .fieldpick { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 10px; align-items: start; }
+.schedprops .fieldpick > div { min-width: 0; }
+.schedprops select[size], .newsched select[size] { height: auto; min-height: 280px; width: 100%; }
+.newsched select[size] { min-height: 240px; }
+.schedprops .fieldpick input[type=search] { width: 100%; margin-bottom: 4px; }
+.schedprops .fieldpick .mid { display: grid; gap: 6px; align-self: center; }
+.schedprops .frow { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.schedprops .frow input[type=text] { flex: 1; min-width: 110px; }
+.schedprops .fmtgrid { display: grid; grid-template-columns: 220px 1fr; gap: 12px; }
+.schedprops .fmtgrid select[size] { width: 100%; }
+.schedprops .fmtform { display: grid; gap: 8px; align-content: start; }
+.schedprops .calclist { margin: 4px 0 0; padding-left: 18px; font-size: 12.5px; }
+.schedprops label.blk { display: block; }
+.newsched { display: grid; grid-template-columns: auto 1fr; gap: 8px 12px; align-items: start; width: min(520px, 86vw); }
+.newsched input[type=search] { width: 100%; margin-bottom: 4px; }
+@media (max-width: 640px) { .schedprops .fieldpick, .schedprops .fmtgrid { grid-template-columns: 1fr; } .schedprops .fieldpick .mid { display: flex; } }
 .results { padding: 0 0 12px; }
 .result { display: grid; grid-template-columns: 52px 1fr; gap: 10px; padding: 8px 18px; border-bottom: 1px solid var(--rule-2); }
 .result .st { font: 600 11px var(--mono); padding: 2px 0; text-align: center; border-radius: 3px; height: 20px; }
@@ -7402,9 +7445,23 @@ declare({ type: "View3D", guid: "wb-0503", category: "View", kind: "view", idPre
           json("sun", "Sun & shadows", null, { group: "Graphics" }) ] });
 BUILDERS.View3D = { build: () => ({ data: {} }) };
 
+/** What a schedule can list, in the order the New Schedule dialog shows it. Append only: files store the key. */
+const SCHEDULE_CATEGORIES = ["IfcWall", "IfcDoor", "IfcWindow", "IfcSpace", "IfcColumn", "IfcSlab", "IfcBeam", "IfcOpeningElement",
+  "IfcBuildingElementProxy", "Furniture", "IfcStair", "IfcRamp", "IfcRailing", "IfcPlate", "IfcFlowTerminal", "IfcTransportElement",
+  "IfcBuildingStorey", "IfcGrid", "Multi-Category", "Sheet", "View"];
+const SCHEDULE_KINDS = ["Schedule/Quantities", "Material Takeoff"];
+const categoryName = c => c === "Multi-Category" ? "Multi-Category" : c === "Sheet" ? "Sheets (Sheet List)" : c === "View" ? "Views (View List)" : (CATEGORIES[c] && CATEGORIES[c].name) || c;
+// Revit's Schedule Properties, one argument per tab: each opens its tab of the dialog from the Properties panel
 declare({ type: "Schedule", guid: "wb-0504", category: "View", kind: "schedule", idPrefix: "SC",
-  summary: "The property panel, transposed: one row per element. Editing a cell edits the model.",
-  args: [ choice("of", "Category", ["IfcWall", "IfcDoor", "IfcWindow", "IfcSpace", "IfcColumn"], 0), json("fields", "Fields", ["Id", "TypeMark", "Length", "Height", "FireRating", "Phase"]) ] });
+  summary: "Revit's Schedule/Quantities: elements of a category as rows - fields, filters, sorting and grouping, formatting and appearance. Editing a cell edits the model.",
+  args: [ choice("of", "Category", SCHEDULE_CATEGORIES, 0, { group: "Other", labels: Object.fromEntries(SCHEDULE_CATEGORIES.map(c => [c, categoryName(c)])) }), json("fields", "Fields", ["Id", "TypeMark", "Length", "Height", "FireRating", "Phase"], { group: "Other", dialog: "Fields" }),
+          choice("kind", "Schedule type", SCHEDULE_KINDS, 0, { group: "Other" }),
+          json("filters", "Filter", [], { group: "Other", dialog: "Filter" }), bool("filterAny", "Filter: match any rule (Or)", false, { group: "Other" }),
+          json("sort", "Sorting/Grouping", [], { group: "Other", dialog: "Sorting/Grouping" }), bool("itemize", "Itemize every instance", true, { group: "Other" }),
+          json("grandTotals", "Grand totals", { on: false, mode: "Title, count, and totals", title: "Grand total" }, { group: "Other", dialog: "Sorting/Grouping" }),
+          json("format", "Formatting", {}, { group: "Other", dialog: "Formatting" }),
+          json("appearance", "Appearance", { title: true, headers: true, gridlines: true, outline: true, stripes: false, blankRow: false }, { group: "Other", dialog: "Appearance" }),
+          json("calculated", "Calculated values", [], { group: "Other", dialog: "Fields" }) ] });
 BUILDERS.Schedule = { build: () => ({ data: {} }) };
 
 const PAPER = { A0: [1189, 841], A1: [841, 594], A2: [594, 420], A3: [420, 297], A4: [297, 210], "ARCH D": [914.4, 609.6], "ANSI D": [863.6, 558.8] };
@@ -10406,6 +10463,555 @@ const sketchBound = t => t === "Floor";
 const sketchOnly = ids => `${ids.join(", ")}: a slab's boundary is edited only in its sketch - Edit Boundary, or double-click it`;
 function isPinned(doc, f) { const decl = f && doc.declOf(f); return !!(decl && decl.args.some(a => a.key === "pinned") && F.bool(f, "pinned")); }
 
+// ===== props.js =====
+//! Pure models the interface draws (§4.5, §4.2, §10.3). Kept free of the DOM so
+//! the tests measure exactly what the panel shows.
+//!
+//! PropertyPanel(element) = merge(driver arguments, type parameters (read-only,
+//! behind Edit Type), instance parameters, computed values). Generated from the
+//! declarations — nothing here names an element type.
+
+
+
+
+
+
+
+const GROUP_ORDER = ["Constraints", "Dimensions", "Graphics", "Extents", "Construction", "Identity Data", "Phasing", "Finishes", "Other"];
+const TYPE_KEYS = ["wallType", "doorType", "windowType", "columnType", "floorType", "beamType"];
+
+/** Which editor a kind gets. Geometry is never a text box (§4.5, test 37e). */
+function editorFor(arg) {
+  if (arg.kind === "Curve2D" || arg.kind === "Point2D") return "edit-in-view";
+  if (arg.kind === "Json") return "json";
+  if (arg.kind === "Real" || arg.kind === "Integer") return "value";
+  if (arg.kind === "Boolean") return "check";
+  if (arg.kind === "Choice") return "choice";
+  if (arg.kind === "Reference") return "reference";
+  return "text";
+}
+function specEditor(spec) {
+  return { Enum: "choice", Boolean: "check", Length: "value", Number: "value", Integer: "value", Angle: "value", Text: "text", MultiText: "text", Colour: "colour", URL: "text", Material: "reference" }[spec.kind] || "text";
+}
+
+/** Parameter specs that apply to an element: document specs + its family chain's. */
+function specsFor(doc, f) {
+  const cat = categoryOf(doc, f);
+  const out = {};
+  for (const [k, s] of Object.entries(doc.lib.paramSpecs)) if (s.categories && (s.categories.includes("*") || s.categories.includes(cat))) out[k] = s;
+  const tk = TYPE_KEYS.find(k => F.refId(f, k));
+  if (tk) { const t = doc.resolveType(F.refId(f, tk)); if (t) for (const [k, s] of Object.entries(t.specs || {})) out[k] = Object.assign({ binding: "type", group: "Identity Data" }, s); }
+  return out;
+}
+
+/** The panel for one element or a multi-selection (common rows, <varies>). */
+function propertyModel(doc, ids) {
+  const els = ids.map(id => doc.element(id)).filter(Boolean);
+  if (!els.length) return null;
+  const types = [...new Set(els.map(f => f.get("Type")))];
+  const rows = [];
+  const push = r => rows.push(Object.assign({ group: "Other" }, r));
+  const vary = vals => vals.every(v => JSON.stringify(v) === JSON.stringify(vals[0])) ? { value: vals[0] } : { varies: true };
+  // driver arguments: only when every element is the same type
+  if (types.length === 1) {
+    const decl = CATALOGUE.get(types[0]);
+    decl && decl.args.forEach((a, i) => {
+      if (a.when) { const ctl = els.map(f => doc.argValue(f, a.when.key)); if (!ctl.every(v => v === a.when.value)) return; }
+      const vals = els.map(f => doc.argValue(f, a.key));
+      const v = vary(vals);
+      const row = { source: "arg", key: a.key, label: a.label, kind: a.kind, editor: editorFor(a), group: a.group || "Constraints", arg: a, entry: els.length === 1 ? els[0].child(argTag(i), false)?.entry() : null };
+      Object.assign(row, v);
+      if (!v.varies && v.value && typeof v.value === "object" && v.value.ref && (a.kind === "Real" || a.kind === "Integer")) {
+        // A bound value shows its expression, not its result (§4.5, test 37d).
+        const ex = doc.element(v.value.ref);
+        row.bound = { id: v.value.ref, expr: ex ? (doc.argValue(ex, "formula") ?? ex.get("Name")) : "?", result: ex && doc.data(ex) ? formatValue({ kind: doc.data(ex).kind, v: doc.data(ex).value }) : "—", error: ex ? doc.error(ex) : "missing" };
+      }
+      if (a.kind === "Reference") row.options = referenceOptions(doc, a, els[0]);
+      if (a.kind === "Choice") row.options = a.options.map(o => ({ value: o, label: (a.labels && a.labels[o]) || o }));
+      push(row);
+    });
+  }
+  // instance and type parameters
+  const specSets = els.map(f => specsFor(doc, f));
+  const common = Object.keys(specSets[0]).filter(k => specSets.every(s => s[k]));
+  for (const k of common) {
+    const spec = specSets[0][k];
+    if (spec.binding === "type") {
+      const vals = els.map(f => { const tk = TYPE_KEYS.find(t => F.refId(f, t)); const t = tk && doc.resolveType(F.refId(f, tk)); return t ? t.params[k] : undefined; });
+      const origin = els.length === 1 ? (() => { const tk = TYPE_KEYS.find(t => F.refId(els[0], t)); const t = tk && doc.resolveType(F.refId(els[0], tk)); return t && t.origin[k]; })() : null;
+      push(Object.assign({ source: "type", key: k, label: k, kind: spec.kind, editor: "readonly", group: spec.group || "Identity Data", spec, origin, readonly: true }, vary(vals)));
+    } else {
+      const vals = els.map(f => doc.getParam(f, k));
+      const row = Object.assign({ source: "param", key: k, label: k, kind: spec.kind, editor: specEditor(spec), group: spec.group || "Identity Data", spec }, vary(vals));
+      if (spec.kind === "Enum") row.options = spec.values.map(o => ({ value: o, label: o }));
+      if (row.value === undefined && spec.default !== undefined) row.placeholder = spec.default;
+      if (row.value && typeof row.value === "object" && row.value.expr) row.display = displayParam(doc, els[0], row.value);
+      push(row);
+    }
+  }
+  // computed values: read-only (length, area, volume)
+  if (els.length === 1) {
+    const d = doc.data(els[0]);
+    // what the element measures of itself - length, area, volume, heights - live, in the project's units,
+    // where Revit shows them: read-only rows in Dimensions (text facts in Identity Data)
+    for (const [k, v] of Object.entries((d && d.props) || {})) push({ source: "computed", key: k, label: k, editor: "readonly", readonly: true, group: v && v.kind === "Text" ? "Identity Data" : "Dimensions", value: formatValue(v), live: true });
+  }
+  rows.sort((a, b) => (GROUP_ORDER.indexOf(a.group) + 1 || 99) - (GROUP_ORDER.indexOf(b.group) + 1 || 99));
+  const tk = types.length === 1 ? TYPE_KEYS.find(k => CATALOGUE.get(types[0]).args.some(a => a.key === k)) : null;
+  return { ids, types, rows, typeKey: tk, typeIds: tk ? [...new Set(els.map(f => F.refId(f, tk)))] : [], errors: els.map(f => doc.error(f)).filter(Boolean), notes: els.map(f => doc.note(f)).filter(Boolean) };
+}
+
+/** What a reference field may point at: elements and library entries whose kind
+ *  is in the declaration's `kinds` — the same check the graph uses for wires. */
+function referenceOptions(doc, arg, self) {
+  const out = [];
+  for (const g of doc.elements()) { if (g === self) continue; const d = doc.declOf(g); if (d && arg.kinds.includes(d.kind)) out.push({ value: doc.idOf(g), label: `${g.get("Name")} (${doc.idOf(g)})` }); }
+  const libKind = { wallType: "IfcWall", doorType: "IfcDoor", windowType: "IfcWindow", columnType: "IfcColumn", floorType: "IfcSlab", beamType: "IfcBeam" };
+  for (const k of arg.kinds) {
+    if (libKind[k]) for (const [id, t] of Object.entries(doc.lib.types)) { const r = doc.resolveType(id); if (r && r.category === libKind[k]) out.push({ value: id, label: t.name || id }); }
+    if (k === "viewStyle") for (const [id, s] of Object.entries(doc.lib.viewStyles)) out.push({ value: id, label: s.name || id });
+    if (k === "textType") for (const [id, s] of Object.entries(doc.lib.textTypes)) out.push({ value: id, label: s.name || id });
+    if (k === "symbol") for (const [id, s] of Object.entries(doc.lib.symbols)) out.push({ value: id, label: s.name || id });
+  }
+  return out;
+}
+/** Can an output of element `src` be wired into argument `arg`? One check, for
+ *  the panel's dropdown, the graph's wires and the pick popover. */
+function canConnect(doc, src, arg) {
+  const d = doc.declOf(src); if (!d) return false;
+  if (arg.kind === "Reference") return arg.kinds.includes(d.kind);
+  if (arg.kind === "Real" || arg.kind === "Integer") return d.kind === "number";
+  return false;
+}
+
+// ---------------------------------------------------------------- pick-binding (§4.2)
+/** Clicking an element while a typed field is active: offer only what matches
+ *  the field's kind — Lengths for a Length, materials for a Material (37g, 37i). */
+function pickCandidates(doc, targetId, kind) {
+  const f = doc.element(targetId); if (!f) return [];
+  const id = doc.idOf(f), out = [];
+  if (kind === "Material") {
+    const tk = TYPE_KEYS.find(k => F.refId(f, k)), t = tk && doc.resolveType(F.refId(f, tk));
+    const mats = new Set((t && t.layers ? t.layers.map(l => l.material) : []).concat(t && t.material ? [t.material] : []));
+    for (const m of mats) out.push({ text: m, label: `${doc.lib.materials[m] ? doc.lib.materials[m].name : m} (${m})`, kind: "Material" });
+    return out;
+  }
+  const d = doc.data(f);
+  for (const [k, v] of Object.entries((d && d.props) || {})) if (v && v.kind === kind) out.push({ text: `${id}.${k}`, label: `${k} = ${formatValue(v)}`, kind });
+  const decl = doc.declOf(f);
+  for (const a of decl ? decl.args : []) if ((a.kind === "Real") && a.quantity === kind && !out.some(o => o.text === `${id}.${a.key}`)) {
+    let val; try { F.doc = doc; val = F.real(f, a.key); } catch (e) { val = NaN; }
+    out.push({ text: `${id}.${a.key}`, label: `${a.label} = ${formatValue({ kind, v: val })}`, kind });
+  }
+  // the element's type's own lengths: total thickness
+  const tk = TYPE_KEYS.find(k => F.refId(f, k)), t = tk && doc.resolveType(F.refId(f, tk));
+  if (kind === "Length" && t && t.layers) out.push({ text: `${id}.Width`, label: `Type thickness = ${formatValue({ kind: "Length", v: t.layers.reduce((a, l) => a + l.thickness, 0) })}`, kind, dedupe: true });
+  const seen = new Set();
+  return out.filter(o => { if (seen.has(o.text)) return false; seen.add(o.text); return true; }).sort((a, b) => (a.text.endsWith(".Length") ? -1 : 0) - (b.text.endsWith(".Length") ? -1 : 0));
+}
+
+// ---------------------------------------------------------------- the node graph (a second projection)
+/** Nodes and wires from the same declarations: an input port per reference or
+ *  bindable numeric argument; every element has one output. A binding typed
+ *  into a field IS a wire here (test 37h) — there is no second link mechanism. */
+function graphModel(doc) {
+  const nodes = [], wires = [];
+  for (const f of doc.elements()) {
+    const decl = doc.declOf(f); if (!decl) continue;
+    const id = doc.idOf(f);
+    const ports = decl.args.filter(a => a.kind === "Reference" || a.kind === "Real" || a.kind === "Integer").map(a => ({ key: a.key, label: a.label, kind: a.kind, kinds: a.kinds, view: !!a.view }));
+    nodes.push({ id, name: f.get("Name"), type: decl.type, kind: decl.kind, ports, error: doc.error(f), note: doc.note(f) });
+    decl.args.forEach(a => {
+      const v = doc.argValue(f, a.key);
+      if (v && typeof v === "object" && v.ref && doc.element(v.ref)) wires.push({ from: v.ref, to: id, port: a.key, view: !!a.view });
+    });
+    if (decl.dependsOn) for (const dep of decl.dependsOn(f, doc)) wires.push({ from: dep, to: id, port: "formula", derived: true });
+  }
+  return { nodes, wires };
+}
+/** A layered layout: column = longest path from a source. */
+function autoLayout(doc, model) {
+  const depth = new Map(), incoming = new Map();
+  for (const w of model.wires) { if (!incoming.has(w.to)) incoming.set(w.to, []); incoming.get(w.to).push(w.from); }
+  const visit = (id, seen = new Set()) => { if (depth.has(id)) return depth.get(id); if (seen.has(id)) return 0; seen.add(id); const d = Math.max(-1, ...(incoming.get(id) || []).map(x => visit(x, seen))) + 1; depth.set(id, d); return d; };
+  const cols = new Map();
+  for (const n of model.nodes) { const d = visit(n.id); if (!cols.has(d)) cols.set(d, []); cols.get(d).push(n.id); }
+  const layout = {};
+  for (const [d, ids] of cols) ids.forEach((id, i) => { layout[id] = [40 + d * 230, 30 + i * 74]; });
+  return layout;
+}
+
+// ---------------------------------------------------------------- listening dimensions (§10.3)
+/** Temporary dimensions from the active wall to nearby parallel references.
+ *  Capped at four; relevance = parallel only; preference order chooses which
+ *  face of each neighbour is measured to. */
+const PREFERENCE = ["centreline", "core.exterior", "core.interior", "face.exterior", "face.interior", "line"];
+function listeningDimensions(doc, id, { radius = 15000, max = 4, prefer = PREFERENCE } = {}) {
+  const f = doc.element(id); if (!f || doc.typeOf(f) !== "Wall") return [];
+  const d = doc.data(f); if (!d || !d.refs) return [];
+  const own = d.refs.find(r => r.key === "centreline"); if (!own || own.kind !== "line") return [];
+  const L = own.geom, mid = doc.plan(f) ? doc.plan(f).curve.at(0.5) : L.p;
+  const cands = [];
+  for (const g of doc.elements()) {
+    if (g === f) continue;
+    const t = doc.typeOf(g); if (t !== "Wall" && t !== "Grid") continue;
+    const gd = doc.data(g); if (!gd || !gd.refs) continue;
+    const lines = gd.refs.filter(r => r.kind === "line");
+    let best = null;
+    for (const key of prefer) { const r = lines.find(x => x.key === key); if (r) { best = r; break; } }
+    if (!best) continue;
+    const par = Math.abs(best.geom.d[0] * L.d[1] - best.geom.d[1] * L.d[0]) < 1e-6;
+    if (!par) continue;                                    // a reference at 37° is noise
+    const sd = signedDistance(L, best.geom.p);
+    if (Math.abs(sd) > radius || Math.abs(sd) < TOL) continue;
+    // overlap along the wall: the neighbour must be beside it, not far down the line
+    const gc = t === "Wall" ? doc.plan(g).curve : null;
+    const along = gc ? [dot(sub(gc.start, L.p), L.d), dot(sub(gc.end, L.p), L.d)] : [-Infinity, Infinity];
+    const mine = [0, dist(doc.plan(f).curve.start, doc.plan(f).curve.end)];
+    if (Math.max(...along) < mine[0] - radius / 3 || Math.min(...along) > mine[1] + radius / 3) continue;
+    cands.push({ to: doc.idOf(g) + ":" + best.key, from: id + ":centreline", value: Math.abs(sd), side: Math.sign(sd), at: mid });
+  }
+  // nearest on each side first, then the next ones
+  cands.sort((a, b) => a.value - b.value);
+  const pos = cands.filter(c => c.side > 0), neg = cands.filter(c => c.side < 0);
+  const out = [];
+  while (out.length < max && (pos.length || neg.length)) { if (pos.length) out.push(pos.shift()); if (out.length < max && neg.length) out.push(neg.shift()); }
+  return out;
+}
+/** Typing into a temporary dimension moves the element to satisfy it exactly. */
+function dimensionMove(doc, dim, value) {
+  const f = doc.element(dim.from.split(":")[0]);
+  const c = doc.argValue(f, "centreline");
+  const other = resolveReference(doc, dim.to), own = resolveReference(doc, dim.from);
+  if (!other || !own || own.kind !== "line") return null;
+  const n = perp(own.geom.d);
+  const cur = dot(sub(own.geom.p, other.geom.p), n);         // own relative to other, along n
+  const want = Math.sign(cur || 1) * value;
+  const delta = want - cur;
+  const mv = [n[0] * delta, n[1] * delta];
+  return { type: "line", start: [c.start[0] + mv[0], c.start[1] + mv[1]], end: [c.end[0] + mv[0], c.end[1] + mv[1]] };
+}
+
+// ===== schedules.js =====
+//! Schedules - Revit's Schedule/Quantities, Material Takeoff, Sheet List and View List - as one engine.
+//! A Schedule element holds only settings (category, fields, filters, sorting/grouping, formatting,
+//! appearance, calculated values); scheduleTable() turns them into rows. The schedule view, the drawing
+//! placed on a sheet and the CSV export all read that one table, so what is filtered, grouped or totalled
+//! in one can never disagree with another.
+
+
+
+
+
+
+
+
+/** A parameter's text as the panel shows it. */
+function paramText(doc, f, k) {
+  if (k === "Name") return f.get("Name");
+  if (k === "Area") { const d = doc.data(f); return d && d.props && d.props.Area ? fmtArea(d.props.Area.v, (doc.meta && doc.meta.displayUnits) || "mm") : "—"; }
+  const p = doc.getParam(f, k); if (p !== undefined) return displayParam(doc, f, p);
+  const v = propertyOf(doc, f, k); return v && !v.error ? formatValue(v) : "";
+}
+
+// ---------------------------------------------------------------- what can be scheduled
+/** Categories a Multi-Category schedule leaves out: views, sheets, datums and annotation are not building. */
+const NOT_BUILDING = new Set(["View", "Sheet", "Annotation", "Parameter", "IfcGrid", "IfcBuildingStorey", "Detail", "Site", "Unknown"]);
+
+/** Revit's filter operators, by name (stored as written, so a saved filter reads the same everywhere). */
+const FILTER_OPS = ["equals", "does not equal", "is greater than", "is greater than or equal to", "is less than", "is less than or equal to",
+  "contains", "does not contain", "begins with", "does not begin with", "ends with", "does not end with", "has a value", "has no value"];
+const FOOTER_MODES = ["Title, count, and totals", "Title and totals", "Count and totals", "Totals only"];
+const TOTAL_MODES = ["None", "Calculate totals", "Calculate minimum", "Calculate maximum", "Calculate minimum and maximum"];
+const CALC_KINDS = ["Number", "Length", "Area", "Volume", "Angle", "Text"];
+const APPEARANCE_DEFAULT = { title: true, headers: true, gridlines: true, outline: true, stripes: false, blankRow: false };
+
+/** Fields a new schedule of a category starts with - what an architect asks of that schedule first. */
+function defaultFields(cat, kind = "Schedule/Quantities") {
+  if (kind === "Material Takeoff") return ["Family and Type", "Material: Name", "Material: Area", "Material: Volume"];
+  return ({
+    IfcWall: ["Family and Type", "TypeMark", "Level", "Length", "Height", "Area", "Volume", "FireRating"],
+    IfcDoor: ["Mark", "Level", "Family and Type", "Width", "Height", "FireRating", "Swing"],
+    IfcWindow: ["Mark", "Level", "Family and Type", "Width", "Height", "Sill height"],
+    IfcSpace: ["Number", "Name", "Level", "Department", "Area", "Perimeter"],
+    IfcSlab: ["Family and Type", "Level", "Area", "Thickness", "Volume"],
+    IfcColumn: ["Family and Type", "Level", "Height", "Volume", "Count"],
+    IfcBeam: ["Family and Type", "Level", "Length", "Volume", "Count"],
+    "Multi-Category": ["Category", "Family and Type", "Level", "Count"],
+    Sheet: ["Sheet Number", "Sheet Name", "Current Revision", "Sheet Size"],
+    View: ["Name", "View Type", "Scale", "Sheet Number", "Sheet Name"],
+  })[cat] || ["Family and Type", "Level", "Count"];
+}
+
+/** The elements a category schedules (Multi-Category: every building element). */
+function scheduledElements(doc, cat) {
+  return doc.elements().filter(f => {
+    const t = doc.typeOf(f), c = categoryOf(doc, f);
+    if (cat === "Sheet") return t === "Sheet";
+    if (cat === "View") return ["PlanView", "ElevationView", "SectionView", "View3D", "Schedule"].includes(t);
+    if (cat === "Multi-Category") return !NOT_BUILDING.has(c) && !(doc.declOf(f) || {}).category?.startsWith("View");
+    return c === cat && !(doc.declOf(f) || {}).category?.startsWith("View");
+  });
+}
+
+const SPECIAL = {
+  element: ["Count", "Category", "Family", "Type", "Family and Type", "Level", "Id", "Name"],
+  Sheet: ["Sheet Number", "Sheet Name", "Current Revision", "Sheet Size", "Views on sheet"],
+  View: ["View Type", "Scale", "Detail Level", "Sheet Number", "Sheet Name", "Associated Level"],
+  material: ["Material: Name", "Material: Mark", "Material: Function", "Material: Thickness", "Material: Area", "Material: Volume"],
+};
+const SCALAR = new Set(["Real", "Integer", "Text", "Choice", "Boolean", "Reference"]);
+/** "FireRating" → "Fire Rating", "Sill height" stays. */
+const prettyField = k => String(k).replace(/([a-z])([A-Z])/g, "$1 $2");
+
+/** Every field a category can schedule: Revit's "Available fields" - the element's own, its type's, its
+ *  quantities, and the schedule's calculated values - each { key, label, group }. */
+function availableFields(doc, cat, kind = "Schedule/Quantities", calculated = []) {
+  F.doc = doc;
+  const out = new Map(), add = (key, group, label) => { if (!out.has(key)) out.set(key, { key, group, label: label || prettyField(key) }); };
+  if (cat === "Sheet") { SPECIAL.Sheet.forEach(k => add(k, "Sheet")); add("Name", "Sheet"); }
+  else if (cat === "View") { add("Name", "View"); SPECIAL.View.forEach(k => add(k, "View")); }
+  else SPECIAL.element.forEach(k => add(k, "Element"));
+  if (kind === "Material Takeoff") SPECIAL.material.forEach(k => add(k, "Material"));
+  const els = scheduledElements(doc, cat);
+  for (const f of els) {
+    const d = doc.data(f);
+    for (const k of Object.keys((d && d.props) || {})) add(k, "Quantities");
+    for (const [k, s] of Object.entries(specsFor(doc, f))) add(k, s.binding === "type" ? "Type" : (s.group || "Identity Data"));
+    const decl = doc.declOf(f);
+    for (const a of (decl && decl.args) || []) if (SCALAR.has(a.kind) && !TYPE_KEYS.includes(a.key) && !["pinned", "view", "style"].includes(a.key)) add(a.key, "Instance", a.label);
+    if (TYPE_KEYS.some(k => F.refId(f, k))) add("TypeMark", "Type", "Type Mark");
+  }
+  if (!els.length) for (const [k, s] of Object.entries(doc.lib.paramSpecs || {})) if (s.categories && (s.categories.includes("*") || s.categories.includes(cat))) add(k, s.binding === "type" ? "Type" : (s.group || "Identity Data"));
+  for (const c of calculated || []) add(c.name, "Calculated");
+  return [...out.values()];
+}
+
+// ---------------------------------------------------------------- a cell's value
+const typeOfEl = (doc, f) => { for (const k of TYPE_KEYS) { const id = F.refId(f, k); if (id) return doc.resolveType(id); } return null; };
+const levelOf = (doc, f) => { for (const k of ["level", "baseLevel"]) { const id = F.refId(f, k), g = id && doc.element(id); if (g) return g.get("Name"); } return ""; };
+const txt = s => ({ text: s == null ? "" : String(s), num: null, kind: "Text" });
+const qty = p => p && !p.error ? { text: formatValue(p), num: typeof p.v === "number" ? p.v : null, kind: p.kind } : txt("");
+function sheetsOf(doc, viewId) {
+  return doc.elements().filter(s => doc.typeOf(s) === "Sheet" && (doc.argValue(s, "viewports") || []).some(vp => vp.view && vp.view.ref === viewId));
+}
+/** One field of one scheduled item: { text, num (in document units, or null), kind }. */
+function fieldValue(doc, item, key) {
+  const f = item.f, t = doc.typeOf(f);
+  switch (key) {
+    case "Count": return { text: "1", num: 1, kind: "Number" };
+    case "Id": return txt(doc.idOf(f));
+    case "Name": return txt(f.get("Name"));
+    case "Category": return txt(categoryName(categoryOf(doc, f)));
+    case "Level": return txt(levelOf(doc, f));
+    case "Family": { const ty = typeOfEl(doc, f); return txt(ty ? (ty.chain[0] && ty.chain[0].name) || "" : t); }
+    case "Type": { const ty = typeOfEl(doc, f); return txt(ty ? ty.name || ty.id : ""); }
+    case "Family and Type": { const ty = typeOfEl(doc, f); return txt(ty ? `${(ty.chain[0] && ty.chain[0].name) || t}: ${ty.name || ty.id}` : t); }
+    case "Sheet Number": return txt(t === "Sheet" ? F.text(f, "number") : sheetsOf(doc, doc.idOf(f)).map(s => F.text(s, "number")).join(", "));
+    case "Sheet Name": return txt(t === "Sheet" ? F.text(f, "sheetName") : sheetsOf(doc, doc.idOf(f)).map(s => F.text(s, "sheetName")).join(", "));
+    case "Current Revision": return txt(F.text(f, "revision"));
+    case "Sheet Size": return txt(doc.argValue(f, "size"));
+    case "Views on sheet": { const n = (doc.argValue(f, "viewports") || []).length; return { text: String(n), num: n, kind: "Number" }; }
+    case "View Type": return txt({ PlanView: "Floor Plan", ElevationView: "Elevation", SectionView: "Section", View3D: "3D View", Schedule: "Schedule" }[t] || t);
+    case "Scale": { const s = doc.declOf(f).args.some(a => a.key === "scale") ? F.int(f, "scale") : null; return s ? { text: "1 : " + s, num: s, kind: "Number" } : txt(""); }
+    case "Detail Level": return txt(doc.declOf(f).args.some(a => a.key === "detailLevel") ? doc.argValue(f, "detailLevel") : "");
+    case "Associated Level": return txt(levelOf(doc, f));
+  }
+  if (key.startsWith("Material: ")) {
+    const m = item.mat; if (!m) return txt("");
+    const k = key.slice(10);
+    if (k === "Name") return txt(m.name); if (k === "Mark") return txt(m.mark); if (k === "Function") return txt(m.function);
+    if (k === "Thickness") return qty({ kind: "Length", v: m.thickness }); if (k === "Area") return qty({ kind: "Area", v: m.area }); if (k === "Volume") return qty({ kind: "Volume", v: m.volume });
+  }
+  const decl = doc.declOf(f), a = decl && decl.args.find(x => x.key === key), d = doc.data(f);
+  if (a && !(d && d.props && d.props[key] !== undefined)) {
+    if (a.kind === "Reference") { const v = doc.argValue(f, key), g = v && v.ref && doc.element(v.ref); return txt(g ? g.get("Name") : v && v.ref ? v.ref : ""); }
+    if (a.kind === "Boolean") return txt(F.bool(f, key) ? "Yes" : "No");
+  }
+  const p = propertyOf(doc, f, key);
+  if (p && !p.error && typeof p.v === "number") return { text: paramText(doc, f, key), num: p.v, kind: p.kind };
+  const s = paramText(doc, f, key);
+  return { text: s === "—" ? "" : s, num: null, kind: (p && p.kind) || "Text" };
+}
+
+// ---------------------------------------------------------------- the rows before filtering: elements, or element × material
+function materialItems(doc, f) {
+  const ty = typeOfEl(doc, f), d = doc.data(f), props = (d && d.props) || {}, lib = doc.lib.materials || {};
+  const mat = (key, extra) => { const m = lib[key] || {}; return Object.assign({ name: m.name || key || "<By Category>", mark: m.mark || "" }, extra); };
+  const area = props.Area ? props.Area.v : 0, vol = props.Volume ? props.Volume.v : 0;
+  if (ty && Array.isArray(ty.layers) && ty.layers.length) {
+    const total = ty.layers.reduce((s, L) => s + (L.thickness || 0), 0) || 1;
+    // a layer's share of the element: its area (each face of a wall or floor) and its thickness' share of the volume
+    return ty.layers.filter(L => L.thickness > 0).map(L => ({ f, mat: mat(L.material, { function: L.function || "", thickness: L.thickness, area, volume: vol ? vol * L.thickness / total : area * L.thickness }) }));
+  }
+  const key = (ty && ty.material) || ((doc.declOf(f) || { args: [] }).args.some(a => a.key === "material") ? doc.argValue(f, "material") : null) || null;
+  return [{ f, mat: mat(key, { function: "", thickness: 0, area, volume: vol }) }];
+}
+
+// ---------------------------------------------------------------- settings
+/** A Schedule's settings, with every default filled in (older files have only `of` and `fields`). */
+function scheduleSettings(doc, v) {
+  const arg = (k, def) => { const x = (doc.declOf(v).args.some(a => a.key === k)) ? doc.argValue(v, k) : undefined; return x == null ? def : x; };
+  return {
+    cat: arg("of", "IfcWall"), kind: arg("kind", "Schedule/Quantities"), fields: arg("fields", []) || [],
+    filters: arg("filters", []) || [], filterAny: !!arg("filterAny", false),
+    sort: arg("sort", []) || [], itemize: arg("itemize", true) !== false,
+    grandTotals: Object.assign({ on: false, mode: "Title, count, and totals", title: "Grand total" }, arg("grandTotals", {}) || {}),
+    format: arg("format", {}) || {}, appearance: Object.assign({}, APPEARANCE_DEFAULT, arg("appearance", {}) || {}),
+    calculated: arg("calculated", []) || [],
+  };
+}
+
+// ---------------------------------------------------------------- filtering
+const numOf = s => { const m = /-?\d+(?:\.\d+)?(?:e-?\d+)?/i.exec(String(s).replace(/,/g, "")); return m ? Number(m[0]) : null; };
+/** Does a cell pass one filter rule? Numbers compare as numbers (a length typed as "3 m" or "3000"; areas and
+ *  volumes in the units the schedule shows them); text compares without regard to case. */
+function passes(cell, op, value) {
+  const t = String(cell.text || "").trim(), low = t.toLowerCase(), v = String(value ?? "").trim(), vl = v.toLowerCase();
+  if (op === "has a value") return t !== "";
+  if (op === "has no value") return t === "";
+  let a = null, b = null;
+  if (cell.kind === "Length" && cell.num != null) { try { b = parseLength(v); a = cell.num; } catch (e) { /* not a length: compare as text */ } }
+  if (a === null) { a = cell.num != null ? numOf(t) : /^-?\d+(\.\d+)?$/.test(t) ? Number(t) : null; b = numOf(v); if (!/\d/.test(v)) b = null; }
+  const numeric = a !== null && b !== null;
+  const eq = numeric ? Math.abs(a - b) <= 1e-6 * Math.max(1, Math.abs(b)) : low === vl;
+  switch (op) {
+    case "equals": return eq;
+    case "does not equal": return !eq;
+    case "is greater than": return numeric ? a > b + 1e-9 : low > vl;
+    case "is greater than or equal to": return numeric ? a >= b - 1e-9 : low >= vl;
+    case "is less than": return numeric ? a < b - 1e-9 : low < vl;
+    case "is less than or equal to": return numeric ? a <= b + 1e-9 : low <= vl;
+    case "contains": return low.includes(vl);
+    case "does not contain": return !low.includes(vl);
+    case "begins with": return low.startsWith(vl);
+    case "does not begin with": return !low.startsWith(vl);
+    case "ends with": return low.endsWith(vl);
+    case "does not end with": return !low.endsWith(vl);
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------- the table
+const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+const cmpCells = (x, y) => x.num != null && y.num != null ? x.num - y.num : collator.compare(x.text || "", y.text || "");
+function aggregate(cells, mode) {
+  const nums = cells.map(c => c.num).filter(n => n != null), kind = (cells.find(c => c.num != null) || {}).kind || "Number";
+  if (!nums.length) return null;
+  const f = v => ({ text: formatValue({ kind, v }), num: v, kind });
+  if (mode === "Calculate totals") return f(nums.reduce((s, n) => s + n, 0));
+  if (mode === "Calculate minimum") return f(Math.min(...nums));
+  if (mode === "Calculate maximum") return f(Math.max(...nums));
+  if (mode === "Calculate minimum and maximum") { const lo = f(Math.min(...nums)), hi = f(Math.max(...nums)); return { text: `${lo.text} – ${hi.text}`, num: null, kind }; }
+  return null;
+}
+
+/** The whole schedule: its columns and its rows (items, group headers and footers, blank lines, grand
+ *  totals), ready for the view, the sheet and the CSV. Settings that name a missing field are skipped
+ *  and reported in `notes`, never fatal. */
+function scheduleTable(doc, v) {
+  F.doc = doc;
+  const S = scheduleSettings(doc, v), notes = [];
+  const calcs = new Map((S.calculated || []).filter(c => c && c.name).map(c => [c.name, c]));
+  const fmt = k => S.format[k] || {};
+  const columns = S.fields.map(key => ({ key, heading: fmt(key).heading || prettyField(key), align: fmt(key).align || "", hidden: !!fmt(key).hidden,
+    total: fmt(key).total || (key === "Count" ? "Calculate totals" : "None"), group: fmt(key).group || "", conditional: fmt(key).conditional || [], calc: calcs.get(key) || null }));
+  // items: one per element, or per element and material layer
+  const els = scheduledElements(doc, S.cat);
+  let items = S.kind === "Material Takeoff" ? els.flatMap(f => materialItems(doc, f)) : els.map(f => ({ f }));
+  items.forEach((it, i) => { it.id = doc.idOf(it.f); it.order = i; it.vals = new Map(); });
+  // a value, computed once per item and field; calculated values see the other fields by key or heading
+  const val = (it, key) => {
+    if (it.vals.has(key)) return it.vals.get(key);
+    it.vals.set(key, { text: "", num: null, kind: "Text" });           // a formula naming itself reads blank, not forever
+    const c = calcs.get(key); let out;
+    if (c && c.type !== "percentage") {
+      try {
+        const lookup = name => { const k = S.fields.find(x => x === name || prettyField(x).replace(/\s+/g, "") === name || (fmt(x).heading || "").replace(/\s+/g, "") === name) || name;
+          const r = val(it, k); return r.num != null ? { kind: r.kind === "Text" ? "Number" : r.kind, v: r.num } : r.text !== "" ? { kind: "Text", v: r.text } : undefined; };
+        const r = evaluate(parse(c.formula || "0"), { lookup, into: c.kind || "Number" });
+        out = { text: formatValue(r), num: typeof r.v === "number" ? r.v : null, kind: r.kind };
+      } catch (e) { out = { text: "⚠ " + e.message, num: null, kind: "Text" }; }
+    } else if (c) out = { text: "", num: null, kind: "Number" };      // percentages are filled in once the groups are known
+    else out = fieldValue(doc, it, key);
+    it.vals.set(key, out); return out;
+  };
+  // filters (all must pass, or any with "Or")
+  const rules = S.filters.filter(r => r && r.field && r.op);
+  if (rules.length) items = items.filter(it => { const ok = rules.map(r => passes(val(it, r.field), r.op, r.value)); return S.filterAny ? ok.some(Boolean) : ok.every(Boolean); });
+  // sorting: each level in turn, the element order last so a schedule never reshuffles between rebuilds
+  const levels = S.sort.filter(s => s && s.field);
+  items.sort((x, y) => { for (const L of levels) { const c = cmpCells(val(x, L.field), val(y, L.field)); if (c) return L.desc ? -c : c; } return x.order - y.order; });
+  // percentage calculated values: of their field's total, over everything or within the first grouping
+  for (const [name, c] of calcs) if (c.type === "percentage" && c.of) {
+    const within = c.by === "group" && levels[0] ? it => val(it, levels[0].field).text : () => "";
+    const sums = new Map(); for (const it of items) { const k = within(it); sums.set(k, (sums.get(k) || 0) + (val(it, c.of).num || 0)); }
+    for (const it of items) { const s = sums.get(within(it)) || 0, n = s ? (val(it, c.of).num || 0) / s * 100 : 0; it.vals.set(name, { text: `${n.toFixed(1)} %`, num: n, kind: "Number" }); }
+  }
+  const cellsOf = it => columns.map(col => { const c = Object.assign({}, val(it, col.key)); const rule = col.conditional.find(r => r && r.op && passes(c, r.op, r.value)); if (rule) c.fill = rule.fill || "#fff3b0"; return c; });
+  const rows = [];
+  const emitLeaf = group => {
+    if (S.itemize) { for (const it of group) rows.push({ kind: "item", ids: [it.id], f: it.f, cells: cellsOf(it) }); return; }
+    // one row for the group: a value all share, the total of what is totalled, the count; blank where they differ
+    const cells = columns.map(col => {
+      const all = group.map(it => val(it, col.key));
+      if (col.key === "Count") return { text: String(group.length), num: group.length, kind: "Number" };
+      if (col.total !== "None") { const a = aggregate(all, col.total); if (a) return a; }
+      return all.every(c => c.text === all[0].text) ? Object.assign({}, all[0]) : { text: "", num: null, kind: all[0] ? all[0].kind : "Text", varies: true };
+    });
+    columns.forEach((col, i) => { const rule = col.conditional.find(r => r && r.op && passes(cells[i], r.op, r.value)); if (rule) cells[i].fill = rule.fill || "#fff3b0"; });
+    rows.push({ kind: "merged", ids: group.map(it => it.id), f: group[0] && group[0].f, cells, count: group.length });
+  };
+  const summary = (group, mode, title, kind, depth) => {
+    const withTitle = /Title/.test(mode), withCount = /Count|count/.test(mode);
+    const cells = columns.map(col => {
+      if (col.key === "Count") return { text: String(group.length), num: group.length, kind: "Number" };
+      return col.total !== "None" ? (aggregate(group.map(it => val(it, col.key)), col.total) || { text: "", num: null }) : { text: "", num: null };
+    });
+    const label = [withTitle ? title : "", withCount ? String(group.length) : ""].filter(Boolean).join(": ");
+    return { kind, depth, ids: group.map(it => it.id), text: label, cells };
+  };
+  const build = (group, depth) => {
+    if (depth >= levels.length) { emitLeaf(group); return; }
+    const L = levels[depth];
+    for (let i = 0; i < group.length;) {
+      const key = val(group[i], L.field).text; let j = i; while (j < group.length && val(group[j], L.field).text === key) j++;
+      const sub = group.slice(i, j), title = key || `<no ${prettyField(L.field).toLowerCase()}>`;
+      if (L.header) rows.push({ kind: "header", depth, text: title, ids: sub.map(it => it.id) });
+      build(sub, depth + 1);
+      if (L.footer) rows.push(summary(sub, L.footerMode || FOOTER_MODES[0], title, "footer", depth));
+      if (L.blank) rows.push({ kind: "blank", depth });
+      i = j;
+    }
+  };
+  build(items, 0);
+  if (S.grandTotals.on) rows.push(summary(items, S.grandTotals.mode || FOOTER_MODES[0], S.grandTotals.title || "Grand total", "grand", 0));
+  for (const r of S.filters) if (r && r.field && !availableFields(doc, S.cat, S.kind, S.calculated).some(a => a.key === r.field)) notes.push(`filter on ${r.field}: no ${S.cat} has that field`);
+  const visible = columns.map((c, i) => c.hidden ? -1 : i).filter(i => i >= 0);
+  return { settings: S, columns, visible, rows, count: items.length, title: v.get("Name"), notes };
+}
+
+/** The table as CSV (what Revit's Export › Reports › Schedule writes): visible columns, header rows as
+ *  a line of their own, totals rows included. */
+function scheduleCSV(table) {
+  const q = s => /[",\n]/.test(s) ? `"${String(s).replace(/"/g, '""')}"` : String(s);
+  const vis = table.visible, out = [];
+  if (table.settings.appearance.title) out.push(q(table.title));
+  if (table.settings.appearance.headers) out.push(vis.map(i => q(table.columns[i].heading)).join(","));
+  for (const r of table.rows) {
+    if (r.kind === "blank") out.push("");
+    else if (r.kind === "header") out.push(q(r.text));
+    else out.push(vis.map((i, n) => q(n === 0 && r.text && !r.cells[i].text ? r.text : r.cells[i].text || "")).join(","));
+  }
+  return out.join("\n") + "\n";
+}
+
+/** Legacy shape (fields + one text row per element), for callers that only list. */
+function scheduleRows(doc, v) {
+  const t = scheduleTable(doc, v);
+  return { fields: t.columns.map(c => c.key), cat: t.settings.cat, rows: t.rows.filter(r => r.kind === "item" || r.kind === "merged").map(r => ({ id: r.ids[0], ids: r.ids, f: r.f, cells: r.cells.map(c => c.text) })) };
+}
+
 // ===== scene.js =====
 //! Phase 4 — DERIVE (§6). A view becomes a flat list of typed 2D primitives
 //! with no reference back to the document, in PAPER MILLIMETRES: the view scale
@@ -10416,6 +11022,7 @@ function isPinned(doc, f) { const decl = f && doc.declOf(f); return !!(decl && d
 //!       {t:"stroke", path, weight (mm | "none" never emitted), colour, dash}
 //!       {t:"text", at, text, height, rot, align, valign, colour} · {t:"raster", rect, url}
 //!       {t:"link", rect, sheet}   — all carry {layer, id} for OCGs and picking.
+
 
 
 
@@ -10858,12 +11465,6 @@ function drawSpace(doc, ctx, B, f) {
   B.hit(id, [add(anchor, [-600, -600]), add(anchor, [600, -600]), add(anchor, [600, 600]), add(anchor, [-600, 600])]);
 }
 function ruleMatch(doc, f, rule) { try { return matches(doc, f, rule.when); } catch (e) { return false; } }
-function paramText(doc, f, k) {
-  if (k === "Name") return f.get("Name");
-  if (k === "Area") { const d = doc.data(f); return d && d.props && d.props.Area ? fmtArea(d.props.Area.v, (doc.meta && doc.meta.displayUnits) || "mm") : "—"; }
-  const p = doc.getParam(f, k); if (p !== undefined) return displayParam(doc, f, p);
-  const v = propertyOf(doc, f, k); return v && !v.error ? formatValue(v) : "";
-}
 const DEPT = ["#dce9f7", "#f8e3cf", "#dff1e2", "#f3dcec", "#fff2c4", "#e4e0f7", "#d8f0f0"];
 function departmentColour(v) { let h = 0; for (const c of v) h = (h * 31 + c.charCodeAt(0)) >>> 0; return DEPT[h % DEPT.length]; }
 
@@ -11605,24 +12206,40 @@ function view3dScene(doc, v, opts = {}) {
 }
 
 // ---------------------------------------------------------------- schedules
-function scheduleRows(doc, v) {
-  const cat = F.choice(v, "of"), fields = F.json(v, "fields") || [];
-  const rows = doc.elements().filter(f => categoryOf(doc, f) === cat && !doc.declOf(f)?.category?.startsWith("View")).map(f => ({ id: doc.idOf(f), f,
-    cells: fields.map(k => k === "Id" ? doc.idOf(f) : k === "Name" ? f.get("Name") : paramText(doc, f, k)) }));
-  return { fields, rows, cat };
-}
+/** A schedule as a drawing (on a sheet): the same table the schedule view shows - title, grouped column
+ *  headings, group headers and footers, totals, hidden columns left out, cells aligned and shaded as
+ *  formatted. Paper millimetres. */
 function scheduleScene(doc, v) {
-  const B = new SceneBuilder(1), { fields, rows } = scheduleRows(doc, v);
-  const h = 2.5, rowH = 6, colW = fields.map(k => Math.max(textWidth(k, h), ...rows.map(r => textWidth(r.cells[fields.indexOf(k)] || "", h))) + 4);
-  const W = colW.reduce((a, b) => a + b, 0), H = (rows.length + 2) * rowH;
-  B.text([0, H + 2], v.get("Name"), 3.5, {});
+  const B = new SceneBuilder(1), T = scheduleTable(doc, v), A = T.settings.appearance, cols = T.visible.map(i => T.columns[i]);
+  const h = 2.5, rowH = 6, pad = 2;
+  const shown = r => r.kind === "header" || r.kind === "blank" ? [] : T.visible.map(i => r.cells[i].text || "");
+  const colW = cols.map((c, n) => Math.max(textWidth(c.heading, h), ...T.rows.map(r => textWidth(shown(r)[n] || (n === 0 && r.text ? r.text : ""), h)), 6) + 2 * pad);
+  const W = colW.reduce((a, b) => a + b, 0), xs = colW.reduce((acc, w) => (acc.push(acc[acc.length - 1] + w), acc), [0]);
+  const groups = cols.some(c => c.group);
+  const nRows = T.rows.length + (A.headers ? 1 : 0) + (A.headers && groups ? 1 : 0) + (A.blankRow ? 1 : 0);
+  const H = nRows * rowH;
+  const stroke = (a, b, w = 0.18) => B.prims.push({ t: "stroke", path: [lineSeg(a, b)], weight: w, colour: "#000", layer: "Schedule" });
+  const fill = (x0, y0, x1, y1, colour) => B.prims.push({ t: "fill", path: rectPath(x0, y0, x1, y1), colour, layer: "Schedule" });
+  const put = (x0, w, y, s, align, opts = {}) => { const tw = textWidth(s, opts.h || h), x = align === "right" ? x0 + w - pad - tw : align === "center" ? x0 + (w - tw) / 2 : x0 + pad; B.text([x, y + 2], s, opts.h || h, opts); };
+  if (A.title) put(0, W, H + 1, T.title, "center", { h: 3.5 });
   let y = H;
-  const line = (y) => B.prims.push({ t: "stroke", path: [lineSeg([0, y], [W, y])], weight: 0.18, colour: "#000", layer: "Schedule" });
-  line(y);
-  let x = 0; fields.forEach((k, i) => { B.text([x + 2, y - rowH + 2], k, h, {}); x += colW[i]; });
-  y -= rowH; line(y);
-  for (const r of rows) { x = 0; r.cells.forEach((c, i) => { B.text([x + 2, y - rowH + 2], c, h, {}); x += colW[i]; }); y -= rowH; line(y); }
-  let xx = 0; for (const cw of [0, ...colW]) { xx += cw; B.prims.push({ t: "stroke", path: [lineSeg([xx, y], [xx, H])], weight: 0.18, colour: "#000", layer: "Schedule" }); }
+  if (A.headers && groups) {
+    y -= rowH;
+    for (let i = 0; i < cols.length;) { let j = i; while (j + 1 < cols.length && cols[j + 1].group === cols[i].group) j++; if (cols[i].group) { put(xs[i], xs[j + 1] - xs[i], y, cols[i].group, "center"); stroke([xs[i], y], [xs[j + 1], y]); } i = j + 1; }
+  }
+  if (A.headers) { y -= rowH; cols.forEach((c, n) => put(xs[n], colW[n], y, c.heading, c.align || "center")); stroke([0, y], [W, y], 0.35); }
+  if (A.blankRow) y -= rowH;
+  T.rows.forEach((r, k) => {
+    y -= rowH;
+    if (r.kind === "blank") return;
+    if (r.kind === "header") { put(0, W, y, r.text, "left"); if (A.gridlines) stroke([0, y], [W, y]); return; }
+    if (A.stripes && k % 2) fill(0, y, W, y + rowH, "#f2f2f2");
+    T.visible.forEach((i, n) => { const c = r.cells[i]; if (c.fill) fill(xs[n], y, xs[n + 1], y + rowH, c.fill); const s = n === 0 && r.text && !c.text ? r.text : c.text || ""; if (s) put(xs[n], colW[n], y, s, T.columns[i].align || (c.num != null ? "right" : "left")); });
+    if (r.kind === "footer" || r.kind === "grand") stroke([0, y + rowH], [W, y + rowH], 0.25);
+    if (A.gridlines) stroke([0, y], [W, y]);
+  });
+  if (A.gridlines) for (const x of xs.slice(1, -1)) stroke([x, y], [x, H - (A.headers && groups ? rowH : 0)]);
+  if (A.outline) { stroke([0, y], [W, y], 0.35); stroke([0, H], [W, H], 0.35); stroke([0, y], [0, H], 0.35); stroke([W, y], [W, H], 0.35); }
   const scene = { prims: B.prims, hits: [], links: [], scale: 1, kind: "schedule" };
   scene.bbox = sceneBBox(B.prims);
   return scene;
@@ -11748,235 +12365,6 @@ function drawImport(doc, ctx, B, f) {
   }
   for (const t of d.texts || []) { if (!on(t.layer)) continue; const at = P(t.at); grow(at); B.text(B.P(at), t.text, Math.max(0.5, t.height * k / S), { align: t.align === "centre" ? "centre" : t.align === "right" ? "right" : "left", rot: (t.rot || 0) + (F.real(f, "rotation") || 0), colour: col(t.layer), layer: "Detail", id }); }
   if (bb) B.hit(id, [[bb[0], bb[1]], [bb[2], bb[1]], [bb[2], bb[3]], [bb[0], bb[3]]]);
-}
-
-// ===== props.js =====
-//! Pure models the interface draws (§4.5, §4.2, §10.3). Kept free of the DOM so
-//! the tests measure exactly what the panel shows.
-//!
-//! PropertyPanel(element) = merge(driver arguments, type parameters (read-only,
-//! behind Edit Type), instance parameters, computed values). Generated from the
-//! declarations — nothing here names an element type.
-
-
-
-
-
-
-
-const GROUP_ORDER = ["Constraints", "Dimensions", "Graphics", "Extents", "Construction", "Identity Data", "Phasing", "Finishes", "Other"];
-const TYPE_KEYS = ["wallType", "doorType", "windowType", "columnType", "floorType", "beamType"];
-
-/** Which editor a kind gets. Geometry is never a text box (§4.5, test 37e). */
-function editorFor(arg) {
-  if (arg.kind === "Curve2D" || arg.kind === "Point2D") return "edit-in-view";
-  if (arg.kind === "Json") return "json";
-  if (arg.kind === "Real" || arg.kind === "Integer") return "value";
-  if (arg.kind === "Boolean") return "check";
-  if (arg.kind === "Choice") return "choice";
-  if (arg.kind === "Reference") return "reference";
-  return "text";
-}
-function specEditor(spec) {
-  return { Enum: "choice", Boolean: "check", Length: "value", Number: "value", Integer: "value", Angle: "value", Text: "text", MultiText: "text", Colour: "colour", URL: "text", Material: "reference" }[spec.kind] || "text";
-}
-
-/** Parameter specs that apply to an element: document specs + its family chain's. */
-function specsFor(doc, f) {
-  const cat = categoryOf(doc, f);
-  const out = {};
-  for (const [k, s] of Object.entries(doc.lib.paramSpecs)) if (s.categories && (s.categories.includes("*") || s.categories.includes(cat))) out[k] = s;
-  const tk = TYPE_KEYS.find(k => F.refId(f, k));
-  if (tk) { const t = doc.resolveType(F.refId(f, tk)); if (t) for (const [k, s] of Object.entries(t.specs || {})) out[k] = Object.assign({ binding: "type", group: "Identity Data" }, s); }
-  return out;
-}
-
-/** The panel for one element or a multi-selection (common rows, <varies>). */
-function propertyModel(doc, ids) {
-  const els = ids.map(id => doc.element(id)).filter(Boolean);
-  if (!els.length) return null;
-  const types = [...new Set(els.map(f => f.get("Type")))];
-  const rows = [];
-  const push = r => rows.push(Object.assign({ group: "Other" }, r));
-  const vary = vals => vals.every(v => JSON.stringify(v) === JSON.stringify(vals[0])) ? { value: vals[0] } : { varies: true };
-  // driver arguments: only when every element is the same type
-  if (types.length === 1) {
-    const decl = CATALOGUE.get(types[0]);
-    decl && decl.args.forEach((a, i) => {
-      if (a.when) { const ctl = els.map(f => doc.argValue(f, a.when.key)); if (!ctl.every(v => v === a.when.value)) return; }
-      const vals = els.map(f => doc.argValue(f, a.key));
-      const v = vary(vals);
-      const row = { source: "arg", key: a.key, label: a.label, kind: a.kind, editor: editorFor(a), group: a.group || "Constraints", arg: a, entry: els.length === 1 ? els[0].child(argTag(i), false)?.entry() : null };
-      Object.assign(row, v);
-      if (!v.varies && v.value && typeof v.value === "object" && v.value.ref && (a.kind === "Real" || a.kind === "Integer")) {
-        // A bound value shows its expression, not its result (§4.5, test 37d).
-        const ex = doc.element(v.value.ref);
-        row.bound = { id: v.value.ref, expr: ex ? (doc.argValue(ex, "formula") ?? ex.get("Name")) : "?", result: ex && doc.data(ex) ? formatValue({ kind: doc.data(ex).kind, v: doc.data(ex).value }) : "—", error: ex ? doc.error(ex) : "missing" };
-      }
-      if (a.kind === "Reference") row.options = referenceOptions(doc, a, els[0]);
-      if (a.kind === "Choice") row.options = a.options.map(o => ({ value: o, label: o }));
-      push(row);
-    });
-  }
-  // instance and type parameters
-  const specSets = els.map(f => specsFor(doc, f));
-  const common = Object.keys(specSets[0]).filter(k => specSets.every(s => s[k]));
-  for (const k of common) {
-    const spec = specSets[0][k];
-    if (spec.binding === "type") {
-      const vals = els.map(f => { const tk = TYPE_KEYS.find(t => F.refId(f, t)); const t = tk && doc.resolveType(F.refId(f, tk)); return t ? t.params[k] : undefined; });
-      const origin = els.length === 1 ? (() => { const tk = TYPE_KEYS.find(t => F.refId(els[0], t)); const t = tk && doc.resolveType(F.refId(els[0], tk)); return t && t.origin[k]; })() : null;
-      push(Object.assign({ source: "type", key: k, label: k, kind: spec.kind, editor: "readonly", group: spec.group || "Identity Data", spec, origin, readonly: true }, vary(vals)));
-    } else {
-      const vals = els.map(f => doc.getParam(f, k));
-      const row = Object.assign({ source: "param", key: k, label: k, kind: spec.kind, editor: specEditor(spec), group: spec.group || "Identity Data", spec }, vary(vals));
-      if (spec.kind === "Enum") row.options = spec.values.map(o => ({ value: o, label: o }));
-      if (row.value === undefined && spec.default !== undefined) row.placeholder = spec.default;
-      if (row.value && typeof row.value === "object" && row.value.expr) row.display = displayParam(doc, els[0], row.value);
-      push(row);
-    }
-  }
-  // computed values: read-only (length, area, volume)
-  if (els.length === 1) {
-    const d = doc.data(els[0]);
-    // what the element measures of itself - length, area, volume, heights - live, in the project's units,
-    // where Revit shows them: read-only rows in Dimensions (text facts in Identity Data)
-    for (const [k, v] of Object.entries((d && d.props) || {})) push({ source: "computed", key: k, label: k, editor: "readonly", readonly: true, group: v && v.kind === "Text" ? "Identity Data" : "Dimensions", value: formatValue(v), live: true });
-  }
-  rows.sort((a, b) => (GROUP_ORDER.indexOf(a.group) + 1 || 99) - (GROUP_ORDER.indexOf(b.group) + 1 || 99));
-  const tk = types.length === 1 ? TYPE_KEYS.find(k => CATALOGUE.get(types[0]).args.some(a => a.key === k)) : null;
-  return { ids, types, rows, typeKey: tk, typeIds: tk ? [...new Set(els.map(f => F.refId(f, tk)))] : [], errors: els.map(f => doc.error(f)).filter(Boolean), notes: els.map(f => doc.note(f)).filter(Boolean) };
-}
-
-/** What a reference field may point at: elements and library entries whose kind
- *  is in the declaration's `kinds` — the same check the graph uses for wires. */
-function referenceOptions(doc, arg, self) {
-  const out = [];
-  for (const g of doc.elements()) { if (g === self) continue; const d = doc.declOf(g); if (d && arg.kinds.includes(d.kind)) out.push({ value: doc.idOf(g), label: `${g.get("Name")} (${doc.idOf(g)})` }); }
-  const libKind = { wallType: "IfcWall", doorType: "IfcDoor", windowType: "IfcWindow", columnType: "IfcColumn", floorType: "IfcSlab", beamType: "IfcBeam" };
-  for (const k of arg.kinds) {
-    if (libKind[k]) for (const [id, t] of Object.entries(doc.lib.types)) { const r = doc.resolveType(id); if (r && r.category === libKind[k]) out.push({ value: id, label: t.name || id }); }
-    if (k === "viewStyle") for (const [id, s] of Object.entries(doc.lib.viewStyles)) out.push({ value: id, label: s.name || id });
-    if (k === "textType") for (const [id, s] of Object.entries(doc.lib.textTypes)) out.push({ value: id, label: s.name || id });
-    if (k === "symbol") for (const [id, s] of Object.entries(doc.lib.symbols)) out.push({ value: id, label: s.name || id });
-  }
-  return out;
-}
-/** Can an output of element `src` be wired into argument `arg`? One check, for
- *  the panel's dropdown, the graph's wires and the pick popover. */
-function canConnect(doc, src, arg) {
-  const d = doc.declOf(src); if (!d) return false;
-  if (arg.kind === "Reference") return arg.kinds.includes(d.kind);
-  if (arg.kind === "Real" || arg.kind === "Integer") return d.kind === "number";
-  return false;
-}
-
-// ---------------------------------------------------------------- pick-binding (§4.2)
-/** Clicking an element while a typed field is active: offer only what matches
- *  the field's kind — Lengths for a Length, materials for a Material (37g, 37i). */
-function pickCandidates(doc, targetId, kind) {
-  const f = doc.element(targetId); if (!f) return [];
-  const id = doc.idOf(f), out = [];
-  if (kind === "Material") {
-    const tk = TYPE_KEYS.find(k => F.refId(f, k)), t = tk && doc.resolveType(F.refId(f, tk));
-    const mats = new Set((t && t.layers ? t.layers.map(l => l.material) : []).concat(t && t.material ? [t.material] : []));
-    for (const m of mats) out.push({ text: m, label: `${doc.lib.materials[m] ? doc.lib.materials[m].name : m} (${m})`, kind: "Material" });
-    return out;
-  }
-  const d = doc.data(f);
-  for (const [k, v] of Object.entries((d && d.props) || {})) if (v && v.kind === kind) out.push({ text: `${id}.${k}`, label: `${k} = ${formatValue(v)}`, kind });
-  const decl = doc.declOf(f);
-  for (const a of decl ? decl.args : []) if ((a.kind === "Real") && a.quantity === kind && !out.some(o => o.text === `${id}.${a.key}`)) {
-    let val; try { F.doc = doc; val = F.real(f, a.key); } catch (e) { val = NaN; }
-    out.push({ text: `${id}.${a.key}`, label: `${a.label} = ${formatValue({ kind, v: val })}`, kind });
-  }
-  // the element's type's own lengths: total thickness
-  const tk = TYPE_KEYS.find(k => F.refId(f, k)), t = tk && doc.resolveType(F.refId(f, tk));
-  if (kind === "Length" && t && t.layers) out.push({ text: `${id}.Width`, label: `Type thickness = ${formatValue({ kind: "Length", v: t.layers.reduce((a, l) => a + l.thickness, 0) })}`, kind, dedupe: true });
-  const seen = new Set();
-  return out.filter(o => { if (seen.has(o.text)) return false; seen.add(o.text); return true; }).sort((a, b) => (a.text.endsWith(".Length") ? -1 : 0) - (b.text.endsWith(".Length") ? -1 : 0));
-}
-
-// ---------------------------------------------------------------- the node graph (a second projection)
-/** Nodes and wires from the same declarations: an input port per reference or
- *  bindable numeric argument; every element has one output. A binding typed
- *  into a field IS a wire here (test 37h) — there is no second link mechanism. */
-function graphModel(doc) {
-  const nodes = [], wires = [];
-  for (const f of doc.elements()) {
-    const decl = doc.declOf(f); if (!decl) continue;
-    const id = doc.idOf(f);
-    const ports = decl.args.filter(a => a.kind === "Reference" || a.kind === "Real" || a.kind === "Integer").map(a => ({ key: a.key, label: a.label, kind: a.kind, kinds: a.kinds, view: !!a.view }));
-    nodes.push({ id, name: f.get("Name"), type: decl.type, kind: decl.kind, ports, error: doc.error(f), note: doc.note(f) });
-    decl.args.forEach(a => {
-      const v = doc.argValue(f, a.key);
-      if (v && typeof v === "object" && v.ref && doc.element(v.ref)) wires.push({ from: v.ref, to: id, port: a.key, view: !!a.view });
-    });
-    if (decl.dependsOn) for (const dep of decl.dependsOn(f, doc)) wires.push({ from: dep, to: id, port: "formula", derived: true });
-  }
-  return { nodes, wires };
-}
-/** A layered layout: column = longest path from a source. */
-function autoLayout(doc, model) {
-  const depth = new Map(), incoming = new Map();
-  for (const w of model.wires) { if (!incoming.has(w.to)) incoming.set(w.to, []); incoming.get(w.to).push(w.from); }
-  const visit = (id, seen = new Set()) => { if (depth.has(id)) return depth.get(id); if (seen.has(id)) return 0; seen.add(id); const d = Math.max(-1, ...(incoming.get(id) || []).map(x => visit(x, seen))) + 1; depth.set(id, d); return d; };
-  const cols = new Map();
-  for (const n of model.nodes) { const d = visit(n.id); if (!cols.has(d)) cols.set(d, []); cols.get(d).push(n.id); }
-  const layout = {};
-  for (const [d, ids] of cols) ids.forEach((id, i) => { layout[id] = [40 + d * 230, 30 + i * 74]; });
-  return layout;
-}
-
-// ---------------------------------------------------------------- listening dimensions (§10.3)
-/** Temporary dimensions from the active wall to nearby parallel references.
- *  Capped at four; relevance = parallel only; preference order chooses which
- *  face of each neighbour is measured to. */
-const PREFERENCE = ["centreline", "core.exterior", "core.interior", "face.exterior", "face.interior", "line"];
-function listeningDimensions(doc, id, { radius = 15000, max = 4, prefer = PREFERENCE } = {}) {
-  const f = doc.element(id); if (!f || doc.typeOf(f) !== "Wall") return [];
-  const d = doc.data(f); if (!d || !d.refs) return [];
-  const own = d.refs.find(r => r.key === "centreline"); if (!own || own.kind !== "line") return [];
-  const L = own.geom, mid = doc.plan(f) ? doc.plan(f).curve.at(0.5) : L.p;
-  const cands = [];
-  for (const g of doc.elements()) {
-    if (g === f) continue;
-    const t = doc.typeOf(g); if (t !== "Wall" && t !== "Grid") continue;
-    const gd = doc.data(g); if (!gd || !gd.refs) continue;
-    const lines = gd.refs.filter(r => r.kind === "line");
-    let best = null;
-    for (const key of prefer) { const r = lines.find(x => x.key === key); if (r) { best = r; break; } }
-    if (!best) continue;
-    const par = Math.abs(best.geom.d[0] * L.d[1] - best.geom.d[1] * L.d[0]) < 1e-6;
-    if (!par) continue;                                    // a reference at 37° is noise
-    const sd = signedDistance(L, best.geom.p);
-    if (Math.abs(sd) > radius || Math.abs(sd) < TOL) continue;
-    // overlap along the wall: the neighbour must be beside it, not far down the line
-    const gc = t === "Wall" ? doc.plan(g).curve : null;
-    const along = gc ? [dot(sub(gc.start, L.p), L.d), dot(sub(gc.end, L.p), L.d)] : [-Infinity, Infinity];
-    const mine = [0, dist(doc.plan(f).curve.start, doc.plan(f).curve.end)];
-    if (Math.max(...along) < mine[0] - radius / 3 || Math.min(...along) > mine[1] + radius / 3) continue;
-    cands.push({ to: doc.idOf(g) + ":" + best.key, from: id + ":centreline", value: Math.abs(sd), side: Math.sign(sd), at: mid });
-  }
-  // nearest on each side first, then the next ones
-  cands.sort((a, b) => a.value - b.value);
-  const pos = cands.filter(c => c.side > 0), neg = cands.filter(c => c.side < 0);
-  const out = [];
-  while (out.length < max && (pos.length || neg.length)) { if (pos.length) out.push(pos.shift()); if (out.length < max && neg.length) out.push(neg.shift()); }
-  return out;
-}
-/** Typing into a temporary dimension moves the element to satisfy it exactly. */
-function dimensionMove(doc, dim, value) {
-  const f = doc.element(dim.from.split(":")[0]);
-  const c = doc.argValue(f, "centreline");
-  const other = resolveReference(doc, dim.to), own = resolveReference(doc, dim.from);
-  if (!other || !own || own.kind !== "line") return null;
-  const n = perp(own.geom.d);
-  const cur = dot(sub(own.geom.p, other.geom.p), n);         // own relative to other, along n
-  const want = Math.sign(cur || 1) * value;
-  const delta = want - cur;
-  const mv = [n[0] * delta, n[1] * delta];
-  return { type: "line", start: [c.start[0] + mv[0], c.start[1] + mv[1]], end: [c.end[0] + mv[0], c.end[1] + mv[1]] };
 }
 
 // ===== hlr.js =====
@@ -15848,6 +16236,7 @@ function mergeModel(cur, next) {
 
 
 
+
 const CASES = [];
 const testCase = (id, name, fn, opts = {}) => CASES.push(Object.assign({ id, name, fn }, opts));
 const approx = (a, b, tol = 1e-6) => Math.abs(a - b) <= tol;
@@ -17830,6 +18219,38 @@ testCase("M71", "A slab's boundary is edited only in its sketch: Move, Rotate, M
   return R(allRefused && wallMoved && copies && grips, "six moves refused, slab untouched; the wall beside it moved +500; two copies made; no grips",
     JSON.stringify({ tries: tries.map(r => r.ok ? "ok" : r.error), wallMoved, copies, grips }));
 });
+testCase("M72", "Schedules as Revit: filters (And, Or, on a field not shown), sorting with headers, footers and grand totals, itemize off (one row per type with its count and total length), calculated formula and percentage, conditional formatting, material takeoff, multi-category, CSV", () => {
+  const { doc, ed } = fixture();
+  // four free-standing walls, 3000 high: A 4000 and B 6000 of Solid 300, C 5000 and D 2000 of Solid 400
+  wall(doc, "A", [0, 0], [4000, 0], "T-300"); wall(doc, "B", [0, 5000], [6000, 5000], "T-300");
+  wall(doc, "C", [0, 10000], [5000, 10000], "T-400"); wall(doc, "D", [0, 15000], [2000, 15000], "T-400");
+  doc.regenerate();
+  const mk = (id, args) => { ed.apply({ op: "add", element: { id, type: "Schedule", name: id, args: Object.assign({ of: "IfcWall", fields: ["Id", "Type", "Length"] }, args) } }); return scheduleTable(doc, doc.element(id)); };
+  const ids = t => t.rows.filter(r => r.kind === "item").map(r => r.ids[0]).join(",");
+  const tAnd = mk("S1", { filters: [{ field: "Length", op: "is greater than", value: "3 m" }, { field: "Family and Type", op: "contains", value: "400" }] });
+  const tOr = mk("S2", { filters: [{ field: "Length", op: "is less than", value: "3000" }, { field: "Type", op: "equals", value: "solid 300" }], filterAny: true });
+  const tGrp = mk("S3", { sort: [{ field: "Type", desc: true, header: true, footer: true, footerMode: "Title, count, and totals" }], grandTotals: { on: true, mode: "Title, count, and totals", title: "Grand total" }, format: { Length: { total: "Calculate totals" } } });
+  const L = t => t.columns.findIndex(c => c.key === "Length");
+  const shape = tGrp.rows.map(r => r.kind === "item" ? r.ids[0] : r.kind === "header" ? "H:" + r.text : `${r.kind}:${r.text}=${r.cells[L(tGrp)].num}`).join(" | ");
+  const grpOk = shape === "H:Solid 400 | C | D | footer:Solid 400: 2=7000 | H:Solid 300 | A | B | footer:Solid 300: 2=10000 | grand:Grand total: 4=17000";
+  const tMerge = mk("S4", { fields: ["Type", "Count", "Length", "Height", "Id"], sort: [{ field: "Type" }], itemize: false, format: { Length: { total: "Calculate totals" } } });
+  const m = tMerge.rows.map(r => r.cells.map(c => c.text).join(";")).join(" | ");
+  const mergeOk = tMerge.rows.length === 2 && tMerge.rows.every(r => r.kind === "merged") && m === "Solid 300;2;10000 mm;3000 mm; | Solid 400;2;7000 mm;3000 mm;";
+  const tCalc = mk("S5", { fields: ["Id", "Length", "Double", "Share"], calculated: [{ name: "Double", type: "formula", formula: "Length * 2", kind: "Length" }, { name: "Share", type: "percentage", of: "Length", by: "grand" }],
+    format: { Length: { conditional: [{ op: "is greater than", value: "4500", fill: "#ffcc00" }] } } });
+  const rowA = tCalc.rows.find(r => r.ids[0] === "A"), rowB = tCalc.rows.find(r => r.ids[0] === "B");
+  const calcOk = rowA.cells[2].num === 8000 && rowA.cells[3].text === "23.5 %" && !rowA.cells[1].fill && rowB.cells[1].fill === "#ffcc00";
+  const tMat = mk("S6", { kind: "Material Takeoff", fields: ["Id", "Material: Name", "Material: Volume"], filters: [{ field: "Id", op: "equals", value: "A" }] });
+  const matOk = tMat.rows.length === 1 && Math.abs(tMat.rows[0].cells[2].num - 4000 * 3000 * 300) < 1;
+  ed.apply({ op: "add", element: { id: "FL", type: "Floor", args: { boundary: [[0, 0], [1000, 0], [1000, 1000], [0, 1000]], floorType: { ref: "T-SLAB200" }, level: { ref: "L0" }, heightOffset: 0 } } });
+  const tMulti = mk("S7", { of: "Multi-Category", fields: ["Category", "Count"], sort: [{ field: "Category" }], itemize: false });
+  const multiOk = tMulti.rows.map(r => r.cells.map(c => c.text).join(":")).join(",") === "Floors:1,Walls:4";
+  const csv = scheduleCSV(tGrp), csvOk = csv.includes("Solid 400: 2") && csv.split("\n")[1] === "Id,Type,Length";
+  const fieldsOk = ["Length", "Area", "Volume", "FireRating", "Family and Type", "Level", "Count"].every(k => availableFields(doc, "IfcWall").some(a => a.key === k));
+  const pass = ids(tAnd) === "C" && ids(tOr) === "A,B,D" && grpOk && mergeOk && calcOk && matOk && multiOk && csvOk && fieldsOk;
+  return R(pass, "And → C; Or → A,B,D; grouped Solid 400 (C, D, 2 = 7000) then Solid 300 (A, B, 2 = 10000), grand 4 = 17000; merged rows per type with count and total; A doubled 8000, 23.5 %; B shaded; A's block 3.6 m³; floors 1, walls 4; CSV",
+    JSON.stringify({ and: ids(tAnd), or: ids(tOr), shape, m, calc: [rowA.cells.map(c => c.text), rowB.cells[1].fill], mat: tMat.rows.map(r => r.cells.map(c => c.text)), multi: tMulti.rows.map(r => r.cells.map(c => c.text)), csv: csv.split("\n").slice(0, 3), fieldsOk }));
+});
 
 // ===== ui_util.js =====
 //! Small DOM vocabulary shared by the interface modules. The interface only
@@ -18050,11 +18471,326 @@ function sectionPicker(app, category, done) {
   return d;
 }
 
+// ===== scheduleui.js =====
+//! The schedule view and Revit's Schedule Properties dialog (Fields, Filter, Sorting/Grouping, Formatting,
+//! Appearance), and the New Schedule dialog. Everything shown comes from scheduleTable(); everything
+//! changed is an ordinary edit of the Schedule element's arguments - one undo step per OK.
+
+
+
+
+
+
+
+const TABS = ["Fields", "Filter", "Sorting/Grouping", "Formatting", "Appearance"];
+
+// ---------------------------------------------------------------- the view
+function renderSchedule(app, root, v) {
+  clear(root);
+  const doc = app.doc, id = doc.idOf(v), T = scheduleTable(doc, v), S = T.settings, A = S.appearance;
+  const pane = h("div", { class: "sheetpane" }), card = h("div", { class: "doccard" });
+  const tabBtn = (t, extra) => h("button", { class: "btn small", onclick: () => scheduleProperties(app, id, t) }, t + (extra ? ` (${extra})` : ""));
+  const nSort = S.sort.filter(s => s && s.field).length, nFilt = S.filters.filter(r => r && r.field).length;
+  card.append(h("header", {},
+    h("h2", {}, v.get("Name")),
+    h("span", { class: "muted" }, `${categoryName(S.cat)} · ${S.kind} · ${T.count} ${T.count === 1 ? "element" : "elements"}${S.itemize ? "" : ` in ${T.rows.filter(r => r.kind === "merged").length} rows`} · editing a cell edits the model`),
+    S.cat === "IfcSpace" ? h("span", { class: "chip" }, "areas to the boundary each space states") : null));
+  card.append(h("div", { class: "schedbar", role: "toolbar", "aria-label": "Schedule tools" },
+    h("span", { class: "muted small" }, "Properties:"), tabBtn("Fields", String(S.fields.length)), tabBtn("Filter", nFilt ? String(nFilt) : ""), tabBtn("Sorting/Grouping", nSort ? String(nSort) : ""), tabBtn("Formatting"), tabBtn("Appearance"),
+    h("span", { class: "sep" }),
+    h("button", { class: "btn small", title: "Select the elements of the chosen rows in a model view", onclick: () => highlightInModel(app) }, "Highlight in Model"),
+    h("button", { class: "btn small", onclick: () => exportCSV(app, T) }, "Export CSV"),
+    h("button", { class: "btn small", onclick: () => duplicateSchedule(app, id) }, "Duplicate")));
+  if (nFilt || nSort) card.append(h("div", { class: "schedchips" },
+    S.filters.filter(r => r && r.field).map((r, i) => h("button", { class: "chip", title: "Edit the filter", onclick: () => scheduleProperties(app, id, "Filter") }, `${i ? (S.filterAny ? "or " : "and ") : "where "}${prettyField(r.field)} ${r.op}${/value/.test(r.op) ? "" : " " + (r.value ?? "")}`)),
+    S.sort.filter(s => s && s.field).map((s, i) => h("button", { class: "chip", title: "Edit sorting and grouping", onclick: () => scheduleProperties(app, id, "Sorting/Grouping") }, `${i ? "then" : "sort by"} ${prettyField(s.field)} ${s.desc ? "↓" : "↑"}${s.header || s.footer ? " · grouped" : ""}`))));
+  for (const n of T.notes) card.append(h("div", { class: "under err" }, n));
+  const cols = T.visible.map(i => T.columns[i]);
+  const table = h("table", { class: "sched" + (A.gridlines ? " grid" : "") + (A.stripes ? " stripes" : "") + (A.outline ? " outline" : "") });
+  if (A.headers) {
+    const thead = h("thead");
+    if (cols.some(c => c.group)) {
+      const tr = h("tr", { class: "grouphdr" });
+      for (let i = 0; i < cols.length;) { let j = i; while (j + 1 < cols.length && cols[j + 1].group === cols[i].group) j++; tr.append(h("th", { colspan: j - i + 1, class: cols[i].group ? "g" : "" }, cols[i].group || "")); i = j + 1; }
+      thead.append(tr);
+    }
+    const lead = S.sort.find(s => s && s.field);
+    thead.append(h("tr", {}, cols.map(c => h("th", { class: c.align ? "a-" + c.align : "", title: `${c.key} - click to sort, right-click for more`,
+      onclick: () => quickSort(app, id, c.key), oncontextmenu: e => { e.preventDefault(); headerMenu(app, id, c, e); } },
+      c.heading, lead && lead.field === c.key ? h("span", { class: "sortmark" }, lead.desc ? " ▼" : " ▲") : null))));
+    table.append(thead);
+  }
+  const tb = h("tbody");
+  if (A.blankRow) tb.append(h("tr", { class: "blank" }, h("td", { colspan: cols.length || 1 })));
+  for (const r of T.rows) {
+    if (r.kind === "blank") { tb.append(h("tr", { class: "blank" }, h("td", { colspan: cols.length || 1 }))); continue; }
+    if (r.kind === "header") { tb.append(h("tr", { class: "grouphead d" + r.depth, onclick: e => app.select(r.ids, e.shiftKey) }, h("td", { colspan: cols.length || 1 }, r.text))); continue; }
+    const sel = r.ids && r.ids.length && r.ids.every(x => app.selection.has(x));
+    const tr = h("tr", { class: [r.kind, sel ? "sel" : ""].join(" "), onclick: e => { if (!/INPUT|SELECT|OPTION/.test(e.target.tagName)) app.select(r.ids || [], e.shiftKey || e.ctrlKey || e.metaKey); } });
+    T.visible.forEach((i, n) => {
+      const c = r.cells[i], col = T.columns[i];
+      const td = (r.kind === "item" || r.kind === "merged") ? cellEditor(app, r, col, c) : h("td", {}, n === 0 && r.text && !c.text ? r.text : c.text || "");
+      if (col.align) td.classList.add("a-" + col.align); else if (c.num != null) td.classList.add("a-right");
+      if (c.fill) td.style.background = c.fill;
+      tr.append(td);
+    });
+    tb.append(tr);
+  }
+  if (!T.rows.length) tb.append(h("tr", {}, h("td", { colspan: cols.length || 1, class: "muted" }, S.filters.length ? "No element passes the filter." : `No ${categoryName(S.cat).toLowerCase()} in the model yet.`)));
+  table.append(tb);
+  card.append(h("div", { class: "tablewrap" }, table));
+  pane.append(card);
+  root.append(pane);
+}
+
+/** A cell that edits the model: an instance value of one element - or of every element a grouped row stands
+ *  for, as Revit does when "Itemize every instance" is off. Quantities, type values and calculated values read only. */
+function cellEditor(app, r, col, c) {
+  const doc = app.doc, f = r.f, ids = r.ids, key = col.key;
+  const decl = doc.declOf(f), arg = decl && decl.args.find(a => a.key === key), spec = specsFor(doc, f)[key], d = doc.data(f);
+  const shown = c.varies ? "" : c.text || "", ph = c.varies ? "<varies>" : "";
+  const label = `${ids.length > 1 ? ids.length + " elements" : ids[0]} ${col.heading}`;
+  const all = mk => { const r2 = app.apply(ids.map(mk)); if (!r2.ok) app.say(r2.error, "error"); };
+  if (col.calc || /^Material: /.test(key) || ["Count", "Id", "Category", "Family", "Type", "Family and Type", "Level", "Sheet Number", "Sheet Name", "View Type", "Views on sheet"].includes(key) && !(key === "Name")) return h("td", { class: key === "Id" ? "id" : "" }, c.text || "");
+  if (key === "Name") return h("td", {}, h("input", { type: "text", value: shown, placeholder: ph, "aria-label": label, onchange: e => all(x => ({ op: "rename", id: x, name: e.target.value })) }));
+  if (arg && !(d && d.props && d.props[key] !== undefined)) {
+    if ((arg.kind === "Real" || arg.kind === "Integer") && !(doc.argValue(f, key) && doc.argValue(f, key).ref)) return h("td", {}, h("input", { type: "text", value: shown, placeholder: ph, "aria-label": label, onchange: e => all(x => ({ op: "set", id: x, key, text: e.target.value })) }));
+    if (arg.kind === "Choice") return h("td", {}, h("select", { "aria-label": label, onchange: e => all(x => ({ op: "set", id: x, key, value: e.target.value })) }, (c.varies ? [h("option", { value: "", selected: true, disabled: true }, "<varies>")] : []).concat(arg.options.map(o => h("option", { selected: !c.varies && o === c.text }, o)))));
+    if (arg.kind === "Boolean") return h("td", {}, h("input", { type: "checkbox", checked: c.text === "Yes", "aria-label": label, onchange: e => all(x => ({ op: "set", id: x, key, value: e.target.checked })) }));
+    if (arg.kind === "Text") return h("td", {}, h("input", { type: "text", value: shown, placeholder: ph, "aria-label": label, onchange: e => all(x => ({ op: "set", id: x, key, value: e.target.value })) }));
+  }
+  if (spec && spec.binding !== "type" && spec.kind === "Enum") return h("td", {}, h("select", { "aria-label": label, onchange: e => all(x => ({ op: "set", id: x, key: "params." + key, value: e.target.value })) },
+    (c.varies ? [h("option", { value: "", selected: true, disabled: true }, "<varies>")] : []).concat(spec.values.map(o => h("option", { selected: !c.varies && String(o) === c.text }, o)))));
+  if (spec && spec.binding !== "type" && spec.kind !== "Material") return h("td", {}, h("input", { type: "text", value: shown, placeholder: ph, "aria-label": label,
+    onchange: e => { const t = e.target.value; all(x => ({ op: "set", id: x, key: "params." + key, value: spec.kind === "Length" || spec.kind === "Number" || spec.kind === "Integer" ? (t.trim() === "" ? "" : { expr: t, kind: spec.kind }) : t })); } }));
+  return h("td", {}, c.text || "");
+}
+
+function quickSort(app, id, key) {
+  const v = app.doc.element(id), sort = clone(scheduleSettings(app.doc, v).sort || []).filter(s => s && s.field);
+  if (sort[0] && sort[0].field === key) sort[0].desc = !sort[0].desc; else sort.unshift({ field: key, desc: false });
+  app.apply({ op: "set", id, key: "sort", value: sort.filter((s, i) => i === 0 || s.field !== key).slice(0, 4) });
+}
+function headerMenu(app, id, col, e) {
+  document.querySelectorAll(".schedmenu").forEach(m => m.remove());
+  const v = app.doc.element(id), S = scheduleSettings(app.doc, v);
+  const setFmt = patch => { const fm = clone(S.format); fm[col.key] = Object.assign({}, fm[col.key] || {}, patch); app.apply({ op: "set", id, key: "format", value: fm }); };
+  const items = [
+    ["Sort ascending", () => app.apply({ op: "set", id, key: "sort", value: [{ field: col.key, desc: false }, ...S.sort.filter(s => s && s.field && s.field !== col.key)].slice(0, 4) })],
+    ["Sort descending", () => app.apply({ op: "set", id, key: "sort", value: [{ field: col.key, desc: true }, ...S.sort.filter(s => s && s.field && s.field !== col.key)].slice(0, 4) })],
+    ["Group by this (header + footer)", () => app.apply({ op: "set", id, key: "sort", value: [{ field: col.key, desc: false, header: true, footer: true, footerMode: FOOTER_MODES[0], blank: true }, ...S.sort.filter(s => s && s.field && s.field !== col.key)].slice(0, 4) })],
+    ["Filter by this…", () => scheduleProperties(app, id, "Filter", { addFilter: col.key })],
+    [col.total === "Calculate totals" ? "Stop totalling" : "Calculate totals", () => setFmt({ total: col.total === "Calculate totals" ? "None" : "Calculate totals" })],
+    ["Hide column", () => setFmt({ hidden: true })],
+    ["Unhide all columns", () => { const fm = clone(S.format); for (const k of Object.keys(fm)) if (fm[k]) fm[k].hidden = false; app.apply({ op: "set", id, key: "format", value: fm }); }],
+    ["Remove field", () => app.apply({ op: "set", id, key: "fields", value: S.fields.filter(k => k !== col.key) })],
+    ["Formatting…", () => scheduleProperties(app, id, "Formatting", { field: col.key })],
+  ];
+  const m = h("div", { class: "schedmenu", role: "menu", style: { left: e.clientX + "px", top: e.clientY + "px" } }, items.map(([t, run]) => h("button", { role: "menuitem", onclick: () => { m.remove(); run(); } }, t)));
+  document.body.append(m);
+  const off = ev => { if (!m.contains(ev.target)) { m.remove(); document.removeEventListener("pointerdown", off, true); } };
+  setTimeout(() => document.addEventListener("pointerdown", off, true), 0);
+  m.addEventListener("keydown", ev => { if (ev.key === "Escape") m.remove(); });
+  m.querySelector("button").focus();
+}
+function highlightInModel(app) {
+  const ids = [...app.selection].filter(x => app.doc.element(x));
+  if (!ids.length) return app.say("click rows of the schedule first, then Highlight in Model", "note");
+  app.revealInView(ids[0]); app.select(ids);
+  app.say(`${ids.length} element${ids.length > 1 ? "s" : ""} highlighted`, "ok");
+}
+async function exportCSV(app, T) {
+  const r = await saveFile(`${T.title.replace(/[^\w\- ]+/g, "_")}.csv`, scheduleCSV(T), "text/csv");
+  app.say(r.ok ? `${T.title}.csv saved` : r.error, r.ok ? "ok" : "error");
+}
+function duplicateSchedule(app, id) {
+  const doc = app.doc, src = doc.element(id), rec = clone(doc.elementJSON(src));
+  let n = 1; while (doc.elements().some(f => f.get("Name") === `${src.get("Name")} Copy ${n}`)) n++;
+  delete rec.id; rec.name = `${src.get("Name")} Copy ${n}`;
+  const r = app.apply({ op: "add", element: rec }); if (r.ok) app.openView(r.id);
+}
+
+// ---------------------------------------------------------------- New Schedule
+function newScheduleDialog(app) {
+  const doc = app.doc;
+  const count = c => scheduledElements(doc, c).length;
+  const search = h("input", { type: "search", placeholder: "filter categories", "aria-label": "Filter categories" });
+  const list = h("select", { size: 14, "aria-label": "Category", style: { width: "100%" } });
+  const fill = () => { const q = search.value.trim().toLowerCase(); const cur = list.value; clear(list);
+    for (const c of SCHEDULE_CATEGORIES) { const nm = categoryName(c); if (q && !nm.toLowerCase().includes(q)) continue; list.append(h("option", { value: c, selected: c === (cur || "IfcWall") }, `${nm}${c === "Multi-Category" ? "" : `  (${count(c)})`}`)); } };
+  fill(); search.addEventListener("input", fill);
+  const name = h("input", { type: "text", "aria-label": "Name", value: "Walls Schedule" });
+  let named = false; name.addEventListener("input", () => { named = true; });
+  const kind = h("select", { "aria-label": "Schedule type" }, SCHEDULE_KINDS.map(k => h("option", {}, k)));
+  const rename = () => { if (!named) name.value = `${categoryName(list.value).replace(/ \(.*\)$/, "")} ${kind.value === "Material Takeoff" ? "Material Takeoff" : list.value === "Sheet" ? "" : list.value === "View" ? "" : "Schedule"}`.replace(/\s+$/, "") + (list.value === "Sheet" ? "Sheet List" : list.value === "View" ? "View List" : ""); };
+  list.addEventListener("change", rename); kind.addEventListener("change", rename); list.addEventListener("dblclick", () => { go(); dlg.close(); });
+  const body = h("div", { class: "newsched" },
+    h("label", {}, "Category"), h("div", {}, search, list),
+    h("label", {}, "Name"), name,
+    h("label", {}, "Type"), kind,
+    h("div", { class: "muted small", style: { gridColumn: "1 / -1" } }, "Multi-Category lists every building element; Sheets and Views make a sheet list and a view list. The fields, filters and grouping come next."));
+  const go = () => {
+    const cat = list.value || "IfcWall", k = kind.value;
+    const avail = new Set(availableFields(doc, cat, k).map(a => a.key)), fields = defaultFields(cat, k).filter(f => avail.has(f) || !count(cat));
+    const r = app.apply({ op: "add", element: { type: "Schedule", name: name.value.trim() || categoryName(cat) + " Schedule", args: { of: cat, kind: k, fields } } });
+    if (!r.ok) { app.say(r.error, "error"); return false; }
+    app.openView(r.id); setTimeout(() => scheduleProperties(app, r.id, "Fields"), 0);
+  };
+  const dlg = dialog("New Schedule", body, [{ label: "Cancel", run: () => {} }, { label: "OK", primary: true, run: go }]);
+  list.focus();
+  return dlg;
+}
+
+// ---------------------------------------------------------------- Schedule Properties
+function scheduleProperties(app, id, tab = "Fields", opts = {}) {
+  const doc = app.doc, v = doc.element(id); if (!v) return;
+  const W = clone(scheduleSettings(doc, v));        // the working copy: nothing reaches the model until OK
+  W.sort = [0, 1, 2, 3].map(i => Object.assign({ field: "", desc: false, header: false, footer: false, footerMode: FOOTER_MODES[0], blank: false }, W.sort[i] || {}));
+  if (opts.addFilter) W.filters.push({ field: opts.addFilter, op: "equals", value: "" });
+  let current = tab, selField = opts.field || W.fields[0] || "";
+  const body = h("div", { class: "schedprops" }), tabs = h("div", { class: "vvtabs", role: "tablist" }), pane = h("div", { class: "tabpane" });
+  const avail = () => availableFields(doc, W.cat, W.kind, W.calculated);
+  const label = k => { const a = avail().find(x => x.key === k); return a ? a.label : prettyField(k); };
+  const fieldSelect = (value, onch, { none = false, aria = "Field" } = {}) => h("select", { "aria-label": aria, onchange: e => onch(e.target.value) },
+    (none ? [h("option", { value: "" }, "(none)")] : []).concat(W.fields.concat(avail().map(a => a.key).filter(k => !W.fields.includes(k))).map(k => h("option", { value: k, selected: k === value }, label(k) + (W.fields.includes(k) ? "" : "  (not in schedule)")))));
+  const draw = () => {
+    clear(tabs); clear(pane);
+    TABS.forEach(t => tabs.append(h("button", { role: "tab", "aria-selected": String(t === current), class: "vvtab" + (t === current ? " on" : ""), onclick: () => { current = t; draw(); } }, t)));
+    ({ Fields: fieldsTab, Filter: filterTab, "Sorting/Grouping": sortTab, Formatting: formatTab, Appearance: appearanceTab })[current]();
+  };
+  // ---- Fields
+  function fieldsTab() {
+    const cat = h("select", { "aria-label": "Category", onchange: e => { W.cat = e.target.value; draw(); } }, SCHEDULE_CATEGORIES.map(c => h("option", { value: c, selected: c === W.cat }, categoryName(c))));
+    const kind = h("select", { "aria-label": "Schedule type", onchange: e => { W.kind = e.target.value; draw(); } }, SCHEDULE_KINDS.map(k => h("option", { selected: k === W.kind }, k)));
+    const q = h("input", { type: "search", placeholder: "search fields", "aria-label": "Search available fields" });
+    const left = h("select", { size: 16, multiple: true, "aria-label": "Available fields" }), right = h("select", { size: 16, multiple: true, "aria-label": "Scheduled fields (in order)" });
+    const fillLeft = () => { clear(left); const s = q.value.trim().toLowerCase(), groups = new Map();
+      for (const a of avail()) if (!W.fields.includes(a.key) && (!s || a.label.toLowerCase().includes(s) || a.key.toLowerCase().includes(s))) { if (!groups.has(a.group)) groups.set(a.group, []); groups.get(a.group).push(a); }
+      for (const [g, as] of groups) left.append(h("optgroup", { label: g }, as.map(a => h("option", { value: a.key }, a.label)))); };
+    const fillRight = () => { clear(right); W.fields.forEach(k => right.append(h("option", { value: k }, label(k) + (W.format[k] && W.format[k].hidden ? "  (hidden)" : "")))); };
+    const picked = s => [...s.selectedOptions].map(o => o.value);
+    const addF = () => { W.fields.push(...picked(left).filter(k => !W.fields.includes(k))); fillLeft(); fillRight(); };
+    const remF = () => { const p = new Set(picked(right)); W.fields = W.fields.filter(k => !p.has(k)); fillLeft(); fillRight(); };
+    const moveF = d => { const p = picked(right); if (p.length !== 1) return; const i = W.fields.indexOf(p[0]), j = i + d; if (j < 0 || j >= W.fields.length) return; [W.fields[i], W.fields[j]] = [W.fields[j], W.fields[i]]; fillRight(); right.value = p[0]; };
+    q.addEventListener("input", fillLeft); left.addEventListener("dblclick", addF); right.addEventListener("dblclick", remF);
+    fillLeft(); fillRight();
+    // calculated values: a formula over other fields, or a percentage of one
+    const cName = h("input", { type: "text", placeholder: "Name, e.g. Area per door", "aria-label": "Calculated value name" });
+    const cType = h("select", { "aria-label": "Calculated value type" }, h("option", { value: "formula" }, "Formula"), h("option", { value: "percentage" }, "Percentage"));
+    const cKind = h("select", { "aria-label": "Discipline type" }, CALC_KINDS.map(k => h("option", {}, k)));
+    const cFormula = h("input", { type: "text", placeholder: "e.g. Length * Height or Width / 2", "aria-label": "Formula" });
+    const cOf = h("select", { "aria-label": "Percentage of" }, avail().filter(a => a.group === "Quantities" || a.key === "Count").map(a => h("option", { value: a.key }, a.label)));
+    const cBy = h("select", { "aria-label": "Percentage by" }, h("option", { value: "grand" }, "Grand total"), h("option", { value: "group" }, "First grouping"));
+    const syncC = () => { cFormula.hidden = cKind.hidden = cType.value !== "formula"; cOf.hidden = cBy.hidden = cType.value === "formula"; };
+    cType.addEventListener("change", syncC); syncC();
+    const calcList = h("ul", { class: "calclist" });
+    const fillCalc = () => { clear(calcList); for (const c of W.calculated) calcList.append(h("li", {}, h("b", {}, c.name), " = ", c.type === "percentage" ? `% of ${label(c.of)} by ${c.by === "group" ? "group" : "grand total"}` : `${c.formula} (${c.kind})`, " ",
+      h("button", { class: "iconbtn", "aria-label": `Delete ${c.name}`, onclick: () => { W.calculated = W.calculated.filter(x => x !== c); W.fields = W.fields.filter(k => k !== c.name); fillCalc(); fillLeft(); fillRight(); } }, "✕"))); };
+    fillCalc();
+    const addCalc = () => { const n = cName.value.trim(); if (!n) return app.say("give the calculated value a name", "note"); if (avail().some(a => a.key === n && a.group !== "Calculated")) return app.say(`${n} is already a field`, "error");
+      W.calculated = W.calculated.filter(c => c.name !== n).concat([cType.value === "formula" ? { name: n, type: "formula", formula: cFormula.value.trim() || "0", kind: cKind.value } : { name: n, type: "percentage", of: cOf.value, by: cBy.value }]);
+      if (!W.fields.includes(n)) W.fields.push(n); cName.value = ""; cFormula.value = ""; fillCalc(); fillLeft(); fillRight(); };
+    pane.append(
+      h("div", { class: "row2" }, h("label", {}, "Category ", cat), h("label", {}, "Type ", kind)),
+      h("div", { class: "fieldpick" },
+        h("div", {}, h("div", { class: "cap" }, "Available fields"), q, left),
+        h("div", { class: "mid" }, h("button", { class: "btn small", onclick: addF, "aria-label": "Add field" }, "Add →"), h("button", { class: "btn small", onclick: remF, "aria-label": "Remove field" }, "← Remove")),
+        h("div", {}, h("div", { class: "cap" }, "Scheduled fields (in order)"), right,
+          h("div", { class: "row2" }, h("button", { class: "btn small", onclick: () => moveF(-1) }, "Move up"), h("button", { class: "btn small", onclick: () => moveF(1) }, "Move down")))),
+      h("fieldset", {}, h("legend", {}, "Calculated value"), h("div", { class: "row2 wrap" }, cName, cType, cKind, cFormula, cOf, cBy, h("button", { class: "btn small", onclick: addCalc }, "Add")),
+        h("div", { class: "muted small" }, "Formulas use field names without spaces (Length, Height, Area, Width…) and units: Area / (1 m * 1 m) gives square metres as a plain number."), calcList));
+  }
+  // ---- Filter
+  function filterTab() {
+    const rows = h("div", { class: "filterrows" });
+    const fillRows = () => { clear(rows);
+      W.filters.forEach((r, i) => {
+        const valIn = h("input", { type: "text", value: r.value ?? "", "aria-label": `Filter ${i + 1} value`, list: `fv-${i}`, disabled: /value$/.test(r.op), oninput: e => { r.value = e.target.value; } });
+        const dl = h("datalist", { id: `fv-${i}` }, [...new Set(scheduledElements(doc, W.cat).slice(0, 400).map(f => fieldValue(doc, { f }, r.field).text).filter(Boolean))].slice(0, 60).map(s => h("option", { value: s })));
+        rows.append(h("div", { class: "frow" }, h("span", { class: "muted" }, i ? (W.filterAny ? "Or" : "And") : "Filter by"),
+          fieldSelect(r.field, k => { r.field = k; fillRows(); }, { aria: `Filter ${i + 1} field` }),
+          h("select", { "aria-label": `Filter ${i + 1} operator`, onchange: e => { r.op = e.target.value; fillRows(); } }, FILTER_OPS.map(o => h("option", { selected: o === r.op }, o))),
+          valIn, dl, h("button", { class: "iconbtn", "aria-label": `Remove filter ${i + 1}`, onclick: () => { W.filters.splice(i, 1); fillRows(); } }, "✕")));
+      });
+      if (!W.filters.length) rows.append(h("div", { class: "muted" }, "No filter: every element of the category is listed."));
+    };
+    fillRows();
+    pane.append(h("div", { class: "row2" }, h("label", {}, h("input", { type: "radio", name: "fany", checked: !W.filterAny, onchange: () => { W.filterAny = false; fillRows(); } }), " All rules (And)"),
+      h("label", {}, h("input", { type: "radio", name: "fany", checked: W.filterAny, onchange: () => { W.filterAny = true; fillRows(); } }), " Any rule (Or)")),
+      rows, h("button", { class: "btn small", disabled: W.filters.length >= 8, onclick: () => { W.filters.push({ field: W.fields[0] || "Count", op: "equals", value: "" }); fillRows(); } }, "+ Add filter"),
+      h("div", { class: "muted small" }, "Numbers compare as numbers: lengths as typed (3 m, 3000), areas and volumes in the units the schedule shows. Text ignores case. Up to eight rules; a field need not be in the schedule."));
+  }
+  // ---- Sorting/Grouping
+  function sortTab() {
+    W.sort.forEach((s, i) => {
+      const on = !!s.field;
+      pane.append(h("fieldset", { class: "sortlevel" }, h("legend", {}, i ? "Then by" : "Sort by"),
+        h("div", { class: "row2 wrap" }, fieldSelect(s.field, k => { s.field = k; draw(); }, { none: true, aria: `${i ? "Then by" : "Sort by"} field` }),
+          h("label", {}, h("input", { type: "radio", name: "sd" + i, checked: !s.desc, disabled: !on, onchange: () => { s.desc = false; } }), " Ascending"),
+          h("label", {}, h("input", { type: "radio", name: "sd" + i, checked: !!s.desc, disabled: !on, onchange: () => { s.desc = true; } }), " Descending")),
+        h("div", { class: "row2 wrap" },
+          h("label", {}, h("input", { type: "checkbox", checked: !!s.header, disabled: !on, onchange: e => { s.header = e.target.checked; } }), " Header"),
+          h("label", {}, h("input", { type: "checkbox", checked: !!s.footer, disabled: !on, onchange: e => { s.footer = e.target.checked; } }), " Footer:"),
+          h("select", { disabled: !on, "aria-label": "Footer contents", onchange: e => { s.footerMode = e.target.value; } }, FOOTER_MODES.map(m => h("option", { selected: m === s.footerMode }, m))),
+          h("label", {}, h("input", { type: "checkbox", checked: !!s.blank, disabled: !on, onchange: e => { s.blank = e.target.checked; } }), " Blank line"))));
+    });
+    const G = W.grandTotals;
+    pane.append(h("fieldset", {}, h("legend", {}, "Totals"),
+      h("div", { class: "row2 wrap" }, h("label", {}, h("input", { type: "checkbox", checked: !!G.on, onchange: e => { G.on = e.target.checked; } }), " Grand totals:"),
+        h("select", { "aria-label": "Grand totals contents", onchange: e => { G.mode = e.target.value; } }, FOOTER_MODES.map(m => h("option", { selected: m === G.mode }, m))),
+        h("label", {}, "Custom grand total title ", h("input", { type: "text", value: G.title || "Grand total", "aria-label": "Grand total title", oninput: e => { G.title = e.target.value; } }))),
+      h("label", {}, h("input", { type: "checkbox", checked: W.itemize, onchange: e => { W.itemize = e.target.checked; } }), " Itemize every instance"),
+      h("div", { class: "muted small" }, "Off: elements with the same sort values share one row, with a count; totalled fields add up, others show where every element agrees.")));
+  }
+  // ---- Formatting
+  function formatTab() {
+    if (!W.fields.includes(selField)) selField = W.fields[0] || "";
+    const list = h("select", { size: 14, "aria-label": "Fields", onchange: e => { selField = e.target.value; draw(); } }, W.fields.map(k => h("option", { value: k, selected: k === selField }, label(k))));
+    const fm = W.format[selField] = Object.assign({}, W.format[selField] || {});
+    const cond = h("div", {});
+    const fillCond = () => { clear(cond); (fm.conditional = fm.conditional || []).forEach((r, i) => cond.append(h("div", { class: "frow" },
+      h("select", { "aria-label": `Rule ${i + 1} operator`, onchange: e => { r.op = e.target.value; } }, FILTER_OPS.map(o => h("option", { selected: o === r.op }, o))),
+      h("input", { type: "text", value: r.value ?? "", "aria-label": `Rule ${i + 1} value`, oninput: e => { r.value = e.target.value; } }),
+      h("input", { type: "color", value: r.fill || "#fff3b0", "aria-label": `Rule ${i + 1} colour`, oninput: e => { r.fill = e.target.value; } }),
+      h("button", { class: "iconbtn", "aria-label": `Remove rule ${i + 1}`, onclick: () => { fm.conditional.splice(i, 1); fillCond(); } }, "✕")))); };
+    fillCond();
+    pane.append(h("div", { class: "fmtgrid" }, h("div", {}, h("div", { class: "cap" }, "Fields"), list),
+      selField ? h("div", { class: "fmtform" },
+        h("label", {}, "Heading ", h("input", { type: "text", value: fm.heading || prettyField(selField), "aria-label": "Heading", oninput: e => { fm.heading = e.target.value; } })),
+        h("label", {}, "Group header ", h("input", { type: "text", value: fm.group || "", placeholder: "shared by neighbouring columns", "aria-label": "Group header", oninput: e => { fm.group = e.target.value; } })),
+        h("label", {}, "Alignment ", h("select", { "aria-label": "Alignment", onchange: e => { fm.align = e.target.value; } }, [["", "Automatic"], ["left", "Left"], ["center", "Center"], ["right", "Right"]].map(([v2, t]) => h("option", { value: v2, selected: (fm.align || "") === v2 }, t)))),
+        h("label", {}, h("input", { type: "checkbox", checked: !!fm.hidden, onchange: e => { fm.hidden = e.target.checked; } }), " Hidden field"),
+        h("label", {}, "Totals ", h("select", { "aria-label": "Totals", onchange: e => { fm.total = e.target.value; } }, TOTAL_MODES.map(m => h("option", { selected: m === (fm.total || (selField === "Count" ? "Calculate totals" : "None")) }, m)))),
+        h("fieldset", {}, h("legend", {}, "Conditional formatting"), cond, h("button", { class: "btn small", onclick: () => { fm.conditional.push({ op: "is greater than", value: "", fill: "#fff3b0" }); fillCond(); } }, "+ Add rule"),
+          h("div", { class: "muted small" }, "The first rule a cell passes shades it - in the view, on sheets and in print."))) : h("div", { class: "muted" }, "Add fields first.")));
+  }
+  // ---- Appearance
+  function appearanceTab() {
+    const A = W.appearance = Object.assign({}, APPEARANCE_DEFAULT, W.appearance);
+    const cb = (k, t) => h("label", { class: "blk" }, h("input", { type: "checkbox", checked: !!A[k], onchange: e => { A[k] = e.target.checked; } }), " " + t);
+    pane.append(h("fieldset", {}, h("legend", {}, "Graphics"), cb("gridlines", "Grid lines"), cb("outline", "Outline"), cb("stripes", "Stripe rows"), cb("blankRow", "Blank row before data")),
+      h("fieldset", {}, h("legend", {}, "Text"), cb("title", "Show title"), cb("headers", "Show headers")));
+  }
+  body.append(tabs, pane);
+  draw();
+  const ok = () => {
+    const S0 = scheduleSettings(doc, v), sort = W.sort.filter(s => s.field);
+    const next = { of: W.cat, kind: W.kind, fields: W.fields, filters: W.filters.filter(r => r.field), filterAny: W.filterAny, sort, itemize: W.itemize, grandTotals: W.grandTotals, format: W.format, appearance: W.appearance, calculated: W.calculated };
+    const prev = { of: S0.cat, kind: S0.kind, fields: S0.fields, filters: S0.filters, filterAny: S0.filterAny, sort: S0.sort, itemize: S0.itemize, grandTotals: S0.grandTotals, format: S0.format, appearance: S0.appearance, calculated: S0.calculated };
+    const ops = Object.keys(next).filter(k => JSON.stringify(next[k]) !== JSON.stringify(prev[k])).map(k => ({ op: "set", id, key: k, value: next[k] }));
+    if (!ops.length) return;
+    const r = app.apply(ops); if (!r.ok) { app.say(r.error, "error"); return false; }
+    app.say(`Schedule updated: ${ops.map(o => o.key).join(", ")}`, "ok");
+  };
+  return dialog(`Schedule Properties - ${v.get("Name")}`, body, [{ label: "Cancel", run: () => {} }, { label: "OK", primary: true, run: ok }]);
+}
+
 // ===== panel.js =====
 //! The property panel (§4.5), the schedule (§4.5: the panel transposed), the
 //! type editor (§5) and Visibility/Graphics (§7). All four are generated from
 //! declarations and specs, and every edit goes through the one op pipeline —
 //! so a cell edited in a schedule is validated exactly as the panel would.
+
 
 
 
@@ -18254,6 +18990,8 @@ function rowEditor(app, ids, f, r) {
       break;
     }
     case "json": {
+      // a schedule's settings are edited in their tab of Schedule Properties, as Revit's Edit… buttons do
+      if (r.arg && r.arg.dialog && app.scheduleProperties) { val.append(h("button", { class: "btn small", onclick: () => app.scheduleProperties(ids[0], r.arg.dialog) }, "Edit…")); break; }
       const ta = h("textarea", { id, spellcheck: false }, r.varies ? "" : JSON.stringify(r.value));
       ta.addEventListener("change", () => { try { commit({ value: JSON.parse(ta.value) }); } catch (e) { under.textContent = "not valid JSON: " + e.message; under.classList.add("err"); } });
       val.append(ta, under);
@@ -18283,41 +19021,6 @@ function describeCurve(c) {
   if (c.type === "arc") return `arc r=${fmtLen(c.radius)} ${c.start}°→${c.end}°`;
   if (c.type === "spline") return `spline, ${c.points.length} points`;
   return c.type;
-}
-
-// ---------------------------------------------------------------- schedules
-function renderSchedule(app, root, v) {
-  clear(root);
-  const doc = app.doc, { fields, rows } = scheduleRows(doc, v);
-  const pane = h("div", { class: "sheetpane" });
-  const card = h("div", { class: "doccard" });
-  card.append(h("header", {}, h("h2", {}, v.get("Name")), h("span", { class: "muted" }, `${rows.length} rows · editing a cell edits the model`),
-    doc.typeOf(v) === "Schedule" && F.choice(v, "of") === "IfcSpace" ? h("span", { class: "chip" }, "areas to the boundary each space states") : null));
-  const table = h("table", { class: "sched" }, h("thead", {}, h("tr", {}, fields.map(k => h("th", {}, k)))));
-  const tb = h("tbody");
-  for (const r of rows) {
-    const tr = h("tr", { class: app.selection.has(r.id) ? "sel" : "", onclick: e => { if (e.target.tagName !== "INPUT" && e.target.tagName !== "SELECT") app.select([r.id], e.shiftKey); } });
-    fields.forEach((k, i) => {
-      const f = r.f, decl = doc.declOf(f), arg = decl && decl.args.find(a => a.key === k), spec = specsFor(doc, f)[k];
-      let td;
-      if (k === "Id") td = h("td", { class: "id" }, r.id);
-      else if (k === "Name") td = h("td", {}, h("input", { type: "text", value: f.get("Name"), "aria-label": `${r.id} name`, onchange: e => app.apply({ op: "rename", id: r.id, name: e.target.value }) }));
-      else if (arg && (arg.kind === "Real" || arg.kind === "Integer") && !(doc.argValue(f, k) && doc.argValue(f, k).ref)) td = h("td", {}, h("input", { type: "text", value: r.cells[i], "aria-label": `${r.id} ${k}`, onchange: e => { const res = app.apply({ op: "set", id: r.id, key: k, text: e.target.value }); if (!res.ok) { e.target.value = r.cells[i]; app.say(res.error, "error"); } } }));
-      else if (spec && spec.binding !== "type" && spec.kind === "Enum") { const cur = doc.getParam(f, k) ?? spec.default; td = h("td", {}, h("select", { "aria-label": `${r.id} ${k}`, onchange: e => app.apply({ op: "set", id: r.id, key: "params." + k, value: e.target.value }) }, spec.values.map(o => h("option", { selected: o === cur }, o)))); }
-      else if (spec && spec.binding !== "type" && spec.kind !== "Material") td = h("td", {}, h("input", { type: "text", value: doc.getParam(f, k) ?? "", "aria-label": `${r.id} ${k}`, onchange: e => app.apply({ op: "set", id: r.id, key: "params." + k, value: spec.kind === "Length" ? parseLength(e.target.value) : spec.kind === "Integer" || spec.kind === "Number" ? parseNumber(e.target.value) : e.target.value }) }));
-      else td = h("td", {}, r.cells[i]);
-      tr.append(td);
-    });
-    tb.append(tr);
-  }
-  table.append(tb);
-  if (F.choice(v, "of") === "IfcSpace") {
-    const total = rows.reduce((a, r) => a + ((doc.data(r.f) || {}).value || 0), 0);
-    table.append(h("tfoot", {}, h("tr", {}, fields.map((k, i) => h("td", { style: { fontWeight: 600, borderTop: "1px solid var(--rule)" } }, k === "Area" ? fmtArea(total) : i === 0 ? "Total" : "")))));
-  }
-  card.append(h("div", { class: "tablewrap" }, table));
-  pane.append(card);
-  root.append(pane);
 }
 
 // ---------------------------------------------------------------- type editor (§5)
@@ -22746,6 +23449,7 @@ const roundCam = c => ({ azimuth: Math.round(((c.azimuth % 360) + 360) % 360 * 1
 
 
 
+
 const VIEW_TYPES = ["PlanView", "ElevationView", "SectionView", "View3D", "Schedule", "Sheet"];
 const PLACE_TOOLS = new Set(["section", "floor", "beam", "wall", "opening", "door", "window", "column", "grid", "text", "dim", "space", "elev", "sep", "mtag"]);
 
@@ -23648,7 +24352,9 @@ function newLevel() {
   const r = app.apply({ op: "add", element: { type: "Level", name, args: { name, elevation: lv.length ? top + 3000 : 0 } } });
   if (r.ok) { app.workLevel = r.id; newPlanView(r.id); app.say(`${name} at +${((lv.length ? top + 3000 : 0) / 1000).toFixed(3)} with its floor plan — set the elevation in Properties`, "ok"); }
 }
-function newSchedule() { const r = app.apply({ op: "add", element: { type: "Schedule", name: "Wall Schedule " + (app.doc.elements().filter(f => app.doc.typeOf(f) === "Schedule").length + 1), args: { of: "IfcWall", fields: ["Id", "TypeMark", "Length", "Height", "FireRating", "Phase"] } } }); if (r.ok) app.openView(r.id); }
+/** Revit's View › Schedules › Schedule/Quantities: pick a category, then its Schedule Properties. */
+function newSchedule() { newScheduleDialog(app); }
+app.scheduleProperties = (id, tab, opts) => scheduleProperties(app, id, tab, opts);
 function newSheet() {
   const n = app.doc.elements().filter(f => app.doc.typeOf(f) === "Sheet").length + 1;
   const r = app.apply({ op: "add", element: { type: "Sheet", name: `A-${100 + n} Unnamed`, args: { number: `A-${100 + n}`, sheetName: "Unnamed", size: "A1", orientation: "landscape", viewports: [], revision: "P01" } } });

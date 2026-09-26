@@ -22,6 +22,7 @@ import { drawScene } from "./render.js";
 import { resolveGraphics, penWeight, categoryOf } from "./styles.js";
 import { propertyModel, pickCandidates, graphModel, listeningDimensions, dimensionMove, editorFor, referenceOptions } from "./props.js";
 import { buildSample } from "./sample.js";
+import { scheduleTable, scheduleCSV, availableFields } from "./schedules.js";
 import { parseLength, setLengthUnit } from "./units.js";
 import { bimToCad, cadEditsToOps } from "./cadbridge.js";
 import { fromPolygon, addElements, fillet, toggleLock, measureDim, dragHandle, regionsOf, shapeFromClicks, filletCorners, toCentreline, elementSegs, splitElement, bsplineAt, bsplineDomain } from "./bimsketch.js";
@@ -2012,4 +2013,36 @@ testCase("M71", "A slab's boundary is edited only in its sketch: Move, Rotate, M
   const grips = (doc.declOf(doc.element("FL")).handles || (() => []))(doc.element("FL")).length === 0;
   return R(allRefused && wallMoved && copies && grips, "six moves refused, slab untouched; the wall beside it moved +500; two copies made; no grips",
     JSON.stringify({ tries: tries.map(r => r.ok ? "ok" : r.error), wallMoved, copies, grips }));
+});
+testCase("M72", "Schedules as Revit: filters (And, Or, on a field not shown), sorting with headers, footers and grand totals, itemize off (one row per type with its count and total length), calculated formula and percentage, conditional formatting, material takeoff, multi-category, CSV", () => {
+  const { doc, ed } = fixture();
+  // four free-standing walls, 3000 high: A 4000 and B 6000 of Solid 300, C 5000 and D 2000 of Solid 400
+  wall(doc, "A", [0, 0], [4000, 0], "T-300"); wall(doc, "B", [0, 5000], [6000, 5000], "T-300");
+  wall(doc, "C", [0, 10000], [5000, 10000], "T-400"); wall(doc, "D", [0, 15000], [2000, 15000], "T-400");
+  doc.regenerate();
+  const mk = (id, args) => { ed.apply({ op: "add", element: { id, type: "Schedule", name: id, args: Object.assign({ of: "IfcWall", fields: ["Id", "Type", "Length"] }, args) } }); return scheduleTable(doc, doc.element(id)); };
+  const ids = t => t.rows.filter(r => r.kind === "item").map(r => r.ids[0]).join(",");
+  const tAnd = mk("S1", { filters: [{ field: "Length", op: "is greater than", value: "3 m" }, { field: "Family and Type", op: "contains", value: "400" }] });
+  const tOr = mk("S2", { filters: [{ field: "Length", op: "is less than", value: "3000" }, { field: "Type", op: "equals", value: "solid 300" }], filterAny: true });
+  const tGrp = mk("S3", { sort: [{ field: "Type", desc: true, header: true, footer: true, footerMode: "Title, count, and totals" }], grandTotals: { on: true, mode: "Title, count, and totals", title: "Grand total" }, format: { Length: { total: "Calculate totals" } } });
+  const L = t => t.columns.findIndex(c => c.key === "Length");
+  const shape = tGrp.rows.map(r => r.kind === "item" ? r.ids[0] : r.kind === "header" ? "H:" + r.text : `${r.kind}:${r.text}=${r.cells[L(tGrp)].num}`).join(" | ");
+  const grpOk = shape === "H:Solid 400 | C | D | footer:Solid 400: 2=7000 | H:Solid 300 | A | B | footer:Solid 300: 2=10000 | grand:Grand total: 4=17000";
+  const tMerge = mk("S4", { fields: ["Type", "Count", "Length", "Height", "Id"], sort: [{ field: "Type" }], itemize: false, format: { Length: { total: "Calculate totals" } } });
+  const m = tMerge.rows.map(r => r.cells.map(c => c.text).join(";")).join(" | ");
+  const mergeOk = tMerge.rows.length === 2 && tMerge.rows.every(r => r.kind === "merged") && m === "Solid 300;2;10000 mm;3000 mm; | Solid 400;2;7000 mm;3000 mm;";
+  const tCalc = mk("S5", { fields: ["Id", "Length", "Double", "Share"], calculated: [{ name: "Double", type: "formula", formula: "Length * 2", kind: "Length" }, { name: "Share", type: "percentage", of: "Length", by: "grand" }],
+    format: { Length: { conditional: [{ op: "is greater than", value: "4500", fill: "#ffcc00" }] } } });
+  const rowA = tCalc.rows.find(r => r.ids[0] === "A"), rowB = tCalc.rows.find(r => r.ids[0] === "B");
+  const calcOk = rowA.cells[2].num === 8000 && rowA.cells[3].text === "23.5 %" && !rowA.cells[1].fill && rowB.cells[1].fill === "#ffcc00";
+  const tMat = mk("S6", { kind: "Material Takeoff", fields: ["Id", "Material: Name", "Material: Volume"], filters: [{ field: "Id", op: "equals", value: "A" }] });
+  const matOk = tMat.rows.length === 1 && Math.abs(tMat.rows[0].cells[2].num - 4000 * 3000 * 300) < 1;
+  ed.apply({ op: "add", element: { id: "FL", type: "Floor", args: { boundary: [[0, 0], [1000, 0], [1000, 1000], [0, 1000]], floorType: { ref: "T-SLAB200" }, level: { ref: "L0" }, heightOffset: 0 } } });
+  const tMulti = mk("S7", { of: "Multi-Category", fields: ["Category", "Count"], sort: [{ field: "Category" }], itemize: false });
+  const multiOk = tMulti.rows.map(r => r.cells.map(c => c.text).join(":")).join(",") === "Floors:1,Walls:4";
+  const csv = scheduleCSV(tGrp), csvOk = csv.includes("Solid 400: 2") && csv.split("\n")[1] === "Id,Type,Length";
+  const fieldsOk = ["Length", "Area", "Volume", "FireRating", "Family and Type", "Level", "Count"].every(k => availableFields(doc, "IfcWall").some(a => a.key === k));
+  const pass = ids(tAnd) === "C" && ids(tOr) === "A,B,D" && grpOk && mergeOk && calcOk && matOk && multiOk && csvOk && fieldsOk;
+  return R(pass, "And → C; Or → A,B,D; grouped Solid 400 (C, D, 2 = 7000) then Solid 300 (A, B, 2 = 10000), grand 4 = 17000; merged rows per type with count and total; A doubled 8000, 23.5 %; B shaded; A's block 3.6 m³; floors 1, walls 4; CSV",
+    JSON.stringify({ and: ids(tAnd), or: ids(tOr), shape, m, calc: [rowA.cells.map(c => c.text), rowB.cells[1].fill], mat: tMat.rows.map(r => r.cells.map(c => c.text)), multi: tMulti.rows.map(r => r.cells.map(c => c.text)), csv: csv.split("\n").slice(0, 3), fieldsOk }));
 });

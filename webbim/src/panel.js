@@ -9,7 +9,8 @@ import { sectionPicker } from "./sectionui.js";
 import { propertyModel, referenceOptions, specsFor, TYPE_KEYS } from "./props.js";
 import { readValue, formatValue, parse, evaluate, ExprError } from "./expr.js";
 import { documentLookup, F, CATALOGUE, clone } from "./ocaf.js";
-import { scheduleRows, paramText, emOf } from "./scene.js";
+import { emOf } from "./scene.js";
+
 import { drawScene } from "./render.js";
 import { OPERATORS, categoryOf, penWeight, LINE_TYPES, SCHEMES, isAnnotationCategory, lockedBy, lockedKey, blankStyle, mix } from "./styles.js";
 import { LAYER_PRIORITY, layerStack } from "./walls.js";
@@ -201,6 +202,8 @@ function rowEditor(app, ids, f, r) {
       break;
     }
     case "json": {
+      // a schedule's settings are edited in their tab of Schedule Properties, as Revit's Edit… buttons do
+      if (r.arg && r.arg.dialog && app.scheduleProperties) { val.append(h("button", { class: "btn small", onclick: () => app.scheduleProperties(ids[0], r.arg.dialog) }, "Edit…")); break; }
       const ta = h("textarea", { id, spellcheck: false }, r.varies ? "" : JSON.stringify(r.value));
       ta.addEventListener("change", () => { try { commit({ value: JSON.parse(ta.value) }); } catch (e) { under.textContent = "not valid JSON: " + e.message; under.classList.add("err"); } });
       val.append(ta, under);
@@ -230,41 +233,6 @@ function describeCurve(c) {
   if (c.type === "arc") return `arc r=${fmtLen(c.radius)} ${c.start}°→${c.end}°`;
   if (c.type === "spline") return `spline, ${c.points.length} points`;
   return c.type;
-}
-
-// ---------------------------------------------------------------- schedules
-export function renderSchedule(app, root, v) {
-  clear(root);
-  const doc = app.doc, { fields, rows } = scheduleRows(doc, v);
-  const pane = h("div", { class: "sheetpane" });
-  const card = h("div", { class: "doccard" });
-  card.append(h("header", {}, h("h2", {}, v.get("Name")), h("span", { class: "muted" }, `${rows.length} rows · editing a cell edits the model`),
-    doc.typeOf(v) === "Schedule" && F.choice(v, "of") === "IfcSpace" ? h("span", { class: "chip" }, "areas to the boundary each space states") : null));
-  const table = h("table", { class: "sched" }, h("thead", {}, h("tr", {}, fields.map(k => h("th", {}, k)))));
-  const tb = h("tbody");
-  for (const r of rows) {
-    const tr = h("tr", { class: app.selection.has(r.id) ? "sel" : "", onclick: e => { if (e.target.tagName !== "INPUT" && e.target.tagName !== "SELECT") app.select([r.id], e.shiftKey); } });
-    fields.forEach((k, i) => {
-      const f = r.f, decl = doc.declOf(f), arg = decl && decl.args.find(a => a.key === k), spec = specsFor(doc, f)[k];
-      let td;
-      if (k === "Id") td = h("td", { class: "id" }, r.id);
-      else if (k === "Name") td = h("td", {}, h("input", { type: "text", value: f.get("Name"), "aria-label": `${r.id} name`, onchange: e => app.apply({ op: "rename", id: r.id, name: e.target.value }) }));
-      else if (arg && (arg.kind === "Real" || arg.kind === "Integer") && !(doc.argValue(f, k) && doc.argValue(f, k).ref)) td = h("td", {}, h("input", { type: "text", value: r.cells[i], "aria-label": `${r.id} ${k}`, onchange: e => { const res = app.apply({ op: "set", id: r.id, key: k, text: e.target.value }); if (!res.ok) { e.target.value = r.cells[i]; app.say(res.error, "error"); } } }));
-      else if (spec && spec.binding !== "type" && spec.kind === "Enum") { const cur = doc.getParam(f, k) ?? spec.default; td = h("td", {}, h("select", { "aria-label": `${r.id} ${k}`, onchange: e => app.apply({ op: "set", id: r.id, key: "params." + k, value: e.target.value }) }, spec.values.map(o => h("option", { selected: o === cur }, o)))); }
-      else if (spec && spec.binding !== "type" && spec.kind !== "Material") td = h("td", {}, h("input", { type: "text", value: doc.getParam(f, k) ?? "", "aria-label": `${r.id} ${k}`, onchange: e => app.apply({ op: "set", id: r.id, key: "params." + k, value: spec.kind === "Length" ? parseLength(e.target.value) : spec.kind === "Integer" || spec.kind === "Number" ? parseNumber(e.target.value) : e.target.value }) }));
-      else td = h("td", {}, r.cells[i]);
-      tr.append(td);
-    });
-    tb.append(tr);
-  }
-  table.append(tb);
-  if (F.choice(v, "of") === "IfcSpace") {
-    const total = rows.reduce((a, r) => a + ((doc.data(r.f) || {}).value || 0), 0);
-    table.append(h("tfoot", {}, h("tr", {}, fields.map((k, i) => h("td", { style: { fontWeight: 600, borderTop: "1px solid var(--rule)" } }, k === "Area" ? fmtArea(total) : i === 0 ? "Total" : "")))));
-  }
-  card.append(h("div", { class: "tablewrap" }, table));
-  pane.append(card);
-  root.append(pane);
 }
 
 // ---------------------------------------------------------------- type editor (§5)

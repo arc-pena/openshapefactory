@@ -35,6 +35,32 @@ Reference: `webbim/src/scene.js` (plan, elevation, section, sheet scenes),
   a single bottom band with project, drawing title, number, scale, date and
   revision. Avoid a heavy right-hand column eating 20% of the sheet.
 
+## Schedules
+
+A schedule is settings on an element: category, fields, filters, sorting and
+grouping, formatting, appearance and calculated values. One function
+(`scheduleTable`) turns those settings into rows: items, group headers and
+footers, blank lines and grand totals. The schedule view, the drawing on a
+sheet and the CSV export all read it, so a filter or total can't differ
+between screen and print.
+
+Revit behaviours architects rely on:
+- **Filters.** Revit's operators, AND or OR, and a filter field doesn't have
+  to be shown. Numbers compare as numbers: lengths as typed ("3 m"), areas and
+  volumes in the units displayed.
+- **Sorting and grouping.** Up to four levels, each with header, footer
+  (title, count, totals) and blank-line options, plus grand totals.
+- **Itemize every instance off.** Rows with the same sort values merge. They
+  show the count, the totals of totalled columns, and a value only where every
+  element agrees. Editing a merged row edits every element in it.
+- **Formatting.** Heading, group header, alignment, hidden field, totals
+  (sum, min, max, min–max) and conditional shading.
+- **Other schedule types.** Multi-category, material takeoff (one row per
+  element and layer), sheet list and view list.
+
+Store settings as named fields, never column indices, so a reordered field
+list can't re-target a filter.
+
 ## Hard sun shadows
 
 Designers want shadows as hard, flat, graphic shapes, not soft render
