@@ -14,6 +14,12 @@ npm run build    # dist/
 Drag, scroll, arrow keys or the ticks on the right to travel. Enter / click the
 centred panel to open it, Escape to close.
 
+`npm run build:artifact` folds `dist/` into one self-contained HTML file (three
+inlined, no CDN, opens straight off the filesystem). It is published at
+https://claude.ai/artifact/DNkuQo4bR8rNpcfvaAkqoy — republish to that URL so the
+link keeps working. `npm run drive -- dist/sphere-world.html scenario.mjs` drives
+the built file in a real browser; see `skills/sphere-world-carousel/`.
+
 > **Provenance.** The reference site (rogierdeboeve.com) is blocked by this
 > environment's network egress policy, so its bundle was never fetched, read or
 > decompiled. This is a from-scratch reconstruction of the *mechanics* as
