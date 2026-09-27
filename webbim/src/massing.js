@@ -68,7 +68,7 @@ export function meshFromKernel(parts) {
   return { positions: w.positions, index: w.index, faces: w.kept.map(t => face[t]) };
 }
 /** Round coordinates to 0.1 mm so a stored mesh stays small. */
-export function packMesh(m) { const out = { positions: m.positions.map(v => Math.round(v * 10) / 10), index: m.index.slice() }; if (m.faces) out.faces = m.faces.slice(); return out; }
+export function packMesh(m) { const out = { positions: m.positions.map(v => Math.round(v * 10) / 10), index: m.index.slice() }; if (m.faces) out.faces = m.faces.slice(); if (m.groups) out.groups = m.groups.map(g => Object.assign({}, g)); return out; }
 /** Move, turn about z and scale a mesh. */
 export function placeMesh(m, { x = 0, y = 0, z = 0, rotation = 0, scale = 1 } = {}) {
   const a = rotation * Math.PI / 180, c = Math.cos(a), s = Math.sin(a), P = m.positions, out = new Array(P.length);

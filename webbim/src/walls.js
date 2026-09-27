@@ -113,7 +113,7 @@ function interiorProbe(S) {
 /** Everything a wall's drawing and solid are derived from, built in phase 2.
  *  Offsets themselves are NOT built here: they are computed per detail level
  *  on demand and counted (test 13), so coarse never builds the intermediate ones. */
-export function wallRecord({ id, centreline, type, mounting, mountOffset, flipped, z0, height, slope, stats, zFloor = z0 }) {
+export function wallRecord({ id, centreline, type, mounting, mountOffset, flipped, z0, height, slope, stats, zFloor = z0, topProfile = null }) {
   let curve = curveOf(centreline);
   const stack = layerStack(type, mounting, mountOffset, flipped);
   const lean = ((slope && slope.lean) || 0) * Math.PI / 180;
@@ -136,18 +136,58 @@ export function wallRecord({ id, centreline, type, mounting, mountOffset, flippe
       throw new Error(`the inner face of this wall would self-intersect at r=${round(curve.radius)}mm; minimum radius for this type is ${round(inward + MIN_FACE_RADIUS)}mm`);
     }
   }
-  const fast = Math.abs(lean) < 1e-12 && Math.abs(topSlope) < 1e-12;
+  // A top that is not one height: a profile along the wall ([u, height above the base] - a gable, steps),
+  // and a slope across the thickness (rise per mm to the wall's left - a top cut under a roof)
+  const profile = cleanProfile(topProfile, curve.length);
+  const across = Math.tan(((slope && slope.across) || 0) * Math.PI / 180);
+  if (profile) height = Math.max(...profile.map(q => q[1]));
+  const fast = Math.abs(lean) < 1e-12 && Math.abs(topSlope) < 1e-12 && !profile && !across;
   // A raking top rises (or falls) along the wall: the band a view tests is the whole range.
-  const rise = curve.length * Math.tan(topSlope);
+  const rise = curve.length * Math.tan(topSlope), halfT = Math.max(...stack.s.map(Math.abs)), bevel = Math.abs(across) * halfT;
+  const lowTop = profile ? Math.min(...profile.map(q => q[1])) : height + Math.min(0, rise);
   const rec = {
-    id, curve, type, stack, z0, z1: z0 + height, height, lean, topSlope, fast,
-    zLo: z0, zHi: z0 + height + Math.max(0, rise), zTopMin: z0 + height + Math.min(0, rise),
+    id, curve, type, stack, z0, z1: z0 + height, height, lean, topSlope, fast, profile, across,
+    zLo: z0, zHi: z0 + height + Math.max(0, profile ? 0 : rise) + bevel, zTopMin: z0 + lowTop - bevel,
     a: curve.start, d: curve.type === "line" ? curve.tangentAt(0) : null, L: curve.length,
     offsets: new Map(), stats, drawn,
   };
   return rec;
 }
 const round = x => Math.round(x);
+/** A top profile made safe: [u, h] pairs within the wall, in order along it (a step is two at one u). */
+function cleanProfile(pr, L) {
+  if (!Array.isArray(pr) || pr.length < 2) return null;
+  const q = pr.filter(x => Array.isArray(x) && isFinite(x[0]) && isFinite(x[1])).map(x => [Math.max(0, Math.min(L, +x[0])), Math.max(1, +x[1])]);
+  if (q.length < 2) return null;
+  q.sort((a, b) => a[0] - b[0]);
+  q[0][0] = 0; q[q.length - 1][0] = L;
+  return q;
+}
+/** The height of a profile at u: `side` picks the left (-1) or right (+1) value where the profile steps. */
+function profileAt(pr, u, side = 0) {
+  if (u <= pr[0][0]) return pr[0][1];
+  for (let k = 1; k < pr.length; k++) {
+    const a = pr[k - 1], b = pr[k];
+    if (u < b[0] - 1e-6 || (side < 0 && Math.abs(u - b[0]) <= 1e-6)) return b[0] - a[0] < 1e-9 ? b[1] : a[1] + (b[1] - a[1]) * (u - a[0]) / (b[0] - a[0]);
+    if (Math.abs(u - b[0]) <= 1e-6) { let j = k; while (j + 1 < pr.length && Math.abs(pr[j + 1][0] - b[0]) <= 1e-6) j++; return side < 0 ? b[1] : pr[j][1]; }
+  }
+  return pr[pr.length - 1][1];
+}
+/** The wall's top at plan point p: its height (flat, raking or profiled) plus its slope across the
+ *  thickness. `side` resolves a step in the profile. One definition for 3D, drawings and shadows. */
+export function wallTop(w, p, side = 0) {
+  const u = uOf(w, p);
+  const z = w.profile ? w.z0 + profileAt(w.profile, u, side) : w.z1 + (w.topSlope ? Math.tan(w.topSlope) * u : 0);
+  return w.across ? z + w.across * sideOf(w, p) : z;
+}
+/** The lowest top over a stretch of the wall (what an opening's head must stay under). */
+export function wallTopMin(w, u0, u1) {
+  if (!w.profile) return w.z1 + Math.min(0, (w.topSlope ? Math.tan(w.topSlope) : 0) * u0, (w.topSlope ? Math.tan(w.topSlope) : 0) * u1) - Math.abs(w.across || 0) * Math.max(...w.stack.s.map(Math.abs));
+  const us = [u0, u1, ...w.profile.map(q => q[0]).filter(u => u > u0 && u < u1)];
+  return w.z0 + Math.min(...us.map(u => Math.min(profileAt(w.profile, u, -1), profileAt(w.profile, u, 1)))) - Math.abs(w.across || 0) * Math.max(...w.stack.s.map(Math.abs));
+}
+/** Where the top changes slope, strictly inside (u0, u1): the pieces of a 3D wall split there. */
+export function topBreaks(w, u0, u1) { return w.profile ? [...new Set(w.profile.map(q => q[0]).filter(u => u > u0 + 1e-6 && u < u1 - 1e-6))] : []; }
 
 /** The boundary curve at stack index i, computed once per build and counted. */
 export function boundary(w, i) {
@@ -312,7 +352,20 @@ export function wallPieces(w, spans, opts = {}) {
       const sa = sp.sRange ? sp.sRange[0] : w.stack.s[0], sb = sp.sRange ? sp.sRange[1] : w.stack.s[n];
       const foot = [termPoint(w, sa, t0, ua), termPoint(w, sa, t1, ub), termPoint(w, sb, t1, ub), termPoint(w, sb, t0, ua)];
       const zb = sp.zb ?? w.z0, zt = sp.zt ?? w.z1;
-      pieces.push({ foot, z0: zb, z1: zt, topAt: w.topSlope ? (p => w.z1 + Math.tan(w.topSlope) * uOf(w, p) + (zt - w.z1)) : null, lean: w.lean, n2: w.d ? perp(w.d) : null, zRef: w.z0, openingSide: sp.openingSide });
+      // a piece that reaches the top follows it (its corners each at their own height); one under an opening is flat
+      const toTop = sp.zt == null || (sp.openingSide === "head");
+      if (toTop && !w.fast && (w.topSlope || w.profile || w.across) && w.curve.type === "line") {
+        // split where the profile turns, so each piece's top is one plane between its corners
+        const cuts = [ua, ...topBreaks(w, ua, ub), ub];
+        for (let j = 0; j < cuts.length - 1; j++) {
+          const ca = cuts[j], cb = cuts[j + 1], ta = j === 0 ? t0 : { k: "normal", u: ca }, tb = j === cuts.length - 2 ? t1 : { k: "normal", u: cb };
+          const ft = [termPoint(w, sa, ta, ca), termPoint(w, sa, tb, cb), termPoint(w, sb, tb, cb), termPoint(w, sb, ta, ca)];
+          const mid = (ca + cb) / 2;
+          pieces.push({ foot: ft, z0: zb, z1: w.z1, topAt: p => wallTop(w, p, uOf(w, p) < mid ? 1 : -1), lean: w.lean, n2: w.d ? perp(w.d) : null, zRef: w.z0, openingSide: sp.openingSide });
+        }
+        continue;
+      }
+      pieces.push({ foot, z0: zb, z1: zt, topAt: null, lean: w.lean, n2: w.d ? perp(w.d) : null, zRef: w.z0, openingSide: sp.openingSide });
     }
   }
   return pieces;

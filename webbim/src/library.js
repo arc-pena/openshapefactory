@@ -110,6 +110,20 @@ export const CATEGORIES = {
   IfcPlate:          { name: "Curtain Panels", subcategories: { Common: { cut: "medium", projection: "thin", beyond: "hairline" } } },
   IfcFlowTerminal:   { name: "Plumbing & Fixtures", subcategories: { Common: { cut: "thin", projection: "thin", beyond: "hairline" } } },
   IfcTransportElement: { name: "Vertical Circulation", subcategories: { Common: { cut: "medium", projection: "thin", beyond: "hairline" } } },
+  // roofs, building services and the site: what coordination models from other disciplines bring
+  IfcRoof:           { name: "Roofs", subcategories: { Common: { cut: "heavy", projection: "thin", beyond: "hairline" } } },
+  IfcChimney:        { name: "Chimneys", subcategories: { Common: { cut: "medium", projection: "thin", beyond: "hairline" } } },
+  IfcDuctSegment:    { name: "Ducts", subcategories: { Common: { cut: "medium", projection: "thin", beyond: "hairline" } } },
+  IfcAirTerminal:    { name: "Air Terminals", subcategories: { Common: { cut: "thin", projection: "thin", beyond: "hairline" } } },
+  IfcPipeSegment:    { name: "Pipes", subcategories: { Common: { cut: "medium", projection: "thin", beyond: "hairline" } } },
+  IfcCableCarrierSegment: { name: "Cable Trays", subcategories: { Common: { cut: "medium", projection: "thin", beyond: "hairline" } } },
+  MechanicalEquipment: { name: "Mechanical Equipment", subcategories: { Common: { cut: "medium", projection: "thin", beyond: "hairline" } } },
+  ElectricalFixtures: { name: "Electrical Fixtures", subcategories: { Common: { cut: "thin", projection: "thin", beyond: "hairline" } } },
+  LightingFixtures:  { name: "Lighting Fixtures", subcategories: { Common: { cut: "thin", projection: "thin", beyond: "hairline" } } },
+  StructuralConnections: { name: "Structural Connections", subcategories: { Common: { cut: "thin", projection: "thin", beyond: "hairline" } } },
+  Topography:        { name: "Topography", subcategories: { Common: { cut: "medium", projection: "hairline", beyond: "hairline" } } },
+  Planting:          { name: "Planting", subcategories: { Common: { cut: "thin", projection: "thin", beyond: "hairline" } } },
+  Earthworks:        { name: "Earthworks", subcategories: { Common: { cut: "medium", projection: "thin", beyond: "hairline" } } },
 };
 
 export const FAMILIES = {

@@ -411,6 +411,12 @@ export function arcThrough3(a, b, m) {
 /** The loops as the CAD sketcher wants them: geometry and the coincidences/tangencies, no dims. */
 export function forCad(d) { const w = weld(sketchOf(d)); return { elements: w.elements, constraints: w.constraints }; }
 /** A drawing made from a plain polygon (a floor drawn before sketches, an imported slab). */
+/** A sketch of several closed loops at once - an outline and its holes. */
+export function fromLoops(loops) {
+  const w = emptySketch(); let n = 0;
+  for (const pts of loops) pts.forEach((p, i) => w.elements.push({ id: "e" + (++n), type: "line", a: [p[0], p[1]], b: [pts[(i + 1) % pts.length][0], pts[(i + 1) % pts.length][1]] }));
+  return weld(w);
+}
 export function fromPolygon(pts) {
   const w = emptySketch();
   pts.forEach((p, i) => w.elements.push({ id: "e" + (i + 1), type: "line", a: [p[0], p[1]], b: [pts[(i + 1) % pts.length][0], pts[(i + 1) % pts.length][1]] }));

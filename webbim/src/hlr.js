@@ -10,7 +10,7 @@
 import { TOL, samplePath, segStart, segEnd, dist, add, mul, sub, perp, normalise } from "./geom2d.js";
 import { featureEdges } from "./massing.js";
 import { wallRegions, wallAt, leanInvolved } from "./joins.js";
-import { pointAt, uOf, sideOf } from "./walls.js";
+import { pointAt, uOf, sideOf, wallTop, topBreaks } from "./walls.js";
 import { F } from "./ocaf.js";
 import { elementParts } from "./solids.js";
 
@@ -37,7 +37,7 @@ export function buildHLRModel(doc, opts = {}) {
     if (opts.visible && !opts.visible(f)) continue;           // the view's Visibility/Graphics
     const t = doc.typeOf(f);
     // a body of its own shape draws its feature edges (it does not hide others: it is not a convex solid)
-    if (t === "Generic" && doc.plan(f) && doc.plan(f).mesh) { const m = doc.plan(f).mesh, P = m.positions; for (const [a, b] of featureEdges(m)) edges.push({ a: [P[a * 3], P[a * 3 + 1], P[a * 3 + 2]], b: [P[b * 3], P[b * 3 + 1], P[b * 3 + 2]], kind: "sharp" }); continue; }
+    if ((t === "Generic" || t === "Duct" || t === "Pipe" || t === "Roof") && doc.plan(f) && doc.plan(f).mesh) { const m = doc.plan(f).mesh, P = m.positions; for (const [a, b] of featureEdges(m)) edges.push({ a: [P[a * 3], P[a * 3 + 1], P[a * 3 + 2]], b: [P[b * 3], P[b * 3 + 1], P[b * 3 + 2]], kind: "sharp" }); continue; }
     if (t === "Door" || t === "Window" || t === "Floor" || t === "Beam" || t === "Generic") { for (const pt of elementParts(doc, f)) if (pt.foot && pt.foot.length >= 3) {
       prism(pt.foot, pt.z0, pt.z1, solids, edges, "auto", pt.topFoot);
       // a hole's edges are drawn; its opening does not yet let the line-work see through (the occluder is the outline)
@@ -119,7 +119,7 @@ function wallEdges(w, out, chord) {
   const inv = leanInvolved(w), W0 = inv ? wallAt(w, w.z0) : w, W1 = inv ? wallAt(w, w.z1) : w;
   const lowRegs = wallRegions(W0, "Coarse", w.z0 + 1, w.openings || []);
   const highRegs = wallRegions(W1, "Coarse", w.z1 - 1, (w.openings || []).filter(o => o.sill + o.h >= w.height - 1));
-  const topAt = p => w.z1 + (w.topSlope ? Math.tan(w.topSlope) * uOf(w, p) : 0);
+  const topAt = p => wallTop(w, p);
   const leanAt = (p, z) => !inv && w.lean ? add(p, mul(perp(w.d || [1, 0]), Math.tan(w.lean) * (z - w.z0))) : p;
   const P3 = (p, z) => { const q = leanAt(p, z); return [q[0], q[1], z]; };
   // A face point at stack index i, arc length u and height z.
@@ -156,7 +156,25 @@ function wallEdges(w, out, chord) {
   }
   for (const r of highRegs) for (const e of r.edges) {
     if (e.role === "weld" || e.role === "hidden") continue;
-    const pts = chordPts(e.seg);
+    let pts = chordPts(e.seg);
+    if (w.profile && w.curve.type === "line") {
+      // along a face the top turns where the profile does; a step is a short upright edge
+      const more = [];
+      for (let i = 0; i < pts.length - 1; i++) {
+        const a = pts[i], b = pts[i + 1], ua = uOf(w, a), ub = uOf(w, b); more.push(a);
+        const bk = topBreaks(w, Math.min(ua, ub), Math.max(ua, ub)).sort((x, y) => ub > ua ? x - y : y - x);
+        for (const u of bk) more.push(add(a, mul(sub(b, a), (u - ua) / (ub - ua))));
+      }
+      more.push(pts[pts.length - 1]); pts = more;
+      for (let i = 0; i < pts.length - 1; i++) {
+        const a = pts[i], b = pts[i + 1], fwd = uOf(w, b) >= uOf(w, a);
+        const za = wallTop(w, a, fwd ? 1 : -1), zb = wallTop(w, b, fwd ? -1 : 1);
+        out.push({ a: P3(a, za), b: P3(b, zb), kind: "sharp" });
+        const zb2 = wallTop(w, b, fwd ? 1 : -1);
+        if (i < pts.length - 2 && Math.abs(zb2 - zb) > 0.5) out.push({ a: P3(b, zb), b: P3(b, zb2), kind: "sharp" });
+      }
+      continue;
+    }
     for (let i = 0; i < pts.length - 1; i++) out.push({ a: P3(pts[i], topAt(pts[i])), b: P3(pts[i + 1], topAt(pts[i + 1])), kind: "sharp" });
   }
   const seen = [];

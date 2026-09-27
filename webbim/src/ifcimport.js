@@ -8,12 +8,16 @@
 //! an IfcBuildingStorey a Level. Types are matched by size or created. What is
 //! not mapped is counted by class in the report, never dropped silently.
 
-import { readIfc, ifcScale, ofType, follow, followAll, asText, asNumber, isRef, asList, pointingAt, ifcWorldFrame, ifcBodyItems, ifcProfile,
+import { readIfc, ifcTextOf, ifcScale, ofType, follow, followAll, asText, asNumber, isRef, asList, pointingAt, ifcWorldFrame, ifcBodyItems, ifcProfile,
   ifcPlacementFrame, ifcCompose, ifcAt, ifcDirection, ifcName, ifcPoint, ifcTransformScale, ifcProfileElements } from "./ifcread.js";
 import { triangulate } from "./geom2d.js";
-import { bridgeHoles } from "./bimsketch.js";
+import { bridgeHoles, fromLoops } from "./bimsketch.js";
+import { hull2, orientedBox, recogniseWall, recognisePrism, recogniseBar, recogniseTube, recogniseTiltedPlate } from "./ifcrecover.js";
+import { interiorPoint } from "./spaces.js";
+import { clone } from "./ocaf.js";
 import { weldTriangles, clipMeshPlane, frameMesh, packMesh } from "./massing.js";
 import { genericCategory } from "./styles.js";
+import { CATEGORIES } from "./library.js";
 
 const WALLS = new Set(["IFCWALL", "IFCWALLSTANDARDCASE", "IFCWALLELEMENTEDCASE", "IFCCURTAINWALL"]);
 const SLABS = new Set(["IFCSLAB", "IFCSLABSTANDARDCASE", "IFCSLABELEMENTEDCASE", "IFCROOF", "IFCCOVERING"]);
@@ -21,7 +25,8 @@ const COLUMNS = new Set(["IFCCOLUMN", "IFCCOLUMNSTANDARDCASE", "IFCMEMBER"]);
 const BEAMS = new Set(["IFCBEAM", "IFCBEAMSTANDARDCASE"]);
 const FILLERS = new Set(["IFCDOOR", "IFCDOORSTANDARDCASE", "IFCWINDOW", "IFCWINDOWSTANDARDCASE"]);
 const PROXIES = new Set(["IFCBUILDINGELEMENTPROXY"]);
-const IGNORED = new Set(["IFCOPENINGELEMENT", "IFCSPACE", "IFCSITE", "IFCBUILDING", "IFCBUILDINGSTOREY", "IFCPROJECT", "IFCANNOTATION", "IFCGRID"]);
+const ZONES = new Set(["IFCSPATIALZONE", "IFCZONE", "IFCSPATIALELEMENT"]);
+const IGNORED = new Set(["IFCOPENINGELEMENT", "IFCSPACE", "IFCSPATIALZONE", "IFCZONE", "IFCSITE", "IFCBUILDING", "IFCBUILDINGSTOREY", "IFCPROJECT", "IFCANNOTATION", "IFCGRID"]);
 
 const r1 = v => Math.round(v * 10) / 10;
 /** The outline of a profile in its own 2D frame, as points. */
@@ -44,22 +49,6 @@ function profilePoints(profile) {
   return null;
 }
 /** Oriented extent of points: the long axis, its length, the short width, the centre. */
-function orientedBox(pts) {
-  let best = null;
-  for (let i = 0; i < pts.length; i++) {
-    const a = pts[i], b = pts[(i + 1) % pts.length], L = Math.hypot(b[0] - a[0], b[1] - a[1]); if (L < 1e-6) continue;
-    const d = [(b[0] - a[0]) / L, (b[1] - a[1]) / L], n = [-d[1], d[0]];
-    const us = pts.map(p => p[0] * d[0] + p[1] * d[1]), vs = pts.map(p => p[0] * n[0] + p[1] * n[1]);
-    const u0 = Math.min(...us), u1 = Math.max(...us), v0 = Math.min(...vs), v1 = Math.max(...vs);
-    const area = (u1 - u0) * (v1 - v0);
-    if (!best || area < best.area - 1e-6) best = { area, d, n, u0, u1, v0, v1 };
-  }
-  if (!best) return null;
-  const { d, n, u0, u1, v0, v1 } = best, len = u1 - u0, wid = v1 - v0;
-  const long = len >= wid ? d : n, L = Math.max(len, wid), W = Math.min(len, wid);
-  const cu = (u0 + u1) / 2, cv = (v0 + v1) / 2, centre = [d[0] * cu + n[0] * cv, d[1] * cu + n[1] * cv];
-  return { centre, dir: long, length: L, width: W };
-}
 /** Everything an element's body is made of, in world coordinates. Extrusions stay extrusions (their
  *  profile and direction are what makes a wall a wall and a beam a beam); a mapped item is followed
  *  through its map (a Revit file is mostly those: nine hundred beams sharing one shape); a boolean
@@ -300,10 +289,31 @@ export function elementShape(model, e, scale) {
     if (rep) {
       const k = ifcTransformScale(model, a[1]), frame = ifcCompose(world, ifcCompose(ifcPlacementFrame(model, a[1], scale), ifcPlacementFrame(model, src.args[0], scale)));
       const key = `map${src.id}${k !== 1 ? "x" + k : ""}`;
-      return { key, frame, build: () => { const t = meshItems(model, followAll(model, rep.args[3]), { o: [0, 0, 0], x: [k, 0, 0], y: [0, k, 0], z: [0, 0, k] }, scale, notes); return t.length ? weldTriangles(t, 0.05) : null; }, notes };
+      return { key, frame, build: () => colouredMesh(model, followAll(model, rep.args[3]), { o: [0, 0, 0], x: [k, 0, 0], y: [0, k, 0], z: [0, 0, k] }, scale, notes), notes };
     }
   }
-  return { key: `el${e.id}`, frame: world, build: () => { const t = meshItems(model, items, ID3, scale, notes); return t.length ? weldTriangles(t, 0.05) : null; }, notes };
+  return { key: `el${e.id}`, frame: world, build: () => colouredMesh(model, items, ID3, scale, notes), notes };
+}
+/** The items' triangles welded into one mesh; where the file paints its items differently (a tree's trunk
+ *  and its foliage), `groups` says which run of triangles takes which colour. */
+function colouredMesh(model, items, fr, scale, notes) {
+  const tri = [], runs = [], cmap = model.itemColour || new Map();
+  for (const it of items) {
+    const before = tri.length / 9, t = meshItems(model, [it], fr, scale, notes); for (let i = 0; i < t.length; i++) tri.push(t[i]);
+    let colour = cmap.get(it.id) || null;
+    if (!colour && it.type === "IFCMAPPEDITEM") { const src = follow(model, it.args[0]), rep = src && follow(model, src.args[1]); for (const x of rep ? followAll(model, rep.args[3]) : []) if (cmap.has(x.id)) { colour = cmap.get(x.id); break; } }
+    runs.push([before, tri.length / 9, colour]);
+  }
+  if (!tri.length) return null;
+  const m = weldTriangles(tri, 0.05);
+  const colours = new Set(runs.map(r => r[2]).filter(Boolean));
+  if (colours.size > 1 && m.kept) {
+    const colourOfTri = k => { for (const r of runs) if (k >= r[0] && k < r[1]) return r[2]; return null; };
+    const groups = [];
+    m.kept.forEach((src, j) => { const c = colourOfTri(src) || ""; const last = groups[groups.length - 1]; if (last && last.colour === c) last.count += 3; else groups.push({ start: j * 3, count: 3, colour: c }); });
+    m.groups = groups;
+  }
+  return m;
 }
 
 /** The points a brep or face set is made of: its cartesian points and point lists, and nothing that is
@@ -322,15 +332,6 @@ function collectPoints(model, item, scale) {
   return pts;
 }
 /** Convex hull of plan points (monotone chain), counter-clockwise. */
-function hull2(pts) {
-  const P = pts.map(p => [p[0], p[1]]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
-  if (P.length < 3) return P;
-  const cross = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
-  const lo = [], hi = [];
-  for (const p of P) { while (lo.length >= 2 && cross(lo[lo.length - 2], lo[lo.length - 1], p) <= 1e-9) lo.pop(); lo.push(p); }
-  for (let i = P.length - 1; i >= 0; i--) { const p = P[i]; while (hi.length >= 2 && cross(hi[hi.length - 2], hi[hi.length - 1], p) <= 1e-9) hi.pop(); hi.push(p); }
-  return lo.slice(0, -1).concat(hi.slice(0, -1));
-}
 /** The long axis of a cloud of points, by power iteration on its covariance: a beam's line. */
 function principalAxis(pts) {
   const n = pts.length, c = [0, 1, 2].map(k => pts.reduce((s, p) => s + p[k], 0) / n);
@@ -361,12 +362,15 @@ const zRange = pts => [Math.min(...pts.map(p => p[2])), Math.max(...pts.map(p =>
 //! What each kind of mesh-bodied element is counted as, and drawn in.
 const MESH_KIND = { IfcStair: ["Stair", "M-CONC"], IfcRamp: ["Ramp", "M-CONC"], IfcRailing: ["Railing", "M-STEEL"], IfcPlate: ["Curtain panel", "M-GLASS"], Furniture: ["Furniture item", "M-TIMBER"],
   IfcFlowTerminal: ["Fixture", "M-TILE"], IfcTransportElement: ["Lift or escalator", "M-STEEL"], IfcWall: ["Wall (exact shape)", "M-BLOCK"], IfcSlab: ["Floor (exact shape)", "M-CONC"],
-  IfcBeam: ["Beam (exact shape)", "M-STEEL"], IfcColumn: ["Column (exact shape)", "M-CONC"] };
+  IfcBeam: ["Beam (exact shape)", "M-STEEL"], IfcColumn: ["Column (exact shape)", "M-CONC"], IfcRoof: ["Roof (exact shape)", "M-TILE"], IfcChimney: ["Chimney", "M-BRICK"],
+  IfcDuctSegment: ["Duct", "M-STEEL"], IfcAirTerminal: ["Air terminal", "M-STEEL"], IfcPipeSegment: ["Pipe", "M-STEEL"], IfcCableCarrierSegment: ["Cable tray", "M-STEEL"],
+  MechanicalEquipment: ["Mechanical equipment", "M-STEEL"], ElectricalFixtures: ["Electrical fixture", "M-STEEL"], LightingFixtures: ["Light fixture", "M-STEEL"],
+  StructuralConnections: ["Structural connection", "M-STEEL"], Topography: ["Topography surface", "M-SOIL"], Planting: ["Plant", "M-TIMBER"], Earthworks: ["Earthwork", "M-SOIL"] };
 /** @param opts.everything bring in every other product with a body (stairs, railings, plates, furniture, fixtures…) with its own shape
  *  @param opts.exact walls, slabs and members that are not one plain extrusion (clipped, sloped, breps) keep their exact shape */
 export function importIfc(doc, text, { everything = true, exact = true } = {}) {
-  const model = readIfc(text), scale = ifcScale(model);
-  const report = { made: {}, missed: {}, notes: [] };
+  const src = ifcTextOf(text), model = readIfc(src.text), scale = ifcScale(model);
+  const report = { made: {}, missed: {}, notes: src.note ? [src.note] : [] };
   const made = k => { report.made[k] = (report.made[k] || 0) + 1; };
   report.why = {};
   //! Every element kept out says why, once per class and reason: "1 × IFCSLAB" alone is not something anybody can act on.
@@ -395,6 +399,13 @@ export function importIfc(doc, text, { everything = true, exact = true } = {}) {
     let lv = levels.find(l => Math.abs(l.z - z) < 1);
     if (!lv) { const id = fresh("L"); ops.push({ op: "add", element: { id, type: "Level", name, args: { name, elevation: r1(z) } } }); lv = { id, z }; levels.push(lv); made("Level"); }
     levelOf.set(st.id, lv);
+  }
+  //! A file with no storeys (a landscape or site model: everything contained in the site) still gets a
+  //! level at zero and a plan, so what it brings has somewhere to stand and to be seen.
+  if (!levels.length) {
+    const id = fresh("L"); ops.push({ op: "add", element: { id, type: "Level", name: "Site", args: { name: "Site", elevation: 0 } } });
+    const lv = { id, z: 0 }; levels.push(lv); levelOf.set("__site", lv); made("Level");
+    note("site", "the file has no storeys: a level \"Site\" at 0 carries what it brings");
   }
   //! One floor plan per level: every storey the file brings in (and any level still without one)
   //! gets its plan, as Revit makes a plan with each level. A level that already has a plan keeps it.
@@ -499,11 +510,155 @@ export function importIfc(doc, text, { everything = true, exact = true } = {}) {
     const zLo = Math.min(...zs), zHi = Math.max(...zs), xy = []; for (let i = 0; i < world.positions.length; i += 3) xy.push([world.positions[i], world.positions[i + 1]]);
     const boundary = hull2(xy); if (boundary.length < 3) return false;
     lv = levelOf.get(storeyFor(e.id)) || levelAt(zLo) || lv;
-    const ic = IFC_CLASS(T), cat = genericCategory(ic), [label, material] = MESH_KIND[cat] || ["Generic models (exact shape)", "M-CONC"];
+    const ic = IFC_CLASS(refined(e)), parent = products.find(x => x.id === parentOf.get(e.id));
+    // what it is filed under: a slab of a roof is roof, a tree on the terrain is planting
+    let own = "";
+    if ((parent && parent.type === "IFCROOF" && (SLABS.has(T) || T === "IFCPLATE")) || T === "IFCROOF" || (T === "IFCSLAB" && /ROOF/i.test(asText(e.args[8], "")))) own = "IfcRoof";
+    else if (/GEOGRAPHICELEMENT/.test(T) && /\b(tree|shrub|bush|hedge|plant|palm|conifer)/i.test(ifcName(e) + " " + asText(e.args[4], ""))) own = "Planting";
+    else if (PROXIES.has(T)) own = proxyCategory(e);
+    const cat = own || genericCategory(ic), [label, material] = MESH_KIND[cat] || ["Generic models (exact shape)", "M-CONC"];
     const r6 = v => Math.round(v * 1e6) / 1e6, fr = { o: [r1(sh.frame.o[0]), r1(sh.frame.o[1]), r1(sh.frame.o[2] - zLo)], x: sh.frame.x.map(r6), y: sh.frame.y.map(r6), z: sh.frame.z.map(r6) };
     const id = fresh("GM");
-    ops.push({ op: "add", element: { id, type: "Generic", name: ifcName(e) || id, args: { boundary: boundary.map(p => [r1(p[0]), r1(p[1])]), level: lv ? { ref: lv.id } : null, baseOffset: r1(zLo - (lv ? lv.z : 0)), height: r1(Math.max(1, zHi - zLo)), ifcClass: ic, material, colour: "", mesh: { shape: shapeId, frame: fr } } } });
+    ops.push({ op: "add", element: { id, type: "Generic", name: ifcName(e) || id, args: { boundary: boundary.map(p => [r1(p[0]), r1(p[1])]), level: lv ? { ref: lv.id } : null, baseOffset: r1(zLo - (lv ? lv.z : 0)), height: r1(Math.max(1, zHi - zLo)), ifcClass: ic, material, colour: colourOf(e), mesh: { shape: shapeId, frame: fr }, category: own } } });
     made(label); return true;
+  };
+  //! Colours: what the file's styled items paint each body item (IFC4 styles directly, IFC2x3 through a
+  //! presentation style assignment), read once; an element takes the first of its body items that has one.
+  const itemColour = model.itemColour = new Map();
+  const hex = c => "#" + [c.args[1], c.args[2], c.args[3]].map(v => Math.max(0, Math.min(255, Math.round(asNumber(v) * 255))).toString(16).padStart(2, "0")).join("");
+  for (const si of ofType(model, "IFCSTYLEDITEM")) {
+    const item = follow(model, si.args[0]); if (!item) continue;
+    let styles = followAll(model, si.args[1]);
+    styles = styles.flatMap(st => st.type === "IFCPRESENTATIONSTYLEASSIGNMENT" ? followAll(model, st.args[0]) : [st]);
+    for (const st of styles) if (st.type === "IFCSURFACESTYLE") for (const r of followAll(model, st.args[2])) {
+      const col = follow(model, r.args[0]); if (col && col.type === "IFCCOLOURRGB" && !itemColour.has(item.id)) itemColour.set(item.id, hex(col));
+    }
+  }
+  const colourOf = e => {
+    for (const it of ifcBodyItems(model, e)) {
+      if (itemColour.has(it.id)) return itemColour.get(it.id);
+      if (it.type === "IFCMAPPEDITEM") { const src = follow(model, it.args[0]), rep = src && follow(model, src.args[1]); for (const x of rep ? followAll(model, rep.args[3]) : []) if (itemColour.has(x.id)) return itemColour.get(x.id); }
+    }
+    return "";
+  };
+  //! What a generic "flow" element is (IFC2x3 writes an air terminal as an IfcFlowTerminal and says which
+  //! in its type): the type object's class, when the element's own is only the generic one.
+  const typeClass = new Map();
+  for (const rel of ofType(model, "IFCRELDEFINESBYTYPE")) { const ty = follow(model, rel.args[5]); if (ty) for (const o of followAll(model, rel.args[4])) typeClass.set(o.id, ty.type); }
+  const refined = e => { const tc = typeClass.get(e.id); return /^IFC(FLOW|ENERGYCONVERSIONDEVICE|DISTRIBUTION)/.test(e.type) && tc && /TYPE$/.test(tc) ? tc.replace(/TYPE$/, "") : e.type; };
+  //! A proxy says what it is in its ObjectType (IFC2x3 has no class for terrain, planting or a flue):
+  //! read that, and the name, into a category.
+  const proxyCategory = e => {
+    const ot = asText(e.args[4], "").toLowerCase(), nm = (ifcName(e) || "").toLowerCase(), both = ot + " " + nm;
+    if (/\b(tree|shrub|bush|hedge|palm|conifer|planting)\b/.test(both)) return "Planting";
+    if (/\b(terrain|topo|ground|soil|grass|lawn|site)\b/.test(both) || (/vegetation/.test(ot) && /grass|lawn|meadow/.test(nm))) return "Topography";
+    if (/vegetation/.test(ot)) return "Planting";
+    if (/\b(subgrade|bedding|fill|earthwork|excavation)\b/.test(both)) return "Earthworks";
+    if (/\b(flue|chimney)\b/.test(both)) return "IfcChimney";
+    if (/\b(shoe|bracket|plate|anchor|fastener|connection)\b/.test(both)) return "StructuralConnections";
+    if (/\b(duct)\b/.test(both)) return "IfcDuctSegment";
+    if (/\b(pipe)\b/.test(both)) return "IfcPipeSegment";
+    return "";
+  };
+  const isZoneProxy = e => /\b(gross volume|zone|envelope volume)\b/i.test(asText(e.args[4], "") + " " + (ifcName(e) || ""));
+  //! A mesh that IS a simple element comes in as that element (ifcrecover.js): read in world coordinates.
+  const worldMesh = e => { const sh = elementShape(model, e, scale); if (!sh) return null; let m = null; try { m = sh.build(); } catch (err) { return null; } return m && m.index && m.index.length ? frameMesh(m, sh.frame) : null; };
+  const deg = x => Math.round(x * 1800 / Math.PI) / 10;
+  const recoveredWalls = [];
+  const addRecoveredWall = (e, r) => {
+    const lv = levelFor(e, r.z0), t = r1(Math.max(1, r.thickness));
+    const typeId = typeFor("wall:" + t, () => ({ family: "F-BASICWALL", name: `IFC wall ${t}`, mark: "IW", layers: [{ function: "Structure", thickness: t, material: "M-BLOCK" }], coreStart: 0, coreEnd: 1 }));
+    const id = fresh("W"), slope = { top: 0, lean: 0 }; if (r.cross) slope.across = deg(Math.atan(r.cross));
+    const wop = { op: "add", element: { id, type: "Wall", name: ifcName(e) || id, args: { centreline: { type: "line", start: r.start.map(r1), end: r.end.map(r1) }, mounting: "Centred", wallType: { ref: typeId }, baseLevel: lv ? { ref: lv.id } : null, baseOffset: r1(r.z0 - (lv ? lv.z : 0)), height: r1(r.height), slope, topProfile: r.profile } } };
+    ops.push(wop); recoveredWalls.push({ id, t, args: wop.element.args, openings: [] });
+    wallOf.set(e.id, { id, a: r.start, b: r.end, z0: r.z0, len: r.length }); made("Wall");
+    if (r.profile) note("wallprofile", "walls whose top is not level (gables, steps) keep that top as their top profile");
+    if (r.cross) note("wallbevel", "walls whose top is cut on the slant under a roof keep that slope across their thickness");
+    for (const o of r.openings) {
+      const w = r1(o.u1 - o.u0), h = o.h == null ? r1(r.height + 1) : r1(o.h);
+      const oop = { op: "add", element: { id: fresh("OP"), type: "Opening", name: `${ifcName(e) || id} opening`, args: { host: { ref: id }, profile: { kind: "rect", at: r1((o.u0 + o.u1) / 2), sill: r1(o.sill), w, h }, farProfile: null, depth: "through" } } };
+      ops.push(oop); recoveredWalls[recoveredWalls.length - 1].openings.push(oop.element.args.profile);
+      made("Opening");
+    }
+  };
+  const addRecoveredFloor = (e, T, r) => {
+    const lv = levelFor(e, r.zBot), footing = T === "IFCFOOTING", thick = r1(r.thick);
+    const typeId = typeFor((footing ? "footing:" : "slab:") + thick, () => ({ family: "F-FLOOR", name: `IFC ${footing ? "footing" : "slab"} ${thick}`, mark: footing ? "FT" : "FL", layers: [{ function: "Structure", thickness: thick, material: "M-CONC" }], coreStart: 0, coreEnd: 1 }));
+    const id = fresh(footing ? "FT" : "FL"), boundary = r.outer.map(p => [r1(p[0]), r1(p[1])]);
+    const args = { boundary, floorType: { ref: typeId }, level: lv ? { ref: lv.id } : null, heightOffset: r1(r.zTop - (lv ? lv.z : 0)) };
+    if (r.holes.length) args.sketch = fromLoops([boundary, ...r.holes.map(hl => hl.map(p => [r1(p[0]), r1(p[1])]))]);
+    ops.push({ op: "add", element: { id, type: "Floor", name: ifcName(e) || id, args } });
+    made(T === "IFCROOF" ? "Floor (roof)" : footing ? "Floor (footing)" : "Floor");
+  };
+  const addRecoveredMember = (e, T, r) => {
+    if (r.up) {
+      const lv = levelFor(e, r.c0[2]), z0 = Math.min(r.c0[2], r.c1[2]), h = Math.abs(r.c1[2] - r.c0[2]);
+      addColumn(e, lv, r.c0, r1(r.W), r1(r.D), false, deg(Math.atan2(r.dir[1], r.dir[0])), z0, h);
+      return;
+    }
+    const W = r1(r.W), D = r1(r.D), roll = (r.roll || 0) * Math.PI / 180, H = Math.abs(r.W * Math.sin(roll)) + Math.abs(r.D * Math.cos(roll));
+    const top = Math.max(r.c0[2], r.c1[2]) + H / 2, lv = levelFor(e, top - H);
+    const typeId = typeFor(`beam:${W}x${D}:false`, () => ({ family: "F-RCBEAM", name: `IFC ${W}×${D}`, mark: "B", shape: "rect", width: W, depth: D, material: "M-TIMBER" }));
+    const id = fresh("B");
+    if (Math.abs(r.c1[2] - r.c0[2]) > 1) note("slope", "sloping beams come in level, at their higher end");
+    ops.push({ op: "add", element: { id, type: "Beam", name: ifcName(e) || id, args: { axis: { type: "line", start: [r1(r.c0[0]), r1(r.c0[1])], end: [r1(r.c1[0]), r1(r.c1[1])] }, beamType: { ref: typeId }, level: lv ? { ref: lv.id } : null, topOffset: r1(top - (lv ? lv.z : 0)), rotation: r1(r.roll || 0) } } });
+    if (Math.abs(r.roll || 0) > 0.05) note("roll", "beams whose section is turned about their axis keep that turn (Cross-section rotation)");
+    made("Beam");
+  };
+  /** Try to read a wall, slab or member off its mesh; true when it came in as a real element. */
+  const recover = (e, T, body) => {
+    const isWall = WALLS.has(T) && T !== "IFCCURTAINWALL", isSlab = SLABS.has(T) || T === "IFCFOOTING", isMember = COLUMNS.has(T) || BEAMS.has(T);
+    if (!(isWall || isSlab || isMember)) return false;
+    // what one plain extrusion already says exactly is read that way; a wall the file voids keeps the box path (its openings host doors)
+    if ((isWall || isSlab) && plainUpright(body)) return false;
+    if (isMember && body.extrusions.length === 1 && body.solids.length === 1 && !body.clipped) return false;
+    if (isWall && voided.has(e.id)) return false;
+    const m = worldMesh(e); if (!m) return false;
+    if (isWall) { const r = recogniseWall(m); if (r) { addRecoveredWall(e, r); note("recover", "walls, slabs and members written as meshes are read back into real walls, floors and beams wherever the mesh is exactly one (checked by volume); the rest keep their exact shape"); return true; } }
+    if (isSlab) { const r = recognisePrism(m); if (r) { addRecoveredFloor(e, T, r); return true; } }
+    // a slab on the slant that is part of a roof (or says it is one) is a roof plane
+    if (isSlab && (T === "IFCROOF" || /ROOF/i.test(asText(e.args[8], "")) || (products.find(x => x.id === parentOf.get(e.id)) || {}).type === "IFCROOF")) {
+      const r = recogniseTiltedPlate(m); if (r) { addRoof(e, r); return true; }
+    }
+    if (isMember) { const r = recogniseBar(m); if (r) { addRecoveredMember(e, T, r); return true; } }
+    return false;
+  };
+  const addRoof = (e, r) => {
+    const lv = levelFor(e, r.zLow), id = fresh("RF"), q = p => [r1(p[0]), r1(p[1])];
+    ops.push({ op: "add", element: { id, type: "Roof", name: ifcName(e) || id, args: { boundary: r.outer.map(q), holes: r.holes.map(h => h.map(q)), level: lv ? { ref: lv.id } : null,
+      heightOffset: r1(r.top - (lv ? lv.z : 0)), pivot: q(r.pivot), pitch: Math.round(r.pitch * 100) / 100, direction: Math.round(r.direction * 100) / 100, thickness: r1(r.thickness), material: "M-TILE", colour: colourOf(e), rafterCut: r.square ? "Square" : "Plumb" } } });
+    made("Roof");
+    note("roofs", "roof slabs come in as roof planes (footprint, slope, direction, thickness), their holes kept");
+  };
+  const addRun = e => {
+    const m = worldMesh(e); if (!m) return false;
+    const r = recogniseTube(m); if (!r) return false;
+    const pipe = /PIPE/.test(refined(e)), lv = levelFor(e, Math.min(r.c0[2], r.c1[2])), z = lv ? lv.z : 0;
+    const id = fresh(pipe ? "PI" : "DU");
+    ops.push({ op: "add", element: { id, type: pipe ? "Pipe" : "Duct", name: ifcName(e) || id, args: { path: [r.c0, r.c1].map(q => [r1(q[0]), r1(q[1]), r1(q[2] - z)]), level: lv ? { ref: lv.id } : null,
+      shape: "Round", width: r1(r.diameter), height: r1(r.diameter), thickness: r1(r.wall), system: systemOf(e), colour: colourOf(e) } } });
+    made(pipe ? "Pipe" : "Duct");
+    note("runs", "straight duct and pipe runs come in as ducts and pipes (path, diameter, wall thickness, system)");
+    return true;
+  };
+  //! The system a run belongs to (IfcRelAssignsToGroup into an IfcSystem / IfcDistributionSystem): its name.
+  const systemName = new Map();
+  for (const rel of ofType(model, "IFCRELASSIGNSTOGROUP")) { const gp = follow(model, rel.args[6]); if (gp && /SYSTEM/.test(gp.type)) for (const o of followAll(model, rel.args[4])) systemName.set(o.id, ifcName(gp) || asText(gp.args[4], "")); }
+  const systemOf = e => systemName.get(e.id) || "";
+  //! An IFC space is a room: its name and number, its level, its height; its footprint is kept as its
+  //! outline, which bounds it until walls in the model enclose it.
+  let zones = 0;
+  const addSpace = e => {
+    const m = worldMesh(e); if (!m) { missed("IFCSPACE", "its body could not be read"); return; }
+    const P = m.positions, zs = []; for (let i = 2; i < P.length; i += 3) zs.push(P[i]);
+    const zLo = Math.min(...zs), zHi = Math.max(...zs), pr = recognisePrism(m);
+    let outline = pr ? pr.outer : hull2((() => { const q = []; for (let i = 0; i < P.length; i += 3) q.push([P[i], P[i + 1]]); return q; })());
+    if (outline.length < 3) { missed("IFCSPACE", "no footprint"); return; }
+    outline = outline.map(p => [r1(p[0]), r1(p[1])]);
+    const lv = levelFor(e, zLo), name = asText(e.args[7], "") || ifcName(e) || "Room", number = asText(e.args[7], "") ? ifcName(e) : "";
+    const id = fresh("SP");
+    ops.push({ op: "add", element: { id, type: "Space", name, args: { level: lv ? { ref: lv.id } : null, upperLimit: { mode: "offset", offset: r1(zHi - (lv ? lv.z : 0)) }, anchor: interiorPoint(outline).map(r1), boundaryAt: "finishFace", outline }, params: number ? { Number: number } : undefined } });
+    made("Room");
   };
   //! "Exact" for a wall, slab or member: a body that is not one plain extrusion (or is clipped) keeps its shape.
   //! A wall with openings stays a wall (its doors and windows need a host); the clipped top is noted instead.
@@ -512,8 +667,13 @@ export function importIfc(doc, text, { everything = true, exact = true } = {}) {
   for (const e of products) {
     const T = e.type;
     if (/^IFCREL/.test(T) || !e.args || !isRef(e.args[6])) continue;
+    if (typeof e.args[0] !== "string" || !e.args[0]) continue;       // products carry a GlobalId; owner histories and the like do not
+    if (T === "IFCSPACE") { addSpace(e); continue; }
+    if (ZONES.has(T)) { zones++; continue; }
     const isWall = WALLS.has(T), isSlab = SLABS.has(T) || T === "IFCFOOTING", isCol = COLUMNS.has(T), isBeam = BEAMS.has(T), isProxy = PROXIES.has(T);
     if (!(isWall || isSlab || isCol || isBeam || isProxy)) {
+      // a straight duct or pipe run comes in as a Duct or Pipe: its path, its diameter, its wall
+      if (/DUCTSEGMENT|PIPESEGMENT/.test(refined(e)) && addRun(e)) continue;
       if (!FILLERS.has(T) && /^IFC/.test(T) && e.args.length > 6 && isRef(e.args[5]) && !IGNORED.has(T)) {
         if (everything && ifcBodyItems(model, e).length && addMesh(e, T, levelFor(e))) continue;
         missed(T, everything ? (ifcBodyItems(model, e).length ? "its body could not be tessellated" : "no Body representation") : "not brought in (Import everything else is off)");
@@ -521,6 +681,8 @@ export function importIfc(doc, text, { everything = true, exact = true } = {}) {
       continue;
     }
     const body = bodySolids(model, e, scale), lv = levelFor(e, body.points.length ? zRange(body.points)[0] : null);
+    if (!isProxy && recover(e, T, body)) continue;
+    if (isProxy && isZoneProxy(e)) { zones++; continue; }
     // a proxy is always its own shape; a wall, slab or member that is not a plain upright extrusion keeps its shape when asked
     if (isProxy && addMesh(e, T, lv)) continue;
     if (exact && body.points.length) {
@@ -629,7 +791,59 @@ export function importIfc(doc, text, { everything = true, exact = true } = {}) {
     ops.push({ op: "add", element: door ? { id: fid, type: "Door", name: ifcName(fill) || fid, args: { fills: { ref: opId }, doorType: { ref: typeId } } } : { id: fid, type: "Window", name: ifcName(fill) || fid, args: { fills: { ref: opId }, windowType: { ref: typeId } } } });
     made(door ? "Door" : "Window");
   }
+  if (zones) note("zones", `${zones} spatial zone${zones > 1 ? "s" : ""} (a gross volume, a fire zone) left out: a zone groups spaces, it is not built`);
   const typeOps = [...newTypes.entries()].map(([id, value]) => ({ op: "type", lib: "types", id, value }));
+  // categories the document does not have yet (an older file importing ducts or terrain)
+  for (const [c, v] of Object.entries(CATEGORIES)) if (!doc.lib.categories[c]) typeOps.push({ op: "type", lib: "categories", id: c, value: clone(v) });
+  //! Recovered walls meet as walls do: a mesh wall stops at the face of the wall it butts against (or
+  //! overlaps it at a corner), where a drawn wall has its end on the other's centreline and a join does
+  //! the rest. Each end that lies inside another wall - one read here, or one already in the model - goes
+  //! to where the centrelines cross (a corner moves both ends, a T only this one); a moved start shifts the
+  //! wall's top profile and openings with it, so nothing on the wall moves. The joins are then made.
+  if (recoveredWalls.length) {
+    const lines = recoveredWalls.map(w => ({ w, doc: false, get a() { return w.args.centreline.start; }, get b() { return w.args.centreline.end; }, t: w.t }));
+    for (const f of doc.elements()) { if (doc.typeOf(f) !== "Wall") continue; const c = doc.argValue(f, "centreline"), p = doc.plan(f); if (c && c.type === "line" && p) lines.push({ w: { id: doc.idOf(f), args: { centreline: clone(c), topProfile: clone(doc.argValue(f, "topProfile")) }, openings: [] }, doc: true, a: c.start, b: c.end, t: p.stack.T, touched: false }); }
+    const L = x => Math.hypot(x.b[0] - x.a[0], x.b[1] - x.a[1]), dirOf = x => { const l = L(x) || 1; return [(x.b[0] - x.a[0]) / l, (x.b[1] - x.a[1]) / l]; };
+    const moveEnd = (x, end, X) => {
+      const c = x.w.args.centreline, d = dirOf(x), old = c[end], k = (X[0] - old[0]) * d[0] + (X[1] - old[1]) * d[1];
+      if (Math.abs(k) < 0.05 && Math.hypot(X[0] - old[0], X[1] - old[1]) < 0.05) return;
+      c[end] = [r1(X[0]), r1(X[1])]; if (x.doc) { x.a = c.start; x.b = c.end; x.touched = true; }
+      const pr = x.w.args.topProfile, Lnew = L({ a: c.start, b: c.end });
+      if (end === "start") {
+        // everything along the wall is measured from its start: shift it by what the start moved
+        if (pr) { for (const q of pr) q[0] = r1(q[0] - k); if (pr[0][0] > 0) pr.unshift([0, pr[0][1]]); while (pr.length > 2 && pr[1][0] <= 0) pr.shift(); pr[0][0] = 0; }
+        for (const o of x.w.openings) o.at = r1(o.at - k);
+        if (x.doc) x.shift = (x.shift || 0) + k;
+      }
+      if (pr) { while (pr.length > 2 && pr[pr.length - 2][0] >= Lnew) pr.pop(); if (pr[pr.length - 1][0] < Lnew) pr.push([r1(Lnew), pr[pr.length - 1][1]]); pr[pr.length - 1][0] = r1(Lnew); }
+    };
+    const cross = (p, dp, q, dq) => { const den = dp[0] * dq[1] - dp[1] * dq[0]; if (Math.abs(den) < 1e-9) return null; const t = ((q[0] - p[0]) * dq[1] - (q[1] - p[1]) * dq[0]) / den; return [p[0] + dp[0] * t, p[1] + dp[1] * t]; };
+    const ends = [];
+    for (const x of lines.filter(l => !l.doc)) for (const end of ["start", "end"]) {
+      const E = x.w.args.centreline[end], dx = dirOf(x);
+      for (const o of lines) {
+        if (o === x) continue;
+        const d0 = dirOf(o); if (Math.abs(dx[0] * d0[0] + dx[1] * d0[1]) > 0.9) continue;          // parallel walls do not join
+        const along = (E[0] - o.a[0]) * d0[0] + (E[1] - o.a[1]) * d0[1], off = Math.abs((E[0] - o.a[0]) * -d0[1] + (E[1] - o.a[1]) * d0[0]), Lo = L(o);
+        if (off > o.t / 2 + x.t / 2 + 2 || along < -o.t / 2 - 2 || along > Lo + o.t / 2 + 2) continue;
+        const X = cross(E, dx, o.a, d0); if (!X) continue;
+        // how far past the crossing the wall reaches: a corner (both ends there), or a T (only this end)
+        const alongX = (X[0] - o.a[0]) * d0[0] + (X[1] - o.a[1]) * d0[1];
+        moveEnd(x, end, X); ends.push({ id: x.w.id, end });
+        if (alongX <= o.t / 2 + x.t / 2 + 2) { moveEnd(o, "start", X); ends.push({ id: o.w.id, end: "start" }); }
+        else if (alongX >= Lo - o.t / 2 - x.t / 2 - 2) { moveEnd(o, "end", X); ends.push({ id: o.w.id, end: "end" }); }
+        break;
+      }
+    }
+    for (const o of lines) if (o.doc && o.touched) {
+      ops.push({ op: "set", id: o.w.id, key: "centreline", value: o.w.args.centreline });
+      if (o.w.args.topProfile) ops.push({ op: "set", id: o.w.id, key: "topProfile", value: o.w.args.topProfile });
+      // the model's own openings in it stay where they were on the wall
+      if (o.shift) for (const g of doc.elements()) if (doc.typeOf(g) === "Opening" && ((doc.argValue(g, "host") || {}).ref) === o.w.id) { const pr = clone(doc.argValue(g, "profile")); pr.at = r1(pr.at - o.shift); ops.push({ op: "set", id: doc.idOf(g), key: "profile", value: pr }); }
+    }
+    for (const en of ends) joinEnds.set(en.id + ":" + en.end, en);
+    if (ends.length) note("recjoin", "walls read from meshes are joined where they meet (their ends taken to where the centrelines cross)");
+  }
   if (joinEnds.size) ops.push({ op: "autojoin", ends: [...joinEnds.values()] });
   // the meshes go first (an element reads its shape as it builds), without their working copies
   const meshOps = ops.filter(o => o.lib === "meshes"), rest = ops.filter(o => o.lib !== "meshes");

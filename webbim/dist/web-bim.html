@@ -1888,6 +1888,20 @@ const CATEGORIES = {
   IfcPlate:          { name: "Curtain Panels", subcategories: { Common: { cut: "medium", projection: "thin", beyond: "hairline" } } },
   IfcFlowTerminal:   { name: "Plumbing & Fixtures", subcategories: { Common: { cut: "thin", projection: "thin", beyond: "hairline" } } },
   IfcTransportElement: { name: "Vertical Circulation", subcategories: { Common: { cut: "medium", projection: "thin", beyond: "hairline" } } },
+  // roofs, building services and the site: what coordination models from other disciplines bring
+  IfcRoof:           { name: "Roofs", subcategories: { Common: { cut: "heavy", projection: "thin", beyond: "hairline" } } },
+  IfcChimney:        { name: "Chimneys", subcategories: { Common: { cut: "medium", projection: "thin", beyond: "hairline" } } },
+  IfcDuctSegment:    { name: "Ducts", subcategories: { Common: { cut: "medium", projection: "thin", beyond: "hairline" } } },
+  IfcAirTerminal:    { name: "Air Terminals", subcategories: { Common: { cut: "thin", projection: "thin", beyond: "hairline" } } },
+  IfcPipeSegment:    { name: "Pipes", subcategories: { Common: { cut: "medium", projection: "thin", beyond: "hairline" } } },
+  IfcCableCarrierSegment: { name: "Cable Trays", subcategories: { Common: { cut: "medium", projection: "thin", beyond: "hairline" } } },
+  MechanicalEquipment: { name: "Mechanical Equipment", subcategories: { Common: { cut: "medium", projection: "thin", beyond: "hairline" } } },
+  ElectricalFixtures: { name: "Electrical Fixtures", subcategories: { Common: { cut: "thin", projection: "thin", beyond: "hairline" } } },
+  LightingFixtures:  { name: "Lighting Fixtures", subcategories: { Common: { cut: "thin", projection: "thin", beyond: "hairline" } } },
+  StructuralConnections: { name: "Structural Connections", subcategories: { Common: { cut: "thin", projection: "thin", beyond: "hairline" } } },
+  Topography:        { name: "Topography", subcategories: { Common: { cut: "medium", projection: "hairline", beyond: "hairline" } } },
+  Planting:          { name: "Planting", subcategories: { Common: { cut: "thin", projection: "thin", beyond: "hairline" } } },
+  Earthworks:        { name: "Earthworks", subcategories: { Common: { cut: "medium", projection: "thin", beyond: "hairline" } } },
 };
 
 const FAMILIES = {
@@ -2188,7 +2202,7 @@ function interiorProbe(S) {
 /** Everything a wall's drawing and solid are derived from, built in phase 2.
  *  Offsets themselves are NOT built here: they are computed per detail level
  *  on demand and counted (test 13), so coarse never builds the intermediate ones. */
-function wallRecord({ id, centreline, type, mounting, mountOffset, flipped, z0, height, slope, stats, zFloor = z0 }) {
+function wallRecord({ id, centreline, type, mounting, mountOffset, flipped, z0, height, slope, stats, zFloor = z0, topProfile = null }) {
   let curve = curveOf(centreline);
   const stack = layerStack(type, mounting, mountOffset, flipped);
   const lean = ((slope && slope.lean) || 0) * Math.PI / 180;
@@ -2211,18 +2225,58 @@ function wallRecord({ id, centreline, type, mounting, mountOffset, flipped, z0, 
       throw new Error(`the inner face of this wall would self-intersect at r=${round(curve.radius)}mm; minimum radius for this type is ${round(inward + MIN_FACE_RADIUS)}mm`);
     }
   }
-  const fast = Math.abs(lean) < 1e-12 && Math.abs(topSlope) < 1e-12;
+  // A top that is not one height: a profile along the wall ([u, height above the base] - a gable, steps),
+  // and a slope across the thickness (rise per mm to the wall's left - a top cut under a roof)
+  const profile = cleanProfile(topProfile, curve.length);
+  const across = Math.tan(((slope && slope.across) || 0) * Math.PI / 180);
+  if (profile) height = Math.max(...profile.map(q => q[1]));
+  const fast = Math.abs(lean) < 1e-12 && Math.abs(topSlope) < 1e-12 && !profile && !across;
   // A raking top rises (or falls) along the wall: the band a view tests is the whole range.
-  const rise = curve.length * Math.tan(topSlope);
+  const rise = curve.length * Math.tan(topSlope), halfT = Math.max(...stack.s.map(Math.abs)), bevel = Math.abs(across) * halfT;
+  const lowTop = profile ? Math.min(...profile.map(q => q[1])) : height + Math.min(0, rise);
   const rec = {
-    id, curve, type, stack, z0, z1: z0 + height, height, lean, topSlope, fast,
-    zLo: z0, zHi: z0 + height + Math.max(0, rise), zTopMin: z0 + height + Math.min(0, rise),
+    id, curve, type, stack, z0, z1: z0 + height, height, lean, topSlope, fast, profile, across,
+    zLo: z0, zHi: z0 + height + Math.max(0, profile ? 0 : rise) + bevel, zTopMin: z0 + lowTop - bevel,
     a: curve.start, d: curve.type === "line" ? curve.tangentAt(0) : null, L: curve.length,
     offsets: new Map(), stats, drawn,
   };
   return rec;
 }
 const round = x => Math.round(x);
+/** A top profile made safe: [u, h] pairs within the wall, in order along it (a step is two at one u). */
+function cleanProfile(pr, L) {
+  if (!Array.isArray(pr) || pr.length < 2) return null;
+  const q = pr.filter(x => Array.isArray(x) && isFinite(x[0]) && isFinite(x[1])).map(x => [Math.max(0, Math.min(L, +x[0])), Math.max(1, +x[1])]);
+  if (q.length < 2) return null;
+  q.sort((a, b) => a[0] - b[0]);
+  q[0][0] = 0; q[q.length - 1][0] = L;
+  return q;
+}
+/** The height of a profile at u: `side` picks the left (-1) or right (+1) value where the profile steps. */
+function profileAt(pr, u, side = 0) {
+  if (u <= pr[0][0]) return pr[0][1];
+  for (let k = 1; k < pr.length; k++) {
+    const a = pr[k - 1], b = pr[k];
+    if (u < b[0] - 1e-6 || (side < 0 && Math.abs(u - b[0]) <= 1e-6)) return b[0] - a[0] < 1e-9 ? b[1] : a[1] + (b[1] - a[1]) * (u - a[0]) / (b[0] - a[0]);
+    if (Math.abs(u - b[0]) <= 1e-6) { let j = k; while (j + 1 < pr.length && Math.abs(pr[j + 1][0] - b[0]) <= 1e-6) j++; return side < 0 ? b[1] : pr[j][1]; }
+  }
+  return pr[pr.length - 1][1];
+}
+/** The wall's top at plan point p: its height (flat, raking or profiled) plus its slope across the
+ *  thickness. `side` resolves a step in the profile. One definition for 3D, drawings and shadows. */
+function wallTop(w, p, side = 0) {
+  const u = uOf(w, p);
+  const z = w.profile ? w.z0 + profileAt(w.profile, u, side) : w.z1 + (w.topSlope ? Math.tan(w.topSlope) * u : 0);
+  return w.across ? z + w.across * sideOf(w, p) : z;
+}
+/** The lowest top over a stretch of the wall (what an opening's head must stay under). */
+function wallTopMin(w, u0, u1) {
+  if (!w.profile) return w.z1 + Math.min(0, (w.topSlope ? Math.tan(w.topSlope) : 0) * u0, (w.topSlope ? Math.tan(w.topSlope) : 0) * u1) - Math.abs(w.across || 0) * Math.max(...w.stack.s.map(Math.abs));
+  const us = [u0, u1, ...w.profile.map(q => q[0]).filter(u => u > u0 && u < u1)];
+  return w.z0 + Math.min(...us.map(u => Math.min(profileAt(w.profile, u, -1), profileAt(w.profile, u, 1)))) - Math.abs(w.across || 0) * Math.max(...w.stack.s.map(Math.abs));
+}
+/** Where the top changes slope, strictly inside (u0, u1): the pieces of a 3D wall split there. */
+function topBreaks(w, u0, u1) { return w.profile ? [...new Set(w.profile.map(q => q[0]).filter(u => u > u0 + 1e-6 && u < u1 - 1e-6))] : []; }
 
 /** The boundary curve at stack index i, computed once per build and counted. */
 function boundary(w, i) {
@@ -2387,7 +2441,20 @@ function wallPieces(w, spans, opts = {}) {
       const sa = sp.sRange ? sp.sRange[0] : w.stack.s[0], sb = sp.sRange ? sp.sRange[1] : w.stack.s[n];
       const foot = [termPoint(w, sa, t0, ua), termPoint(w, sa, t1, ub), termPoint(w, sb, t1, ub), termPoint(w, sb, t0, ua)];
       const zb = sp.zb ?? w.z0, zt = sp.zt ?? w.z1;
-      pieces.push({ foot, z0: zb, z1: zt, topAt: w.topSlope ? (p => w.z1 + Math.tan(w.topSlope) * uOf(w, p) + (zt - w.z1)) : null, lean: w.lean, n2: w.d ? perp(w.d) : null, zRef: w.z0, openingSide: sp.openingSide });
+      // a piece that reaches the top follows it (its corners each at their own height); one under an opening is flat
+      const toTop = sp.zt == null || (sp.openingSide === "head");
+      if (toTop && !w.fast && (w.topSlope || w.profile || w.across) && w.curve.type === "line") {
+        // split where the profile turns, so each piece's top is one plane between its corners
+        const cuts = [ua, ...topBreaks(w, ua, ub), ub];
+        for (let j = 0; j < cuts.length - 1; j++) {
+          const ca = cuts[j], cb = cuts[j + 1], ta = j === 0 ? t0 : { k: "normal", u: ca }, tb = j === cuts.length - 2 ? t1 : { k: "normal", u: cb };
+          const ft = [termPoint(w, sa, ta, ca), termPoint(w, sa, tb, cb), termPoint(w, sb, tb, cb), termPoint(w, sb, ta, ca)];
+          const mid = (ca + cb) / 2;
+          pieces.push({ foot: ft, z0: zb, z1: w.z1, topAt: p => wallTop(w, p, uOf(w, p) < mid ? 1 : -1), lean: w.lean, n2: w.d ? perp(w.d) : null, zRef: w.z0, openingSide: sp.openingSide });
+        }
+        continue;
+      }
+      pieces.push({ foot, z0: zb, z1: zt, topAt: null, lean: w.lean, n2: w.d ? perp(w.d) : null, zRef: w.z0, openingSide: sp.openingSide });
     }
   }
   return pieces;
@@ -3042,7 +3109,7 @@ function solidSpans(w, openings, stats) {
     spans.push({ t0, t1: { k: "normal", u: op.u0 }, u0, u1: op.u0 });
     // below the sill and above the head, the wall continues across the opening
     if (op.sill > 0) spans.push({ t0: { k: "normal", u: op.u0 }, t1: { k: "normal", u: op.u1 }, u0: op.u0, u1: op.u1, zb: w.z0, zt: w.z0 + op.sill, openingSide: "sill" });
-    if (op.sill + op.h < w.height) spans.push({ t0: { k: "normal", u: op.u0 }, t1: { k: "normal", u: op.u1 }, u0: op.u0, u1: op.u1, zb: w.z0 + op.sill + op.h, zt: w.z1, openingSide: "head" });
+    if (w.z0 + op.sill + op.h < wallTopMin(w, op.u0, op.u1) - 1) spans.push({ t0: { k: "normal", u: op.u0 }, t1: { k: "normal", u: op.u1 }, u0: op.u0, u1: op.u1, zb: w.z0 + op.sill + op.h, zt: w.z1, openingSide: "head" });
     if (op.recess) {
       // behind a recess the wall continues: from depth d off the exterior face to the other face
       const s0 = w.stack.s[0], sN = w.stack.s[w.stack.s.length - 1], dir = Math.sign(sN - s0) || 1;
@@ -6128,6 +6195,12 @@ function arcThrough3(a, b, m) {
 /** The loops as the CAD sketcher wants them: geometry and the coincidences/tangencies, no dims. */
 function forCad(d) { const w = weld(sketchOf(d)); return { elements: w.elements, constraints: w.constraints }; }
 /** A drawing made from a plain polygon (a floor drawn before sketches, an imported slab). */
+/** A sketch of several closed loops at once - an outline and its holes. */
+function fromLoops(loops) {
+  const w = emptySketch(); let n = 0;
+  for (const pts of loops) pts.forEach((p, i) => w.elements.push({ id: "e" + (++n), type: "line", a: [p[0], p[1]], b: [pts[(i + 1) % pts.length][0], pts[(i + 1) % pts.length][1]] }));
+  return weld(w);
+}
 function fromPolygon(pts) {
   const w = emptySketch();
   pts.forEach((p, i) => w.elements.push({ id: "e" + (i + 1), type: "line", a: [p[0], p[1]], b: [pts[(i + 1) % pts.length][0], pts[(i + 1) % pts.length][1]] }));
@@ -6518,7 +6591,7 @@ function meshFromKernel(parts) {
   return { positions: w.positions, index: w.index, faces: w.kept.map(t => face[t]) };
 }
 /** Round coordinates to 0.1 mm so a stored mesh stays small. */
-function packMesh(m) { const out = { positions: m.positions.map(v => Math.round(v * 10) / 10), index: m.index.slice() }; if (m.faces) out.faces = m.faces.slice(); return out; }
+function packMesh(m) { const out = { positions: m.positions.map(v => Math.round(v * 10) / 10), index: m.index.slice() }; if (m.faces) out.faces = m.faces.slice(); if (m.groups) out.groups = m.groups.map(g => Object.assign({}, g)); return out; }
 /** Move, turn about z and scale a mesh. */
 function placeMesh(m, { x = 0, y = 0, z = 0, rotation = 0, scale = 1 } = {}) {
   const a = rotation * Math.PI / 180, c = Math.cos(a), s = Math.sin(a), P = m.positions, out = new Array(P.length);
@@ -6924,6 +6997,8 @@ declare({ type: "Wall", guid: "wb-0101", category: "IfcWall", kind: "wall", idPr
     real("height", "Unconnected height", 3000, 1, 100000, 1, "mm", { group: "Dimensions" }),
     bool("flipped", "Flipped", false),
     json("slope", "Inclination & top slope", { top: 0, lean: 0 }, { group: "Constraints" }),
+    // Revit's Edit Profile for the top: [distance along the wall, height above the base] - a gable, steps
+    json("topProfile", "Top profile", null, { group: "Constraints" }),
   ],
   handles: (f, doc) => {
     const c = F.json(f, "centreline"), w = doc.plan(f);
@@ -6949,16 +7024,19 @@ BUILDERS.Wall = {
     const height = top ? levelElev(doc, f, "topLevel") + (F.real(f, "topOffset") || 0) - z0 : F.real(f, "height");
     if (!(height > 0)) throw new Error(top ? `its top (${F.text(top, "name") || doc.idOf(top)} ${(F.real(f, "topOffset") || 0) >= 0 ? "+" : ""}${F.real(f, "topOffset") || 0}) is not above its base: ${Math.round(height)}mm` : `a wall ${height}mm high has nothing to draw`);
     const w = wallRecord({ id: doc.idOf(f), centreline: F.json(f, "centreline"), type: t, mounting: F.choice(f, "mounting"),
-      mountOffset: F.real(f, "mountOffset"), flipped: F.bool(f, "flipped"), z0, height, slope: F.json(f, "slope"), stats: doc.stats, zFloor: levelElev(doc, f) + ((F.json(f, "slope") || {}).pivotZ || 0) });
+      mountOffset: F.real(f, "mountOffset"), flipped: F.bool(f, "flipped"), z0, height, slope: F.json(f, "slope"), stats: doc.stats, zFloor: levelElev(doc, f) + ((F.json(f, "slope") || {}).pivotZ || 0), topProfile: F.json(f, "topProfile") });
     if (w.L < TOL) throw new Error("the centreline has no length");
     const len = w.L, thick = w.stack.T;
+    // the face's area: under its top profile (a gable), or its length times its height
+    let faceArea = len * w.height;
+    if (w.profile) { faceArea = 0; for (let k = 1; k < w.profile.length; k++) faceArea += (w.profile[k][0] - w.profile[k - 1][0]) * (w.profile[k][1] + w.profile[k - 1][1]) / 2; }
     const lv = F.reference(f, "baseLevel");
     return {
       plan: w,
       data: { value: len, kind: "Length", refs: wallReferences(w), props: {
-        Length: L(len), Width: L(thick), Height: L(height), "Base elevation": L(z0), "Top elevation": L(z0 + height),
+        Length: L(len), Width: L(thick), Height: L(w.height), "Base elevation": L(z0), "Top elevation": L(z0 + w.height),
         "Top constraint": T(top ? `Up to ${F.text(top, "name") || doc.idOf(top)}` : "Unconnected"),
-        Area: { kind: "Area", v: len * height }, Volume: { kind: "Volume", v: len * height * thick } } },
+        Area: { kind: "Area", v: faceArea }, Volume: { kind: "Volume", v: faceArea * thick } } },
       note: lv ? null : (F.refId(f, "baseLevel") ? null : "no base level: built from z = 0"),
     };
   },
@@ -7305,7 +7383,9 @@ BUILDERS.Floor = {
 declare({ type: "Beam", guid: "wb-0402", category: "IfcBeam", kind: "beam", idPrefix: "B",
   summary: "A profile swept along a line, hung from its level by its top.",
   args: [ curve2d("axis", "Axis", ["line"], { type: "line", start: [0, 0], end: [6000, 0] }), ref("beamType", "Type", ["beamType"]), ref("level", "Reference level", ["level"]),
-          real("topOffset", "Top offset", 0, -10000, 10000, 1, "mm", { group: "Constraints" }) ],
+          real("topOffset", "Top offset", 0, -10000, 10000, 1, "mm", { group: "Constraints" }),
+          // Revit's Cross-Section Rotation: the section turned about the beam's own axis (a rafter square to the roof)
+          real("rotation", "Cross-section rotation", 0, -180, 180, 1, "°", { group: "Constraints" }) ],
   handles: (f) => { const c = F.json(f, "axis"); return c && c.type === "line" ? [{ key: "start", at: c.start, constraint: "free2d", writes: "axis.start" }, { key: "end", at: c.end, constraint: "free2d", writes: "axis.end", readout: "length" }, { key: "move", at: lerp(c.start, c.end, 0.5), constraint: "free2d", writes: "axis" }] : []; } });
 BUILDERS.Beam = {
   precondition: (f) => { const c = F.json(f, "axis"); if (!c || c.type !== "line" || dist(c.start, c.end) < 1) return "a beam needs an axis"; return F.type(f, "beamType") ? null : "pick a beam type"; },
@@ -7321,11 +7401,146 @@ BUILDERS.Beam = {
       : t.shape === "RHS" ? [band(W, top - tk, top, "Flange"), band(W, top - D, top - D + tk, "Flange"), bandAt(tk, -(W - tk) / 2, top - D + tk, top - tk, "Web"), bandAt(tk, (W - tk) / 2, top - D + tk, top - tk, "Web")]
       : t.shape === "CHS" ? roundSlices(W / 2, t.thick || 0, top).flatMap(([hw, hi, z0, z1]) => hi > 0 ? [bandAt(hw - hi, -(hw + hi) / 2, z0, z1, "Beam"), bandAt(hw - hi, (hw + hi) / 2, z0, z1, "Beam")] : [bandAt(2 * hw, 0, z0, z1, "Beam")])
       : [band(W, top - D, top, "Beam")];
+    // a rectangular section turned about the axis: sliced where its corners are, each slice a loft whose
+    // width changes straight from its bottom to its top - exact for any turn. `top` stays its highest point.
+    const rot = (F.real(f, "rotation") || 0) * Math.PI / 180;
+    if (Math.abs(rot) > 1e-6 && (!t.shape || t.shape === "rect")) {
+      const cs = Math.cos(rot), sn = Math.sin(rot), H = Math.abs(W * sn) + Math.abs(D * cs), zc = top - H / 2;
+      const cor = [[-W / 2, -D / 2], [W / 2, -D / 2], [W / 2, D / 2], [-W / 2, D / 2]].map(([x, y]) => [x * cs - y * sn, zc + x * sn + y * cs]);
+      // the section's extent across at height z (a corner exactly at z, within rounding, counts)
+      const across = z => {
+        const xs = [];
+        for (let i = 0; i < 4; i++) { const a = cor[i], b = cor[(i + 1) % 4], lo = Math.min(a[1], b[1]) - 1e-6, hi = Math.max(a[1], b[1]) + 1e-6;
+          if (z < lo || z > hi) continue; if (Math.abs(b[1] - a[1]) < 1e-9) { xs.push(a[0], b[0]); continue; } const t = Math.max(0, Math.min(1, (z - a[1]) / (b[1] - a[1]))); xs.push(a[0] + (b[0] - a[0]) * t); }
+        return xs.length ? [Math.min(...xs), Math.max(...xs)] : [0, 0];
+      };
+      const zs = [...new Set(cor.map(q => Math.round(q[1] * 1e6) / 1e6))].sort((a, b) => a - b);
+      const strip = ([x0, x1]) => [add(c.start, mul(n, x0)), add(c.end, mul(n, x0)), add(c.end, mul(n, x1)), add(c.start, mul(n, x1))];
+      parts.length = 0;
+      for (let i = 0; i + 1 < zs.length; i++) parts.push({ foot: strip(across(zs[i])), topFoot: strip(across(zs[i + 1])), z0: zs[i], z1: zs[i + 1], sub: "Beam", material: t.material });
+    }
+    const hb = parts.length ? [Math.min(...parts.map(q => q.z0)), Math.max(...parts.map(q => q.z1))] : [top - D, top];
     const foot = band(W, 0, 0).foot, len = dist(c.start, c.end);
-    return { plan: { path: polyPath(foot), foot, axis: c, z0: top - D, z1: top, parts },
-      data: { value: len, kind: "Length", parts, refs: [{ key: "axis", kind: "line", geom: lineThrough(c.start, c.end) }], props: { Length: L(len), Depth: L(D), Width: L(W), "Top elevation": L(top), "Bottom elevation": L(top - D), Volume: { kind: "Volume", v: parts.reduce((s, q) => s + Math.abs(polyArea(q.foot)) * (q.z1 - q.z0), 0) }, TypeMark: T(t.mark || t.id) } } };
+    return { plan: { path: polyPath(foot), foot, axis: c, z0: hb[0], z1: hb[1], parts },
+      data: { value: len, kind: "Length", parts, refs: [{ key: "axis", kind: "line", geom: lineThrough(c.start, c.end) }], props: { Length: L(len), Depth: L(D), Width: L(W), "Top elevation": L(top), "Bottom elevation": L(top - D), Volume: { kind: "Volume", v: parts.reduce((s, q) => s + (Math.abs(polyArea(q.foot)) + Math.abs(polyArea(q.topFoot || q.foot))) / 2 * (q.z1 - q.z0), 0) }, TypeMark: T(t.mark || t.id) } } };
   },
 };
+
+// ---------------------------------------------------------------- roofs
+//! Revit's roof by footprint, one plane of it: a plan outline (with holes - a chimney), a slope and the
+//! direction it rises, a thickness square to the slope, and the height of its top at a reference point.
+//! A gable is two of them. Its body is built from those numbers, so changing the pitch rebuilds it.
+declare({ type: "Roof", guid: "wb-0404", category: "IfcRoof", kind: "roof", idPrefix: "RF",
+  summary: "A roof plane: a footprint, a slope rising in one direction, a thickness.",
+  args: [ json("boundary", "Footprint", [[0, 0], [6000, 0], [6000, 4000], [0, 4000]]), json("holes", "Holes", []), ref("level", "Level", ["level"]),
+          real("heightOffset", "Height at reference point", 3000, -100000, 100000, 1, "mm", { group: "Constraints" }),
+          point2d("pivot", "Slope reference point", [0, 0], { group: "Constraints" }),
+          real("pitch", "Slope", 30, -80, 80, 0.5, "°", { group: "Dimensions" }), real("direction", "Slope rises toward", 90, -360, 360, 1, "°", { group: "Dimensions" }),
+          real("thickness", "Thickness", 200, 1, 3000, 1, "mm", { group: "Dimensions" }),
+          text("material", "Material", "M-TILE", { group: "Materials" }), text("colour", "Colour", "", { group: "Graphics" }),
+          // Revit's Rafter Cut: edges plumb (upright), or square to the slope (the footprint is then the mid-plane's)
+          choice("rafterCut", "Rafter cut", ["Plumb", "Square"], 0, { group: "Construction" }) ],
+  handles: (f) => { const b = F.json(f, "boundary") || []; return b.map((p, i) => ({ key: "v" + i, at: p, constraint: "free2d", writes: `boundary.${i}` })); } });
+BUILDERS.Roof = {
+  precondition: (f) => { const b = F.json(f, "boundary"); return Array.isArray(b) && b.length >= 3 ? null : "a roof needs a footprint of three points or more"; },
+  build: (f, doc) => {
+    const outer = F.json(f, "boundary"), holes = (F.json(f, "holes") || []).filter(h => Array.isArray(h) && h.length >= 3);
+    const z0 = levelElev(doc, f, "level") + F.real(f, "heightOffset"), pv = F.point(f, "pivot"), a = F.real(f, "pitch") * Math.PI / 180, dirA = F.real(f, "direction") * Math.PI / 180;
+    const d = [Math.cos(dirA), Math.sin(dirA)], k = Math.tan(a), tv = F.real(f, "thickness") / Math.cos(a);
+    const top = p => z0 + k * ((p[0] - pv[0]) * d[0] + (p[1] - pv[1]) * d[1]);
+    const ccw = pts => polyArea(pts) >= 0 ? pts : pts.slice().reverse(), cw = pts => polyArea(pts) < 0 ? pts : pts.slice().reverse();
+    const O = ccw(outer), H = holes.map(cw), cap = H.length ? bridgeHoles(O, H) : O, tri = triangulate(cap);
+    const pos = [], idx = [];
+    const put = (p, z) => { pos.push(p[0], p[1], z); return pos.length / 3 - 1; };
+    // top and underside: the footprint's triangles on each plane
+    // square-cut edges run along the slope's normal: the top face sits half a thickness downhill of the
+    // footprint, the underside half a thickness uphill; plumb-cut edges stand straight up from it
+    const sq = F.choice(f, "rafterCut") === "Square", sh = sq ? (F.real(f, "thickness") / 2) * Math.sin(a) : 0;
+    const upP = p => [p[0] - d[0] * sh, p[1] - d[1] * sh], dnP = p => [p[0] + d[0] * sh, p[1] + d[1] * sh];
+    const T0 = cap.map(p => { const q = upP(p); return put(q, top(q) + (sq ? 0 : 0)); }), B0 = cap.map(p => { const q = dnP(p); return put(q, top(q) - tv); });
+    for (const [i, j, l] of tri) { idx.push(T0[i], T0[j], T0[l]); idx.push(B0[i], B0[l], B0[j]); }
+    // the edges round the outline and each hole
+    for (const loop of [O, ...H]) for (let i = 0; i < loop.length; i++) {
+      const p = loop[i], q = loop[(i + 1) % loop.length], pb = dnP(p), qb = dnP(q), pt = upP(p), qt = upP(q);
+      const a0 = put(pb, top(pb) - tv), b0 = put(qb, top(qb) - tv), a1 = put(pt, top(pt)), b1 = put(qt, top(qt));
+      idx.push(a0, b0, b1, a0, b1, a1);
+    }
+    // one welded body: its faces share their corners, so a section plane slices it into closed outlines
+    const soup = []; for (const k of idx) soup.push(pos[k * 3], pos[k * 3 + 1], pos[k * 3 + 2]);
+    const welded = weldTriangles(soup, 0.01); pos.length = 0; idx.length = 0; pos.push(...welded.positions); idx.push(...welded.index);
+    const zs = []; for (let i = 2; i < pos.length; i += 3) zs.push(pos[i]);
+    const area = Math.abs(polyArea(O)) - H.reduce((s, h) => s + Math.abs(polyArea(h)), 0);
+    const mat = F.text(f, "material") || "M-TILE", colour = F.text(f, "colour") || ((doc.lib.materials[mat] || {}).shading || {}).colour || "#c9a27a";
+    return { plan: { path: [...polyPath(O), ...H.flatMap(h => polyPath(h))], foot: O, z0: Math.min(...zs), z1: Math.max(...zs), material: mat, parts: [], mesh: { positions: pos, index: idx }, mesh3d: [{ positions: pos, index: idx, colour }], roof: { top, tv } },
+      data: { value: area / Math.cos(a), kind: "Area", props: { Area: { kind: "Area", v: area / Math.cos(a) }, "Footprint area": { kind: "Area", v: area }, Slope: { kind: "Angle", v: F.real(f, "pitch") }, Thickness: L(F.real(f, "thickness")),
+        Volume: { kind: "Volume", v: area * tv }, "Lowest point": L(Math.min(...zs)), "Highest point": L(Math.max(...zs)) } } };
+  },
+};
+// ---------------------------------------------------------------- building services: ducts and pipes
+//! Revit's Duct and Pipe: a run through space - a path of points (height measured from its level), a
+//! round or rectangular section, a wall thickness, a system. The body is built from those numbers, so
+//! changing the diameter or the path rebuilds it; plans draw it as MEP drawings do (two lines and a
+//! centreline, a riser as a crossed circle or box).
+const MEP_SHAPES = ["Round", "Rectangular"];
+const mepArgs = (defW) => [ json("path", "Path (x, y, height above level)", [[0, 0, 2700], [4000, 0, 2700]]), ref("level", "Reference level", ["level"]),
+  choice("shape", "Shape", MEP_SHAPES, 0, { group: "Dimensions" }), real("width", "Diameter or width", defW, 5, 5000, 1, "mm", { group: "Dimensions" }),
+  real("height", "Height (rectangular)", defW, 5, 5000, 1, "mm", { group: "Dimensions" }), real("thickness", "Wall thickness", 0, 0, 500, 0.5, "mm", { group: "Dimensions" }),
+  text("system", "System", "", { group: "Mechanical" }), text("colour", "Colour", "", { group: "Graphics" }) ];
+declare({ type: "Duct", guid: "wb-0601", category: "IfcDuctSegment", kind: "duct", idPrefix: "DU", summary: "A duct run: a path through space and a round or rectangular section.", args: mepArgs(300) });
+declare({ type: "Pipe", guid: "wb-0602", category: "IfcPipeSegment", kind: "pipe", idPrefix: "PI", summary: "A pipe run: a path through space and a round section.", args: mepArgs(50) });
+/** One straight run's body: a tube (24 sides) or a box, hollow when it has a wall thickness. */
+function runMesh(a, b, round, W, H, t, pos, idx) {
+  const ax = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], L = Math.hypot(...ax); if (L < 1e-6) return;
+  const u = ax.map(x => x / L);
+  // across: horizontal and square to the run (for an upright run, the x axis); up: square to both
+  let v = Math.abs(u[2]) > 0.999 ? [1, 0, 0] : (() => { const h = Math.hypot(u[0], u[1]); return [-u[1] / h, u[0] / h, 0]; })();
+  const w = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+  const ring = (rw, rh) => round ? Array.from({ length: 24 }, (_, i) => { const t2 = i / 24 * 2 * Math.PI; return [Math.cos(t2) * rw / 2, Math.sin(t2) * rw / 2]; }) : [[-rw / 2, -rh / 2], [rw / 2, -rh / 2], [rw / 2, rh / 2], [-rw / 2, rh / 2]];
+  const at = (p0, q) => [p0[0] + v[0] * q[0] + w[0] * q[1], p0[1] + v[1] * q[0] + w[1] * q[1], p0[2] + v[2] * q[0] + w[2] * q[1]];
+  const put = pts => { const base = pos.length / 3; for (const p of pts) pos.push(p[0], p[1], p[2]); return base; };
+  const o = ring(W, H), n = o.length, O0 = put(o.map(q => at(a, q))), O1 = put(o.map(q => at(b, q)));
+  for (let i = 0; i < n; i++) { const j = (i + 1) % n; idx.push(O0 + i, O0 + j, O1 + j, O0 + i, O1 + j, O1 + i); }
+  if (t > 0 && t < Math.min(W, round ? W : H) / 2) {
+    const r = ring(W - 2 * t, (round ? W : H) - 2 * t), I0 = put(r.map(q => at(a, q))), I1 = put(r.map(q => at(b, q)));
+    for (let i = 0; i < n; i++) { const j = (i + 1) % n; idx.push(I0 + j, I0 + i, I1 + i, I0 + j, I1 + i, I1 + j); idx.push(O0 + j, O0 + i, I0 + i, O0 + j, I0 + i, I0 + j); idx.push(O1 + i, O1 + j, I1 + j, O1 + i, I1 + j, I1 + i); }
+  } else {
+    const c0 = put([a]), c1 = put([b]);
+    for (let i = 0; i < n; i++) { const j = (i + 1) % n; idx.push(c0, O0 + j, O0 + i, c1, O1 + i, O1 + j); }
+  }
+}
+const mepBuilder = kind => ({
+  precondition: (f) => { const p = F.json(f, "path"); return Array.isArray(p) && p.length >= 2 && p.every(q => Array.isArray(q) && q.length >= 2) ? null : "a run needs a path of two points or more"; },
+  build: (f, doc) => {
+    const z0 = levelElev(doc, f, "level"), path = F.json(f, "path").map(q => [+q[0], +q[1], z0 + (+q[2] || 0)]);
+    const round = F.choice(f, "shape") !== "Rectangular" || kind === "pipe", W = F.real(f, "width"), H = round ? W : F.real(f, "height"), t = F.real(f, "thickness") || 0;
+    const pos = [], idx = []; let length = 0;
+    for (let i = 0; i + 1 < path.length; i++) { runMesh(path[i], path[i + 1], round, W, H, t, pos, idx); length += Math.hypot(path[i + 1][0] - path[i][0], path[i + 1][1] - path[i][1], path[i + 1][2] - path[i][2]); }
+    if (!idx.length) throw new Error("its path has no length");
+    // in plan: each run as its outline, a riser as its section
+    const runs = [];
+    for (let i = 0; i + 1 < path.length; i++) {
+      const a = path[i], b = path[i + 1], h = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      if (h < 1) runs.push({ riser: true, c: [a[0], a[1]], z0: Math.min(a[2], b[2]), z1: Math.max(a[2], b[2]) });
+      else { const d = [(b[0] - a[0]) / h, (b[1] - a[1]) / h], n = [-d[1] * W / 2, d[0] * W / 2]; runs.push({ riser: false, a: [a[0], a[1]], b: [b[0], b[1]], foot: [[a[0] + n[0], a[1] + n[1]], [b[0] + n[0], b[1] + n[1]], [b[0] - n[0], b[1] - n[1]], [a[0] - n[0], a[1] - n[1]]], z0: Math.min(a[2], b[2]) - H / 2, z1: Math.max(a[2], b[2]) + H / 2 }); }
+    }
+    const pts2 = []; for (let i = 0; i < pos.length; i += 3) pts2.push([pos[i], pos[i + 1]]);
+    const foot = hullXY(pts2), zs = []; for (let i = 2; i < pos.length; i += 3) zs.push(pos[i]);
+    const colour = F.text(f, "colour") || (kind === "pipe" ? "#9aa7b4" : "#b8c4cf");
+    const mesh = { positions: pos, index: idx };
+    const system = F.text(f, "system");
+    return { plan: { path: polyPath(foot), foot, z0: Math.min(...zs), z1: Math.max(...zs), material: "M-STEEL", mesh, mesh3d: [{ positions: pos, index: idx, colour }], runs, round, W, H, parts: [] },
+      data: { value: length, kind: "Length", props: { Length: L(length), [round ? "Diameter" : "Width"]: L(W), ...(round ? {} : { Height: L(H) }), "Wall thickness": L(t), System: T(system || "—"), Shape: T(round ? "Round" : "Rectangular") } } };
+  },
+});
+BUILDERS.Duct = mepBuilder("duct");
+BUILDERS.Pipe = mepBuilder("pipe");
+function hullXY(pts) {
+  const P = pts.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]); if (P.length < 3) return P;
+  const cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]), lo = [], hi = [];
+  for (const p of P) { while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], p) <= 1e-9) lo.pop(); lo.push(p); }
+  for (let i = P.length - 1; i >= 0; i--) { const p = P[i]; while (hi.length >= 2 && cr(hi[hi.length - 2], hi[hi.length - 1], p) <= 1e-9) hi.pop(); hi.push(p); }
+  return lo.slice(0, -1).concat(hi.slice(0, -1));
+}
 
 //! A generic model: IFC's IfcBuildingElementProxy, "something that is part of the building". It has
 //! no system of its own, so it is kept as what it is: an outline on a level pulled up through its height.
@@ -7337,7 +7552,9 @@ declare({ type: "Generic", guid: "wb-0403", category: "IfcBuildingElementProxy",
           text("colour", "Colour", "", { group: "Graphics" }),
           // a body that is not an extrusion (an imported stair, railing, fixture): a shared mesh from the
           // document's mesh library and the frame that places it, z measured from the base
-          json("mesh", "Body mesh", null, { group: "IFC" }) ],
+          json("mesh", "Body mesh", null, { group: "IFC" }),
+          // the category it is filed under when its IFC class alone does not say (a tree among the terrain)
+          text("category", "Category", "", { group: "IFC" }) ],
   handles: (f) => { if (F.json(f, "mesh")) return []; const b = F.json(f, "boundary") || []; return b.map((p, i) => ({ key: "v" + i, at: p, constraint: "free2d", writes: `boundary.${i}` })); } });
 BUILDERS.Generic = {
   precondition: (f) => { const b = F.json(f, "boundary"); return Array.isArray(b) && b.length >= 3 ? null : "a generic model needs an outline of three points or more"; },
@@ -7349,9 +7566,13 @@ BUILDERS.Generic = {
       const fr = mref.frame || { o: [0, 0, 0], x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] }, P = shape.positions, W = new Array(P.length);
       let lo = Infinity, hi = -Infinity;
       for (let i = 0; i < P.length; i += 3) { const x = P[i], y = P[i + 1], z = P[i + 2]; for (let k = 0; k < 3; k++) W[i + k] = fr.o[k] + fr.x[k] * x + fr.y[k] * y + fr.z[k] * z; W[i + 2] += z0; lo = Math.min(lo, W[i + 2]); hi = Math.max(hi, W[i + 2]); }
-      const mesh = { positions: W, index: shape.index }, shade = mref.colour || ((doc.lib.materials[material] || {}).shading || {}).colour || "#b9b2a6";
+      const mesh = { positions: W, index: shape.index }, shade = colour || mref.colour || ((doc.lib.materials[material] || {}).shading || {}).colour || "#b9b2a6";
+      // painted by parts (a tree's trunk and foliage): one 3D mesh per colour run, each its own colour
+      const mesh3d = Array.isArray(shape.groups) && shape.groups.length > 1 && !F.text(f, "colour").startsWith("!")
+        ? shape.groups.map(g => ({ positions: W, index: shape.index.slice(g.start, g.start + g.count), colour: g.colour || shade }))
+        : [{ positions: W, index: shape.index, colour: shade }];
       const area = Math.abs(polyArea(b));
-      return { plan: { path: polyPath(b), foot: b.map(p => p.slice()), z0: lo, z1: hi, material, parts: [], colour, mesh, meshShape: mref.shape, meshFrame: { o: [fr.o[0], fr.o[1], fr.o[2] + z0], x: fr.x, y: fr.y, z: fr.z }, mesh3d: [{ positions: W, index: shape.index, colour: shade }] },
+      return { plan: { path: polyPath(b), foot: b.map(p => p.slice()), z0: lo, z1: hi, material, parts: [], colour, mesh, meshShape: mref.shape, meshFrame: { o: [fr.o[0], fr.o[1], fr.o[2] + z0], x: fr.x, y: fr.y, z: fr.z }, mesh3d },
         data: { value: area, kind: "Area", parts: [], props: { Area: { kind: "Area", v: area }, Height: L(hi - lo), "Base elevation": L(lo), "IFC class": T(F.text(f, "ifcClass")), Triangles: T(String(shape.index.length / 3)) } } };
     }
     const parts = [{ foot: b.map(p => p.slice()), z0, z1: z0 + h, sub: "Body", material, colour }];
@@ -7380,7 +7601,9 @@ BUILDERS.Furniture = { build: (f, doc) => {
 declare({ type: "Space", guid: "wb-0401", category: "IfcSpace", kind: "space", idPrefix: "SP",
   summary: "The volume between two horizontal surfaces, bounded by room-bounding elements. Found by planar face-finding; kept by its anchor.",
   args: [ ref("level", "Level", ["level"]), json("upperLimit", "Upper limit", { mode: "offset", offset: 3000 }), point2d("anchor", "Anchor", [0, 0]),
-          choice("boundaryAt", "Boundary at", ["finishFace", "coreFace", "coreCentre", "wallCentre"], 0) ],
+          choice("boundaryAt", "Boundary at", ["finishFace", "coreFace", "coreCentre", "wallCentre"], 0),
+          // the outline a space came with (an IFC room's own footprint): its boundary until walls enclose it
+          json("outline", "Stated outline", null, { group: "IFC" }) ],
   handles: (f) => [{ key: "anchor", at: F.point(f, "anchor"), constraint: "free2d", writes: "anchor" }] });
 BUILDERS.Space = { build: (f, doc) => ({ data: { props: {} } }) };      // phase 3 finds its loop
 
@@ -7451,7 +7674,8 @@ BUILDERS.View3D = { build: () => ({ data: {} }) };
 /** What a schedule can list, in the order the New Schedule dialog shows it. Append only: files store the key. */
 const SCHEDULE_CATEGORIES = ["IfcWall", "IfcDoor", "IfcWindow", "IfcSpace", "IfcColumn", "IfcSlab", "IfcBeam", "IfcOpeningElement",
   "IfcBuildingElementProxy", "Furniture", "IfcStair", "IfcRamp", "IfcRailing", "IfcPlate", "IfcFlowTerminal", "IfcTransportElement",
-  "IfcBuildingStorey", "IfcGrid", "Multi-Category", "Sheet", "View"];
+  "IfcBuildingStorey", "IfcGrid", "Multi-Category", "Sheet", "View",
+  "IfcRoof", "IfcDuctSegment", "IfcPipeSegment", "IfcAirTerminal", "MechanicalEquipment", "IfcChimney", "Topography", "Planting", "Earthworks", "StructuralConnections"];
 const SCHEDULE_KINDS = ["Schedule/Quantities", "Material Takeoff"];
 const categoryName = c => c === "Multi-Category" ? "Multi-Category" : c === "Sheet" ? "Sheets (Sheet List)" : c === "View" ? "Views (View List)" : (CATEGORIES[c] && CATEGORIES[c].name) || c;
 // Revit's Schedule Properties, one argument per tab: each opens its tab of the dialog from the Properties panel
@@ -7838,7 +8062,10 @@ function computeSpaces(doc, walls) {
     const claims = claimLoops(loops, fs.map(f => ({ id: doc.idOf(f), anchor: F.point(f, "anchor") })));
     const lv = levelId && doc.element(levelId), z0 = lv ? doc.data(lv)?.value ?? 0 : 0;
     for (const f of fs) {
-      const c = claims[doc.idOf(f)] || { loop: null, status: "not enclosed" };
+      let c = claims[doc.idOf(f)] || { loop: null, status: "not enclosed" };
+      // walls that enclose it win; with none, the outline the space came with (an IFC room's footprint)
+      const stated = F.json(f, "outline");
+      if (!c.loop && Array.isArray(stated) && stated.length >= 3) c = { loop: { pts: stated, net: Math.abs(polyArea(stated)) }, status: "stated" };
       const up = F.json(f, "upperLimit") || {};
       const upper = up.mode === "toLevel" && up.level ? ((doc.element(up.level.ref) && doc.data(doc.element(up.level.ref))?.value) ?? z0 + 3000) + (up.offset || 0) : z0 + (up.offset ?? 3000);
       const area = c.loop ? c.loop.net : 0;
@@ -7848,7 +8075,7 @@ function computeSpaces(doc, walls) {
       const props = { Area: { kind: "Area", v: area }, Perimeter: L(perim), Volume: { kind: "Volume", v: area * (upper - z0) }, Height: L(upper - z0),
         Name: T(f.get("Name")), "Boundary basis": T(mode) };
       f.child(DATA_TAG).set("Json", { value: area, kind: "Area", props });
-      const note = c.status === "ok" ? null : c.status === "redundant" ? "another space already claims this room — pick which one keeps it" : "not enclosed: kept with its name and number, waiting for its room";
+      const note = c.status === "ok" ? null : c.status === "stated" ? "bounded by the outline it came with (no walls enclose it here)" : c.status === "redundant" ? "another space already claims this room — pick which one keeps it" : "not enclosed: kept with its name and number, waiting for its room";
       if (note) f.child(NOTE_TAG).set("Text", note); else f.forget(NOTE_TAG);
     }
   }
@@ -7890,6 +8117,8 @@ function openDocument(json) {
   const doc = loadDocument(json);
   // Fill library sections a file left out, so an older file still draws.
   const defaults = newDocument();
+  // categories added since the file was written (roofs, ducts, topography...) join the ones it has
+  if (doc.lib.categories && Object.keys(doc.lib.categories).length) for (const [c, v] of Object.entries(defaults.lib.categories)) if (!doc.lib.categories[c]) doc.lib.categories[c] = v;
   for (const k of Object.keys(defaults.lib)) if (!Object.keys(doc.lib[k]).length && Object.keys(defaults.lib[k]).length) { doc.lib[k] = defaults.lib[k]; doc.loadReport.push(`no ${k} in the file: using the defaults`); doc._filledLibs = (doc._filledLibs || []).concat(k); }
   attach(doc);
   return doc;
@@ -8053,11 +8282,22 @@ function categoryOf(doc, f) {
     const id = F.refId(f, k); if (id) { const t = doc.resolveType(id); if (t && t.category) return t.category; }
   }
   // an imported generic model files under what the IFC says it is: a stair with the stairs, a basin with the fixtures
-  if (doc.typeOf(f) === "Generic") { const c = genericCategory(F.text(f, "ifcClass")); if (c && doc.lib.categories[c]) return c; }
+  if (doc.typeOf(f) === "Generic") {
+    const own = decl.args.some(a => a.key === "category") ? F.text(f, "category") : ""; if (own && doc.lib.categories[own]) return own;
+    const c = genericCategory(F.text(f, "ifcClass")); if (c && doc.lib.categories[c]) return c;
+  }
   return decl ? decl.category : "Unknown";
 }
-const GENERIC_CATEGORY = [[/^Ifc(Stair|StairFlight)$/i, "IfcStair"], [/^Ifc(Ramp|RampFlight)$/i, "IfcRamp"], [/^IfcRailing$/i, "IfcRailing"], [/^IfcPlate$/i, "IfcPlate"],
-  [/^Ifc(Furnishing|Furniture|SystemFurniture)/i, "Furniture"], [/^Ifc(FlowTerminal|SanitaryTerminal|LightFixture|AirTerminal|WasteTerminal|FireSuppressionTerminal|ElectricAppliance|Lamp|Outlet|SpaceHeater|Valve|FlowSegment|FlowFitting|DuctSegment|PipeSegment)/i, "IfcFlowTerminal"],
+const GENERIC_CATEGORY = [
+  // building services and the site first: their classes would otherwise fall into the broader patterns below
+  [/^IfcAirTerminal/i, "IfcAirTerminal"], [/^Ifc(Duct(Segment|Fitting|Silencer))/i, "IfcDuctSegment"], [/^IfcPipe(Segment|Fitting)/i, "IfcPipeSegment"],
+  [/^IfcCable(Carrier|Segment|Fitting)/i, "IfcCableCarrierSegment"], [/^Ifc(LightFixture|Lamp)/i, "LightingFixtures"],
+  [/^Ifc(Outlet|SwitchingDevice|ElectricAppliance|ElectricDistributionBoard|ProtectiveDevice|CommunicationsAppliance|AudioVisualAppliance|Sensor|Alarm)/i, "ElectricalFixtures"],
+  [/^Ifc(UnitaryEquipment|Fan|Boiler|Chiller|Pump|AirToAirHeatRecovery|CoolingTower|Compressor|Condenser|HeatExchanger|Humidifier|Tank|EnergyConversionDevice|FlowMovingDevice|FlowStorageDevice|FlowTreatmentDevice|Damper|Valve|FlowController|Burner|Coil|Evaporator|Filter|Engine|Motor)/i, "MechanicalEquipment"],
+  [/^IfcGeographicElement/i, "Topography"], [/^IfcEarthworks/i, "Earthworks"], [/^IfcChimney/i, "IfcChimney"], [/^IfcRoof$/i, "IfcRoof"],
+  [/^Ifc(DiscreteAccessory|MechanicalFastener|Fastener|ReinforcingBar|ReinforcingMesh|Tendon)/i, "StructuralConnections"],
+  [/^Ifc(Stair|StairFlight)$/i, "IfcStair"], [/^Ifc(Ramp|RampFlight)$/i, "IfcRamp"], [/^IfcRailing$/i, "IfcRailing"], [/^IfcPlate$/i, "IfcPlate"],
+  [/^Ifc(Furnishing|Furniture|SystemFurniture)/i, "Furniture"], [/^Ifc(FlowTerminal|SanitaryTerminal|WasteTerminal|FireSuppressionTerminal|SpaceHeater|FlowSegment|FlowFitting)/i, "IfcFlowTerminal"],
   [/^Ifc(TransportElement)$/i, "IfcTransportElement"], [/^Ifc(Wall|WallStandardCase|CurtainWall)$/i, "IfcWall"], [/^Ifc(Slab|Roof|Covering|Footing)$/i, "IfcSlab"], [/^Ifc(Beam|Member)$/i, "IfcBeam"], [/^IfcColumn$/i, "IfcColumn"]];
 function genericCategory(cls) { for (const [re, c] of GENERIC_CATEGORY) if (re.test(cls || "")) return c; return null; }
 function familyChainOf(doc, f) {
@@ -11289,9 +11529,65 @@ function planScene(doc, v, opts = {}) {
         B.hit(doc.idOf(f), pl.outer);
       }
     }
-    if (t === "Generic" && vis(f)) {
+    if ((t === "Duct" || t === "Pipe") && vis(f)) {
+      // MEP runs as MEP drawings show them: each run two lines and a dashed centreline, a riser its section crossed
+      // drawn whatever the cut: services above it are what a services plan is for
+      const p = doc.plan(f); if (!p) continue;
+      const id = doc.idOf(f), cat = categoryOf(doc, f), g = resolveGraphics(doc, ctx, f, "projection");
+      for (const r of p.runs || []) {
+        if (r.riser) {
+          const c = r.c, h = p.W / 2;
+          if (p.round) { const ring = []; for (let i = 0; i <= 32; i++) { const a = i / 32 * 2 * Math.PI; ring.push([c[0] + Math.cos(a) * h, c[1] + Math.sin(a) * h]); } B.stroke(ring.slice(0, -1).map((q, i) => lineSeg(q, ring[i + 1])), g, cat, id); }
+          else B.stroke(polyPath([[c[0] - h, c[1] - p.H / 2], [c[0] + h, c[1] - p.H / 2], [c[0] + h, c[1] + p.H / 2], [c[0] - h, c[1] + p.H / 2]]), g, cat, id);
+          const k = h * 0.7071; B.stroke([lineSeg([c[0] - k, c[1] - k], [c[0] + k, c[1] + k]), lineSeg([c[0] - k, c[1] + k], [c[0] + k, c[1] - k])], g, cat, id);
+          B.hit(id, [[c[0] - h, c[1] - h], [c[0] + h, c[1] - h], [c[0] + h, c[1] + h], [c[0] - h, c[1] + h]]);
+        } else {
+          B.stroke([lineSeg(r.foot[0], r.foot[1]), lineSeg(r.foot[2], r.foot[3]), lineSeg(r.foot[1], r.foot[2]), lineSeg(r.foot[3], r.foot[0])], g, cat, id);
+          B.stroke([lineSeg(r.a, r.b)], Object.assign({}, g, { dash: LINE_TYPES.centre, weight: penWeight(doc, "hairline", S) }), cat, id);
+          B.hit(id, r.foot);
+        }
+      }
+      continue;
+    }
+    if ((t === "Generic" || t === "Roof") && vis(f)) {
+      const p = doc.plan(f); if (!p) continue;
+      const catG = categoryOf(doc, f);
+      // the ground is not cut in plan: it is drawn as its contours (every 0.5 m, every 2.5 m heavier) within its edge
+      if (catG === "Topography" && p.mesh) {
+        const id = doc.idOf(f), gp = resolveGraphics(doc, ctx, f, "projection"), minor = [], major = [];
+        // strata lie under the ground surface: only the uppermost of overlapping surfaces draws contours
+        const bb = q => { const xs = q.foot.map(a => a[0]), ys = q.foot.map(a => a[1]); return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]; }, mb = bb(p);
+        const under = doc.elements().some(g => { if (g === f || doc.typeOf(g) !== "Generic" || categoryOf(doc, g) !== "Topography") return false; const q = doc.plan(g); if (!q || !q.mesh || q.z1 <= p.z1) return false;
+          const o = bb(q), ix = Math.max(0, Math.min(o[2], mb[2]) - Math.max(o[0], mb[0])), iy = Math.max(0, Math.min(o[3], mb[3]) - Math.max(o[1], mb[1])); return ix * iy > 0.5 * (mb[2] - mb[0]) * (mb[3] - mb[1]); });
+        if (under) { B.hit(id, p.foot); continue; }
+        const P = p.mesh.positions, I = p.mesh.index;
+        for (let k = 0; k < I.length; k += 3) {
+          const A = I[k] * 3, Bi = I[k + 1] * 3, C = I[k + 2] * 3;
+          const q = [[P[A], P[A + 1], P[A + 2]], [P[Bi], P[Bi + 1], P[Bi + 2]], [P[C], P[C + 1], P[C + 2]]];
+          const nz = (q[1][0] - q[0][0]) * (q[2][1] - q[0][1]) - (q[1][1] - q[0][1]) * (q[2][0] - q[0][0]);
+          if (nz <= 1e-6) continue;                                   // the ground's upper surface only
+          const zl = Math.min(q[0][2], q[1][2], q[2][2]), zh = Math.max(q[0][2], q[1][2], q[2][2]);
+          for (let z = Math.ceil(zl / 500) * 500; z <= zh; z += 500) {
+            const pts = [];
+            for (let i = 0; i < 3; i++) { const a = q[i], b = q[(i + 1) % 3]; if ((a[2] - z) * (b[2] - z) < 0) { const t = (z - a[2]) / (b[2] - a[2]); pts.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]); } }
+            if (pts.length === 2) (Math.round(z) % 2500 === 0 ? major : minor).push(lineSeg(pts[0], pts[1]));
+          }
+        }
+        if (minor.length) B.stroke(minor, Object.assign({}, gp, { weight: penWeight(doc, "hairline", S), colour: "#8a7a62" }), catG, id);
+        if (major.length) B.stroke(major, Object.assign({}, gp, { weight: penWeight(doc, "thin", S), colour: "#6b5a40" }), catG, id);
+        B.stroke(p.path, Object.assign({}, gp, { dash: LINE_TYPES.dashed2 }), catG, id); B.hit(id, p.foot);
+        continue;
+      }
+      // a tree or shrub: its canopy seen from above, whatever the cut
+      if (catG === "Planting") {
+        const id = doc.idOf(f), gp = resolveGraphics(doc, ctx, f, "projection"), c = p.foot.reduce((a, q) => [a[0] + q[0] / p.foot.length, a[1] + q[1] / p.foot.length], [0, 0]);
+        const rr = Math.max(...p.foot.map(q => Math.hypot(q[0] - c[0], q[1] - c[1]))) * 0.12;
+        B.fill(p.path, "#e1eed7", catG, id);
+        B.stroke([...p.path, lineSeg([c[0] - rr, c[1]], [c[0] + rr, c[1]]), lineSeg([c[0], c[1] - rr], [c[0], c[1] + rr])], gp, catG, id); B.hit(id, p.foot);
+        continue;
+      }
       // a generic model reads like a column: poché where the cut crosses it, its outline below
-      const p = doc.plan(f); if (!p) continue; const bnd = band(p.z0, p.z1);
+      const bnd = band(p.z0, p.z1);
       if (bnd === "above" || bnd === "below") continue;
       if (p.mesh) {
         // a body of its own shape (an imported stair, railing, basin): cut where the plane crosses it,
@@ -11848,7 +12144,7 @@ function gatherElevationItems(doc, ctx, G, skip = null) {
     if (!categoryVisible(ctx, categoryOf(doc, f))) continue;
     const t = doc.typeOf(f);
     if (t === "Wall") { const w = doc.plan(f); if (!w) continue; const it = elevWall(doc, f, w, V, sOf, depthOf, ctx); if (it) items.push(it); }
-    if (t === "Generic" && doc.plan(f) && doc.plan(f).mesh) {
+    if ((t === "Generic" || t === "Duct" || t === "Pipe" || t === "Roof") && doc.plan(f) && doc.plan(f).mesh) {
       // a body of its own shape: its feature edges, projected; hidden by what stands in front of it
       const p = doc.plan(f), P = p.mesh.positions, curves = [];
       let d0 = Infinity, d1 = -Infinity, s0 = Infinity, s1 = -Infinity, z0 = Infinity, z1 = -Infinity;
@@ -12021,7 +12317,7 @@ function sectionCut(doc, v) {
         }
       }
     }
-    if (t === "Generic" && p.mesh) {
+    if ((t === "Generic" || t === "Duct" || t === "Pipe" || t === "Roof") && p.mesh) {
       // a body of its own shape, cut by the section plane: turned into (along, up, depth) and sliced at depth 0
       const P = p.mesh.positions, Q = new Array(P.length); let lo = Infinity, hi = -Infinity;
       for (let i = 0; i < P.length; i += 3) { const q = [P[i], P[i + 1]], dd = G.depthOf(q); Q[i] = G.sOf(q); Q[i + 1] = P[i + 2] - G.Z0; Q[i + 2] = dd; lo = Math.min(lo, dd); hi = Math.max(hi, dd); }
@@ -12117,11 +12413,21 @@ function elevWall(doc, f, w, V, sOf, depthOf, ctx) {
   const foot = samplePath(regs[0].path, 24);
   const ss = foot.map(sOf), dd = foot.map(depthOf);
   const s0 = Math.min(...ss), s1 = Math.max(...ss);
-  const topAt = p => w.z1 + (w.topSlope ? Math.tan(w.topSlope) * uOf(w, p) : 0);
+  const topAt = p => wallTop(w, p);
   const iMin = ss.indexOf(s0), iMax = ss.indexOf(s1);
   const zt0 = topAt(foot[iMin]), zt1 = topAt(foot[iMax]);
   const baseZ = V(foot[0], w.z0)[1], t0 = V(foot[0], zt0)[1], t1 = V(foot[0], zt1)[1];
-  const curves = [[[s0, baseZ], [s1, baseZ]], [[s1, baseZ], [s1, t1]], [[s1, t1], [s0, t0]], [[s0, t0], [s0, baseZ]]];
+  const curves = [[[s0, baseZ], [s1, baseZ]], [[s1, baseZ], [s1, t1]], [[s0, t0], [s0, baseZ]]];
+  let profileLine = null;
+  // the top: straight, or through every corner of a profiled top (a gable, steps) along the face nearer the eye
+  if (w.profile && w.curve.type === "line") {
+    const n0 = w.stack.s.length - 1, sNear = depthOf(pointAt(w, w.stack.s[0], w.L / 2)) <= depthOf(pointAt(w, w.stack.s[n0], w.L / 2)) ? w.stack.s[0] : w.stack.s[n0];
+    const top = [];
+    for (const [u] of w.profile) for (const side of [-1, 1]) { const p = pointAt(w, sNear, u); top.push([sOf(p), V(p, wallTop(w, p, side))[1]]); }
+    const line = top.filter((q, i) => i === 0 || Math.abs(q[0] - top[i - 1][0]) > 1e-6 || Math.abs(q[1] - top[i - 1][1]) > 1e-6);
+    for (let i = 0; i < line.length - 1; i++) curves.push([line[i], line[i + 1]]);
+    profileLine = line[0][0] <= line[line.length - 1][0] ? line : line.slice().reverse();
+  } else curves.push([[s1, t1], [s0, t0]]);
   // Vertical edges at footprint corners that face the viewer.
   const n = w.stack.s.length - 1;
   const corners = regs[0].edges.map(e => segStart(e.seg));
@@ -12136,7 +12442,7 @@ function elevWall(doc, f, w, V, sOf, depthOf, ctx) {
   for (const op of w.openings || []) {
     const a1 = sOf(pointAt(w, w.stack.s[0], op.u0)), b1 = sOf(pointAt(w, w.stack.s[0], op.u1));
     const a2 = sOf(pointAt(w, w.stack.s[n], op.u0)), b2 = sOf(pointAt(w, w.stack.s[n], op.u1));
-    const za = V(foot[0], w.z0 + op.sill)[1], zb2 = V(foot[0], w.z0 + op.sill + op.h)[1];
+    const za = V(foot[0], w.z0 + op.sill)[1], zb2 = V(foot[0], Math.min(w.z0 + op.sill + op.h, w.zHi ?? w.z1))[1];
     const na = sOf(pointAt(w, nearS, op.u0)), nb = sOf(pointAt(w, nearS, op.u1));
     const lo = Math.min(na, nb), hi = Math.max(na, nb);
     curves.push([[lo, za], [hi, za]], [[hi, za], [hi, zb2]], [[hi, zb2], [lo, zb2]], [[lo, zb2], [lo, za]]);
@@ -12153,8 +12459,12 @@ function elevWall(doc, f, w, V, sOf, depthOf, ctx) {
   }
   // Silhouette minus see-through holes, as convex slabs (for the occluder list).
   const sil = [];
-  const cuts = [...new Set([s0, s1, ...holes.flatMap(h => [h.s0 ?? h[0], h[1]])])].filter(x => x >= s0 && x <= s1).sort((a, b) => a - b);
-  const topLine = s => t0 + (t1 - t0) * ((s - s0) / ((s1 - s0) || 1));
+  const cuts = [...new Set([s0, s1, ...holes.flatMap(h => [h.s0 ?? h[0], h[1]]), ...(profileLine ? profileLine.map(q => q[0]) : [])])].filter(x => x >= s0 && x <= s1).sort((a, b) => a - b);
+  const topLine = s => {
+    if (!profileLine) return t0 + (t1 - t0) * ((s - s0) / ((s1 - s0) || 1));
+    for (let k = 1; k < profileLine.length; k++) { const a = profileLine[k - 1], b = profileLine[k]; if (s <= b[0] + 1e-9) return b[0] - a[0] < 1e-9 ? Math.min(a[1], b[1]) : a[1] + (b[1] - a[1]) * (s - a[0]) / (b[0] - a[0]); }
+    return profileLine[profileLine.length - 1][1];
+  };
   for (let i = 0; i < cuts.length - 1; i++) {
     const sa = cuts[i], sb = cuts[i + 1]; if (sb - sa < TOL) continue;
     const m = (sa + sb) / 2;
@@ -12438,7 +12748,7 @@ function buildHLRModel(doc, opts = {}) {
     if (opts.visible && !opts.visible(f)) continue;           // the view's Visibility/Graphics
     const t = doc.typeOf(f);
     // a body of its own shape draws its feature edges (it does not hide others: it is not a convex solid)
-    if (t === "Generic" && doc.plan(f) && doc.plan(f).mesh) { const m = doc.plan(f).mesh, P = m.positions; for (const [a, b] of featureEdges(m)) edges.push({ a: [P[a * 3], P[a * 3 + 1], P[a * 3 + 2]], b: [P[b * 3], P[b * 3 + 1], P[b * 3 + 2]], kind: "sharp" }); continue; }
+    if ((t === "Generic" || t === "Duct" || t === "Pipe" || t === "Roof") && doc.plan(f) && doc.plan(f).mesh) { const m = doc.plan(f).mesh, P = m.positions; for (const [a, b] of featureEdges(m)) edges.push({ a: [P[a * 3], P[a * 3 + 1], P[a * 3 + 2]], b: [P[b * 3], P[b * 3 + 1], P[b * 3 + 2]], kind: "sharp" }); continue; }
     if (t === "Door" || t === "Window" || t === "Floor" || t === "Beam" || t === "Generic") { for (const pt of elementParts(doc, f)) if (pt.foot && pt.foot.length >= 3) {
       prism(pt.foot, pt.z0, pt.z1, solids, edges, "auto", pt.topFoot);
       // a hole's edges are drawn; its opening does not yet let the line-work see through (the occluder is the outline)
@@ -12520,7 +12830,7 @@ function wallEdges(w, out, chord) {
   const inv = leanInvolved(w), W0 = inv ? wallAt(w, w.z0) : w, W1 = inv ? wallAt(w, w.z1) : w;
   const lowRegs = wallRegions(W0, "Coarse", w.z0 + 1, w.openings || []);
   const highRegs = wallRegions(W1, "Coarse", w.z1 - 1, (w.openings || []).filter(o => o.sill + o.h >= w.height - 1));
-  const topAt = p => w.z1 + (w.topSlope ? Math.tan(w.topSlope) * uOf(w, p) : 0);
+  const topAt = p => wallTop(w, p);
   const leanAt = (p, z) => !inv && w.lean ? add(p, mul(perp(w.d || [1, 0]), Math.tan(w.lean) * (z - w.z0))) : p;
   const P3 = (p, z) => { const q = leanAt(p, z); return [q[0], q[1], z]; };
   // A face point at stack index i, arc length u and height z.
@@ -12557,7 +12867,25 @@ function wallEdges(w, out, chord) {
   }
   for (const r of highRegs) for (const e of r.edges) {
     if (e.role === "weld" || e.role === "hidden") continue;
-    const pts = chordPts(e.seg);
+    let pts = chordPts(e.seg);
+    if (w.profile && w.curve.type === "line") {
+      // along a face the top turns where the profile does; a step is a short upright edge
+      const more = [];
+      for (let i = 0; i < pts.length - 1; i++) {
+        const a = pts[i], b = pts[i + 1], ua = uOf(w, a), ub = uOf(w, b); more.push(a);
+        const bk = topBreaks(w, Math.min(ua, ub), Math.max(ua, ub)).sort((x, y) => ub > ua ? x - y : y - x);
+        for (const u of bk) more.push(add(a, mul(sub(b, a), (u - ua) / (ub - ua))));
+      }
+      more.push(pts[pts.length - 1]); pts = more;
+      for (let i = 0; i < pts.length - 1; i++) {
+        const a = pts[i], b = pts[i + 1], fwd = uOf(w, b) >= uOf(w, a);
+        const za = wallTop(w, a, fwd ? 1 : -1), zb = wallTop(w, b, fwd ? -1 : 1);
+        out.push({ a: P3(a, za), b: P3(b, zb), kind: "sharp" });
+        const zb2 = wallTop(w, b, fwd ? 1 : -1);
+        if (i < pts.length - 2 && Math.abs(zb2 - zb) > 0.5) out.push({ a: P3(b, zb), b: P3(b, zb2), kind: "sharp" });
+      }
+      continue;
+    }
     for (let i = 0; i < pts.length - 1; i++) out.push({ a: P3(pts[i], topAt(pts[i])), b: P3(pts[i + 1], topAt(pts[i + 1])), kind: "sharp" });
   }
   const seen = [];
@@ -13611,6 +13939,33 @@ const IFC_DIGIT = /[0-9]/;
 //! Reads one IFC file. The whole text, one pass, no regular expressions over
 //! the body: a building model is tens of megabytes and a backtracking match
 //! over it is not a thing anybody should wait for.
+/** The IFC text in what was opened. A file saved from GitHub's "view file" page is that page, not the
+ *  IFC: when the page carries the file's lines (GitHub embeds files up to a size) they are taken from it;
+ *  when it does not, the error says where the raw file is. Returns { text, note }. */
+function ifcTextOf(text) {
+  const src = String(text || "");
+  if (/^\s*ISO-10303-21/.test(src)) return { text: src, note: null };
+  if (!/^\s*(<!DOCTYPE html|<html)/i.test(src)) return { text: src, note: null };
+  const raw = (/"rawBlobUrl":"([^"]+)"/.exec(src) || [])[1] || "";
+  const at = src.indexOf('"rawLines":[');
+  if (at >= 0) {
+    // the JSON array that follows, read to its closing bracket (strings may hold brackets and escapes)
+    let i = at + '"rawLines":'.length, depth = 0, inStr = false, esc = false, end = -1;
+    for (; i < src.length; i++) {
+      const c = src[i];
+      if (inStr) { if (esc) esc = false; else if (c === "\\") esc = true; else if (c === '"') inStr = false; continue; }
+      if (c === '"') inStr = true; else if (c === "[") depth++; else if (c === "]") { depth--; if (!depth) { end = i; break; } }
+    }
+    if (end > 0) {
+      try {
+        const lines = JSON.parse(src.slice(at + '"rawLines":'.length, end + 1));
+        const body = lines.join("\n");
+        if (/^\s*ISO-10303-21/.test(body)) return { text: body, note: "this was GitHub's web page for the file: the IFC it shows was read out of it" };
+      } catch (e) { /* fall through to the explanation */ }
+    }
+  }
+  throw new Error(`this is a web page (GitHub's view of the file), not the IFC file itself${at < 0 ? " - the file is too large for GitHub to show inline" : ""}. Download the raw file${raw ? " from " + raw.replace(/\\u0026/g, "&") : " (the Download raw file button)"} and import that.`);
+}
 function readIfc(text) {
   const source = String(text || "");
   let i = 0;
@@ -15425,6 +15780,328 @@ const IFC_MESHY = new Set(["IFCFACETEDBREP", "IFCADVANCEDBREP",
   "IFCFACEBASEDSURFACEMODEL", "IFCSHELLBASEDSURFACEMODEL", "IFCPOLYGONALFACESET",
   "IFCTRIANGULATEDFACESET"]);
 
+// ===== ifcrecover.js =====
+
+
+//! Reading a parametric element back out of a mesh. Many IFC files (SketchUp's, most coordination
+//! exports, every IFC4 "reference view") carry walls, slabs and members as triangles or breps, not as
+//! extrusions. A wall that IS a box, a slab that IS a flat plate, a beam that IS a bar is recognised
+//! here and comes in as a real wall, floor or beam - its holes as openings, its gable as a top profile -
+//! so it can be edited, joined, scheduled and drawn like one drawn by hand. Each recogniser proves its
+//! reading by volume: the element it would make must hold the same volume as the mesh (within 2%), or
+//! it answers null and the shape is kept exactly as the file has it.
+
+/** The convex hull of plan points (monotone chain), anticlockwise. */
+function hull2(pts) {
+  const P = pts.map(p => [p[0], p[1]]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  if (P.length < 3) return P;
+  const cross = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lo = [], hi = [];
+  for (const p of P) { while (lo.length >= 2 && cross(lo[lo.length - 2], lo[lo.length - 1], p) <= 1e-9) lo.pop(); lo.push(p); }
+  for (let i = P.length - 1; i >= 0; i--) { const p = P[i]; while (hi.length >= 2 && cross(hi[hi.length - 2], hi[hi.length - 1], p) <= 1e-9) hi.pop(); hi.push(p); }
+  return lo.slice(0, -1).concat(hi.slice(0, -1));
+}
+/** The smallest box around plan points: its centre, long direction, length and width. */
+function orientedBox(pts) {
+  let best = null;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i + 1) % pts.length], L = Math.hypot(b[0] - a[0], b[1] - a[1]); if (L < 1e-6) continue;
+    const d = [(b[0] - a[0]) / L, (b[1] - a[1]) / L], n = [-d[1], d[0]];
+    const us = pts.map(p => p[0] * d[0] + p[1] * d[1]), vs = pts.map(p => p[0] * n[0] + p[1] * n[1]);
+    const u0 = Math.min(...us), u1 = Math.max(...us), v0 = Math.min(...vs), v1 = Math.max(...vs);
+    const area = (u1 - u0) * (v1 - v0);
+    if (!best || area < best.area - 1e-6) best = { area, d, n, u0, u1, v0, v1 };
+  }
+  if (!best) return null;
+  const { d, n, u0, u1, v0, v1 } = best, len = u1 - u0, wid = v1 - v0;
+  const long = len >= wid ? d : n, L = Math.max(len, wid), W = Math.min(len, wid);
+  const cu = (u0 + u1) / 2, cv = (v0 + v1) / 2, centre = [d[0] * cu + n[0] * cv, d[1] * cu + n[1] * cv];
+  return { centre, dir: long, length: L, width: W };
+}
+
+// ---------------------------------------------------------------- mesh basics
+/** Triangles of a {positions, index} mesh, each with its unit normal and area. */
+function meshTriangles(m) {
+  const P = m.positions, I = m.index, out = [];
+  for (let k = 0; k < I.length; k += 3) {
+    const a = [P[I[k] * 3], P[I[k] * 3 + 1], P[I[k] * 3 + 2]], b = [P[I[k + 1] * 3], P[I[k + 1] * 3 + 1], P[I[k + 1] * 3 + 2]], c = [P[I[k + 2] * 3], P[I[k + 2] * 3 + 1], P[I[k + 2] * 3 + 2]];
+    const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+    const n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]], l = Math.hypot(...n);
+    if (l < 1e-9) continue;
+    out.push({ p: [a, b, c], n: n.map(x => x / l), area: l / 2 });
+  }
+  return out;
+}
+/** Enclosed volume (divergence theorem); positive for an outward-wound closed mesh. */
+function meshVolume(tris) {
+  let v = 0;
+  for (const { p: [a, b, c] } of tris) v += (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0]) + a[2] * (b[0] * c[1] - b[1] * c[0])) / 6;
+  return Math.abs(v);
+}
+const area2 = pts => { let s = 0; for (let i = 0; i < pts.length; i++) { const a = pts[i], b = pts[(i + 1) % pts.length]; s += a[0] * b[1] - b[0] * a[1]; } return s / 2; };
+/** Drop points that do not turn the loop (collinear within tol mm) and repeats. */
+function simplify(loop, tol = 0.5) {
+  let pts = loop.slice(), changed = true;
+  while (changed && pts.length > 3) {
+    changed = false;
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[(i - 1 + pts.length) % pts.length], b = pts[i], c = pts[(i + 1) % pts.length];
+      const L = Math.hypot(c[0] - a[0], c[1] - a[1]), off = L < 1e-9 ? Math.hypot(b[0] - a[0], b[1] - a[1]) : Math.abs((c[0] - a[0]) * (b[1] - a[1]) - (c[1] - a[1]) * (b[0] - a[0])) / L;
+      if (off < tol) { pts.splice(i, 1); changed = true; break; }
+    }
+  }
+  return pts;
+}
+/** The boundary loops of a set of coplanar triangles in a 2D projection: edges used by one triangle
+ *  only, chained. Anticlockwise outer loop first (the largest), holes after, each simplified. */
+function faceLoops(tris, proj) {
+  const key = q => Math.round(q[0] * 2) + "," + Math.round(q[1] * 2);
+  const pt = new Map(), count = new Map(), dirEdges = [];
+  for (const t of tris) {
+    let q = t.p.map(proj);
+    if (area2(q) < 0) q = [q[0], q[2], q[1]];           // wind every triangle anticlockwise in the projection
+    const ks = q.map(key); q.forEach((x, i) => pt.set(ks[i], x));
+    for (let i = 0; i < 3; i++) {
+      const a = ks[i], b = ks[(i + 1) % 3]; if (a === b) continue;
+      const u = a < b ? a + "|" + b : b + "|" + a; count.set(u, (count.get(u) || 0) + 1); dirEdges.push([a, b, u]);
+    }
+  }
+  // T-junctions: a vertex lying on another triangle's edge splits that edge, so both sides count it alike
+  const keys = [...pt.keys()], split = [];
+  for (const [a, b] of dirEdges) {
+    const A = pt.get(a), B = pt.get(b), L = Math.hypot(B[0] - A[0], B[1] - A[1]); if (L < 1e-9) continue;
+    const on = [];
+    for (const k of keys) { if (k === a || k === b) continue; const Q = pt.get(k), t = ((Q[0] - A[0]) * (B[0] - A[0]) + (Q[1] - A[1]) * (B[1] - A[1])) / (L * L);
+      if (t <= 1e-6 || t >= 1 - 1e-6) continue; const off = Math.abs((B[0] - A[0]) * (Q[1] - A[1]) - (B[1] - A[1]) * (Q[0] - A[0])) / L; if (off < 0.6) on.push([t, k]); }
+    const chain = [a, ...on.sort((x, y) => x[0] - y[0]).map(x => x[1]), b];
+    for (let i = 0; i < chain.length - 1; i++) split.push([chain[i], chain[i + 1]]);
+  }
+  count.clear();
+  const uk = (a, b) => a < b ? a + "|" + b : b + "|" + a;
+  for (const [a, b] of split) count.set(uk(a, b), (count.get(uk(a, b)) || 0) + 1);
+  // an edge shared by two triangles in opposite directions is interior; one used once is boundary
+  const next = new Map();
+  for (const [a, b] of split) if (count.get(uk(a, b)) === 1) next.set(a, b);
+  const loops = [], seen = new Set();
+  for (const start of next.keys()) {
+    if (seen.has(start)) continue;
+    const loop = []; let k = start, guard = 0;
+    while (k && !seen.has(k) && guard++ < 100000) { seen.add(k); loop.push(pt.get(k)); k = next.get(k); }
+    if (loop.length >= 3) loops.push(simplify(loop));
+  }
+  const withArea = loops.map(l => ({ pts: l, area: area2(l) })).filter(l => Math.abs(l.area) > 1).sort((x, y) => Math.abs(y.area) - Math.abs(x.area));
+  return withArea.map((l, i) => { const ccw = l.area > 0; const pts = (i === 0) === ccw ? l.pts : l.pts.slice().reverse(); return { pts, area: Math.abs(l.area) }; });
+}
+
+// ---------------------------------------------------------------- prisms: slabs, footings, spaces
+/** A flat plate: every vertex on its top or bottom plane. Its plan outline (with holes), top, bottom. */
+function recognisePrism(m, { tol = 1.5 } = {}) {
+  const tris = meshTriangles(m); if (tris.length < 8) return null;
+  const P = m.positions, zs = []; for (let i = 2; i < P.length; i += 3) zs.push(P[i]);
+  const zTop = Math.max(...zs), zBot = Math.min(...zs), thick = zTop - zBot;
+  if (thick < 5 || zs.some(z => Math.abs(z - zTop) > tol && Math.abs(z - zBot) > tol)) return null;
+  const top = tris.filter(t => t.n[2] > 0.999 && t.p.every(q => Math.abs(q[2] - zTop) <= tol));
+  const loops = faceLoops(top, q => [q[0], q[1]]); if (!loops.length) return null;
+  const [outer, ...holes] = loops, net = outer.area - holes.reduce((s, h) => s + h.area, 0);
+  const vol = meshVolume(tris);
+  if (Math.abs(vol - net * thick) > 0.02 * vol + 1e3) return null;
+  return { outer: outer.pts, holes: holes.map(h => h.pts), zTop, zBot, thick, area: net };
+}
+
+// ---------------------------------------------------------------- tilted plates: roof planes
+/** A plate on the slant (a roof plane): every vertex on one of two parallel sloping planes. Its footprint
+ *  is where its mid-plane runs (read in the plate's own frame and laid back on plan), with its holes; its
+ *  pitch, the direction it rises, its thickness square to the slope, its top plane. */
+function recogniseTiltedPlate(m, { tol = 1.5 } = {}) {
+  const tris = meshTriangles(m); if (tris.length < 8) return null;
+  const big = tris.reduce((a, b) => (b.area > a.area ? b : a));
+  let n = big.n.slice(); if (n[2] < 0) n = n.map(x => -x);
+  if (n[2] > 0.999 || n[2] < 0.05) return null;                                 // flat (a slab) or upright (a wall)
+  const P = m.positions, pts = []; for (let i = 0; i < P.length; i += 3) pts.push([P[i], P[i + 1], P[i + 2]]);
+  const dOf = q => q[0] * n[0] + q[1] * n[1] + q[2] * n[2], ds = pts.map(dOf), dTop = Math.max(...ds), dBot = Math.min(...ds), t = dTop - dBot;
+  if (t < 5 || ds.some(d => Math.abs(d - dTop) > tol && Math.abs(d - dBot) > tol)) return null;
+  // the plate's own frame: e1 along the slope's level lines, e2 up the slope, n out of it
+  const hz = Math.hypot(n[0], n[1]), e1 = [-n[1] / hz, n[0] / hz, 0], e2 = [n[1] * e1[2] - n[2] * e1[1], n[2] * e1[0] - n[0] * e1[2], n[0] * e1[1] - n[1] * e1[0]];
+  const local = [], mid = (dTop + dBot) / 2;
+  for (const q of pts) local.push(q[0] * e1[0] + q[1] * e1[1] + q[2] * e1[2], q[0] * e2[0] + q[1] * e2[1] + q[2] * e2[2], dOf(q));
+  const loops = sliceMesh({ positions: local, index: m.index }, mid).filter(l => l.closed && l.pts.length >= 3);
+  if (!loops.length) return null;
+  const toPlan = ([x, y]) => [x * e1[0] + y * e2[0] + mid * n[0], x * e1[1] + y * e2[1] + mid * n[1]];
+  const area2 = ps => { let a = 0; for (let i = 0; i < ps.length; i++) { const p = ps[i], q = ps[(i + 1) % ps.length]; a += p[0] * q[1] - q[0] * p[1]; } return a / 2; };
+  const plan = loops.map(l => simplify(l.pts.map(toPlan))).map(ps => ({ ps, a: Math.abs(area2(ps)) })).sort((x, y) => y.a - x.a);
+  const outer = plan[0].ps, holes = plan.slice(1).map(x => x.ps), net = plan[0].a - plan.slice(1).reduce((s, x) => s + x.a, 0);
+  const tv = t / n[2], vol = meshVolume(tris);
+  if (Math.abs(vol - net * tv) > 0.03 * vol + 1e3) return null;
+  const up = [-n[0] / hz, -n[1] / hz], pivot = outer[0];
+  const topAt = p => (dTop - n[0] * p[0] - n[1] * p[1]) / n[2];
+  // how its edges are cut: plumb (upright side faces) or square to the slope (side faces along its normal)
+  // (only the eave and ridge faces tell: the rake edges run up the slope and are upright either way)
+  const side = tris.filter(tr => Math.abs(tr.n[0] * n[0] + tr.n[1] * n[1] + tr.n[2] * n[2]) < 0.2 && tr.area > 1 && Math.abs(tr.n[0] * n[0] + tr.n[1] * n[1]) / (hz * (Math.hypot(tr.n[0], tr.n[1]) || 1)) > 0.5);
+  const plumb = side.filter(tr => Math.abs(tr.n[2]) < 0.02).reduce((a2, tr) => a2 + tr.area, 0), square = side.reduce((a2, tr) => a2 + tr.area, 0) - plumb;
+  return { outer, holes, pitch: Math.acos(n[2]) * 180 / Math.PI, direction: Math.atan2(up[1], up[0]) * 180 / Math.PI, pivot, top: topAt(pivot), thickness: t, zLow: Math.min(...pts.map(q => q[2])), square: square > plumb };
+}
+
+// ---------------------------------------------------------------- walls
+/** Where the upright line u = x crosses a set of polygon loops in (u, z): [lowest, highest], or null. */
+function span(loops, x) {
+  let lo = Infinity, hi = -Infinity;
+  for (const L of loops) for (let i = 0; i < L.length; i++) {
+    const a = L[i], b = L[(i + 1) % L.length];
+    if ((a[0] - x) * (b[0] - x) > 0 || Math.abs(b[0] - a[0]) < 1e-9) continue;
+    const z = a[1] + (b[1] - a[1]) * (x - a[0]) / (b[0] - a[0]); lo = Math.min(lo, z); hi = Math.max(hi, z);
+  }
+  return hi > -Infinity ? [lo, hi] : null;
+}
+/** A wall: every vertex on one of two parallel upright planes, so it is one constant thickness. Its
+ *  face, read in the wall's own elevation (u along it, z up), gives the rest: the top as a profile
+ *  along the wall (a gable, a rake, steps - small pockets in it for beams are filled), a slope across
+ *  the thickness where the two faces' tops differ by the same amount everywhere (a top cut under a
+ *  roof), rectangular holes (windows), notches up from the base (doors) and gaps between pieces
+ *  (openings the full height). */
+function recogniseWall(m, { tol = 1.5, why = null } = {}) {
+  const no = tag => { if (why) why.push(tag); return null; };
+  const tris = meshTriangles(m); if (tris.length < 12) return no(2);
+  const P = m.positions, pts = []; for (let i = 0; i < P.length; i += 3) pts.push([P[i], P[i + 1], P[i + 2]]);
+  const box = orientedBox(hull2(pts)); if (!box || box.width < 5 || box.width > 0.5 * box.length) return no(3);
+  const d = box.dir, n = [-d[1], d[0]], t = box.width, L = box.length;
+  const a = [box.centre[0] - d[0] * L / 2, box.centre[1] - d[1] * L / 2];
+  const sOf = q => (q[0] - box.centre[0]) * n[0] + (q[1] - box.centre[1]) * n[1], uOf = q => (q[0] - a[0]) * d[0] + (q[1] - a[1]) * d[1];
+  // vertices between the faces are allowed only in pockets and bevels; the faces themselves must be two planes
+  const face = sign => tris.filter(tr => (tr.n[0] * n[0] + tr.n[1] * n[1]) * sign > 0.999 && tr.p.every(q => Math.abs(sOf(q) - sign * t / 2) <= tol));
+  if (pts.some(q => Math.abs(sOf(q)) > t / 2 + tol)) return no(4);
+  const proj = q => [uOf(q), q[2]];
+  const F = [face(1), face(-1)].map(f => faceLoops(f, proj)); if (!F[0].length || !F[1].length) return no(5);
+  const z0 = Math.min(...pts.map(q => q[2]));
+  // breakpoints along the wall: every vertex of either face; read each face's top and bottom either side of each
+  const us = [...new Set(F.flat().flatMap(l => l.pts.map(q => Math.round(q[0] * 10) / 10)).concat([0, L]))].filter(u => u >= -tol && u <= L + tol).sort((x, y) => x - y);
+  const outers = F.map(ls => { const ol = []; for (const l of ls) { const c = l.pts.reduce((acc, q) => [acc[0] + q[0], acc[1] + q[1]], [0, 0]).map(v => v / l.pts.length); if (!ls.some(o => o !== l && o.area > l.area && inside(c, o.pts))) ol.push(l.pts); } return ol; });
+  const holesOf = F.map((ls, i) => ls.map(l => l.pts).filter(p => !outers[i].includes(p)));
+  const eps = 0.05, samples = [];
+  for (let k = 0; k < us.length; k++) for (const x of [us[k] - eps, us[k] + eps]) if (x > 0 && x < L) samples.push(x);
+  const top = [[], []], bot = [[], []];
+  for (const x of samples) for (let i = 0; i < 2; i++) { const sp = span(outers[i], x); top[i].push(sp ? sp[1] : null); bot[i].push(sp ? sp[0] : null); }
+  // the two faces must stand over the same stretches, and their tops differ by one constant (a bevel)
+  const deltas = [];
+  for (let k = 0; k < samples.length; k++) { if ((top[0][k] === null) !== (top[1][k] === null)) return no(6); if (top[0][k] !== null) deltas.push(top[0][k] - top[1][k]); }
+  if (!deltas.length) return no(7);
+  // the bevel is what most of the wall agrees on (the median); a pocket cut into one face only (a beam
+  // seat) is filled from the other face, and the volume check below bounds what that may add
+  const delta = deltas.slice().sort((x, y) => x - y)[Math.floor(deltas.length / 2)];
+  const cross = Math.abs(delta) > tol ? delta / t : 0;              // rise per mm to the wall's left
+  // the centreline top profile, and the stretches with no wall (full-height openings) or a raised base (doors)
+  const profile = [], openings = [];
+  let gap = null, notch = null;
+  for (let k = 0; k < samples.length; k++) {
+    const x = samples[k], tp = top[0][k], bt = bot[0][k];
+    if (tp === null) { if (!gap) gap = { u0: x }; gap.u1 = x; continue; }
+    if (gap) { openings.push({ u0: gap.u0 - eps, u1: gap.u1 + eps, sill: 0, h: Infinity }); gap = null; }
+    profile.push([x, Math.max(tp - delta / 2, top[1][k] + delta / 2) - z0]);
+    const raised = Math.max(bt, bot[1][k]) - z0;
+    if (raised > tol) { if (notch && Math.abs(notch.h - raised) > tol) return no(9); if (!notch) notch = { u0: x, h: raised }; notch.u1 = x; }
+    else if (notch) { openings.push({ u0: notch.u0 - eps, u1: notch.u1 + eps, sill: 0, h: notch.h }); notch = null; }
+    if (Math.max(bt, bot[1][k]) < z0 - tol) return no(10);
+  }
+  if (gap || notch) return no(11);                                        // a wall starts and ends with wall
+  // holes: upright rectangles through both faces (windows)
+  for (const hp of holesOf[0]) {
+    const U = hp.map(q => q[0]), Z = hp.map(q => q[1]), u0 = Math.min(...U), u1 = Math.max(...U), zb = Math.min(...Z), zt = Math.max(...Z);
+    if (hp.length !== 4 || hp.some(q => !(Math.abs(q[0] - u0) <= tol || Math.abs(q[0] - u1) <= tol) || !(Math.abs(q[1] - zb) <= tol || Math.abs(q[1] - zt) <= tol))) return no(12);
+    if (!holesOf[1].some(o => o.every(q => (Math.abs(q[0] - u0) <= tol || Math.abs(q[0] - u1) <= tol) && (Math.abs(q[1] - zb) <= tol || Math.abs(q[1] - zt) <= tol)))) return no(13);
+    openings.push({ u0, u1, sill: zb - z0, h: zt - zb });
+  }
+  // the profile, simplified: a point stays where the slope changes (steps are two points at one u)
+  const prof = [profile[0]];
+  for (let k = 1; k < profile.length - 1; k++) {
+    const p = prof[prof.length - 1], q = profile[k], r = profile[k + 1];
+    const cr = (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
+    if (Math.abs(cr) > 0.5 * Math.max(1, Math.hypot(r[0] - p[0], r[1] - p[1]))) prof.push(q);
+  }
+  prof.push(profile[profile.length - 1]);
+  prof[0] = [0, prof[0][1]]; prof[prof.length - 1] = [L, prof[prof.length - 1][1]];
+  // the volume the wall element will hold, against the mesh's
+  let area = 0; for (let k = 1; k < prof.length; k++) area += (prof[k][0] - prof[k - 1][0]) * (prof[k][1] + prof[k - 1][1]) / 2;
+  const topAt = u => { for (let k = 1; k < prof.length; k++) if (u <= prof[k][0] + 1e-9) { const p = prof[k - 1], q = prof[k]; return q[0] - p[0] < 1e-9 ? q[1] : p[1] + (q[1] - p[1]) * (u - p[0]) / (q[0] - p[0]); } return prof[prof.length - 1][1]; };
+  for (const o of openings) { const hmax = Math.min(o.h, Math.max(topAt(o.u0 + 0.1), topAt(o.u1 - 0.1))); area -= (o.u1 - o.u0) * (isFinite(o.h) ? o.h : (topAt(o.u0 + 0.1) + topAt(o.u1 - 0.1)) / 2); void hmax; }
+  const vol = meshVolume(tris);
+  if (Math.abs(vol - t * area) > 0.03 * vol + 1e3) return no(14);
+  const r = v => Math.round(v * 10) / 10;
+  const heights = prof.map(q => q[1]), flat = heights.every(hh => Math.abs(hh - heights[0]) <= tol);
+  return { start: a, end: [a[0] + d[0] * L, a[1] + d[1] * L], thickness: t, length: L, z0, height: Math.max(...heights), cross,
+    profile: flat ? null : prof.map(q => [r(Math.max(0, Math.min(L, q[0]))), r(q[1])]),
+    openings: openings.map(o => ({ u0: r(Math.max(0, o.u0)), u1: r(Math.min(L, o.u1)), sill: r(o.sill), h: isFinite(o.h) ? r(o.h) : null })).sort((x, y) => x.u0 - y.u0) };
+}
+function inside(p, poly) { let c = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) { const a = poly[i], b = poly[j]; if ((a[1] > p[1]) !== (b[1] > p[1]) && p[0] < (b[0] - a[0]) * (p[1] - a[1]) / (b[1] - a[1]) + a[0]) c = !c; } return c; }
+
+// ---------------------------------------------------------------- bars: beams and columns
+/** A straight member of rectangular section: its axis (end to end through the section's centre) and
+ *  its section's two sides, when the mesh fills that box. */
+function recogniseBar(m, { tol = 1.5 } = {}) {
+  const tris = meshTriangles(m); if (tris.length < 12) return null;
+  const P = m.positions, pts = []; for (let i = 0; i < P.length; i += 3) pts.push([P[i], P[i + 1], P[i + 2]]);
+  const c = [0, 1, 2].map(k => pts.reduce((s, q) => s + q[k], 0) / pts.length);
+  // the long axis: the direction of the longest spread (power iteration on the covariance)
+  const C = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+  for (const q of pts) { const v = [q[0] - c[0], q[1] - c[1], q[2] - c[2]]; for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) C[i][j] += v[i] * v[j]; }
+  let ax = [1, 0.3, 0.2]; for (let it = 0; it < 60; it++) { const w = [0, 1, 2].map(i => C[i][0] * ax[0] + C[i][1] * ax[1] + C[i][2] * ax[2]), l = Math.hypot(...w) || 1; ax = w.map(x => x / l); }
+  // snap a nearly level or nearly upright axis exactly
+  if (Math.abs(ax[2]) > 0.999) ax = [0, 0, Math.sign(ax[2])]; else if (Math.abs(ax[2]) < 0.001) { const l = Math.hypot(ax[0], ax[1]); ax = [ax[0] / l, ax[1] / l, 0]; }
+  const up = Math.abs(ax[2]) > 0.9;
+  // across: for a level bar, horizontal and vertical; for an upright one, the plan box's own sides
+  let e1, e2;
+  if (up) { const b = orientedBox(hull2(pts)); if (!b) return null; e1 = [b.dir[0], b.dir[1], 0]; e2 = [-b.dir[1], b.dir[0], 0]; }
+  else { const h = Math.hypot(ax[0], ax[1]); e1 = [-ax[1] / h, ax[0] / h, 0]; e2 = [ax[1] * e1[2] - ax[2] * e1[1], ax[2] * e1[0] - ax[0] * e1[2], ax[0] * e1[1] - ax[1] * e1[0]]; if (e2[2] < 0) e2 = e2.map(x => -x); }
+  const dot = (q, v) => (q[0] - c[0]) * v[0] + (q[1] - c[1]) * v[1] + (q[2] - c[2]) * v[2];
+  const ext = v => { const s = pts.map(q => dot(q, v)); return [Math.min(...s), Math.max(...s)]; };
+  // the section's own sides: the smallest box round the points seen end-on, and how far it is turned (roll)
+  const sec = orientedBox(hull2(pts.map(q => [dot(q, e1), dot(q, e2)])));
+  let roll = 0;
+  if (sec && !up) {
+    const ang = Math.atan2(sec.dir[1], sec.dir[0]);                   // the long side of the section from e1
+    const turn = ((ang % (Math.PI / 2)) + Math.PI / 2) % (Math.PI / 2), r0 = turn > Math.PI / 4 ? turn - Math.PI / 2 : turn;
+    if (Math.abs(r0) > 0.002) { roll = r0; const c1 = Math.cos(r0), s1 = Math.sin(r0), f1 = e1.map((v, k) => v * c1 + e2[k] * s1), f2 = e2.map((v, k) => -e1[k] * s1 + v * c1); e1 = f1; e2 = f2; }
+  }
+  const [u0, u1] = ext(ax), [a0, a1] = ext(e1), [b0, b1] = ext(e2);
+  const Lb = u1 - u0, W = a1 - a0, D = b1 - b0;
+  if (Lb < 2 * Math.max(W, D) || W < 5 || D < 5) return null;
+  const vol = meshVolume(tris); if (Math.abs(vol - Lb * W * D) > 0.02 * vol + 1e3) return null;
+  const mid = [0, 1, 2].map(k => c[k] + e1[k] * (a0 + a1) / 2 + e2[k] * (b0 + b1) / 2);
+  const c0 = [0, 1, 2].map(k => mid[k] + ax[k] * u0), c1 = [0, 1, 2].map(k => mid[k] + ax[k] * u1);
+  return { c0, c1, W, D, up, dir: e1, roll: roll * 180 / Math.PI };
+}
+
+// ---------------------------------------------------------------- tubes: round ducts and pipes
+/** A straight round tube (a duct or pipe run): its axis and outside diameter, and its wall thickness
+ *  when it is hollow. Vertices lie on one or two circles about the axis at each end. */
+function recogniseTube(m, { tol = 2 } = {}) {
+  const tris = meshTriangles(m); if (tris.length < 16) return null;
+  const P = m.positions, pts = []; for (let i = 0; i < P.length; i += 3) pts.push([P[i], P[i + 1], P[i + 2]]);
+  const bar = recogniseBarAxis(pts); if (!bar) return null;
+  const { c, ax } = bar;
+  const along = q => (q[0] - c[0]) * ax[0] + (q[1] - c[1]) * ax[1] + (q[2] - c[2]) * ax[2];
+  const radial = q => { const s = along(q); return Math.hypot(q[0] - c[0] - ax[0] * s, q[1] - c[1] - ax[1] * s, q[2] - c[2] - ax[2] * s); };
+  // the points on the axis are end-cap centres; the rest lie on the outside circle, and on an inside one if hollow
+  const rs = pts.map(radial).filter(x => x > tol), R = Math.max(...rs), inner = rs.filter(x => x < R - 0.1), r = inner.length ? Math.min(...inner) : 0;
+  if (!rs.length || rs.some(x => Math.abs(x - R) > 0.1 && Math.abs(x - r) > 0.1)) return null;       // not circles about one axis
+  const us = pts.map(along), u0 = Math.min(...us), u1 = Math.max(...us), L = u1 - u0;
+  if (L < 2 * R || R < 5) return null;
+  // polygonal circles hold less than the true ones: compare with the n-gon's area
+  const n = Math.max(6, Math.round(pts.filter(q => Math.abs(along(q) - u0) < tol && Math.abs(radial(q) - R) < 0.1).length));
+  const ngon = rad => n / 2 * rad * rad * Math.sin(2 * Math.PI / n);
+  const hollow = r > 0, vol = meshVolume(tris), want = L * (ngon(R) - (hollow ? ngon(r) : 0));
+  if (Math.abs(vol - want) > 0.03 * vol + 1e3) return null;
+  const c0 = [0, 1, 2].map(k => c[k] + ax[k] * u0), c1 = [0, 1, 2].map(k => c[k] + ax[k] * u1);
+  return { c0, c1, diameter: 2 * R, wall: hollow ? R - r : 0 };
+}
+function recogniseBarAxis(pts) {
+  const c = [0, 1, 2].map(k => pts.reduce((s, q) => s + q[k], 0) / pts.length);
+  const C = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+  for (const q of pts) { const v = [q[0] - c[0], q[1] - c[1], q[2] - c[2]]; for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) C[i][j] += v[i] * v[j]; }
+  let ax = [0.2, 0.3, 1]; for (let it = 0; it < 80; it++) { const w = [0, 1, 2].map(i => C[i][0] * ax[0] + C[i][1] * ax[1] + C[i][2] * ax[2]), l = Math.hypot(...w) || 1; ax = w.map(x => x / l); }
+  if (Math.abs(ax[2]) > 0.999) ax = [0, 0, 1];
+  // the centre of a ring of points is its middle, not its mean when the ring is uneven: use the bounding middle across the axis
+  return { c, ax };
+}
+
 // ===== ifcimport.js =====
 //! IFC classes read as Web BIM classes.
 //!
@@ -15442,13 +16119,18 @@ const IFC_MESHY = new Set(["IFCFACETEDBREP", "IFCADVANCEDBREP",
 
 
 
+
+
+
+
 const WALLS = new Set(["IFCWALL", "IFCWALLSTANDARDCASE", "IFCWALLELEMENTEDCASE", "IFCCURTAINWALL"]);
 const SLABS = new Set(["IFCSLAB", "IFCSLABSTANDARDCASE", "IFCSLABELEMENTEDCASE", "IFCROOF", "IFCCOVERING"]);
 const COLUMNS = new Set(["IFCCOLUMN", "IFCCOLUMNSTANDARDCASE", "IFCMEMBER"]);
 const BEAMS = new Set(["IFCBEAM", "IFCBEAMSTANDARDCASE"]);
 const FILLERS = new Set(["IFCDOOR", "IFCDOORSTANDARDCASE", "IFCWINDOW", "IFCWINDOWSTANDARDCASE"]);
 const PROXIES = new Set(["IFCBUILDINGELEMENTPROXY"]);
-const IGNORED = new Set(["IFCOPENINGELEMENT", "IFCSPACE", "IFCSITE", "IFCBUILDING", "IFCBUILDINGSTOREY", "IFCPROJECT", "IFCANNOTATION", "IFCGRID"]);
+const ZONES = new Set(["IFCSPATIALZONE", "IFCZONE", "IFCSPATIALELEMENT"]);
+const IGNORED = new Set(["IFCOPENINGELEMENT", "IFCSPACE", "IFCSPATIALZONE", "IFCZONE", "IFCSITE", "IFCBUILDING", "IFCBUILDINGSTOREY", "IFCPROJECT", "IFCANNOTATION", "IFCGRID"]);
 
 const r1 = v => Math.round(v * 10) / 10;
 /** The outline of a profile in its own 2D frame, as points. */
@@ -15471,22 +16153,6 @@ function profilePoints(profile) {
   return null;
 }
 /** Oriented extent of points: the long axis, its length, the short width, the centre. */
-function orientedBox(pts) {
-  let best = null;
-  for (let i = 0; i < pts.length; i++) {
-    const a = pts[i], b = pts[(i + 1) % pts.length], L = Math.hypot(b[0] - a[0], b[1] - a[1]); if (L < 1e-6) continue;
-    const d = [(b[0] - a[0]) / L, (b[1] - a[1]) / L], n = [-d[1], d[0]];
-    const us = pts.map(p => p[0] * d[0] + p[1] * d[1]), vs = pts.map(p => p[0] * n[0] + p[1] * n[1]);
-    const u0 = Math.min(...us), u1 = Math.max(...us), v0 = Math.min(...vs), v1 = Math.max(...vs);
-    const area = (u1 - u0) * (v1 - v0);
-    if (!best || area < best.area - 1e-6) best = { area, d, n, u0, u1, v0, v1 };
-  }
-  if (!best) return null;
-  const { d, n, u0, u1, v0, v1 } = best, len = u1 - u0, wid = v1 - v0;
-  const long = len >= wid ? d : n, L = Math.max(len, wid), W = Math.min(len, wid);
-  const cu = (u0 + u1) / 2, cv = (v0 + v1) / 2, centre = [d[0] * cu + n[0] * cv, d[1] * cu + n[1] * cv];
-  return { centre, dir: long, length: L, width: W };
-}
 /** Everything an element's body is made of, in world coordinates. Extrusions stay extrusions (their
  *  profile and direction are what makes a wall a wall and a beam a beam); a mapped item is followed
  *  through its map (a Revit file is mostly those: nine hundred beams sharing one shape); a boolean
@@ -15727,10 +16393,31 @@ function elementShape(model, e, scale) {
     if (rep) {
       const k = ifcTransformScale(model, a[1]), frame = ifcCompose(world, ifcCompose(ifcPlacementFrame(model, a[1], scale), ifcPlacementFrame(model, src.args[0], scale)));
       const key = `map${src.id}${k !== 1 ? "x" + k : ""}`;
-      return { key, frame, build: () => { const t = meshItems(model, followAll(model, rep.args[3]), { o: [0, 0, 0], x: [k, 0, 0], y: [0, k, 0], z: [0, 0, k] }, scale, notes); return t.length ? weldTriangles(t, 0.05) : null; }, notes };
+      return { key, frame, build: () => colouredMesh(model, followAll(model, rep.args[3]), { o: [0, 0, 0], x: [k, 0, 0], y: [0, k, 0], z: [0, 0, k] }, scale, notes), notes };
     }
   }
-  return { key: `el${e.id}`, frame: world, build: () => { const t = meshItems(model, items, ID3, scale, notes); return t.length ? weldTriangles(t, 0.05) : null; }, notes };
+  return { key: `el${e.id}`, frame: world, build: () => colouredMesh(model, items, ID3, scale, notes), notes };
+}
+/** The items' triangles welded into one mesh; where the file paints its items differently (a tree's trunk
+ *  and its foliage), `groups` says which run of triangles takes which colour. */
+function colouredMesh(model, items, fr, scale, notes) {
+  const tri = [], runs = [], cmap = model.itemColour || new Map();
+  for (const it of items) {
+    const before = tri.length / 9, t = meshItems(model, [it], fr, scale, notes); for (let i = 0; i < t.length; i++) tri.push(t[i]);
+    let colour = cmap.get(it.id) || null;
+    if (!colour && it.type === "IFCMAPPEDITEM") { const src = follow(model, it.args[0]), rep = src && follow(model, src.args[1]); for (const x of rep ? followAll(model, rep.args[3]) : []) if (cmap.has(x.id)) { colour = cmap.get(x.id); break; } }
+    runs.push([before, tri.length / 9, colour]);
+  }
+  if (!tri.length) return null;
+  const m = weldTriangles(tri, 0.05);
+  const colours = new Set(runs.map(r => r[2]).filter(Boolean));
+  if (colours.size > 1 && m.kept) {
+    const colourOfTri = k => { for (const r of runs) if (k >= r[0] && k < r[1]) return r[2]; return null; };
+    const groups = [];
+    m.kept.forEach((src, j) => { const c = colourOfTri(src) || ""; const last = groups[groups.length - 1]; if (last && last.colour === c) last.count += 3; else groups.push({ start: j * 3, count: 3, colour: c }); });
+    m.groups = groups;
+  }
+  return m;
 }
 
 /** The points a brep or face set is made of: its cartesian points and point lists, and nothing that is
@@ -15749,15 +16436,6 @@ function collectPoints(model, item, scale) {
   return pts;
 }
 /** Convex hull of plan points (monotone chain), counter-clockwise. */
-function hull2(pts) {
-  const P = pts.map(p => [p[0], p[1]]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
-  if (P.length < 3) return P;
-  const cross = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
-  const lo = [], hi = [];
-  for (const p of P) { while (lo.length >= 2 && cross(lo[lo.length - 2], lo[lo.length - 1], p) <= 1e-9) lo.pop(); lo.push(p); }
-  for (let i = P.length - 1; i >= 0; i--) { const p = P[i]; while (hi.length >= 2 && cross(hi[hi.length - 2], hi[hi.length - 1], p) <= 1e-9) hi.pop(); hi.push(p); }
-  return lo.slice(0, -1).concat(hi.slice(0, -1));
-}
 /** The long axis of a cloud of points, by power iteration on its covariance: a beam's line. */
 function principalAxis(pts) {
   const n = pts.length, c = [0, 1, 2].map(k => pts.reduce((s, p) => s + p[k], 0) / n);
@@ -15788,12 +16466,15 @@ const zRange = pts => [Math.min(...pts.map(p => p[2])), Math.max(...pts.map(p =>
 //! What each kind of mesh-bodied element is counted as, and drawn in.
 const MESH_KIND = { IfcStair: ["Stair", "M-CONC"], IfcRamp: ["Ramp", "M-CONC"], IfcRailing: ["Railing", "M-STEEL"], IfcPlate: ["Curtain panel", "M-GLASS"], Furniture: ["Furniture item", "M-TIMBER"],
   IfcFlowTerminal: ["Fixture", "M-TILE"], IfcTransportElement: ["Lift or escalator", "M-STEEL"], IfcWall: ["Wall (exact shape)", "M-BLOCK"], IfcSlab: ["Floor (exact shape)", "M-CONC"],
-  IfcBeam: ["Beam (exact shape)", "M-STEEL"], IfcColumn: ["Column (exact shape)", "M-CONC"] };
+  IfcBeam: ["Beam (exact shape)", "M-STEEL"], IfcColumn: ["Column (exact shape)", "M-CONC"], IfcRoof: ["Roof (exact shape)", "M-TILE"], IfcChimney: ["Chimney", "M-BRICK"],
+  IfcDuctSegment: ["Duct", "M-STEEL"], IfcAirTerminal: ["Air terminal", "M-STEEL"], IfcPipeSegment: ["Pipe", "M-STEEL"], IfcCableCarrierSegment: ["Cable tray", "M-STEEL"],
+  MechanicalEquipment: ["Mechanical equipment", "M-STEEL"], ElectricalFixtures: ["Electrical fixture", "M-STEEL"], LightingFixtures: ["Light fixture", "M-STEEL"],
+  StructuralConnections: ["Structural connection", "M-STEEL"], Topography: ["Topography surface", "M-SOIL"], Planting: ["Plant", "M-TIMBER"], Earthworks: ["Earthwork", "M-SOIL"] };
 /** @param opts.everything bring in every other product with a body (stairs, railings, plates, furniture, fixtures…) with its own shape
  *  @param opts.exact walls, slabs and members that are not one plain extrusion (clipped, sloped, breps) keep their exact shape */
 function importIfc(doc, text, { everything = true, exact = true } = {}) {
-  const model = readIfc(text), scale = ifcScale(model);
-  const report = { made: {}, missed: {}, notes: [] };
+  const src = ifcTextOf(text), model = readIfc(src.text), scale = ifcScale(model);
+  const report = { made: {}, missed: {}, notes: src.note ? [src.note] : [] };
   const made = k => { report.made[k] = (report.made[k] || 0) + 1; };
   report.why = {};
   //! Every element kept out says why, once per class and reason: "1 × IFCSLAB" alone is not something anybody can act on.
@@ -15822,6 +16503,13 @@ function importIfc(doc, text, { everything = true, exact = true } = {}) {
     let lv = levels.find(l => Math.abs(l.z - z) < 1);
     if (!lv) { const id = fresh("L"); ops.push({ op: "add", element: { id, type: "Level", name, args: { name, elevation: r1(z) } } }); lv = { id, z }; levels.push(lv); made("Level"); }
     levelOf.set(st.id, lv);
+  }
+  //! A file with no storeys (a landscape or site model: everything contained in the site) still gets a
+  //! level at zero and a plan, so what it brings has somewhere to stand and to be seen.
+  if (!levels.length) {
+    const id = fresh("L"); ops.push({ op: "add", element: { id, type: "Level", name: "Site", args: { name: "Site", elevation: 0 } } });
+    const lv = { id, z: 0 }; levels.push(lv); levelOf.set("__site", lv); made("Level");
+    note("site", "the file has no storeys: a level \"Site\" at 0 carries what it brings");
   }
   //! One floor plan per level: every storey the file brings in (and any level still without one)
   //! gets its plan, as Revit makes a plan with each level. A level that already has a plan keeps it.
@@ -15926,11 +16614,155 @@ function importIfc(doc, text, { everything = true, exact = true } = {}) {
     const zLo = Math.min(...zs), zHi = Math.max(...zs), xy = []; for (let i = 0; i < world.positions.length; i += 3) xy.push([world.positions[i], world.positions[i + 1]]);
     const boundary = hull2(xy); if (boundary.length < 3) return false;
     lv = levelOf.get(storeyFor(e.id)) || levelAt(zLo) || lv;
-    const ic = IFC_CLASS(T), cat = genericCategory(ic), [label, material] = MESH_KIND[cat] || ["Generic models (exact shape)", "M-CONC"];
+    const ic = IFC_CLASS(refined(e)), parent = products.find(x => x.id === parentOf.get(e.id));
+    // what it is filed under: a slab of a roof is roof, a tree on the terrain is planting
+    let own = "";
+    if ((parent && parent.type === "IFCROOF" && (SLABS.has(T) || T === "IFCPLATE")) || T === "IFCROOF" || (T === "IFCSLAB" && /ROOF/i.test(asText(e.args[8], "")))) own = "IfcRoof";
+    else if (/GEOGRAPHICELEMENT/.test(T) && /\b(tree|shrub|bush|hedge|plant|palm|conifer)/i.test(ifcName(e) + " " + asText(e.args[4], ""))) own = "Planting";
+    else if (PROXIES.has(T)) own = proxyCategory(e);
+    const cat = own || genericCategory(ic), [label, material] = MESH_KIND[cat] || ["Generic models (exact shape)", "M-CONC"];
     const r6 = v => Math.round(v * 1e6) / 1e6, fr = { o: [r1(sh.frame.o[0]), r1(sh.frame.o[1]), r1(sh.frame.o[2] - zLo)], x: sh.frame.x.map(r6), y: sh.frame.y.map(r6), z: sh.frame.z.map(r6) };
     const id = fresh("GM");
-    ops.push({ op: "add", element: { id, type: "Generic", name: ifcName(e) || id, args: { boundary: boundary.map(p => [r1(p[0]), r1(p[1])]), level: lv ? { ref: lv.id } : null, baseOffset: r1(zLo - (lv ? lv.z : 0)), height: r1(Math.max(1, zHi - zLo)), ifcClass: ic, material, colour: "", mesh: { shape: shapeId, frame: fr } } } });
+    ops.push({ op: "add", element: { id, type: "Generic", name: ifcName(e) || id, args: { boundary: boundary.map(p => [r1(p[0]), r1(p[1])]), level: lv ? { ref: lv.id } : null, baseOffset: r1(zLo - (lv ? lv.z : 0)), height: r1(Math.max(1, zHi - zLo)), ifcClass: ic, material, colour: colourOf(e), mesh: { shape: shapeId, frame: fr }, category: own } } });
     made(label); return true;
+  };
+  //! Colours: what the file's styled items paint each body item (IFC4 styles directly, IFC2x3 through a
+  //! presentation style assignment), read once; an element takes the first of its body items that has one.
+  const itemColour = model.itemColour = new Map();
+  const hex = c => "#" + [c.args[1], c.args[2], c.args[3]].map(v => Math.max(0, Math.min(255, Math.round(asNumber(v) * 255))).toString(16).padStart(2, "0")).join("");
+  for (const si of ofType(model, "IFCSTYLEDITEM")) {
+    const item = follow(model, si.args[0]); if (!item) continue;
+    let styles = followAll(model, si.args[1]);
+    styles = styles.flatMap(st => st.type === "IFCPRESENTATIONSTYLEASSIGNMENT" ? followAll(model, st.args[0]) : [st]);
+    for (const st of styles) if (st.type === "IFCSURFACESTYLE") for (const r of followAll(model, st.args[2])) {
+      const col = follow(model, r.args[0]); if (col && col.type === "IFCCOLOURRGB" && !itemColour.has(item.id)) itemColour.set(item.id, hex(col));
+    }
+  }
+  const colourOf = e => {
+    for (const it of ifcBodyItems(model, e)) {
+      if (itemColour.has(it.id)) return itemColour.get(it.id);
+      if (it.type === "IFCMAPPEDITEM") { const src = follow(model, it.args[0]), rep = src && follow(model, src.args[1]); for (const x of rep ? followAll(model, rep.args[3]) : []) if (itemColour.has(x.id)) return itemColour.get(x.id); }
+    }
+    return "";
+  };
+  //! What a generic "flow" element is (IFC2x3 writes an air terminal as an IfcFlowTerminal and says which
+  //! in its type): the type object's class, when the element's own is only the generic one.
+  const typeClass = new Map();
+  for (const rel of ofType(model, "IFCRELDEFINESBYTYPE")) { const ty = follow(model, rel.args[5]); if (ty) for (const o of followAll(model, rel.args[4])) typeClass.set(o.id, ty.type); }
+  const refined = e => { const tc = typeClass.get(e.id); return /^IFC(FLOW|ENERGYCONVERSIONDEVICE|DISTRIBUTION)/.test(e.type) && tc && /TYPE$/.test(tc) ? tc.replace(/TYPE$/, "") : e.type; };
+  //! A proxy says what it is in its ObjectType (IFC2x3 has no class for terrain, planting or a flue):
+  //! read that, and the name, into a category.
+  const proxyCategory = e => {
+    const ot = asText(e.args[4], "").toLowerCase(), nm = (ifcName(e) || "").toLowerCase(), both = ot + " " + nm;
+    if (/\b(tree|shrub|bush|hedge|palm|conifer|planting)\b/.test(both)) return "Planting";
+    if (/\b(terrain|topo|ground|soil|grass|lawn|site)\b/.test(both) || (/vegetation/.test(ot) && /grass|lawn|meadow/.test(nm))) return "Topography";
+    if (/vegetation/.test(ot)) return "Planting";
+    if (/\b(subgrade|bedding|fill|earthwork|excavation)\b/.test(both)) return "Earthworks";
+    if (/\b(flue|chimney)\b/.test(both)) return "IfcChimney";
+    if (/\b(shoe|bracket|plate|anchor|fastener|connection)\b/.test(both)) return "StructuralConnections";
+    if (/\b(duct)\b/.test(both)) return "IfcDuctSegment";
+    if (/\b(pipe)\b/.test(both)) return "IfcPipeSegment";
+    return "";
+  };
+  const isZoneProxy = e => /\b(gross volume|zone|envelope volume)\b/i.test(asText(e.args[4], "") + " " + (ifcName(e) || ""));
+  //! A mesh that IS a simple element comes in as that element (ifcrecover.js): read in world coordinates.
+  const worldMesh = e => { const sh = elementShape(model, e, scale); if (!sh) return null; let m = null; try { m = sh.build(); } catch (err) { return null; } return m && m.index && m.index.length ? frameMesh(m, sh.frame) : null; };
+  const deg = x => Math.round(x * 1800 / Math.PI) / 10;
+  const recoveredWalls = [];
+  const addRecoveredWall = (e, r) => {
+    const lv = levelFor(e, r.z0), t = r1(Math.max(1, r.thickness));
+    const typeId = typeFor("wall:" + t, () => ({ family: "F-BASICWALL", name: `IFC wall ${t}`, mark: "IW", layers: [{ function: "Structure", thickness: t, material: "M-BLOCK" }], coreStart: 0, coreEnd: 1 }));
+    const id = fresh("W"), slope = { top: 0, lean: 0 }; if (r.cross) slope.across = deg(Math.atan(r.cross));
+    const wop = { op: "add", element: { id, type: "Wall", name: ifcName(e) || id, args: { centreline: { type: "line", start: r.start.map(r1), end: r.end.map(r1) }, mounting: "Centred", wallType: { ref: typeId }, baseLevel: lv ? { ref: lv.id } : null, baseOffset: r1(r.z0 - (lv ? lv.z : 0)), height: r1(r.height), slope, topProfile: r.profile } } };
+    ops.push(wop); recoveredWalls.push({ id, t, args: wop.element.args, openings: [] });
+    wallOf.set(e.id, { id, a: r.start, b: r.end, z0: r.z0, len: r.length }); made("Wall");
+    if (r.profile) note("wallprofile", "walls whose top is not level (gables, steps) keep that top as their top profile");
+    if (r.cross) note("wallbevel", "walls whose top is cut on the slant under a roof keep that slope across their thickness");
+    for (const o of r.openings) {
+      const w = r1(o.u1 - o.u0), h = o.h == null ? r1(r.height + 1) : r1(o.h);
+      const oop = { op: "add", element: { id: fresh("OP"), type: "Opening", name: `${ifcName(e) || id} opening`, args: { host: { ref: id }, profile: { kind: "rect", at: r1((o.u0 + o.u1) / 2), sill: r1(o.sill), w, h }, farProfile: null, depth: "through" } } };
+      ops.push(oop); recoveredWalls[recoveredWalls.length - 1].openings.push(oop.element.args.profile);
+      made("Opening");
+    }
+  };
+  const addRecoveredFloor = (e, T, r) => {
+    const lv = levelFor(e, r.zBot), footing = T === "IFCFOOTING", thick = r1(r.thick);
+    const typeId = typeFor((footing ? "footing:" : "slab:") + thick, () => ({ family: "F-FLOOR", name: `IFC ${footing ? "footing" : "slab"} ${thick}`, mark: footing ? "FT" : "FL", layers: [{ function: "Structure", thickness: thick, material: "M-CONC" }], coreStart: 0, coreEnd: 1 }));
+    const id = fresh(footing ? "FT" : "FL"), boundary = r.outer.map(p => [r1(p[0]), r1(p[1])]);
+    const args = { boundary, floorType: { ref: typeId }, level: lv ? { ref: lv.id } : null, heightOffset: r1(r.zTop - (lv ? lv.z : 0)) };
+    if (r.holes.length) args.sketch = fromLoops([boundary, ...r.holes.map(hl => hl.map(p => [r1(p[0]), r1(p[1])]))]);
+    ops.push({ op: "add", element: { id, type: "Floor", name: ifcName(e) || id, args } });
+    made(T === "IFCROOF" ? "Floor (roof)" : footing ? "Floor (footing)" : "Floor");
+  };
+  const addRecoveredMember = (e, T, r) => {
+    if (r.up) {
+      const lv = levelFor(e, r.c0[2]), z0 = Math.min(r.c0[2], r.c1[2]), h = Math.abs(r.c1[2] - r.c0[2]);
+      addColumn(e, lv, r.c0, r1(r.W), r1(r.D), false, deg(Math.atan2(r.dir[1], r.dir[0])), z0, h);
+      return;
+    }
+    const W = r1(r.W), D = r1(r.D), roll = (r.roll || 0) * Math.PI / 180, H = Math.abs(r.W * Math.sin(roll)) + Math.abs(r.D * Math.cos(roll));
+    const top = Math.max(r.c0[2], r.c1[2]) + H / 2, lv = levelFor(e, top - H);
+    const typeId = typeFor(`beam:${W}x${D}:false`, () => ({ family: "F-RCBEAM", name: `IFC ${W}×${D}`, mark: "B", shape: "rect", width: W, depth: D, material: "M-TIMBER" }));
+    const id = fresh("B");
+    if (Math.abs(r.c1[2] - r.c0[2]) > 1) note("slope", "sloping beams come in level, at their higher end");
+    ops.push({ op: "add", element: { id, type: "Beam", name: ifcName(e) || id, args: { axis: { type: "line", start: [r1(r.c0[0]), r1(r.c0[1])], end: [r1(r.c1[0]), r1(r.c1[1])] }, beamType: { ref: typeId }, level: lv ? { ref: lv.id } : null, topOffset: r1(top - (lv ? lv.z : 0)), rotation: r1(r.roll || 0) } } });
+    if (Math.abs(r.roll || 0) > 0.05) note("roll", "beams whose section is turned about their axis keep that turn (Cross-section rotation)");
+    made("Beam");
+  };
+  /** Try to read a wall, slab or member off its mesh; true when it came in as a real element. */
+  const recover = (e, T, body) => {
+    const isWall = WALLS.has(T) && T !== "IFCCURTAINWALL", isSlab = SLABS.has(T) || T === "IFCFOOTING", isMember = COLUMNS.has(T) || BEAMS.has(T);
+    if (!(isWall || isSlab || isMember)) return false;
+    // what one plain extrusion already says exactly is read that way; a wall the file voids keeps the box path (its openings host doors)
+    if ((isWall || isSlab) && plainUpright(body)) return false;
+    if (isMember && body.extrusions.length === 1 && body.solids.length === 1 && !body.clipped) return false;
+    if (isWall && voided.has(e.id)) return false;
+    const m = worldMesh(e); if (!m) return false;
+    if (isWall) { const r = recogniseWall(m); if (r) { addRecoveredWall(e, r); note("recover", "walls, slabs and members written as meshes are read back into real walls, floors and beams wherever the mesh is exactly one (checked by volume); the rest keep their exact shape"); return true; } }
+    if (isSlab) { const r = recognisePrism(m); if (r) { addRecoveredFloor(e, T, r); return true; } }
+    // a slab on the slant that is part of a roof (or says it is one) is a roof plane
+    if (isSlab && (T === "IFCROOF" || /ROOF/i.test(asText(e.args[8], "")) || (products.find(x => x.id === parentOf.get(e.id)) || {}).type === "IFCROOF")) {
+      const r = recogniseTiltedPlate(m); if (r) { addRoof(e, r); return true; }
+    }
+    if (isMember) { const r = recogniseBar(m); if (r) { addRecoveredMember(e, T, r); return true; } }
+    return false;
+  };
+  const addRoof = (e, r) => {
+    const lv = levelFor(e, r.zLow), id = fresh("RF"), q = p => [r1(p[0]), r1(p[1])];
+    ops.push({ op: "add", element: { id, type: "Roof", name: ifcName(e) || id, args: { boundary: r.outer.map(q), holes: r.holes.map(h => h.map(q)), level: lv ? { ref: lv.id } : null,
+      heightOffset: r1(r.top - (lv ? lv.z : 0)), pivot: q(r.pivot), pitch: Math.round(r.pitch * 100) / 100, direction: Math.round(r.direction * 100) / 100, thickness: r1(r.thickness), material: "M-TILE", colour: colourOf(e), rafterCut: r.square ? "Square" : "Plumb" } } });
+    made("Roof");
+    note("roofs", "roof slabs come in as roof planes (footprint, slope, direction, thickness), their holes kept");
+  };
+  const addRun = e => {
+    const m = worldMesh(e); if (!m) return false;
+    const r = recogniseTube(m); if (!r) return false;
+    const pipe = /PIPE/.test(refined(e)), lv = levelFor(e, Math.min(r.c0[2], r.c1[2])), z = lv ? lv.z : 0;
+    const id = fresh(pipe ? "PI" : "DU");
+    ops.push({ op: "add", element: { id, type: pipe ? "Pipe" : "Duct", name: ifcName(e) || id, args: { path: [r.c0, r.c1].map(q => [r1(q[0]), r1(q[1]), r1(q[2] - z)]), level: lv ? { ref: lv.id } : null,
+      shape: "Round", width: r1(r.diameter), height: r1(r.diameter), thickness: r1(r.wall), system: systemOf(e), colour: colourOf(e) } } });
+    made(pipe ? "Pipe" : "Duct");
+    note("runs", "straight duct and pipe runs come in as ducts and pipes (path, diameter, wall thickness, system)");
+    return true;
+  };
+  //! The system a run belongs to (IfcRelAssignsToGroup into an IfcSystem / IfcDistributionSystem): its name.
+  const systemName = new Map();
+  for (const rel of ofType(model, "IFCRELASSIGNSTOGROUP")) { const gp = follow(model, rel.args[6]); if (gp && /SYSTEM/.test(gp.type)) for (const o of followAll(model, rel.args[4])) systemName.set(o.id, ifcName(gp) || asText(gp.args[4], "")); }
+  const systemOf = e => systemName.get(e.id) || "";
+  //! An IFC space is a room: its name and number, its level, its height; its footprint is kept as its
+  //! outline, which bounds it until walls in the model enclose it.
+  let zones = 0;
+  const addSpace = e => {
+    const m = worldMesh(e); if (!m) { missed("IFCSPACE", "its body could not be read"); return; }
+    const P = m.positions, zs = []; for (let i = 2; i < P.length; i += 3) zs.push(P[i]);
+    const zLo = Math.min(...zs), zHi = Math.max(...zs), pr = recognisePrism(m);
+    let outline = pr ? pr.outer : hull2((() => { const q = []; for (let i = 0; i < P.length; i += 3) q.push([P[i], P[i + 1]]); return q; })());
+    if (outline.length < 3) { missed("IFCSPACE", "no footprint"); return; }
+    outline = outline.map(p => [r1(p[0]), r1(p[1])]);
+    const lv = levelFor(e, zLo), name = asText(e.args[7], "") || ifcName(e) || "Room", number = asText(e.args[7], "") ? ifcName(e) : "";
+    const id = fresh("SP");
+    ops.push({ op: "add", element: { id, type: "Space", name, args: { level: lv ? { ref: lv.id } : null, upperLimit: { mode: "offset", offset: r1(zHi - (lv ? lv.z : 0)) }, anchor: interiorPoint(outline).map(r1), boundaryAt: "finishFace", outline }, params: number ? { Number: number } : undefined } });
+    made("Room");
   };
   //! "Exact" for a wall, slab or member: a body that is not one plain extrusion (or is clipped) keeps its shape.
   //! A wall with openings stays a wall (its doors and windows need a host); the clipped top is noted instead.
@@ -15939,8 +16771,13 @@ function importIfc(doc, text, { everything = true, exact = true } = {}) {
   for (const e of products) {
     const T = e.type;
     if (/^IFCREL/.test(T) || !e.args || !isRef(e.args[6])) continue;
+    if (typeof e.args[0] !== "string" || !e.args[0]) continue;       // products carry a GlobalId; owner histories and the like do not
+    if (T === "IFCSPACE") { addSpace(e); continue; }
+    if (ZONES.has(T)) { zones++; continue; }
     const isWall = WALLS.has(T), isSlab = SLABS.has(T) || T === "IFCFOOTING", isCol = COLUMNS.has(T), isBeam = BEAMS.has(T), isProxy = PROXIES.has(T);
     if (!(isWall || isSlab || isCol || isBeam || isProxy)) {
+      // a straight duct or pipe run comes in as a Duct or Pipe: its path, its diameter, its wall
+      if (/DUCTSEGMENT|PIPESEGMENT/.test(refined(e)) && addRun(e)) continue;
       if (!FILLERS.has(T) && /^IFC/.test(T) && e.args.length > 6 && isRef(e.args[5]) && !IGNORED.has(T)) {
         if (everything && ifcBodyItems(model, e).length && addMesh(e, T, levelFor(e))) continue;
         missed(T, everything ? (ifcBodyItems(model, e).length ? "its body could not be tessellated" : "no Body representation") : "not brought in (Import everything else is off)");
@@ -15948,6 +16785,8 @@ function importIfc(doc, text, { everything = true, exact = true } = {}) {
       continue;
     }
     const body = bodySolids(model, e, scale), lv = levelFor(e, body.points.length ? zRange(body.points)[0] : null);
+    if (!isProxy && recover(e, T, body)) continue;
+    if (isProxy && isZoneProxy(e)) { zones++; continue; }
     // a proxy is always its own shape; a wall, slab or member that is not a plain upright extrusion keeps its shape when asked
     if (isProxy && addMesh(e, T, lv)) continue;
     if (exact && body.points.length) {
@@ -16056,7 +16895,59 @@ function importIfc(doc, text, { everything = true, exact = true } = {}) {
     ops.push({ op: "add", element: door ? { id: fid, type: "Door", name: ifcName(fill) || fid, args: { fills: { ref: opId }, doorType: { ref: typeId } } } : { id: fid, type: "Window", name: ifcName(fill) || fid, args: { fills: { ref: opId }, windowType: { ref: typeId } } } });
     made(door ? "Door" : "Window");
   }
+  if (zones) note("zones", `${zones} spatial zone${zones > 1 ? "s" : ""} (a gross volume, a fire zone) left out: a zone groups spaces, it is not built`);
   const typeOps = [...newTypes.entries()].map(([id, value]) => ({ op: "type", lib: "types", id, value }));
+  // categories the document does not have yet (an older file importing ducts or terrain)
+  for (const [c, v] of Object.entries(CATEGORIES)) if (!doc.lib.categories[c]) typeOps.push({ op: "type", lib: "categories", id: c, value: clone(v) });
+  //! Recovered walls meet as walls do: a mesh wall stops at the face of the wall it butts against (or
+  //! overlaps it at a corner), where a drawn wall has its end on the other's centreline and a join does
+  //! the rest. Each end that lies inside another wall - one read here, or one already in the model - goes
+  //! to where the centrelines cross (a corner moves both ends, a T only this one); a moved start shifts the
+  //! wall's top profile and openings with it, so nothing on the wall moves. The joins are then made.
+  if (recoveredWalls.length) {
+    const lines = recoveredWalls.map(w => ({ w, doc: false, get a() { return w.args.centreline.start; }, get b() { return w.args.centreline.end; }, t: w.t }));
+    for (const f of doc.elements()) { if (doc.typeOf(f) !== "Wall") continue; const c = doc.argValue(f, "centreline"), p = doc.plan(f); if (c && c.type === "line" && p) lines.push({ w: { id: doc.idOf(f), args: { centreline: clone(c), topProfile: clone(doc.argValue(f, "topProfile")) }, openings: [] }, doc: true, a: c.start, b: c.end, t: p.stack.T, touched: false }); }
+    const L = x => Math.hypot(x.b[0] - x.a[0], x.b[1] - x.a[1]), dirOf = x => { const l = L(x) || 1; return [(x.b[0] - x.a[0]) / l, (x.b[1] - x.a[1]) / l]; };
+    const moveEnd = (x, end, X) => {
+      const c = x.w.args.centreline, d = dirOf(x), old = c[end], k = (X[0] - old[0]) * d[0] + (X[1] - old[1]) * d[1];
+      if (Math.abs(k) < 0.05 && Math.hypot(X[0] - old[0], X[1] - old[1]) < 0.05) return;
+      c[end] = [r1(X[0]), r1(X[1])]; if (x.doc) { x.a = c.start; x.b = c.end; x.touched = true; }
+      const pr = x.w.args.topProfile, Lnew = L({ a: c.start, b: c.end });
+      if (end === "start") {
+        // everything along the wall is measured from its start: shift it by what the start moved
+        if (pr) { for (const q of pr) q[0] = r1(q[0] - k); if (pr[0][0] > 0) pr.unshift([0, pr[0][1]]); while (pr.length > 2 && pr[1][0] <= 0) pr.shift(); pr[0][0] = 0; }
+        for (const o of x.w.openings) o.at = r1(o.at - k);
+        if (x.doc) x.shift = (x.shift || 0) + k;
+      }
+      if (pr) { while (pr.length > 2 && pr[pr.length - 2][0] >= Lnew) pr.pop(); if (pr[pr.length - 1][0] < Lnew) pr.push([r1(Lnew), pr[pr.length - 1][1]]); pr[pr.length - 1][0] = r1(Lnew); }
+    };
+    const cross = (p, dp, q, dq) => { const den = dp[0] * dq[1] - dp[1] * dq[0]; if (Math.abs(den) < 1e-9) return null; const t = ((q[0] - p[0]) * dq[1] - (q[1] - p[1]) * dq[0]) / den; return [p[0] + dp[0] * t, p[1] + dp[1] * t]; };
+    const ends = [];
+    for (const x of lines.filter(l => !l.doc)) for (const end of ["start", "end"]) {
+      const E = x.w.args.centreline[end], dx = dirOf(x);
+      for (const o of lines) {
+        if (o === x) continue;
+        const d0 = dirOf(o); if (Math.abs(dx[0] * d0[0] + dx[1] * d0[1]) > 0.9) continue;          // parallel walls do not join
+        const along = (E[0] - o.a[0]) * d0[0] + (E[1] - o.a[1]) * d0[1], off = Math.abs((E[0] - o.a[0]) * -d0[1] + (E[1] - o.a[1]) * d0[0]), Lo = L(o);
+        if (off > o.t / 2 + x.t / 2 + 2 || along < -o.t / 2 - 2 || along > Lo + o.t / 2 + 2) continue;
+        const X = cross(E, dx, o.a, d0); if (!X) continue;
+        // how far past the crossing the wall reaches: a corner (both ends there), or a T (only this end)
+        const alongX = (X[0] - o.a[0]) * d0[0] + (X[1] - o.a[1]) * d0[1];
+        moveEnd(x, end, X); ends.push({ id: x.w.id, end });
+        if (alongX <= o.t / 2 + x.t / 2 + 2) { moveEnd(o, "start", X); ends.push({ id: o.w.id, end: "start" }); }
+        else if (alongX >= Lo - o.t / 2 - x.t / 2 - 2) { moveEnd(o, "end", X); ends.push({ id: o.w.id, end: "end" }); }
+        break;
+      }
+    }
+    for (const o of lines) if (o.doc && o.touched) {
+      ops.push({ op: "set", id: o.w.id, key: "centreline", value: o.w.args.centreline });
+      if (o.w.args.topProfile) ops.push({ op: "set", id: o.w.id, key: "topProfile", value: o.w.args.topProfile });
+      // the model's own openings in it stay where they were on the wall
+      if (o.shift) for (const g of doc.elements()) if (doc.typeOf(g) === "Opening" && ((doc.argValue(g, "host") || {}).ref) === o.w.id) { const pr = clone(doc.argValue(g, "profile")); pr.at = r1(pr.at - o.shift); ops.push({ op: "set", id: doc.idOf(g), key: "profile", value: pr }); }
+    }
+    for (const en of ends) joinEnds.set(en.id + ":" + en.end, en);
+    if (ends.length) note("recjoin", "walls read from meshes are joined where they meet (their ends taken to where the centrelines cross)");
+  }
   if (joinEnds.size) ops.push({ op: "autojoin", ends: [...joinEnds.values()] });
   // the meshes go first (an element reads its shape as it builds), without their working copies
   const meshOps = ops.filter(o => o.lib === "meshes"), rest = ops.filter(o => o.lib !== "meshes");
@@ -16238,6 +17129,8 @@ function mergeModel(cur, next) {
 //! view. Every expected value is derived on paper in the comment beside it,
 //! before the program is asked; a test whose expectation came from running the
 //! code would prove only that the code is deterministic (measured-truth).
+
+
 
 
 
@@ -17896,7 +18789,7 @@ DATA;
 #117=IFCPOLYGONALFACESET(#110,.T.,(#111,#112,#113,#114,#115,#116),$);#118=IFCSHAPEREPRESENTATION($,'Body','Tessellation',(#117));#119=IFCPRODUCTDEFINITIONSHAPE($,$,(#118));#120=IFCSANITARYTERMINAL('sn',$,'Basin',$,$,#14,#119,$,$);
 #130=IFCRELCONTAINEDINSPATIALSTRUCTURE('c1',$,$,$,(#50,#57,#69,#75,#93,#109,#120),#23);
 ENDSEC;END-ISO-10303-21;`;
-testCase("M55", "IFC bodies kept as their own shape: a brep stair, a swept-disk handrail, two chairs sharing one mapped shape, a gable wall clipped by a sloping half-space, a tilted roof slab and a polygonal-face-set basin - each a generic model with its true tessellated body, filed in its category, cut true in plan and section", () => {
+testCase("M55", "IFC bodies kept as their own shape: a brep stair, a swept-disk handrail, two chairs sharing one mapped shape, a gable wall clipped by a sloping half-space and a polygonal-face-set basin - each a generic model with its true tessellated body, filed in its category, cut true in plan and section; the tilted roof slab a roof plane, 2 m of rise", () => {
   const doc = newDocument("ifc"), ed = new Editor(doc);
   const r = importIfc(doc, IFC_SHAPES), res = ed.apply(r.ops);
   const gm = doc.elements().filter(f => doc.typeOf(f) === "Generic"), by = n => gm.find(f => f.get("Name") === n), cat = n => by(n) && categoryOf(doc, by(n));
@@ -17904,17 +18797,18 @@ testCase("M55", "IFC bodies kept as their own shape: a brep stair, a swept-disk 
   const wall = by("Gable wall"), wp = wall && doc.plan(wall);
   // the gable: whole 5 m × 200 at 1.2 m; above 3.0 m only where the slope still clears it (x < 2500 + 500 × 0.8 / 0.6 ≈ 3167)
   const a12 = wp ? plateAt(wp.mesh, 1200).area : 0, a30 = wp ? plateAt(wp.mesh, 3000).area : 0;
-  const stair = doc.plan(by("Stair flight")), rail = doc.plan(by("Handrail")), roof = doc.plan(by("Sloped roof")), basin = doc.plan(by("Basin"));
+  const roofEl = doc.elements().find(f => doc.typeOf(f) === "Roof" && f.get("Name") === "Sloped roof");
+  const stair = doc.plan(by("Stair flight")), rail = doc.plan(by("Handrail")), roof = roofEl && doc.plan(roofEl), basin = doc.plan(by("Basin"));
   const c1 = doc.plan(by("Chair 1")), c2 = doc.plan(by("Chair 2"));
   const plan = deriveView(doc, doc.elements().find(f => doc.typeOf(f) === "PlanView"));
   const drawnStair = plan.prims.some(p => p.id === doc.idOf(by("Stair flight")) || (p.layer === "IfcStair"));
-  const ok = res.ok && !Object.keys(r.report.missed).length && gm.length === 7
+  const ok = res.ok && !Object.keys(r.report.missed).length && gm.length === 6 && !!roof
     && cat("Stair flight") === "IfcStair" && cat("Handrail") === "IfcRailing" && cat("Chair 1") === "Furniture" && cat("Basin") === "IfcFlowTerminal" && cat("Gable wall") === "IfcWall"
-    && shapes.length === 6 && F.json(by("Chair 1"), "mesh").shape === F.json(by("Chair 2"), "mesh").shape
+    && shapes.length === 5 && F.json(by("Chair 1"), "mesh").shape === F.json(by("Chair 2"), "mesh").shape
     && Math.abs(c2.mesh.positions[0] - c1.mesh.positions[0] - 2000) < 1
     && Math.abs(a12 - 1e6) < 2e3 && Math.abs(a30 - 3166.7 * 200) < 4e3 && Math.abs(wp.z1 - 4000) < 1
     && Math.abs(stair.z1 - 1500) < 1 && Math.abs(rail.z1 - 2425) < 10 && Math.abs(roof.z1 - roof.z0 - 2000) < 2 && Math.abs(basin.z0 - 800) < 1 && drawnStair;
-  return R(ok, "7 generic models, nothing missed; stair/railing/furniture/fixture/wall categories; 6 shapes, the chairs sharing one 2 m apart; gable 1.00 m² at 1.2 m, ≈0.63 m² at 3.0 m, 4 m high; stair 1.5 m; rail to 2.425 m; roof tilted; basin from 0.8 m; the stair drawn in plan",
+  return R(ok, "6 generic models and a roof plane, nothing missed; stair/railing/furniture/fixture/wall categories; 5 shapes, the chairs sharing one 2 m apart; gable 1.00 m² at 1.2 m, ≈0.63 m² at 3.0 m, 4 m high; stair 1.5 m; rail to 2.425 m; roof tilted; basin from 0.8 m; the stair drawn in plan",
     `ok ${res.ok} ${res.error || ""}; missed ${JSON.stringify(r.report.missed)}; generic ${gm.length}; cats ${["Stair flight", "Handrail", "Chair 1", "Basin", "Gable wall"].map(cat).join("/")}; shapes ${shapes.length}; chairs ${c1 && c2 && (c2.mesh.positions[0] - c1.mesh.positions[0])}; gable ${Math.round(a12)} / ${Math.round(a30)} h ${wp && wp.z1}; stair ${stair && stair.z1}; rail ${rail && rail.z1}; roof ${roof && [roof.z0, roof.z1].map(Math.round)}; basin ${basin && basin.z0}; drawn ${drawnStair}; notes ${r.report.notes.join(" | ")}`);
 });
 
@@ -18294,6 +19188,130 @@ testCase("M73", "A schedule says what its filter leaves out: the count of all an
   const why = b && b.fails ? b.fails.map(failText).join("; ") : "";
   const pass = T.total === 2 && T.count === 1 && T.excluded.has("B") && !T.excluded.has("A") && b.status === "filtered" && why === "Length 7250 mm does not satisfy “is less than 2921 mm”" && a.status === "shown" && fl.status === "other" && fl.category === "Floors";
   return R(pass, "2 walls, 1 shown; mybaby left out by the Length rule, said in words; A listed; the slab is a floor", JSON.stringify({ total: T.total, count: T.count, b, why, a: a && a.status, fl }));
+});
+/** An element's 3D body as one welded mesh: each prism's footprint at its base, its top (lofted, or
+ *  following its top) above, and the sides between - what an exporter writes as triangles. */
+function partsMesh(parts) {
+  const tri = [];
+  for (const pt of parts) {
+    let foot = pt.foot, top = pt.topFoot || pt.foot;
+    if (polyArea(foot) < 0) { foot = foot.slice().reverse(); top = top.slice().reverse(); }
+    const zb = foot.map(() => pt.z0), zt = top.map(q => pt.topAt ? pt.topAt(q) : pt.z1);
+    const P = (q, z) => [q[0], q[1], z];
+    for (const [i, j, k] of triangulate(foot)) { tri.push(...P(foot[i], zb[i]), ...P(foot[k], zb[k]), ...P(foot[j], zb[j])); tri.push(...P(top[i], zt[i]), ...P(top[j], zt[j]), ...P(top[k], zt[k])); }
+    for (let i = 0; i < foot.length; i++) { const j = (i + 1) % foot.length; tri.push(...P(foot[i], zb[i]), ...P(foot[j], zb[j]), ...P(top[j], zt[j]), ...P(foot[i], zb[i]), ...P(top[j], zt[j]), ...P(top[i], zt[i])); }
+  }
+  return weldTriangles(tri, 0.01);
+}
+testCase("M74", "Meshes read back into the elements they are: a gable wall with a door, a window and a top bevelled under a roof; a plate with a hole; a roof plane on the slant (square-cut and plumb); a beam turned 30° about its axis; a duct riser and a level duct - each built, meshed as an exporter writes it, and read back to the same numbers", () => {
+  const { doc, ed } = fixture();
+  doc.lib.types["T-RB"] = { family: "F-RCBEAM", name: "RB 200x400", shape: "rect", width: 200, depth: 400, material: "M-CONC" };
+  wall(doc, "A", [0, 0], [5000, 0], "T-300", { height: 4300, topProfile: [[0, 2800], [2500, 4300], [5000, 2800]], slope: { top: 0, lean: 0, across: 10 } });
+  ed.apply([{ op: "add", element: { id: "D", type: "Opening", args: { host: { ref: "A" }, profile: { kind: "rect", at: 1200, sill: 0, w: 900, h: 2100 }, farProfile: null, depth: "through" } } },
+    { op: "add", element: { id: "WN", type: "Opening", args: { host: { ref: "A" }, profile: { kind: "rect", at: 3600, sill: 900, w: 1000, h: 1200 }, farProfile: null, depth: "through" } } },
+    { op: "add", element: { id: "RF0", type: "Roof", args: { boundary: [[0, 10000], [6000, 10000], [6000, 14000], [0, 14000]], holes: [[[2000, 11000], [3000, 11000], [3000, 12000], [2000, 12000]]], level: { ref: "L0" }, heightOffset: 3000, pivot: [0, 10000], pitch: 0, direction: 0, thickness: 250 } } },
+    { op: "add", element: { id: "RF1", type: "Roof", args: { boundary: [[0, 20000], [6000, 20000], [6000, 22000], [3000, 22000], [3000, 25000], [0, 25000]], holes: [[[1000, 21000], [1800, 21000], [1800, 21600], [1000, 21600]]], level: { ref: "L0" }, heightOffset: 3000, pivot: [0, 20000], pitch: 30, direction: 60, thickness: 250, rafterCut: "Square" } } },
+    { op: "add", element: { id: "RF2", type: "Roof", args: { boundary: [[0, 30000], [4000, 30000], [4000, 33000], [0, 33000]], holes: [], level: { ref: "L0" }, heightOffset: 3000, pivot: [0, 30000], pitch: 35, direction: 90, thickness: 200, rafterCut: "Plumb" } } },
+    { op: "add", element: { id: "BR", type: "Beam", args: { axis: { type: "line", start: [0, 40000], end: [6000, 40000] }, beamType: { ref: "T-RB" }, level: { ref: "L0" }, topOffset: 3000, rotation: 30 } } },
+    { op: "add", element: { id: "DU1", type: "Duct", args: { path: [[1000, 50000, 500], [1000, 50000, 4500]], level: { ref: "L0" }, shape: "Round", width: 250, height: 250, thickness: 1 } } },
+    { op: "add", element: { id: "DU2", type: "Duct", args: { path: [[0, 52000, 2700], [5000, 52000, 2700]], level: { ref: "L0" }, shape: "Round", width: 300, height: 300, thickness: 0 } } }]);
+  doc.regenerate();
+  const errs = ["A", "RF0", "RF1", "RF2", "BR", "DU1", "DU2"].filter(id => doc.error(doc.element(id)));
+  const near = (a, b, t = 1.5) => Math.abs(a - b) <= t;
+  // the wall: read in either direction, so compare in its own terms
+  const w = recogniseWall(partsMesh(doc.plan(doc.element("A")).pieces));
+  const flip = w && w.start[0] > w.end[0], mir = u => flip ? 5000 - u : u;
+  const wallOk = !!w && near(w.thickness, 300) && near(w.length, 5000) && w.profile && w.profile.length === 3 && near(w.profile[1][0], 2500, 2) && near(w.profile[1][1] - w.profile[0][1], 1500, 3)
+    && near(Math.abs(w.cross), Math.tan(10 * Math.PI / 180), 0.005) && w.openings.length === 2
+    && w.openings.some(o => near(mir((o.u0 + o.u1) / 2), 1200, 2) && near(o.u1 - o.u0, 900, 2) && near(o.sill, 0, 2) && near(o.h, 2100, 2))
+    && w.openings.some(o => near(mir((o.u0 + o.u1) / 2), 3600, 2) && near(o.u1 - o.u0, 1000, 2) && near(o.sill, 900, 2) && near(o.h, 1200, 2));
+  const pr = recognisePrism(doc.plan(doc.element("RF0")).mesh);
+  const prismOk = !!pr && near(pr.thick, 250) && near(pr.zTop, 3000) && pr.holes.length === 1 && Math.abs(pr.area - 23e6) < 2e4;
+  const t1 = recogniseTiltedPlate(doc.plan(doc.element("RF1")).mesh), t2 = recogniseTiltedPlate(doc.plan(doc.element("RF2")).mesh);
+  const Lshape = 6000 * 2000 + 3000 * 3000;
+  const roofOk = !!t1 && near(t1.pitch, 30, 0.1) && near(t1.direction, 60, 0.1) && near(t1.thickness, 250) && t1.square && t1.holes.length === 1 && Math.abs(Math.abs(polyArea(t1.outer)) - Lshape) < 0.005 * Lshape
+    && !!t2 && near(t2.pitch, 35, 0.1) && near(t2.direction, 90, 0.1) && near(t2.thickness, 200) && !t2.square;
+  const bparts = doc.data(doc.element("BR")).parts, b = recogniseBar(partsMesh(bparts));
+  const turn = b ? ((b.roll % 90) + 90) % 90 : NaN;
+  const beamOk = !!b && [b.W, b.D].sort((x, y) => x - y).every((v, i) => near(v, [200, 400][i], 2)) && (near(turn, 30, 0.5) || near(turn, 60, 0.5)) && near(Math.hypot(b.c1[0] - b.c0[0], b.c1[1] - b.c0[1]), 6000, 2);
+  const d1 = recogniseTube(doc.plan(doc.element("DU1")).mesh), d2 = recogniseTube(doc.plan(doc.element("DU2")).mesh);
+  const ductOk = !!d1 && near(d1.diameter, 250, 1) && near(d1.wall, 1, 0.3) && near(Math.min(d1.c0[2], d1.c1[2]), 500) && near(Math.max(d1.c0[2], d1.c1[2]), 4500) && near(d1.c0[0], 1000) && near(d1.c0[1], 50000)
+    && !!d2 && near(d2.diameter, 300, 1) && d2.wall === 0 && near(Math.abs(d2.c1[0] - d2.c0[0]), 5000, 1) && near(d2.c0[2], 2700, 1);
+  return R(!errs.length && wallOk && prismOk && roofOk && beamOk && ductOk, "all built; wall 300 × 5000, gable 2800-4300-2800, bevel tan 10°, door 900×2100 at 1200, window 1000×1200 at 3600 sill 900; plate 250 at 3000 with one hole (23 m²); roof 30° toward 60°, 250 square-cut, L-shape and hole; roof 35° toward 90° plumb; beam 200×400 turned 30°, 6 m; ducts Ø250 (1 mm wall) 500→4500 and Ø300 5 m level",
+    JSON.stringify({ errs, w: w && { t: w.thickness, L: w.length, prof: w.profile, cross: w.cross, ops: w.openings }, pr: pr && { thick: pr.thick, top: pr.zTop, holes: pr.holes.length, area: pr.area }, t1: t1 && { p: t1.pitch, d: t1.direction, t: t1.thickness, sq: t1.square, a: Math.abs(polyArea(t1.outer)), h: t1.holes.length }, t2: t2 && { p: t2.pitch, d: t2.direction, sq: t2.square }, b, d1, d2 }).slice(0, 2500));
+});
+/** A small IFC4 file of triangulated products (what reference-view exporters write), for the importer. */
+function ifcOfMeshes(items) {
+  let n = 100; const L = [], id = () => "#" + (++n), ids = { storey: "#23", roof: null };
+  const f = x => { const r = Math.round(x * 1000) / 1000; return Number.isInteger(r) ? r + "." : String(r); };
+  const colourRef = rgb => { const c = id(); L.push(`${c}=IFCCOLOURRGB($,${rgb.map(f).join(",")});`); const r = id(); L.push(`${r}=IFCSURFACESTYLERENDERING(${c},$,$,$,$,$,$,$,.FLAT.);`); const st = id(); L.push(`${st}=IFCSURFACESTYLE($,.BOTH.,(${r}));`); return st; };
+  const faceSet = m => { const pl = id(); const pts = []; for (let i = 0; i < m.positions.length; i += 3) pts.push(`(${f(m.positions[i])},${f(m.positions[i + 1])},${f(m.positions[i + 2])})`); L.push(`${pl}=IFCCARTESIANPOINTLIST3D((${pts.join(",")}),$);`);
+    const ix = []; for (let i = 0; i < m.index.length; i += 3) ix.push(`(${m.index[i] + 1},${m.index[i + 1] + 1},${m.index[i + 2] + 1})`); const fs = id(); L.push(`${fs}=IFCTRIANGULATEDFACESET(${pl},$,.T.,(${ix.join(",")}),$);`); return fs; };
+  const contained = [], roofParts = [], groups = [];
+  for (const it of items) {
+    const sets = (it.meshes || [it.mesh]).map((m, k) => { const fs = faceSet(m); const rgb = (it.colours || [])[k]; if (rgb) { const st = colourRef(rgb); L.push(`${id()}=IFCSTYLEDITEM(${fs},(${st}),$);`); } return fs; });
+    const rep = id(); L.push(`${rep}=IFCSHAPEREPRESENTATION(#40,'Body','Tessellation',(${sets.join(",")}));`); const pds = id(); L.push(`${pds}=IFCPRODUCTDEFINITIONSHAPE($,$,(${rep}));`);
+    const e = id(), gid = it.gid || ("g" + n), q = s2 => s2 == null ? "$" : `'${s2}'`;
+    if (it.cls === "IFCSPACE") L.push(`${e}=IFCSPACE('${gid}',$,${q(it.name)},$,$,#14,${pds},${q(it.longName)},.ELEMENT.,.SPACE.,$);`);
+    else L.push(`${e}=${it.cls}('${gid}',$,${q(it.name)},$,${q(it.objectType)},#14,${pds},$,${it.predefined || "$"});`);
+    (it.inRoof ? roofParts : contained).push(e);
+    if (it.system) groups.push([e, it.system]);
+  }
+  if (roofParts.length) { const r = id(); L.push(`${r}=IFCROOF('rf0',$,'Roof',$,$,#14,$,$,.GABLE_ROOF.);`); contained.push(r); L.push(`${id()}=IFCRELAGGREGATES('ra',$,$,$,${r},(${roofParts.join(",")}));`); }
+  for (const [e, name] of groups) { const sy = id(); L.push(`${sy}=IFCDISTRIBUTIONSYSTEM('sy${n}',$,'${name}',$,$,$,.VENTILATION.);`); L.push(`${id()}=IFCRELASSIGNSTOGROUP('ag${n}',$,$,$,(${e}),$,${sy});`); }
+  L.push(`${id()}=IFCRELCONTAINEDINSPATIALSTRUCTURE('cs',$,$,$,(${contained.join(",")}),#23);`);
+  return `ISO-10303-21;
+HEADER;FILE_DESCRIPTION((''),'2;1');FILE_NAME('m.ifc','',(''),(''),'','','');FILE_SCHEMA(('IFC4'));ENDSEC;
+DATA;
+#1=IFCSIUNIT(*,.LENGTHUNIT.,.MILLI.,.METRE.);#2=IFCUNITASSIGNMENT((#1));
+#10=IFCCARTESIANPOINT((0.,0.,0.));#11=IFCDIRECTION((0.,0.,1.));#12=IFCDIRECTION((1.,0.,0.));#13=IFCAXIS2PLACEMENT3D(#10,#11,#12);#14=IFCLOCALPLACEMENT($,#13);
+#20=IFCPROJECT('p',$,'T',$,$,$,$,(#40),#2);#23=IFCBUILDINGSTOREY('s1',$,'Ground',$,$,#14,$,$,.ELEMENT.,0.);
+#40=IFCGEOMETRICREPRESENTATIONCONTEXT($,'Model',3,1.E-05,#13,$);
+${L.join("\n")}
+ENDSEC;
+END-ISO-10303-21;
+`;
+}
+testCase("M75", "A reference-view IFC of triangles comes in as a model: the wall a wall (gable, bevel, door, window), the roof slab a roof plane, the beam a beam turned 30°, the duct a duct in its system, the room a room with its name and number, the tree a plant in its two colours, the terrain topography, the zone left out - and the same file saved from GitHub's web page reads the same, or says where the raw file is", () => {
+  const src = fixture(); src.doc.lib.types["T-RB"] = { family: "F-RCBEAM", name: "RB 200x400", shape: "rect", width: 200, depth: 400, material: "M-CONC" };
+  wall(src.doc, "A", [0, 0], [5000, 0], "T-300", { height: 4300, topProfile: [[0, 2800], [2500, 4300], [5000, 2800]], slope: { top: 0, lean: 0, across: 10 } });
+  src.ed.apply([{ op: "add", element: { id: "D", type: "Opening", args: { host: { ref: "A" }, profile: { kind: "rect", at: 1200, sill: 0, w: 900, h: 2100 }, farProfile: null, depth: "through" } } },
+    { op: "add", element: { id: "WN", type: "Opening", args: { host: { ref: "A" }, profile: { kind: "rect", at: 3600, sill: 900, w: 1000, h: 1200 }, farProfile: null, depth: "through" } } },
+    { op: "add", element: { id: "RF1", type: "Roof", args: { boundary: [[0, -1000], [5000, -1000], [5000, 1000], [0, 1000]], holes: [], level: { ref: "L0" }, heightOffset: 4000, pivot: [0, -1000], pitch: 30, direction: 90, thickness: 250, rafterCut: "Square" } } },
+    { op: "add", element: { id: "BR", type: "Beam", args: { axis: { type: "line", start: [0, 3000], end: [5000, 3000] }, beamType: { ref: "T-RB" }, level: { ref: "L0" }, topOffset: 3000, rotation: 30 } } },
+    { op: "add", element: { id: "DU1", type: "Duct", args: { path: [[4000, 2000, 500], [4000, 2000, 4500]], level: { ref: "L0" }, shape: "Round", width: 250, height: 250, thickness: 1 } } }]);
+  src.doc.regenerate();
+  const box = (x0, y0, z0, x1, y1, z1) => partsMesh([{ foot: [[x0, y0], [x1, y0], [x1, y1], [x0, y1]], z0, z1 }]);
+  const text = ifcOfMeshes([
+    { cls: "IFCWALL", name: "Gable wall", mesh: partsMesh(src.doc.plan(src.doc.element("A")).pieces) },
+    { cls: "IFCSLAB", name: "Roof slab", mesh: src.doc.plan(src.doc.element("RF1")).mesh, inRoof: true, colours: [[0.8, 0.4, 0.3]] },
+    { cls: "IFCBEAM", name: "Purlin", mesh: partsMesh(src.doc.data(src.doc.element("BR")).parts) },
+    { cls: "IFCDUCTSEGMENT", name: "Flue", mesh: src.doc.plan(src.doc.element("DU1")).mesh, system: "Exhaust air" },
+    { cls: "IFCSPACE", name: "G.01", longName: "Kitchen", mesh: box(0, 200, 0, 4000, 3200, 2500) },
+    { cls: "IFCGEOGRAPHICELEMENT", name: "apple tree", meshes: [box(9000, 9000, 0, 9200, 9200, 2000), box(8200, 8200, 2000, 10000, 10000, 4500)], colours: [[0.5, 0.3, 0.1], [0.2, 0.6, 0.2]] },
+    { cls: "IFCBUILDINGELEMENTPROXY", name: "site - soil", objectType: "terrain", mesh: box(-5000, -5000, -2000, 15000, 15000, -300) },
+    { cls: "IFCSPATIALZONE", name: "gross volume", mesh: box(0, 0, 0, 5000, 5000, 5000) },
+  ]);
+  const doc = newDocument("m"), ed = new Editor(doc), r = importIfc(doc, text), res = ed.apply(r.ops);
+  const of = t => doc.elements().filter(f => doc.typeOf(f) === t);
+  const W = of("Wall")[0], Rf = of("Roof")[0], Bm = of("Beam")[0], Du = of("Duct")[0], Sp = of("Space")[0], gens = of("Generic");
+  const tree = gens.find(g => g.get("Name") === "apple tree"), soil = gens.find(g => g.get("Name") === "site - soil");
+  const treeShape = tree && doc.lib.meshes[F.json(tree, "mesh").shape];
+  const ok = res.ok && !Object.keys(r.report.missed).length
+    && of("Wall").length === 1 && (F.json(W, "topProfile") || []).length === 3 && Math.abs(Math.abs((F.json(W, "slope") || {}).across || 0) - 10) < 0.2 && of("Opening").length === 2
+    && of("Roof").length === 1 && Math.abs(F.real(Rf, "pitch") - 30) < 0.1 && F.choice(Rf, "rafterCut") === "Square" && F.text(Rf, "colour") === "#cc664d"
+    && of("Beam").length === 1 && [30, 60].some(v => Math.abs((((F.real(Bm, "rotation") % 90) + 90) % 90) - v) < 0.5)
+    && of("Duct").length === 1 && Math.abs(F.real(Du, "width") - 250) < 1 && F.text(Du, "system") === "Exhaust air"
+    && Sp && Sp.get("Name") === "Kitchen" && doc.getParam(Sp, "Number") === "G.01" && Math.abs((doc.data(Sp) || {}).value - 12e6) < 1e4
+    && tree && categoryOf(doc, tree) === "Planting" && treeShape && (treeShape.groups || []).length === 2
+    && soil && categoryOf(doc, soil) === "Topography" && gens.length === 2 && r.report.notes.some(t => /spatial zone/.test(t));
+  // the same file as GitHub's page for it, with its lines in the page; and a page too large to carry them
+  const page = `<!DOCTYPE html><html><head><title>x.ifc at main</title></head><body><script type="application/json">{"payload":{"blob":{"rawLines":${JSON.stringify(text.split("\n"))},"rawBlobUrl":"https://github.com/o/r/raw/refs/heads/main/x.ifc"}}}<` + `/script></body></html>`;
+  const unwrapped = ifcTextOf(page), bare = `<!DOCTYPE html><html><body><script>{"rawBlobUrl":"https://github.com/o/r/raw/refs/heads/main/big.ifc","truncated":true}<` + `/script></body></html>`;
+  let err = ""; try { ifcTextOf(bare); } catch (e) { err = e.message; }
+  const pageOk = unwrapped.text.trim() === text.trim() && /GitHub/.test(unwrapped.note) && /raw\/refs\/heads\/main\/big\.ifc/.test(err) && /web page/.test(err);
+  return R(ok && pageOk, "1 wall (3-point gable, 10° bevel, 2 openings), 1 roof 30° square-cut in its colour, 1 beam turned 30°, 1 duct Ø250 on Exhaust air, room Kitchen G.01 of 12 m², a plant in 2 colours, topography, the zone left out, nothing missed; the GitHub page read, the bare one explained",
+    JSON.stringify({ res: res.ok, missed: r.report.missed, made: r.report.made, wall: W && [F.json(W, "topProfile"), F.json(W, "slope"), of("Opening").length], roof: Rf && [F.real(Rf, "pitch"), F.choice(Rf, "rafterCut"), F.text(Rf, "colour")], beam: Bm && F.real(Bm, "rotation"), duct: Du && [F.real(Du, "width"), F.text(Du, "system")], space: Sp && [Sp.get("Name"), doc.getParam(Sp, "Number"), (doc.data(Sp) || {}).value], tree: tree && [categoryOf(doc, tree), treeShape && (treeShape.groups || []).length], soil: soil && categoryOf(doc, soil), gens: gens.length, notes: r.report.notes, pageOk, err }).slice(0, 3000));
 });
 
 // ===== ui_util.js =====
@@ -24118,7 +25136,7 @@ function rowClick(key, single, dbl) {
 }
 const ELEMENT_ICON = { Wall: "wall", Door: "door", Window: "window", Column: "column", Floor: "floor", Beam: "beam", Grid: "grid", Level: "level", Space: "room", Text: "text", Dimension: "dim",
   SectionView: "section", ElevationView: "elevview", PlanView: "plan", RoomSeparator: "sepline", DetailLine: "skline", FilledRegion: "skrect", SymbolInstance: "symbol", CADImport: "importI", Generic: "column", Furniture: "select" };
-const BODY_TYPES = new Set(["Wall", "Column", "Door", "Window", "Floor", "Beam", "Generic"]);
+const BODY_TYPES = new Set(["Wall", "Column", "Door", "Window", "Floor", "Beam", "Generic", "Duct", "Pipe", "Roof"]);
 /** What a view shows that can be picked in it - the inclusion test is "visible and editable here": the
  *  ids its drawing publishes as hits (plans, elevations, sections), or the bodies it shows (3D).
  *  Cached per model and view revision; with `quick`, an uncached view is worked out in the background
@@ -24501,7 +25519,8 @@ function runIfcImport(file, text, opts) {
     const res = app.apply(r.ops);
     if (!res.ok) return app.say(`${file.name}: ${res.error}`, "error");
     // "9 Floors (footing)", not "9 Floor (footing)s"
-    const plural = (k, n) => n > 1 ? (/ \(/.test(k) ? k.replace(/ \(/, "s (") : k + "s") : k;
+    const word = w => /(s|sh|ch|x)$/.test(w) ? w : /[^aeiou]y$/.test(w) ? w.slice(0, -1) + "ies" : w + "s";
+    const plural = (k, n) => n > 1 ? (/ \(/.test(k) ? k.replace(/^(.*?)( \(.*)$/, (_, a, b) => word(a) + b) : word(k)) : k;
     const made = Object.entries(r.report.made).map(([k, n]) => `${n} ${plural(k, n)}`).join(", ") || "nothing";
     const missed = Object.entries(r.report.missed).map(([k, n]) => `${n} × ${k}${r.report.why && r.report.why[k] ? " (" + Object.entries(r.report.why[k]).map(([w, c]) => (c > 1 ? c + ": " : "") + w).join("; ") + ")" : ""}`).join(", ");
     dialog(`Imported ${file.name}`, h("div", { style: { display: "grid", gap: "8px" } },

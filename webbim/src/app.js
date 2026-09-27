@@ -628,7 +628,7 @@ function rowClick(key, single, dbl) {
 }
 const ELEMENT_ICON = { Wall: "wall", Door: "door", Window: "window", Column: "column", Floor: "floor", Beam: "beam", Grid: "grid", Level: "level", Space: "room", Text: "text", Dimension: "dim",
   SectionView: "section", ElevationView: "elevview", PlanView: "plan", RoomSeparator: "sepline", DetailLine: "skline", FilledRegion: "skrect", SymbolInstance: "symbol", CADImport: "importI", Generic: "column", Furniture: "select" };
-const BODY_TYPES = new Set(["Wall", "Column", "Door", "Window", "Floor", "Beam", "Generic"]);
+const BODY_TYPES = new Set(["Wall", "Column", "Door", "Window", "Floor", "Beam", "Generic", "Duct", "Pipe", "Roof"]);
 /** What a view shows that can be picked in it - the inclusion test is "visible and editable here": the
  *  ids its drawing publishes as hits (plans, elevations, sections), or the bodies it shows (3D).
  *  Cached per model and view revision; with `quick`, an uncached view is worked out in the background
@@ -1011,7 +1011,8 @@ function runIfcImport(file, text, opts) {
     const res = app.apply(r.ops);
     if (!res.ok) return app.say(`${file.name}: ${res.error}`, "error");
     // "9 Floors (footing)", not "9 Floor (footing)s"
-    const plural = (k, n) => n > 1 ? (/ \(/.test(k) ? k.replace(/ \(/, "s (") : k + "s") : k;
+    const word = w => /(s|sh|ch|x)$/.test(w) ? w : /[^aeiou]y$/.test(w) ? w.slice(0, -1) + "ies" : w + "s";
+    const plural = (k, n) => n > 1 ? (/ \(/.test(k) ? k.replace(/^(.*?)( \(.*)$/, (_, a, b) => word(a) + b) : word(k)) : k;
     const made = Object.entries(r.report.made).map(([k, n]) => `${n} ${plural(k, n)}`).join(", ") || "nothing";
     const missed = Object.entries(r.report.missed).map(([k, n]) => `${n} × ${k}${r.report.why && r.report.why[k] ? " (" + Object.entries(r.report.why[k]).map(([w, c]) => (c > 1 ? c + ": " : "") + w).join("; ") + ")" : ""}`).join(", ");
     dialog(`Imported ${file.name}`, h("div", { style: { display: "grid", gap: "8px" } },

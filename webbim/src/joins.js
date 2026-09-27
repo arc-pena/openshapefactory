@@ -7,7 +7,7 @@ import {
   TOL, MITER_LIMIT, sub, add, mul, dot, cross, dist, perp, normalise, intersectLines, intersectLineCircle, intersectCircles,
   projectPoint, angleOf, TAU, wrap, curveOf,
 } from "./geom2d.js";
-import { boundary, termPoint, uOf, sideOf, pointAt, layerRegion, faceLine, wallPieces } from "./walls.js";
+import { boundary, termPoint, uOf, sideOf, pointAt, layerRegion, faceLine, wallPieces, wallTopMin } from "./walls.js";
 
 export const JOIN_TOL = 1.0;   // mm: ends closer than this share a node
 
@@ -376,7 +376,7 @@ export function solidSpans(w, openings, stats) {
     spans.push({ t0, t1: { k: "normal", u: op.u0 }, u0, u1: op.u0 });
     // below the sill and above the head, the wall continues across the opening
     if (op.sill > 0) spans.push({ t0: { k: "normal", u: op.u0 }, t1: { k: "normal", u: op.u1 }, u0: op.u0, u1: op.u1, zb: w.z0, zt: w.z0 + op.sill, openingSide: "sill" });
-    if (op.sill + op.h < w.height) spans.push({ t0: { k: "normal", u: op.u0 }, t1: { k: "normal", u: op.u1 }, u0: op.u0, u1: op.u1, zb: w.z0 + op.sill + op.h, zt: w.z1, openingSide: "head" });
+    if (w.z0 + op.sill + op.h < wallTopMin(w, op.u0, op.u1) - 1) spans.push({ t0: { k: "normal", u: op.u0 }, t1: { k: "normal", u: op.u1 }, u0: op.u0, u1: op.u1, zb: w.z0 + op.sill + op.h, zt: w.z1, openingSide: "head" });
     if (op.recess) {
       // behind a recess the wall continues: from depth d off the exterior face to the other face
       const s0 = w.stack.s[0], sN = w.stack.s[w.stack.s.length - 1], dir = Math.sign(sN - s0) || 1;

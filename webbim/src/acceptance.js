@@ -3,7 +3,7 @@
 //! before the program is asked; a test whose expectation came from running the
 //! code would prove only that the code is deterministic (measured-truth).
 
-import { TOL, dist, sub, add, mul, pointInPoly, pathArea, samplePath, intersectLines, lineThrough, bez, polyArea, segEnd, segStart, distToSeg } from "./geom2d.js";
+import { TOL, dist, sub, add, mul, pointInPoly, pathArea, samplePath, intersectLines, lineThrough, bez, polyArea, segEnd, segStart, distToSeg, triangulate } from "./geom2d.js";
 import { parse, evaluate, formatValue } from "./expr.js";
 import { CATALOGUE, F, loadDocument, danglingRefs, clone } from "./ocaf.js";
 import { wallRegions, solidSpans } from "./joins.js";
@@ -15,6 +15,8 @@ import { elementRefs } from "./bim.js";
 import { viewLineGeometry, viewContext, sectionBoxKey, dimText, deriveView, planScene, elevationScene, placements, textWidth, sheetScene, visibilityKey, sectionCut, cutOutline, SHEET_DISPLAYS, sheetDisplayOf, dimensionGeometry } from "./scene.js";
 import { chainLoop } from "./crop.js";
 import { importIfc } from "./ifcimport.js";
+import { recogniseWall, recognisePrism, recogniseBar, recogniseTube, recogniseTiltedPlate } from "./ifcrecover.js";
+import { ifcTextOf } from "./ifcread.js";
 import { writePDF, pathOps, PT_PER_MM } from "./pdf.js";
 import { writeDXF, readDXF, dxfLineweight, dxfDrawing } from "./dxf.js";
 import { buildHLRModel, runHLR, elementsBox } from "./hlr.js";
@@ -30,7 +32,7 @@ import { cadSketchOutline } from "./cadsketch.js";
 import { programFromBrief, planSpaceGraph, relaxBubbles, gfaOf, activeLegend, legendColour, groupKey } from "./spacegraph.js";
 import { buildRmuhSample, RMUH_BRIEF } from "./sample_rmuh.js";
 import { buildPavilionSample } from "./sample_pavilion.js";
-import { parseOBJ, storeysFor, plateAt } from "./massing.js";
+import { parseOBJ, storeysFor, plateAt, weldTriangles } from "./massing.js";
 
 export const CASES = [];
 const testCase = (id, name, fn, opts = {}) => CASES.push(Object.assign({ id, name, fn }, opts));
@@ -1660,7 +1662,7 @@ DATA;
 #117=IFCPOLYGONALFACESET(#110,.T.,(#111,#112,#113,#114,#115,#116),$);#118=IFCSHAPEREPRESENTATION($,'Body','Tessellation',(#117));#119=IFCPRODUCTDEFINITIONSHAPE($,$,(#118));#120=IFCSANITARYTERMINAL('sn',$,'Basin',$,$,#14,#119,$,$);
 #130=IFCRELCONTAINEDINSPATIALSTRUCTURE('c1',$,$,$,(#50,#57,#69,#75,#93,#109,#120),#23);
 ENDSEC;END-ISO-10303-21;`;
-testCase("M55", "IFC bodies kept as their own shape: a brep stair, a swept-disk handrail, two chairs sharing one mapped shape, a gable wall clipped by a sloping half-space, a tilted roof slab and a polygonal-face-set basin - each a generic model with its true tessellated body, filed in its category, cut true in plan and section", () => {
+testCase("M55", "IFC bodies kept as their own shape: a brep stair, a swept-disk handrail, two chairs sharing one mapped shape, a gable wall clipped by a sloping half-space and a polygonal-face-set basin - each a generic model with its true tessellated body, filed in its category, cut true in plan and section; the tilted roof slab a roof plane, 2 m of rise", () => {
   const doc = newDocument("ifc"), ed = new Editor(doc);
   const r = importIfc(doc, IFC_SHAPES), res = ed.apply(r.ops);
   const gm = doc.elements().filter(f => doc.typeOf(f) === "Generic"), by = n => gm.find(f => f.get("Name") === n), cat = n => by(n) && categoryOf(doc, by(n));
@@ -1668,17 +1670,18 @@ testCase("M55", "IFC bodies kept as their own shape: a brep stair, a swept-disk 
   const wall = by("Gable wall"), wp = wall && doc.plan(wall);
   // the gable: whole 5 m × 200 at 1.2 m; above 3.0 m only where the slope still clears it (x < 2500 + 500 × 0.8 / 0.6 ≈ 3167)
   const a12 = wp ? plateAt(wp.mesh, 1200).area : 0, a30 = wp ? plateAt(wp.mesh, 3000).area : 0;
-  const stair = doc.plan(by("Stair flight")), rail = doc.plan(by("Handrail")), roof = doc.plan(by("Sloped roof")), basin = doc.plan(by("Basin"));
+  const roofEl = doc.elements().find(f => doc.typeOf(f) === "Roof" && f.get("Name") === "Sloped roof");
+  const stair = doc.plan(by("Stair flight")), rail = doc.plan(by("Handrail")), roof = roofEl && doc.plan(roofEl), basin = doc.plan(by("Basin"));
   const c1 = doc.plan(by("Chair 1")), c2 = doc.plan(by("Chair 2"));
   const plan = deriveView(doc, doc.elements().find(f => doc.typeOf(f) === "PlanView"));
   const drawnStair = plan.prims.some(p => p.id === doc.idOf(by("Stair flight")) || (p.layer === "IfcStair"));
-  const ok = res.ok && !Object.keys(r.report.missed).length && gm.length === 7
+  const ok = res.ok && !Object.keys(r.report.missed).length && gm.length === 6 && !!roof
     && cat("Stair flight") === "IfcStair" && cat("Handrail") === "IfcRailing" && cat("Chair 1") === "Furniture" && cat("Basin") === "IfcFlowTerminal" && cat("Gable wall") === "IfcWall"
-    && shapes.length === 6 && F.json(by("Chair 1"), "mesh").shape === F.json(by("Chair 2"), "mesh").shape
+    && shapes.length === 5 && F.json(by("Chair 1"), "mesh").shape === F.json(by("Chair 2"), "mesh").shape
     && Math.abs(c2.mesh.positions[0] - c1.mesh.positions[0] - 2000) < 1
     && Math.abs(a12 - 1e6) < 2e3 && Math.abs(a30 - 3166.7 * 200) < 4e3 && Math.abs(wp.z1 - 4000) < 1
     && Math.abs(stair.z1 - 1500) < 1 && Math.abs(rail.z1 - 2425) < 10 && Math.abs(roof.z1 - roof.z0 - 2000) < 2 && Math.abs(basin.z0 - 800) < 1 && drawnStair;
-  return R(ok, "7 generic models, nothing missed; stair/railing/furniture/fixture/wall categories; 6 shapes, the chairs sharing one 2 m apart; gable 1.00 m² at 1.2 m, ≈0.63 m² at 3.0 m, 4 m high; stair 1.5 m; rail to 2.425 m; roof tilted; basin from 0.8 m; the stair drawn in plan",
+  return R(ok, "6 generic models and a roof plane, nothing missed; stair/railing/furniture/fixture/wall categories; 5 shapes, the chairs sharing one 2 m apart; gable 1.00 m² at 1.2 m, ≈0.63 m² at 3.0 m, 4 m high; stair 1.5 m; rail to 2.425 m; roof tilted; basin from 0.8 m; the stair drawn in plan",
     `ok ${res.ok} ${res.error || ""}; missed ${JSON.stringify(r.report.missed)}; generic ${gm.length}; cats ${["Stair flight", "Handrail", "Chair 1", "Basin", "Gable wall"].map(cat).join("/")}; shapes ${shapes.length}; chairs ${c1 && c2 && (c2.mesh.positions[0] - c1.mesh.positions[0])}; gable ${Math.round(a12)} / ${Math.round(a30)} h ${wp && wp.z1}; stair ${stair && stair.z1}; rail ${rail && rail.z1}; roof ${roof && [roof.z0, roof.z1].map(Math.round)}; basin ${basin && basin.z0}; drawn ${drawnStair}; notes ${r.report.notes.join(" | ")}`);
 });
 
@@ -2058,4 +2061,128 @@ testCase("M73", "A schedule says what its filter leaves out: the count of all an
   const why = b && b.fails ? b.fails.map(failText).join("; ") : "";
   const pass = T.total === 2 && T.count === 1 && T.excluded.has("B") && !T.excluded.has("A") && b.status === "filtered" && why === "Length 7250 mm does not satisfy “is less than 2921 mm”" && a.status === "shown" && fl.status === "other" && fl.category === "Floors";
   return R(pass, "2 walls, 1 shown; mybaby left out by the Length rule, said in words; A listed; the slab is a floor", JSON.stringify({ total: T.total, count: T.count, b, why, a: a && a.status, fl }));
+});
+/** An element's 3D body as one welded mesh: each prism's footprint at its base, its top (lofted, or
+ *  following its top) above, and the sides between - what an exporter writes as triangles. */
+function partsMesh(parts) {
+  const tri = [];
+  for (const pt of parts) {
+    let foot = pt.foot, top = pt.topFoot || pt.foot;
+    if (polyArea(foot) < 0) { foot = foot.slice().reverse(); top = top.slice().reverse(); }
+    const zb = foot.map(() => pt.z0), zt = top.map(q => pt.topAt ? pt.topAt(q) : pt.z1);
+    const P = (q, z) => [q[0], q[1], z];
+    for (const [i, j, k] of triangulate(foot)) { tri.push(...P(foot[i], zb[i]), ...P(foot[k], zb[k]), ...P(foot[j], zb[j])); tri.push(...P(top[i], zt[i]), ...P(top[j], zt[j]), ...P(top[k], zt[k])); }
+    for (let i = 0; i < foot.length; i++) { const j = (i + 1) % foot.length; tri.push(...P(foot[i], zb[i]), ...P(foot[j], zb[j]), ...P(top[j], zt[j]), ...P(foot[i], zb[i]), ...P(top[j], zt[j]), ...P(top[i], zt[i])); }
+  }
+  return weldTriangles(tri, 0.01);
+}
+testCase("M74", "Meshes read back into the elements they are: a gable wall with a door, a window and a top bevelled under a roof; a plate with a hole; a roof plane on the slant (square-cut and plumb); a beam turned 30° about its axis; a duct riser and a level duct - each built, meshed as an exporter writes it, and read back to the same numbers", () => {
+  const { doc, ed } = fixture();
+  doc.lib.types["T-RB"] = { family: "F-RCBEAM", name: "RB 200x400", shape: "rect", width: 200, depth: 400, material: "M-CONC" };
+  wall(doc, "A", [0, 0], [5000, 0], "T-300", { height: 4300, topProfile: [[0, 2800], [2500, 4300], [5000, 2800]], slope: { top: 0, lean: 0, across: 10 } });
+  ed.apply([{ op: "add", element: { id: "D", type: "Opening", args: { host: { ref: "A" }, profile: { kind: "rect", at: 1200, sill: 0, w: 900, h: 2100 }, farProfile: null, depth: "through" } } },
+    { op: "add", element: { id: "WN", type: "Opening", args: { host: { ref: "A" }, profile: { kind: "rect", at: 3600, sill: 900, w: 1000, h: 1200 }, farProfile: null, depth: "through" } } },
+    { op: "add", element: { id: "RF0", type: "Roof", args: { boundary: [[0, 10000], [6000, 10000], [6000, 14000], [0, 14000]], holes: [[[2000, 11000], [3000, 11000], [3000, 12000], [2000, 12000]]], level: { ref: "L0" }, heightOffset: 3000, pivot: [0, 10000], pitch: 0, direction: 0, thickness: 250 } } },
+    { op: "add", element: { id: "RF1", type: "Roof", args: { boundary: [[0, 20000], [6000, 20000], [6000, 22000], [3000, 22000], [3000, 25000], [0, 25000]], holes: [[[1000, 21000], [1800, 21000], [1800, 21600], [1000, 21600]]], level: { ref: "L0" }, heightOffset: 3000, pivot: [0, 20000], pitch: 30, direction: 60, thickness: 250, rafterCut: "Square" } } },
+    { op: "add", element: { id: "RF2", type: "Roof", args: { boundary: [[0, 30000], [4000, 30000], [4000, 33000], [0, 33000]], holes: [], level: { ref: "L0" }, heightOffset: 3000, pivot: [0, 30000], pitch: 35, direction: 90, thickness: 200, rafterCut: "Plumb" } } },
+    { op: "add", element: { id: "BR", type: "Beam", args: { axis: { type: "line", start: [0, 40000], end: [6000, 40000] }, beamType: { ref: "T-RB" }, level: { ref: "L0" }, topOffset: 3000, rotation: 30 } } },
+    { op: "add", element: { id: "DU1", type: "Duct", args: { path: [[1000, 50000, 500], [1000, 50000, 4500]], level: { ref: "L0" }, shape: "Round", width: 250, height: 250, thickness: 1 } } },
+    { op: "add", element: { id: "DU2", type: "Duct", args: { path: [[0, 52000, 2700], [5000, 52000, 2700]], level: { ref: "L0" }, shape: "Round", width: 300, height: 300, thickness: 0 } } }]);
+  doc.regenerate();
+  const errs = ["A", "RF0", "RF1", "RF2", "BR", "DU1", "DU2"].filter(id => doc.error(doc.element(id)));
+  const near = (a, b, t = 1.5) => Math.abs(a - b) <= t;
+  // the wall: read in either direction, so compare in its own terms
+  const w = recogniseWall(partsMesh(doc.plan(doc.element("A")).pieces));
+  const flip = w && w.start[0] > w.end[0], mir = u => flip ? 5000 - u : u;
+  const wallOk = !!w && near(w.thickness, 300) && near(w.length, 5000) && w.profile && w.profile.length === 3 && near(w.profile[1][0], 2500, 2) && near(w.profile[1][1] - w.profile[0][1], 1500, 3)
+    && near(Math.abs(w.cross), Math.tan(10 * Math.PI / 180), 0.005) && w.openings.length === 2
+    && w.openings.some(o => near(mir((o.u0 + o.u1) / 2), 1200, 2) && near(o.u1 - o.u0, 900, 2) && near(o.sill, 0, 2) && near(o.h, 2100, 2))
+    && w.openings.some(o => near(mir((o.u0 + o.u1) / 2), 3600, 2) && near(o.u1 - o.u0, 1000, 2) && near(o.sill, 900, 2) && near(o.h, 1200, 2));
+  const pr = recognisePrism(doc.plan(doc.element("RF0")).mesh);
+  const prismOk = !!pr && near(pr.thick, 250) && near(pr.zTop, 3000) && pr.holes.length === 1 && Math.abs(pr.area - 23e6) < 2e4;
+  const t1 = recogniseTiltedPlate(doc.plan(doc.element("RF1")).mesh), t2 = recogniseTiltedPlate(doc.plan(doc.element("RF2")).mesh);
+  const Lshape = 6000 * 2000 + 3000 * 3000;
+  const roofOk = !!t1 && near(t1.pitch, 30, 0.1) && near(t1.direction, 60, 0.1) && near(t1.thickness, 250) && t1.square && t1.holes.length === 1 && Math.abs(Math.abs(polyArea(t1.outer)) - Lshape) < 0.005 * Lshape
+    && !!t2 && near(t2.pitch, 35, 0.1) && near(t2.direction, 90, 0.1) && near(t2.thickness, 200) && !t2.square;
+  const bparts = doc.data(doc.element("BR")).parts, b = recogniseBar(partsMesh(bparts));
+  const turn = b ? ((b.roll % 90) + 90) % 90 : NaN;
+  const beamOk = !!b && [b.W, b.D].sort((x, y) => x - y).every((v, i) => near(v, [200, 400][i], 2)) && (near(turn, 30, 0.5) || near(turn, 60, 0.5)) && near(Math.hypot(b.c1[0] - b.c0[0], b.c1[1] - b.c0[1]), 6000, 2);
+  const d1 = recogniseTube(doc.plan(doc.element("DU1")).mesh), d2 = recogniseTube(doc.plan(doc.element("DU2")).mesh);
+  const ductOk = !!d1 && near(d1.diameter, 250, 1) && near(d1.wall, 1, 0.3) && near(Math.min(d1.c0[2], d1.c1[2]), 500) && near(Math.max(d1.c0[2], d1.c1[2]), 4500) && near(d1.c0[0], 1000) && near(d1.c0[1], 50000)
+    && !!d2 && near(d2.diameter, 300, 1) && d2.wall === 0 && near(Math.abs(d2.c1[0] - d2.c0[0]), 5000, 1) && near(d2.c0[2], 2700, 1);
+  return R(!errs.length && wallOk && prismOk && roofOk && beamOk && ductOk, "all built; wall 300 × 5000, gable 2800-4300-2800, bevel tan 10°, door 900×2100 at 1200, window 1000×1200 at 3600 sill 900; plate 250 at 3000 with one hole (23 m²); roof 30° toward 60°, 250 square-cut, L-shape and hole; roof 35° toward 90° plumb; beam 200×400 turned 30°, 6 m; ducts Ø250 (1 mm wall) 500→4500 and Ø300 5 m level",
+    JSON.stringify({ errs, w: w && { t: w.thickness, L: w.length, prof: w.profile, cross: w.cross, ops: w.openings }, pr: pr && { thick: pr.thick, top: pr.zTop, holes: pr.holes.length, area: pr.area }, t1: t1 && { p: t1.pitch, d: t1.direction, t: t1.thickness, sq: t1.square, a: Math.abs(polyArea(t1.outer)), h: t1.holes.length }, t2: t2 && { p: t2.pitch, d: t2.direction, sq: t2.square }, b, d1, d2 }).slice(0, 2500));
+});
+/** A small IFC4 file of triangulated products (what reference-view exporters write), for the importer. */
+function ifcOfMeshes(items) {
+  let n = 100; const L = [], id = () => "#" + (++n), ids = { storey: "#23", roof: null };
+  const f = x => { const r = Math.round(x * 1000) / 1000; return Number.isInteger(r) ? r + "." : String(r); };
+  const colourRef = rgb => { const c = id(); L.push(`${c}=IFCCOLOURRGB($,${rgb.map(f).join(",")});`); const r = id(); L.push(`${r}=IFCSURFACESTYLERENDERING(${c},$,$,$,$,$,$,$,.FLAT.);`); const st = id(); L.push(`${st}=IFCSURFACESTYLE($,.BOTH.,(${r}));`); return st; };
+  const faceSet = m => { const pl = id(); const pts = []; for (let i = 0; i < m.positions.length; i += 3) pts.push(`(${f(m.positions[i])},${f(m.positions[i + 1])},${f(m.positions[i + 2])})`); L.push(`${pl}=IFCCARTESIANPOINTLIST3D((${pts.join(",")}),$);`);
+    const ix = []; for (let i = 0; i < m.index.length; i += 3) ix.push(`(${m.index[i] + 1},${m.index[i + 1] + 1},${m.index[i + 2] + 1})`); const fs = id(); L.push(`${fs}=IFCTRIANGULATEDFACESET(${pl},$,.T.,(${ix.join(",")}),$);`); return fs; };
+  const contained = [], roofParts = [], groups = [];
+  for (const it of items) {
+    const sets = (it.meshes || [it.mesh]).map((m, k) => { const fs = faceSet(m); const rgb = (it.colours || [])[k]; if (rgb) { const st = colourRef(rgb); L.push(`${id()}=IFCSTYLEDITEM(${fs},(${st}),$);`); } return fs; });
+    const rep = id(); L.push(`${rep}=IFCSHAPEREPRESENTATION(#40,'Body','Tessellation',(${sets.join(",")}));`); const pds = id(); L.push(`${pds}=IFCPRODUCTDEFINITIONSHAPE($,$,(${rep}));`);
+    const e = id(), gid = it.gid || ("g" + n), q = s2 => s2 == null ? "$" : `'${s2}'`;
+    if (it.cls === "IFCSPACE") L.push(`${e}=IFCSPACE('${gid}',$,${q(it.name)},$,$,#14,${pds},${q(it.longName)},.ELEMENT.,.SPACE.,$);`);
+    else L.push(`${e}=${it.cls}('${gid}',$,${q(it.name)},$,${q(it.objectType)},#14,${pds},$,${it.predefined || "$"});`);
+    (it.inRoof ? roofParts : contained).push(e);
+    if (it.system) groups.push([e, it.system]);
+  }
+  if (roofParts.length) { const r = id(); L.push(`${r}=IFCROOF('rf0',$,'Roof',$,$,#14,$,$,.GABLE_ROOF.);`); contained.push(r); L.push(`${id()}=IFCRELAGGREGATES('ra',$,$,$,${r},(${roofParts.join(",")}));`); }
+  for (const [e, name] of groups) { const sy = id(); L.push(`${sy}=IFCDISTRIBUTIONSYSTEM('sy${n}',$,'${name}',$,$,$,.VENTILATION.);`); L.push(`${id()}=IFCRELASSIGNSTOGROUP('ag${n}',$,$,$,(${e}),$,${sy});`); }
+  L.push(`${id()}=IFCRELCONTAINEDINSPATIALSTRUCTURE('cs',$,$,$,(${contained.join(",")}),#23);`);
+  return `ISO-10303-21;
+HEADER;FILE_DESCRIPTION((''),'2;1');FILE_NAME('m.ifc','',(''),(''),'','','');FILE_SCHEMA(('IFC4'));ENDSEC;
+DATA;
+#1=IFCSIUNIT(*,.LENGTHUNIT.,.MILLI.,.METRE.);#2=IFCUNITASSIGNMENT((#1));
+#10=IFCCARTESIANPOINT((0.,0.,0.));#11=IFCDIRECTION((0.,0.,1.));#12=IFCDIRECTION((1.,0.,0.));#13=IFCAXIS2PLACEMENT3D(#10,#11,#12);#14=IFCLOCALPLACEMENT($,#13);
+#20=IFCPROJECT('p',$,'T',$,$,$,$,(#40),#2);#23=IFCBUILDINGSTOREY('s1',$,'Ground',$,$,#14,$,$,.ELEMENT.,0.);
+#40=IFCGEOMETRICREPRESENTATIONCONTEXT($,'Model',3,1.E-05,#13,$);
+${L.join("\n")}
+ENDSEC;
+END-ISO-10303-21;
+`;
+}
+testCase("M75", "A reference-view IFC of triangles comes in as a model: the wall a wall (gable, bevel, door, window), the roof slab a roof plane, the beam a beam turned 30°, the duct a duct in its system, the room a room with its name and number, the tree a plant in its two colours, the terrain topography, the zone left out - and the same file saved from GitHub's web page reads the same, or says where the raw file is", () => {
+  const src = fixture(); src.doc.lib.types["T-RB"] = { family: "F-RCBEAM", name: "RB 200x400", shape: "rect", width: 200, depth: 400, material: "M-CONC" };
+  wall(src.doc, "A", [0, 0], [5000, 0], "T-300", { height: 4300, topProfile: [[0, 2800], [2500, 4300], [5000, 2800]], slope: { top: 0, lean: 0, across: 10 } });
+  src.ed.apply([{ op: "add", element: { id: "D", type: "Opening", args: { host: { ref: "A" }, profile: { kind: "rect", at: 1200, sill: 0, w: 900, h: 2100 }, farProfile: null, depth: "through" } } },
+    { op: "add", element: { id: "WN", type: "Opening", args: { host: { ref: "A" }, profile: { kind: "rect", at: 3600, sill: 900, w: 1000, h: 1200 }, farProfile: null, depth: "through" } } },
+    { op: "add", element: { id: "RF1", type: "Roof", args: { boundary: [[0, -1000], [5000, -1000], [5000, 1000], [0, 1000]], holes: [], level: { ref: "L0" }, heightOffset: 4000, pivot: [0, -1000], pitch: 30, direction: 90, thickness: 250, rafterCut: "Square" } } },
+    { op: "add", element: { id: "BR", type: "Beam", args: { axis: { type: "line", start: [0, 3000], end: [5000, 3000] }, beamType: { ref: "T-RB" }, level: { ref: "L0" }, topOffset: 3000, rotation: 30 } } },
+    { op: "add", element: { id: "DU1", type: "Duct", args: { path: [[4000, 2000, 500], [4000, 2000, 4500]], level: { ref: "L0" }, shape: "Round", width: 250, height: 250, thickness: 1 } } }]);
+  src.doc.regenerate();
+  const box = (x0, y0, z0, x1, y1, z1) => partsMesh([{ foot: [[x0, y0], [x1, y0], [x1, y1], [x0, y1]], z0, z1 }]);
+  const text = ifcOfMeshes([
+    { cls: "IFCWALL", name: "Gable wall", mesh: partsMesh(src.doc.plan(src.doc.element("A")).pieces) },
+    { cls: "IFCSLAB", name: "Roof slab", mesh: src.doc.plan(src.doc.element("RF1")).mesh, inRoof: true, colours: [[0.8, 0.4, 0.3]] },
+    { cls: "IFCBEAM", name: "Purlin", mesh: partsMesh(src.doc.data(src.doc.element("BR")).parts) },
+    { cls: "IFCDUCTSEGMENT", name: "Flue", mesh: src.doc.plan(src.doc.element("DU1")).mesh, system: "Exhaust air" },
+    { cls: "IFCSPACE", name: "G.01", longName: "Kitchen", mesh: box(0, 200, 0, 4000, 3200, 2500) },
+    { cls: "IFCGEOGRAPHICELEMENT", name: "apple tree", meshes: [box(9000, 9000, 0, 9200, 9200, 2000), box(8200, 8200, 2000, 10000, 10000, 4500)], colours: [[0.5, 0.3, 0.1], [0.2, 0.6, 0.2]] },
+    { cls: "IFCBUILDINGELEMENTPROXY", name: "site - soil", objectType: "terrain", mesh: box(-5000, -5000, -2000, 15000, 15000, -300) },
+    { cls: "IFCSPATIALZONE", name: "gross volume", mesh: box(0, 0, 0, 5000, 5000, 5000) },
+  ]);
+  const doc = newDocument("m"), ed = new Editor(doc), r = importIfc(doc, text), res = ed.apply(r.ops);
+  const of = t => doc.elements().filter(f => doc.typeOf(f) === t);
+  const W = of("Wall")[0], Rf = of("Roof")[0], Bm = of("Beam")[0], Du = of("Duct")[0], Sp = of("Space")[0], gens = of("Generic");
+  const tree = gens.find(g => g.get("Name") === "apple tree"), soil = gens.find(g => g.get("Name") === "site - soil");
+  const treeShape = tree && doc.lib.meshes[F.json(tree, "mesh").shape];
+  const ok = res.ok && !Object.keys(r.report.missed).length
+    && of("Wall").length === 1 && (F.json(W, "topProfile") || []).length === 3 && Math.abs(Math.abs((F.json(W, "slope") || {}).across || 0) - 10) < 0.2 && of("Opening").length === 2
+    && of("Roof").length === 1 && Math.abs(F.real(Rf, "pitch") - 30) < 0.1 && F.choice(Rf, "rafterCut") === "Square" && F.text(Rf, "colour") === "#cc664d"
+    && of("Beam").length === 1 && [30, 60].some(v => Math.abs((((F.real(Bm, "rotation") % 90) + 90) % 90) - v) < 0.5)
+    && of("Duct").length === 1 && Math.abs(F.real(Du, "width") - 250) < 1 && F.text(Du, "system") === "Exhaust air"
+    && Sp && Sp.get("Name") === "Kitchen" && doc.getParam(Sp, "Number") === "G.01" && Math.abs((doc.data(Sp) || {}).value - 12e6) < 1e4
+    && tree && categoryOf(doc, tree) === "Planting" && treeShape && (treeShape.groups || []).length === 2
+    && soil && categoryOf(doc, soil) === "Topography" && gens.length === 2 && r.report.notes.some(t => /spatial zone/.test(t));
+  // the same file as GitHub's page for it, with its lines in the page; and a page too large to carry them
+  const page = `<!DOCTYPE html><html><head><title>x.ifc at main</title></head><body><script type="application/json">{"payload":{"blob":{"rawLines":${JSON.stringify(text.split("\n"))},"rawBlobUrl":"https://github.com/o/r/raw/refs/heads/main/x.ifc"}}}<` + `/script></body></html>`;
+  const unwrapped = ifcTextOf(page), bare = `<!DOCTYPE html><html><body><script>{"rawBlobUrl":"https://github.com/o/r/raw/refs/heads/main/big.ifc","truncated":true}<` + `/script></body></html>`;
+  let err = ""; try { ifcTextOf(bare); } catch (e) { err = e.message; }
+  const pageOk = unwrapped.text.trim() === text.trim() && /GitHub/.test(unwrapped.note) && /raw\/refs\/heads\/main\/big\.ifc/.test(err) && /web page/.test(err);
+  return R(ok && pageOk, "1 wall (3-point gable, 10° bevel, 2 openings), 1 roof 30° square-cut in its colour, 1 beam turned 30°, 1 duct Ø250 on Exhaust air, room Kitchen G.01 of 12 m², a plant in 2 colours, topography, the zone left out, nothing missed; the GitHub page read, the bare one explained",
+    JSON.stringify({ res: res.ok, missed: r.report.missed, made: r.report.made, wall: W && [F.json(W, "topProfile"), F.json(W, "slope"), of("Opening").length], roof: Rf && [F.real(Rf, "pitch"), F.choice(Rf, "rafterCut"), F.text(Rf, "colour")], beam: Bm && F.real(Bm, "rotation"), duct: Du && [F.real(Du, "width"), F.text(Du, "system")], space: Sp && [Sp.get("Name"), doc.getParam(Sp, "Number"), (doc.data(Sp) || {}).value], tree: tree && [categoryOf(doc, tree), treeShape && (treeShape.groups || []).length], soil: soil && categoryOf(doc, soil), gens: gens.length, notes: r.report.notes, pageOk, err }).slice(0, 3000));
 });

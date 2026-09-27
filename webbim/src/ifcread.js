@@ -59,6 +59,33 @@ const IFC_DIGIT = /[0-9]/;
 //! Reads one IFC file. The whole text, one pass, no regular expressions over
 //! the body: a building model is tens of megabytes and a backtracking match
 //! over it is not a thing anybody should wait for.
+/** The IFC text in what was opened. A file saved from GitHub's "view file" page is that page, not the
+ *  IFC: when the page carries the file's lines (GitHub embeds files up to a size) they are taken from it;
+ *  when it does not, the error says where the raw file is. Returns { text, note }. */
+export function ifcTextOf(text) {
+  const src = String(text || "");
+  if (/^\s*ISO-10303-21/.test(src)) return { text: src, note: null };
+  if (!/^\s*(<!DOCTYPE html|<html)/i.test(src)) return { text: src, note: null };
+  const raw = (/"rawBlobUrl":"([^"]+)"/.exec(src) || [])[1] || "";
+  const at = src.indexOf('"rawLines":[');
+  if (at >= 0) {
+    // the JSON array that follows, read to its closing bracket (strings may hold brackets and escapes)
+    let i = at + '"rawLines":'.length, depth = 0, inStr = false, esc = false, end = -1;
+    for (; i < src.length; i++) {
+      const c = src[i];
+      if (inStr) { if (esc) esc = false; else if (c === "\\") esc = true; else if (c === '"') inStr = false; continue; }
+      if (c === '"') inStr = true; else if (c === "[") depth++; else if (c === "]") { depth--; if (!depth) { end = i; break; } }
+    }
+    if (end > 0) {
+      try {
+        const lines = JSON.parse(src.slice(at + '"rawLines":'.length, end + 1));
+        const body = lines.join("\n");
+        if (/^\s*ISO-10303-21/.test(body)) return { text: body, note: "this was GitHub's web page for the file: the IFC it shows was read out of it" };
+      } catch (e) { /* fall through to the explanation */ }
+    }
+  }
+  throw new Error(`this is a web page (GitHub's view of the file), not the IFC file itself${at < 0 ? " - the file is too large for GitHub to show inline" : ""}. Download the raw file${raw ? " from " + raw.replace(/\\u0026/g, "&") : " (the Download raw file button)"} and import that.`);
+}
 export function readIfc(text) {
   const source = String(text || "");
   let i = 0;

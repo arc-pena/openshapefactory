@@ -19,7 +19,7 @@ import {
 import { F, propertyOf, evalParam, displayParam } from "./ocaf.js";
 import { formatValue, parse, evaluate } from "./expr.js";
 import { wallRegions, coarseMaterial, blocks, wallAt, leanInvolved } from "./joins.js";
-import { pointAt, uOf, wallSurfaces, cutAtHeight, plane, LAYER_PRIORITY } from "./walls.js";
+import { pointAt, uOf, wallSurfaces, cutAtHeight, plane, LAYER_PRIORITY, wallTop, topBreaks } from "./walls.js";
 import { cropLoop, loopBBox, annotationRect, isAnnotationLayer } from "./crop.js";
 import { resolveGraphics, categoryOf, penWeight, rulesFor, categoryVisible, mix, LINE_TYPES, matches, effectiveStyle } from "./styles.js";
 import { measureRefs, resolveReference, sheetSize, regionAreas, importPlacer, importLayerMap, sketchPath } from "./bim.js";
@@ -246,9 +246,65 @@ export function planScene(doc, v, opts = {}) {
         B.hit(doc.idOf(f), pl.outer);
       }
     }
-    if (t === "Generic" && vis(f)) {
+    if ((t === "Duct" || t === "Pipe") && vis(f)) {
+      // MEP runs as MEP drawings show them: each run two lines and a dashed centreline, a riser its section crossed
+      // drawn whatever the cut: services above it are what a services plan is for
+      const p = doc.plan(f); if (!p) continue;
+      const id = doc.idOf(f), cat = categoryOf(doc, f), g = resolveGraphics(doc, ctx, f, "projection");
+      for (const r of p.runs || []) {
+        if (r.riser) {
+          const c = r.c, h = p.W / 2;
+          if (p.round) { const ring = []; for (let i = 0; i <= 32; i++) { const a = i / 32 * 2 * Math.PI; ring.push([c[0] + Math.cos(a) * h, c[1] + Math.sin(a) * h]); } B.stroke(ring.slice(0, -1).map((q, i) => lineSeg(q, ring[i + 1])), g, cat, id); }
+          else B.stroke(polyPath([[c[0] - h, c[1] - p.H / 2], [c[0] + h, c[1] - p.H / 2], [c[0] + h, c[1] + p.H / 2], [c[0] - h, c[1] + p.H / 2]]), g, cat, id);
+          const k = h * 0.7071; B.stroke([lineSeg([c[0] - k, c[1] - k], [c[0] + k, c[1] + k]), lineSeg([c[0] - k, c[1] + k], [c[0] + k, c[1] - k])], g, cat, id);
+          B.hit(id, [[c[0] - h, c[1] - h], [c[0] + h, c[1] - h], [c[0] + h, c[1] + h], [c[0] - h, c[1] + h]]);
+        } else {
+          B.stroke([lineSeg(r.foot[0], r.foot[1]), lineSeg(r.foot[2], r.foot[3]), lineSeg(r.foot[1], r.foot[2]), lineSeg(r.foot[3], r.foot[0])], g, cat, id);
+          B.stroke([lineSeg(r.a, r.b)], Object.assign({}, g, { dash: LINE_TYPES.centre, weight: penWeight(doc, "hairline", S) }), cat, id);
+          B.hit(id, r.foot);
+        }
+      }
+      continue;
+    }
+    if ((t === "Generic" || t === "Roof") && vis(f)) {
+      const p = doc.plan(f); if (!p) continue;
+      const catG = categoryOf(doc, f);
+      // the ground is not cut in plan: it is drawn as its contours (every 0.5 m, every 2.5 m heavier) within its edge
+      if (catG === "Topography" && p.mesh) {
+        const id = doc.idOf(f), gp = resolveGraphics(doc, ctx, f, "projection"), minor = [], major = [];
+        // strata lie under the ground surface: only the uppermost of overlapping surfaces draws contours
+        const bb = q => { const xs = q.foot.map(a => a[0]), ys = q.foot.map(a => a[1]); return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]; }, mb = bb(p);
+        const under = doc.elements().some(g => { if (g === f || doc.typeOf(g) !== "Generic" || categoryOf(doc, g) !== "Topography") return false; const q = doc.plan(g); if (!q || !q.mesh || q.z1 <= p.z1) return false;
+          const o = bb(q), ix = Math.max(0, Math.min(o[2], mb[2]) - Math.max(o[0], mb[0])), iy = Math.max(0, Math.min(o[3], mb[3]) - Math.max(o[1], mb[1])); return ix * iy > 0.5 * (mb[2] - mb[0]) * (mb[3] - mb[1]); });
+        if (under) { B.hit(id, p.foot); continue; }
+        const P = p.mesh.positions, I = p.mesh.index;
+        for (let k = 0; k < I.length; k += 3) {
+          const A = I[k] * 3, Bi = I[k + 1] * 3, C = I[k + 2] * 3;
+          const q = [[P[A], P[A + 1], P[A + 2]], [P[Bi], P[Bi + 1], P[Bi + 2]], [P[C], P[C + 1], P[C + 2]]];
+          const nz = (q[1][0] - q[0][0]) * (q[2][1] - q[0][1]) - (q[1][1] - q[0][1]) * (q[2][0] - q[0][0]);
+          if (nz <= 1e-6) continue;                                   // the ground's upper surface only
+          const zl = Math.min(q[0][2], q[1][2], q[2][2]), zh = Math.max(q[0][2], q[1][2], q[2][2]);
+          for (let z = Math.ceil(zl / 500) * 500; z <= zh; z += 500) {
+            const pts = [];
+            for (let i = 0; i < 3; i++) { const a = q[i], b = q[(i + 1) % 3]; if ((a[2] - z) * (b[2] - z) < 0) { const t = (z - a[2]) / (b[2] - a[2]); pts.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]); } }
+            if (pts.length === 2) (Math.round(z) % 2500 === 0 ? major : minor).push(lineSeg(pts[0], pts[1]));
+          }
+        }
+        if (minor.length) B.stroke(minor, Object.assign({}, gp, { weight: penWeight(doc, "hairline", S), colour: "#8a7a62" }), catG, id);
+        if (major.length) B.stroke(major, Object.assign({}, gp, { weight: penWeight(doc, "thin", S), colour: "#6b5a40" }), catG, id);
+        B.stroke(p.path, Object.assign({}, gp, { dash: LINE_TYPES.dashed2 }), catG, id); B.hit(id, p.foot);
+        continue;
+      }
+      // a tree or shrub: its canopy seen from above, whatever the cut
+      if (catG === "Planting") {
+        const id = doc.idOf(f), gp = resolveGraphics(doc, ctx, f, "projection"), c = p.foot.reduce((a, q) => [a[0] + q[0] / p.foot.length, a[1] + q[1] / p.foot.length], [0, 0]);
+        const rr = Math.max(...p.foot.map(q => Math.hypot(q[0] - c[0], q[1] - c[1]))) * 0.12;
+        B.fill(p.path, "#e1eed7", catG, id);
+        B.stroke([...p.path, lineSeg([c[0] - rr, c[1]], [c[0] + rr, c[1]]), lineSeg([c[0], c[1] - rr], [c[0], c[1] + rr])], gp, catG, id); B.hit(id, p.foot);
+        continue;
+      }
       // a generic model reads like a column: poché where the cut crosses it, its outline below
-      const p = doc.plan(f); if (!p) continue; const bnd = band(p.z0, p.z1);
+      const bnd = band(p.z0, p.z1);
       if (bnd === "above" || bnd === "below") continue;
       if (p.mesh) {
         // a body of its own shape (an imported stair, railing, basin): cut where the plane crosses it,
@@ -805,7 +861,7 @@ function gatherElevationItems(doc, ctx, G, skip = null) {
     if (!categoryVisible(ctx, categoryOf(doc, f))) continue;
     const t = doc.typeOf(f);
     if (t === "Wall") { const w = doc.plan(f); if (!w) continue; const it = elevWall(doc, f, w, V, sOf, depthOf, ctx); if (it) items.push(it); }
-    if (t === "Generic" && doc.plan(f) && doc.plan(f).mesh) {
+    if ((t === "Generic" || t === "Duct" || t === "Pipe" || t === "Roof") && doc.plan(f) && doc.plan(f).mesh) {
       // a body of its own shape: its feature edges, projected; hidden by what stands in front of it
       const p = doc.plan(f), P = p.mesh.positions, curves = [];
       let d0 = Infinity, d1 = -Infinity, s0 = Infinity, s1 = -Infinity, z0 = Infinity, z1 = -Infinity;
@@ -978,7 +1034,7 @@ export function sectionCut(doc, v) {
         }
       }
     }
-    if (t === "Generic" && p.mesh) {
+    if ((t === "Generic" || t === "Duct" || t === "Pipe" || t === "Roof") && p.mesh) {
       // a body of its own shape, cut by the section plane: turned into (along, up, depth) and sliced at depth 0
       const P = p.mesh.positions, Q = new Array(P.length); let lo = Infinity, hi = -Infinity;
       for (let i = 0; i < P.length; i += 3) { const q = [P[i], P[i + 1]], dd = G.depthOf(q); Q[i] = G.sOf(q); Q[i + 1] = P[i + 2] - G.Z0; Q[i + 2] = dd; lo = Math.min(lo, dd); hi = Math.max(hi, dd); }
@@ -1074,11 +1130,21 @@ function elevWall(doc, f, w, V, sOf, depthOf, ctx) {
   const foot = samplePath(regs[0].path, 24);
   const ss = foot.map(sOf), dd = foot.map(depthOf);
   const s0 = Math.min(...ss), s1 = Math.max(...ss);
-  const topAt = p => w.z1 + (w.topSlope ? Math.tan(w.topSlope) * uOf(w, p) : 0);
+  const topAt = p => wallTop(w, p);
   const iMin = ss.indexOf(s0), iMax = ss.indexOf(s1);
   const zt0 = topAt(foot[iMin]), zt1 = topAt(foot[iMax]);
   const baseZ = V(foot[0], w.z0)[1], t0 = V(foot[0], zt0)[1], t1 = V(foot[0], zt1)[1];
-  const curves = [[[s0, baseZ], [s1, baseZ]], [[s1, baseZ], [s1, t1]], [[s1, t1], [s0, t0]], [[s0, t0], [s0, baseZ]]];
+  const curves = [[[s0, baseZ], [s1, baseZ]], [[s1, baseZ], [s1, t1]], [[s0, t0], [s0, baseZ]]];
+  let profileLine = null;
+  // the top: straight, or through every corner of a profiled top (a gable, steps) along the face nearer the eye
+  if (w.profile && w.curve.type === "line") {
+    const n0 = w.stack.s.length - 1, sNear = depthOf(pointAt(w, w.stack.s[0], w.L / 2)) <= depthOf(pointAt(w, w.stack.s[n0], w.L / 2)) ? w.stack.s[0] : w.stack.s[n0];
+    const top = [];
+    for (const [u] of w.profile) for (const side of [-1, 1]) { const p = pointAt(w, sNear, u); top.push([sOf(p), V(p, wallTop(w, p, side))[1]]); }
+    const line = top.filter((q, i) => i === 0 || Math.abs(q[0] - top[i - 1][0]) > 1e-6 || Math.abs(q[1] - top[i - 1][1]) > 1e-6);
+    for (let i = 0; i < line.length - 1; i++) curves.push([line[i], line[i + 1]]);
+    profileLine = line[0][0] <= line[line.length - 1][0] ? line : line.slice().reverse();
+  } else curves.push([[s1, t1], [s0, t0]]);
   // Vertical edges at footprint corners that face the viewer.
   const n = w.stack.s.length - 1;
   const corners = regs[0].edges.map(e => segStart(e.seg));
@@ -1093,7 +1159,7 @@ function elevWall(doc, f, w, V, sOf, depthOf, ctx) {
   for (const op of w.openings || []) {
     const a1 = sOf(pointAt(w, w.stack.s[0], op.u0)), b1 = sOf(pointAt(w, w.stack.s[0], op.u1));
     const a2 = sOf(pointAt(w, w.stack.s[n], op.u0)), b2 = sOf(pointAt(w, w.stack.s[n], op.u1));
-    const za = V(foot[0], w.z0 + op.sill)[1], zb2 = V(foot[0], w.z0 + op.sill + op.h)[1];
+    const za = V(foot[0], w.z0 + op.sill)[1], zb2 = V(foot[0], Math.min(w.z0 + op.sill + op.h, w.zHi ?? w.z1))[1];
     const na = sOf(pointAt(w, nearS, op.u0)), nb = sOf(pointAt(w, nearS, op.u1));
     const lo = Math.min(na, nb), hi = Math.max(na, nb);
     curves.push([[lo, za], [hi, za]], [[hi, za], [hi, zb2]], [[hi, zb2], [lo, zb2]], [[lo, zb2], [lo, za]]);
@@ -1110,8 +1176,12 @@ function elevWall(doc, f, w, V, sOf, depthOf, ctx) {
   }
   // Silhouette minus see-through holes, as convex slabs (for the occluder list).
   const sil = [];
-  const cuts = [...new Set([s0, s1, ...holes.flatMap(h => [h.s0 ?? h[0], h[1]])])].filter(x => x >= s0 && x <= s1).sort((a, b) => a - b);
-  const topLine = s => t0 + (t1 - t0) * ((s - s0) / ((s1 - s0) || 1));
+  const cuts = [...new Set([s0, s1, ...holes.flatMap(h => [h.s0 ?? h[0], h[1]]), ...(profileLine ? profileLine.map(q => q[0]) : [])])].filter(x => x >= s0 && x <= s1).sort((a, b) => a - b);
+  const topLine = s => {
+    if (!profileLine) return t0 + (t1 - t0) * ((s - s0) / ((s1 - s0) || 1));
+    for (let k = 1; k < profileLine.length; k++) { const a = profileLine[k - 1], b = profileLine[k]; if (s <= b[0] + 1e-9) return b[0] - a[0] < 1e-9 ? Math.min(a[1], b[1]) : a[1] + (b[1] - a[1]) * (s - a[0]) / (b[0] - a[0]); }
+    return profileLine[profileLine.length - 1][1];
+  };
   for (let i = 0; i < cuts.length - 1; i++) {
     const sa = cuts[i], sb = cuts[i + 1]; if (sb - sa < TOL) continue;
     const m = (sa + sb) / 2;
