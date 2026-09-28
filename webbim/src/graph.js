@@ -99,7 +99,7 @@ export function renderGraph(app, root, focusId = null) {
     drag = null;
   });
   svg.addEventListener("wheel", e => { e.preventDefault(); const r = svg.getBoundingClientRect(), k = Math.exp(-e.deltaY * 0.0015), mx = e.clientX - r.left, my = e.clientY - r.top; view.x = mx - (mx - view.x) * k; view.y = my - (my - view.y) * k; view.z *= k; g.setAttribute("transform", `translate(${view.x},${view.y}) scale(${view.z})`); }, { passive: false });
-  root.addEventListener("keydown", e => { if ((e.key === "Delete" || e.key === "Backspace") && app.graphWire) { const w = app.graphWire; const f = doc.element(w.to), a = doc.declOf(f).args.find(x => x.key === w.port); app.apply(a.kind === "Reference" ? { op: "disconnect", id: w.to, key: w.port } : { op: "unbind", id: w.to, key: w.port }); app.graphWire = null; renderGraph(app, root); } });
+  root.addEventListener("keydown", e => { if ((e.key === "Delete" || e.key === "Backspace") && app.graphWire) { e.stopPropagation(); e.preventDefault(); const w = app.graphWire; const f = doc.element(w.to), a = doc.declOf(f).args.find(x => x.key === w.port); app.apply(a.kind === "Reference" ? { op: "disconnect", id: w.to, key: w.port } : { op: "unbind", id: w.to, key: w.port }); app.graphWire = null; renderGraph(app, root); } });
   pane.tabIndex = 0;
   pane.append(svg);
   const bar = h("div", { class: "viewbar" }, h("div", { class: "card" },

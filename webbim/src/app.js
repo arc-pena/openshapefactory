@@ -1363,7 +1363,8 @@ window.addEventListener("keydown", e => {
     if (app.tool !== "select") { app.setTool("select"); app.say("Select", "note"); return; }
     if (app.selection.size) app.select([]); return;
   }
-  if ((e.key === "Delete" || e.key === "Backspace") && app.selection.size && app.activeView !== "__graph") { e.preventDefault(); deleteSelection(); return; }
+  // in the graph a picked wire is disconnected by the graph itself; otherwise its selected nodes are deleted as anywhere
+  if ((e.key === "Delete" || e.key === "Backspace") && app.selection.size && !(app.activeView === "__graph" && app.graphWire)) { e.preventDefault(); deleteSelection(); return; }
   if (mod || e.altKey) return;
   if (e.key === "Enter" && !keyBuf && app.lastCommand && app.tool === "select") { app.run(app.lastCommand); return; }
   if (!/^[a-z0-9]$/i.test(e.key)) return;
