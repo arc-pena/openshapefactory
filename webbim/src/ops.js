@@ -156,6 +156,9 @@ const HANDLERS = {
         const t = doc.typeOf(g);
         if ((t === "Opening" && F.refId(g, "host") === id) || ((t === "Door" || t === "Window") && F.refId(g, "fills") === id)) cascade(doc.idOf(g));
       }
+      // …and a door or window takes the opening it was placed with: the wall closes up, as in Revit
+      const f = doc.element(id), ft = f && doc.typeOf(f);
+      if (ft === "Door" || ft === "Window") { const op = F.refId(f, "fills"); if (op && doc.element(op) && !doc.elements().some(g => g !== f && !gone.has(doc.idOf(g)) && F.refId(g, "fills") === op)) cascade(op); }
       // …and a sheet's viewport of a deleted view
       for (const g of doc.elements()) if (doc.typeOf(g) === "Sheet") {
         const vps = doc.argValue(g, "viewports") || [];

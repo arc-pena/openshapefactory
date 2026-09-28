@@ -382,6 +382,16 @@ export function planScene(doc, v, opts = {}) {
       { const wz = leanInvolved(w) ? wallAt(w, Math.max(w.z0, Math.min(w.z1, cutZ))) : w, n_ = wz.stack.s.length - 1;
         B.hit(doc.idOf(f), [pointAt(wz, wz.stack.s[0], fr.u0), pointAt(wz, wz.stack.s[0], fr.u1), pointAt(wz, wz.stack.s[n_], fr.u1), pointAt(wz, wz.stack.s[n_], fr.u0)]); }
     }
+    // a bare opening (nothing fills it) is picked by the gap it leaves where the plan cuts it; a filled one
+    // is picked through its door or window
+    if (t === "Opening") {
+      const d = doc.data(f), fr = d && d.frame, host = fr && doc.element(fr.host), w = host && doc.plan(host);
+      if (!w || !w.stack || fr.flagged) continue;
+      if (doc.elements().some(g => (doc.typeOf(g) === "Door" || doc.typeOf(g) === "Window") && F.refId(g, "fills") === doc.idOf(f))) continue;
+      if (!(fr.sill + w.z0 < cutZ && fr.sill + fr.h + w.z0 > cutZ && band(w.z0, w.z1) === "cut")) continue;
+      const wz = leanInvolved(w) ? wallAt(w, Math.max(w.z0, Math.min(w.z1, cutZ))) : w, n_ = wz.stack.s.length - 1;
+      B.hit(doc.idOf(f), [pointAt(wz, wz.stack.s[0], fr.u0), pointAt(wz, wz.stack.s[0], fr.u1), pointAt(wz, wz.stack.s[n_], fr.u1), pointAt(wz, wz.stack.s[n_], fr.u0)]);
+    }
     if (t === "Furniture") {
       const p = doc.plan(f); if (!p) continue; const bnd = band(p.z0, p.z1); if (bnd !== "projection" && bnd !== "cut") continue;
       const g = resolveGraphics(doc, ctx, f, "projection");
@@ -1406,6 +1416,8 @@ function elevWall(doc, f, w, V, sOf, depthOf, ctx) {
     const lo = Math.min(na, nb), hi = Math.max(na, nb);
     curves.push([[lo, za], [hi, za]], [[hi, za], [hi, zb2]], [[hi, zb2], [lo, zb2]], [[lo, zb2], [lo, za]]);
     if (!op.recess) { const sa = Math.max(Math.min(a1, b1), Math.min(a2, b2)), sb = Math.min(Math.max(a1, b1), Math.max(a2, b2)); if (sb - sa > 1) holes.push([sa, sb, za, zb2]); }
+    // a bare opening is picked by its own outline here (a filled one through its door or window, below)
+    if (op.id && !doc.elements().some(g => (doc.typeOf(g) === "Door" || doc.typeOf(g) === "Window") && F.refId(g, "fills") === op.id)) fillerHits.push({ id: op.id, poly: [[lo, za], [hi, za], [hi, zb2], [lo, zb2]] });
     // the filler's own elevation rep, mapped from host (u, z)
     for (const g of doc.elements()) if ((doc.typeOf(g) === "Door" || doc.typeOf(g) === "Window") && (!ctx || categoryVisible(ctx, categoryOf(doc, g))) && doc.data(g) && doc.data(g).frame && doc.data(g).frame.u0 === op.u0 && doc.data(g).host === w.id) {
       const er = doc.elev(g); if (!er) continue;

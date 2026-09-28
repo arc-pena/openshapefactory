@@ -2285,5 +2285,13 @@ testCase("M78", "Everything deletes: one element of every type in the model - mo
     if (r.ok) { ed.undo(); if (!doc.element(id)) err = "undo did not bring it back"; }
     if (err) bad.push(`${t} ${id}: ${err}`);
   }
-  return R(!bad.length && first.size >= 30, `${first.size} types, each deleted and undone, every view drawing`, bad.length ? bad.join("; ") : `${first.size} types: ${[...first.keys()].join(", ")}`);
+  // a bare opening can be picked where the plan cuts it (so it can be deleted there); a door takes its opening with it
+  const bare = ed.apply({ op: "add", element: { type: "Opening", args: { host: { ref: "W1" }, profile: { kind: "rect", at: 500, sill: 0, w: 900, h: 2100 }, farProfile: null, depth: "through" } } }).id;
+  const pickable = deriveView(doc, doc.element("V-P00")).hits.some(h => h.id === bare);
+  const door = doc.elements().find(f => doc.typeOf(f) === "Door"), dop = F.refId(door, "fills");
+  ed.apply({ op: "delete", ids: [doc.idOf(door)] });
+  const closes = !doc.element(dop);
+  if (!pickable) bad.push("a bare opening has no pick area in plan");
+  if (!closes) bad.push("deleting a door left its opening");
+  return R(!bad.length && first.size >= 30, `${first.size} types, each deleted and undone, every view drawing; a bare opening picked in plan; a door takes its opening`, bad.length ? bad.join("; ") : `${first.size} types: ${[...first.keys()].join(", ")}`);
 });
