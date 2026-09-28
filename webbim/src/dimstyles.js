@@ -40,6 +40,7 @@ export const DIM_DEFAULTS = {
   fit: "Best fit", overallScale: 1,                 // DIMATFIT, DIMSCALE
   // Primary units
   unit: "Project", precision: 0, decimal: ".",      // DIMLUNIT, DIMDEC, DIMDSEP
+  thousands: "",                                    // digit grouping (Revit's "Use digit grouping"): "" none, ",", ".", " ", "'"
   roundOff: 0, scaleFactor: 1,                      // DIMRND, DIMLFAC
   prefix: "", suffix: "",                           // DIMPOST
   suppressLeading: false, suppressTrailing: false,  // DIMZIN
@@ -68,13 +69,21 @@ export function dimStyleOf(doc, typeId) {
 
 // ---------------------------------------------------------------- the number
 const PER_MM = { mm: 1, cm: 10, m: 1000, in: 25.4 };
-/** A number in the type's own terms: precision, rounding, decimal separator, zero suppression. */
+export const DIM_GROUPING = [["", "None (40000)"], [",", "Comma (40,000)"], [".", "Point (40.000)"], [" ", "Space (40 000)"], ["'", "Apostrophe (40'000)"]];
+/** A number in the type's own terms: precision, rounding, zero suppression, the decimal separator and
+ *  digit grouping - 40000 with a comma grouping is 40,000; 12345.5 with a comma decimal and point grouping
+ *  is 12.345,5. A grouping the same as the decimal separator would make the number ambiguous, so it
+ *  gives way: with a comma decimal, a comma grouping becomes a point. */
 function number(v, precision, st) {
   let x = st.roundOff > 0 ? Math.round(v / st.roundOff) * st.roundOff : v;
   let s = x.toFixed(Math.max(0, Math.min(8, precision | 0)));
   if (st.suppressTrailing && s.includes(".")) s = s.replace(/0+$/, "").replace(/\.$/, "");
   if (st.suppressLeading) s = s.replace(/^(-?)0\./, "$1.");
-  return st.decimal && st.decimal !== "." ? s.replace(".", st.decimal) : s;
+  const dec = st.decimal || ".";
+  let grp = st.thousands || ""; if (grp && grp === dec) grp = dec === "," ? "." : ",";
+  const m = s.match(/^(-?)(\d*)(\.\d*)?$/); if (!m) return s;
+  const int = grp ? m[2].replace(/\B(?=(\d{3})+(?!\d))/g, grp) : m[2];
+  return m[1] + int + (m[3] ? dec + m[3].slice(1) : "");
 }
 function inUnit(doc, mm, unit, precision, st, withUnit) {
   const u = unit === "Project" ? ((doc.meta && doc.meta.displayUnits) || "mm") : unit;

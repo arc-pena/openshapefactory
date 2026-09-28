@@ -5,7 +5,7 @@
 
 import { h, clear, dialog } from "./ui_util.js";
 import { clone } from "./ocaf.js";
-import { DIM_ARROWS, DIM_UNITS, DIM_TEXT_V, DIM_TEXT_H, DIM_TEXT_ALIGN, DIM_FIT, DIM_TOLERANCES, DEFAULT_DIM_TYPE, dimStyleOf } from "./dimstyles.js";
+import { DIM_ARROWS, DIM_UNITS, DIM_TEXT_V, DIM_TEXT_H, DIM_TEXT_ALIGN, DIM_FIT, DIM_TOLERANCES, DIM_GROUPING, DEFAULT_DIM_TYPE, dimStyleOf } from "./dimstyles.js";
 import { TEXT_FONTS, dimStylePreview } from "./scene.js";
 import { drawScene } from "./render.js";
 
@@ -28,7 +28,7 @@ export const DIM_TABS = [
     ["—", "When there is not room for text and arrows inside the extension lines"], ["fit", "Move", "choice", DIM_FIT],
     ["—", "Scale for dimension features"], ["overallScale", "Overall scale", "num"]]],
   ["Primary Units", [
-    ["—", "Linear dimensions"], ["unit", "Unit format", "choice", DIM_UNITS], ["precision", "Precision (decimals)", "int"], ["decimal", "Decimal separator", "choice", [".", ","]],
+    ["—", "Linear dimensions"], ["unit", "Unit format", "choice", DIM_UNITS], ["precision", "Precision (decimals)", "int"], ["decimal", "Decimal separator", "choice", [".", ","]], ["thousands", "Digit grouping", "pairs", DIM_GROUPING],
     ["roundOff", "Round off (mm, 0 = none)", "num"], ["prefix", "Prefix", "text"], ["suffix", "Suffix", "text"], ["showUnit", "Write the unit", "bool"],
     ["—", "Measurement scale"], ["scaleFactor", "Scale factor", "num"],
     ["—", "Zero suppression"], ["suppressLeading", "Leading", "bool"], ["suppressTrailing", "Trailing", "bool"]]],
@@ -47,7 +47,9 @@ export function dimStyleManager(app, typeId, onPick) {
   let tab = app.dimStyleTab || 0;
   const list = h("div", { class: "vslist", role: "listbox", "aria-label": "Dimension types" }), right = h("div", { class: "vsright", style: { minWidth: "0" } });
   const preview = h("canvas", { width: 340, height: 170, "aria-label": "Preview of the dimension type", style: { width: "340px", maxWidth: "100%", height: "170px", border: "1px solid var(--line, #ccd)", borderRadius: "6px", background: "#fff" } });
-  const users = id => doc.elements().filter(f => doc.typeOf(f) === "Dimension" && (doc.argValue(f, "dimType") || {}).ref === id).length;
+  // a dimension with no type, or one whose type is gone, is drawn with the default: it counts there
+  const typeOf = f => { const r = (doc.argValue(f, "dimType") || {}).ref; return r && lib()[r] ? r : (doc.meta && doc.meta.defaultDimType) || DEFAULT_DIM_TYPE; };
+  const users = id => doc.elements().filter(f => doc.typeOf(f) === "Dimension" && typeOf(f) === id).length;
   const newId = () => { let n = 1; while (lib()["DT-NEW" + n]) n++; return "DT-NEW" + n; };
   const save = (value, id = cur) => { const r = app.apply({ op: "type", lib: "dimTypes", id, value }); if (!r.ok) app.say(r.error, "error"); return r.ok; };
   const drawPreview = () => {
@@ -77,7 +79,8 @@ export function dimStyleManager(app, typeId, onPick) {
       const opts = kind === "weight" ? PEN_WEIGHTS : options;
       input = h("select", { onchange: e => set(kind === "weight" ? Number(e.target.value) : e.target.value) }, opts.map(o => h("option", { value: String(o), selected: String(o) === String(v) }, kind === "weight" ? `${o.toFixed(2)} mm` : kind === "choice" && key === "font" ? (TEXT_FONTS[o].label || o) : String(o))));
       if (kind === "weight" && !opts.includes(v)) input.prepend(h("option", { value: String(v), selected: true }, `${v} mm`));
-    } else if (kind === "colour") input = h("input", { type: "color", value: v || "#000000", onchange: e => set(e.target.value) });
+    } else if (kind === "pairs") input = h("select", { onchange: e => set(e.target.value) }, options.map(([val, lab]) => h("option", { value: val, selected: val === (v || "") }, lab)));
+    else if (kind === "colour") input = h("input", { type: "color", value: v || "#000000", onchange: e => set(e.target.value) });
     else if (kind === "fill") input = h("span", { style: { display: "inline-flex", gap: "6px", alignItems: "center" } },
       h("input", { type: "checkbox", checked: !!v, "aria-label": "Fill behind the text", onchange: e => set(e.target.checked ? "#ffffff" : "") }),
       h("input", { type: "color", value: v || "#ffffff", disabled: !v, onchange: e => set(e.target.value) }));

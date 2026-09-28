@@ -2226,10 +2226,13 @@ testCase("M76", "A dimension in a section binds to the planes behind the lines i
   const textOk = tp.font === "Arial" && tp.height === 3.5 && tp.colour === "#c00000" && tp.text === '5.950 ±0.005 [234.3"]';
   const st = dimStyleOf(doc, "DT-X"), dev = formatDimension(doc, Object.assign({}, st, { tolerance: "Deviation", tolUpper: 2, tolLower: 1, unit: "mm", precision: 0 }), 5700);
   const lim = formatDimension(doc, Object.assign({}, st, { tolerance: "Limits", tolUpper: 2, tolLower: 1, unit: "mm", precision: 0, altUnits: false }), 5700);
-  const fmtOk = dev.tol.up === "+2.000" && dev.tol.low === "-1.000" && lim.main === "5702" && lim.tol.low === "5699" && formatDimension(doc, st, 5700, { value: "<> TYP" }).main === "5.700 TYP";
+  const fmtOk = dev.tol.up === "+2.000" && dev.tol.low === "-1.000" && lim.main === "5702" && lim.tol.low === "5699" && formatDimension(doc, st, 5700, { value: "<> TYP" }).main === "5.700 TYP"
+    // digit grouping: 40000 → 40,000; with a comma decimal the grouping gives way to a point
+    && formatDimension(doc, Object.assign({}, st, { unit: "mm", precision: 0, altUnits: false, tolerance: "None", thousands: "," }), 40000).main === "40,000"
+    && formatDimension(doc, Object.assign({}, st, { unit: "mm", precision: 1, altUnits: false, tolerance: "None", thousands: ",", decimal: "," }), 12345.5).main === "12.345,5";
   // the type change restyles it; a PDF of it names Helvetica
   const pdfOk = /Helvetica/.test(pdfText(writePDF([{ size: [297, 210], prims: [tp], title: "t" }]).bytes));
-  return R(found && follows && cols && bad && arrowsOk && textOk && fmtOk && pdfOk, "section lines are planes: slab 200 → 300 with its type, faces 6000 → 5950 with a thicker wall; columns centre to centre 3000 in section and plan; a height and a width refuse; 16 terminators draw; Arial 3.5 red, 5.950 ±0.005 [234.3\"]; deviation and limits; <> override; the PDF names Helvetica",
+  return R(found && follows && cols && bad && arrowsOk && textOk && fmtOk && pdfOk, "section lines are planes: slab 200 → 300 with its type, faces 6000 → 5950 with a thicker wall; columns centre to centre 3000 in section and plan; a height and a width refuse; 16 terminators draw; Arial 3.5 red, 5.950 ±0.005 [234.3\"]; deviation and limits; <> override; 40,000 and 12.345,5; the PDF names Helvetica",
     JSON.stringify({ found, cols, cc: cc.value, keys: refs.map(r => r.key).slice(0, 40), v1, v1b, v2, v2b, t1, t1b, bad, arrows, tp: [tp.text, tp.font, tp.height, tp.colour], dev, lim, pdfOk }));
 });
 
