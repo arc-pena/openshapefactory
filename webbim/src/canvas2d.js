@@ -7,7 +7,8 @@
 import { h, clear, fmtLen, icon } from "./ui_util.js";
 import { parseLength, parseAngle, fmtArea } from "./units.js";
 import { TOL, add, sub, mul, dot, dist, perp, normalise, lerp, intersectLines, lineThrough, projectPoint, pointInPoly, samplePath, polyArea, bboxOf, distToSeg } from "./geom2d.js";
-import { deriveView, placements, dimensionGeometry, viewLineGeometry, dimAxis } from "./scene.js";
+import { deriveView, placements, dimensionGeometry, viewLineGeometry, dimAxis, viewReferences, viewMeasure } from "./scene.js";
+import { DEFAULT_DIM_TYPE } from "./dimstyles.js";
 import { drawScene, primsBBox } from "./render.js";
 import { F, CATALOGUE } from "./ocaf.js";
 import { uOf, pointAt } from "./walls.js";
@@ -102,17 +103,50 @@ export class View2D {
   // ---------------------------------------------------------------- levels in elevation and section
   viewZ0() { const lv = F.reference(this.view, "baseLevel"), d = lv && this.doc.data(lv); return d ? d.value || 0 : 0; }
   viewLineLength() { const c = F.json(this.view, "line"); return c ? dist(c.start, c.end) : 0; }
-  /** Dimension tool in an elevation: click a level, then another; the dimension stands where the second click was. */
+  /** Every plane this elevation or section shows as a line near p (view coordinates), nearest first: a level,
+   *  a slab's top or underside or a layer between, a wall's face, base or top, a beam's soffit, a sill… */
+  viewRefCandidates(p) {
+    const tol = 10 * this.modelPerPx(), out = [];
+    for (const r of viewReferences(this.doc, this.view)) {
+      if (r.dir === "h") { if (p[0] < r.s0 - tol || p[0] > r.s1 + tol) continue; const d = Math.abs(p[1] - r.z); if (d < tol) out.push(Object.assign({}, r, { kind: "line", a: [r.s0, r.z], b: [r.s1, r.z], d })); }
+      else { if (p[1] < Math.min(r.z0, r.z1) - tol || p[1] > Math.max(r.z0, r.z1) + tol) continue; const d = Math.abs(p[0] - r.s); if (d < tol) out.push(Object.assign({}, r, { kind: "line", a: [r.s, r.z0], b: [r.s, r.z1], d })); }
+    }
+    // the nearest first, an element's own plane before a datum (a level, a grid) nearly as near, and for the
+    // second pick the lines running the way the first did (a height pairs with a height); Tab reaches the rest
+    const doc = this.doc, first = (this.tool.refs || [])[0];
+    const datum = r => { const f = doc.element(r.of), t = f && doc.typeOf(f); return t === "Level" || t === "Grid" ? 1 : 0; };
+    const score = r => r.d + datum(r) * tol * 0.6 + (first && first.dir !== r.dir ? tol * 2 : 0);
+    // lines on top of each other (a wall's base on a slab's top): what the section cuts, or stands nearest, first
+    return out.sort((x, y) => { const a = score(x), b = score(y); return Math.abs(a - b) > tol * 0.05 ? a - b : (x.depth ?? Infinity) - (y.depth ?? Infinity) || a - b; });
+  }
+  /** Dimension tool in an elevation or a section: click a line, then another. The dimension binds to the
+   *  planes behind them - two horizontal ones give a height, two upright ones a width - and stands where
+   *  the second click was. Tab steps through lines lying on top of each other (a wall's top and a slab's underside). */
   levelDimClick(sx, sy) {
-    const T = this.tool, hit = this.hitAt(sx, sy), f = hit && this.doc.element(hit.id);
-    if (!f || this.doc.typeOf(f) !== "Level") return this.app.say("click a level line", "note");
-    T.refs = (T.refs || []).concat([hit.id]);
-    if (T.refs.length === 1) return this.app.say(`${F.text(f, "name")}: now click the other level`, "note");
+    const T = this.tool, doc = this.doc, p = this.toModel(sx, sy);
+    const cands = T.refCands || this.viewRefCandidates(p), r = cands.length ? cands[(T.refIdx || 0) % cands.length] : null;
+    if (!r) return this.app.say("click a line: a level, a slab's top or underside, a wall face, a sill…", "note");
+    T.refs = (T.refs || []).concat([r]); T.refCands = null;
+    if (T.refs.length === 1) return this.app.say(`First: ${r.of} · ${r.name.replace(".", " ")} (a ${r.dir === "h" ? "horizontal" : "upright"} plane); now a ${r.dir === "h" ? "horizontal" : "upright"} one`, "note");
     const [a, b] = T.refs; T.refs = [];
-    if (a === b) return this.app.say("pick two different levels", "note");
-    const p = this.toModel(sx, sy);
-    const r = this.app.apply({ op: "add", element: { type: "Dimension", args: { of: [a + ":plane", b + ":plane"], offset: Math.round(p[0]), view: { ref: this.viewId }, locked: false } } });
-    if (r.ok) { this.app.say("Dimension between levels: click its padlock to lock the height, or its value to change it", "ok"); this.app.select([r.id]); }
+    if (a.key === b.key) return this.app.say("pick two different lines", "note");
+    const m = viewMeasure(doc, this.view, [a.key, b.key]);
+    if (m.value == null) return this.app.say(m.why || "cannot dimension those", "error");
+    const off = Math.round(m.kind === "levels" ? p[0] : p[1]);
+    const res = this.app.apply({ op: "add", element: { type: "Dimension", args: { of: [a.key, b.key], offset: off, view: { ref: this.viewId }, locked: false, dimType: { ref: this.app.dimType || DEFAULT_DIM_TYPE } } } });
+    if (res.ok) {
+      const both = a.name === "level" && b.name === "level";
+      this.app.say(both ? "Dimension between levels: click its padlock to lock the height, or its value to change it"
+        : `Dimension ${fmtLen(m.value)} bound to the planes ${a.key} and ${b.key}: change the element and it follows`, "ok");
+      this.app.select([res.id]);
+    }
+    this.draw();
+  }
+  /** The line the Dimension tool would take here, shown before the click. */
+  viewDimHover(p, sx, sy) {
+    const T = this.tool, cands = this.viewRefCandidates(p), keys = cands.map(c => c.key).join("|");
+    if (keys !== T.refKeys) { T.refKeys = keys; T.refIdx = 0; }
+    T.refCands = cands; T.refAt = [sx, sy]; this.showRefHud(); this.draw();
   }
   /** A selected level shows its height at its head, editable: type a height and the level moves there. */
   levelHeadEditor(f) {
@@ -253,7 +287,7 @@ export class View2D {
       }
     }
     this.drawViewExtents(g);
-    if (this.app.tool === "dim" && this.kind === "PlanView") {
+    if (this.app.tool === "dim" && (this.kind === "PlanView" || this.kind === "ElevationView" || this.kind === "SectionView")) {
       // the reference the click will take (orange), and the one already taken (blue)
       const T = this.tool, mark = (r, colour) => {
         if (!r) return; g.strokeStyle = colour; g.fillStyle = colour; g.lineWidth = 3; g.setLineDash([]);
@@ -310,7 +344,7 @@ export class View2D {
     if ((this.kind === "ElevationView" || this.kind === "SectionView") && ids.length === 1 && this.app.tool === "select") {
       const f = doc.element(ids[0]);
       if (f && doc.typeOf(f) === "Level") return this.levelHeadEditor(f);
-      if (f && doc.typeOf(f) === "Dimension" && measureRefs(doc, F.json(f, "of") || []).kind === "levels") return this.levelDimEditor(f);
+      if (f && doc.typeOf(f) === "Dimension" && (F.json(f, "of") || []).every(k => /:plane$/.test(k)) && measureRefs(doc, F.json(f, "of") || []).kind === "levels") return this.levelDimEditor(f);
     }
     if (this.kind !== "PlanView" || ids.length !== 1 || this.app.tool !== "select") return;
     const f = doc.element(ids[0]); if (!f) return;
@@ -706,13 +740,14 @@ export class View2D {
    *  (so a column of them lines up) and to grids, within a few pixels; Shift drags freely. */
   dragLevelDim(d, sx, sy, e) {
     const p = this.toModel(sx, sy), L = d.levelDim, doc = this.doc;
-    let off = L.off0 + (p[0] - L.grab[0]), snapped = null;
+    const across = viewMeasure(doc, this.view, F.json(doc.element(L.id), "of") || []).kind === "across", ax = across ? 1 : 0;
+    let off = L.off0 + (p[ax] - L.grab[ax]), snapped = null;
     if (!e.shiftKey) {
       const tol = SNAP_PX * this.S / this.cam.z, cands = [];
       for (const g of doc.elements()) {
-        if (doc.typeOf(g) === "Dimension" && doc.idOf(g) !== L.id && F.refId(g, "view") === this.viewId) cands.push([F.real(g, "offset"), `dimension ${doc.idOf(g)}`]);
+        if (doc.typeOf(g) === "Dimension" && doc.idOf(g) !== L.id && F.refId(g, "view") === this.viewId && (viewMeasure(doc, this.view, F.json(g, "of") || []).kind === "across") === across) cands.push([F.real(g, "offset"), `dimension ${doc.idOf(g)}`]);
       }
-      for (const h of this.scene().hits || []) if (h.kind === "curve" && h.pts && h.pts.length === 2 && Math.abs(h.pts[0][0] - h.pts[1][0]) < 1e-6 && doc.element(h.id) && doc.typeOf(doc.element(h.id)) === "Grid") cands.push([h.pts[0][0], `grid ${doc.element(h.id).get("Name") || h.id}`]);
+      if (!across) for (const h of this.scene().hits || []) if (h.kind === "curve" && h.pts && h.pts.length === 2 && Math.abs(h.pts[0][0] - h.pts[1][0]) < 1e-6 && doc.element(h.id) && doc.typeOf(doc.element(h.id)) === "Grid") cands.push([h.pts[0][0], `grid ${doc.element(h.id).get("Name") || h.id}`]);
       let best = null; for (const c of cands) { const dd = Math.abs(c[0] - off); if (dd <= tol && (!best || dd < best.dd)) best = { dd, c }; }
       if (best) { off = best.c[0]; snapped = best.c[1]; }
     }
@@ -808,6 +843,7 @@ export class View2D {
     const p = this.toModel(sx, sy);
     if (this.app.sketch && this.app.sketch.view === this) { this.canvas.style.cursor = this.app.sketch.tool === "select" ? "default" : "crosshair"; this.app.sketch.hover(p, e); return; }
     if (this.app.tool !== "select" && this.kind === "PlanView") return this.toolHover(p, sx, sy, e);
+    if (this.app.tool === "dim" && (this.kind === "ElevationView" || this.kind === "SectionView")) return this.viewDimHover(p, sx, sy);
     const hit = this.hitAt(sx, sy), hid = hit ? (this.kind === "Sheet" ? null : hit.id) : null;
     if (hid !== this.hover) { this.hover = hid; this.draw(); if (hid) this.app.hoverInfo(hid); }
     this.canvas.style.cursor = this.app.pickMode ? "crosshair" : hit ? (hid && this.app.selection.has(hid) ? "move" : "pointer") : "default";
@@ -1078,7 +1114,7 @@ export class View2D {
       const m = measureRefs(doc, [a.key, b.key]);
       if (m.value == null) { this.app.say(m.why || "cannot dimension those", "error"); return; }
       const ax = dimAxis(m), off = Math.round(dot(sub(q, ax.a), perp(ax.dir)));
-      addEl({ type: "Dimension", args: { of: [a.key, b.key], offset: off, view: { ref: this.viewId }, locked: false } }, `Dimension ${fmtLen(m.value)} bound to ${a.key} and ${b.key}`);
+      addEl({ type: "Dimension", args: { of: [a.key, b.key], offset: off, view: { ref: this.viewId }, locked: false, dimType: { ref: this.app.dimType || DEFAULT_DIM_TYPE } } }, `Dimension ${fmtLen(m.value)} bound to ${a.key} and ${b.key}`);
     }
   }
   // ---------------------------------------------------------------- Move · Copy · Rotate · Mirror

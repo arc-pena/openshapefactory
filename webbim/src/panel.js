@@ -6,6 +6,8 @@
 import { parseLength, parseNumber, bareFactor, fmtArea, fmtVolume } from "./units.js";
 import { h, clear, icon, dialog, fmtLen } from "./ui_util.js";
 import { sectionPicker } from "./sectionui.js";
+import { dimStyleManager } from "./dimstyleui.js";
+import { DEFAULT_DIM_TYPE } from "./dimstyles.js";
 import { propertyModel, referenceOptions, specsFor, TYPE_KEYS } from "./props.js";
 import { readValue, formatValue, parse, evaluate, ExprError } from "./expr.js";
 import { documentLookup, F, CATALOGUE, clone } from "./ocaf.js";
@@ -52,6 +54,16 @@ export function renderPanel(app, root) {
   for (const e of m.errors) pp.append(h("div", { class: "banner error", role: "alert" }, e));
   for (const n of m.notes) pp.append(h("div", { class: "banner note" }, n));
   if (ids.length === 1) { const w = doc.plan(f0); if (w && w.joinNotes) for (const n of w.joinNotes) pp.append(h("div", { class: "banner note" }, n)); }
+  // ---- a dimension's type (its style): the selector and Edit Type, which opens the Dimension Style Manager
+  const dims = ids.map(id => doc.element(id)).filter(f => f && doc.typeOf(f) === "Dimension");
+  if (dims.length && dims.length === ids.length) {
+    const tids = [...new Set(dims.map(f => (doc.argValue(f, "dimType") || {}).ref || DEFAULT_DIM_TYPE))], cur = tids.length === 1 ? tids[0] : "";
+    const sel = h("select", { id: "pp-type", "aria-label": "Dimension type", onchange: e => app.apply({ op: "set", ids, key: "dimType", value: { ref: e.target.value } }) },
+      cur ? null : h("option", { value: "" }, "<varies>"), Object.entries(doc.lib.dimTypes || {}).map(([id, t]) => h("option", { value: id, selected: id === cur }, t.name || id)));
+    pp.append(h("div", { class: "pp-head", style: { paddingTop: "8px" } },
+      h("div", { class: "typebar" }, sel, h("button", { class: "btn small", onclick: () => dimStyleManager(app, cur || tids[0]) }, "Edit Type")),
+      h("div", { class: "muted", style: { fontSize: "11.5px" } }, "The type draws it: ticks or arrows, text font and height on paper, units, tolerances. Edit Type changes every dimension of this type.")));
+  }
   // ---- the type selector at the head, with Edit Type (the two-tier split made visible)
   if (m.typeKey) {
     const arg = decl.args.find(a => a.key === m.typeKey);

@@ -22,6 +22,7 @@ import { writePDF } from "./pdf.js";
 import { writeDXF, readDXF, dxfDrawing, makeZip } from "./dxf.js";
 import { runAll, CASES } from "./acceptance.js";
 import { sectionPicker } from "./sectionui.js";
+import { dimStyleManager } from "./dimstyleui.js";
 import { sunOf } from "./sun.js";
 import { renderPanel, typeEditor, vvDialog, viewStyleEditor, materialsEditor } from "./panel.js";
 import { renderSchedule, newScheduleDialog, scheduleProperties } from "./scheduleui.js";
@@ -213,6 +214,7 @@ const COMMANDS = {
   sgimport: { label: "Import Program", icon: "importI", run: () => importProgram(app) },
   sgbrief: { label: "Brief", icon: "text", run: () => briefDialog(app) },
   materials: { label: "Materials", icon: "material", key: "MA", run: () => materialsEditor(app) },
+  dimstyles: { label: "Dimension Styles", icon: "dim", key: "DS", hint: "Dimension types, as AutoCAD's DIMSTYLE: lines, ticks and arrows, text font and height, fit, units, alternate units, tolerances", run: () => { const f = [...app.selection].map(id => app.doc.element(id)).find(g => g && app.doc.typeOf(g) === "Dimension"); dimStyleManager(app, f ? (app.doc.argValue(f, "dimType") || {}).ref : null); } },
   elev: tool("elev", "Elevation", "elevview", "EL", "Two clicks: the marker line is the view."),
   section: tool("section", "Section", "section", "SE", "Two clicks: the section line. It looks to the right of the direction you drew it; double-click its head to open it."),
   move: tool("move", "Move", "move", "MV", "Click a base point, then the destination (or type a distance + Enter)."),
@@ -312,7 +314,7 @@ const RIBBON = [
     { title: "Interface", items: [big("cadmode")] },
   ] },
   { tab: "Manage", panels: [
-    { title: "Settings", items: [big("materials"), big("pens"), big("projectinfo"), big("units")] },
+    { title: "Settings", items: [big("materials"), big("dimstyles"), big("pens"), big("projectinfo"), big("units")] },
     { title: "Inquiry", items: [big("tests")] },
   ] },
   { tab: "Modify", panels: [

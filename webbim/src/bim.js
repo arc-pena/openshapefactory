@@ -17,6 +17,7 @@ import { resolveJoins, wallRegions, solidSpans, solidPieces, coarseMaterial, JOI
 import { findLoops, claimLoops, filterWallFaces, interiorPoint } from "./spaces.js";
 import { regionsOf, regionPaths, FINE, elementSegs, bridgeHoles } from "./bimsketch.js";
 import { placeMesh, meshBox, meshMeasure, levelsIn, weldTriangles } from "./massing.js";
+import { DIM_TYPES } from "./dimstyles.js";
 import {
   PEN_ISO, PATTERNS, MATERIALS, PARAM_SPECS, CATEGORIES, FAMILIES, TYPES, TEXT_TYPES, SYMBOLS, VS_PRESENTATION, VS_CONSTRUCTION,
 } from "./library.js";
@@ -1022,7 +1023,11 @@ BUILDERS.CADImport = { build: (f) => {
 
 declare({ type: "Dimension", guid: "wb-0705", category: "Annotation", kind: "dimension", idPrefix: "DIM",
   summary: "Binds to references, never to points (§10.2). Padlocked, it is a constraint row.",
-  args: [ json("of", "References", []), real("offset", "Offset", 600, -1e5, 1e5, 1), ref("view", "View", ["view"], { view: true }), bool("locked", "Padlocked", false) ] });
+  args: [ json("of", "References", []), real("offset", "Offset", 600, -1e5, 1e5, 1), ref("view", "View", ["view"], { view: true }), bool("locked", "Padlocked", false),
+          // its type (AutoCAD's dimension style: lines, arrows or ticks, text, units, tolerances), and Revit's text overrides
+          ref("dimType", "Type", ["dimType"], { view: true, group: "Graphics" }),
+          text("valueOverride", "Value override (<> is the measured value)", "", { group: "Text" }), text("prefix", "Prefix", "", { group: "Text" }), text("suffix", "Suffix", "", { group: "Text" }),
+          text("above", "Text above", "", { group: "Text" }), text("below", "Text below", "", { group: "Text" }) ] });
 BUILDERS.Dimension = { build: () => ({ data: {} }) };   // measured at derive time: annotation stays out of the model graph
 
 // ---------------------------------------------------------------- references resolution (§10.2)
@@ -1039,6 +1044,34 @@ export function resolveReference(doc, key) {
  *  a floor's or generic model's edges and corners; an opening's jambs and centre; a line's line and ends.
  *  Keys are stable names, so a dimension survives every rebuild. */
 export function elementRefs(doc, f) {
+  const out = elementRefs2d(doc, f), t = doc.typeOf(f), d = doc.data(f), p = doc.plan(f);
+  if (!p) return out;
+  // every line and point in plan is a vertical plane or edge in a section or an elevation: it runs from the
+  // element's bottom to its top there
+  const zr = t === "Opening" || t === "Door" || t === "Window" ? openingZ(doc, d) : [p.z0, p.z1];
+  for (const r of out) if (r.z0 == null && zr && Number.isFinite(zr[0])) { r.z0 = zr[0]; r.z1 = zr[1]; }
+  // and the horizontal planes that drive it: a slab's top and underside and every layer between, a wall's
+  // base and top, a beam's top and soffit, a column's base and top, an opening's sill and head. A section
+  // or an elevation dimensions to these, so a thicker slab moves its dimension with it
+  const plane = (key, z, foot) => { if (Number.isFinite(z)) out.push({ key, kind: "plane", z, foot }); };
+  const foot = p.foot && p.foot.length ? p.foot : null;
+  if (t === "Floor" && p.parts) {
+    plane("face.top", p.z1, foot); plane("face.bottom", p.z0, foot);
+    const zs = [...new Set(p.parts.map(q => q.z0))].filter(z => z > p.z0 + 1e-6).sort((a, b) => b - a);
+    zs.forEach((z, i) => plane(`layer.${i + 1}`, z, foot));
+  }
+  if (t === "Beam" || t === "Generic" || t === "Roof") { plane("face.top", p.z1, foot); plane("face.bottom", p.z0, foot); }
+  if (t === "Wall" && p.curve) { const ft = [p.curve.start, p.curve.end]; plane("base", p.z0, ft); plane("top", p.z1, ft); }
+  if (t === "Column") { plane("base", p.z0, foot); plane("top", p.z1, foot); }
+  if ((t === "Opening" || t === "Door" || t === "Window") && zr) { const j = out.filter(r => /^jamb/.test(r.key)).map(r => r.a); plane("sill", zr[0], j); plane("head", zr[1], j); }
+  return out;
+}
+/** An opening's (or its filler's) sill and head, absolute. */
+function openingZ(doc, d) {
+  const fr = d && d.frame, host = fr && doc.element(fr.host), w = host && doc.plan(host);
+  return w ? [w.z0 + fr.sill, w.z0 + fr.sill + fr.h] : null;
+}
+function elementRefs2d(doc, f) {
   const t = doc.typeOf(f), d = doc.data(f), p = doc.plan(f), out = [];
   const line = (key, a, b) => { if (a && b && dist(a, b) > 1e-6) out.push({ key, kind: "line", geom: lineThrough(a, b), a, b }); };
   const point = (key, q) => { if (q) out.push({ key, kind: "point", geom: q }); };
@@ -1046,7 +1079,7 @@ export function elementRefs(doc, f) {
   if (t === "Wall" && p && d && d.refs) {
     for (const r of d.refs) {
       if (r.kind === "line" && p.curve.type === "line") { const a = add(p.curve.start, mul(perp(p.d), r.s || 0)), b = add(p.curve.end, mul(perp(p.d), r.s || 0)); out.push(Object.assign({}, r, { a, b })); }
-      else out.push(r);
+      else out.push(Object.assign({}, r));
     }
     return out;
   }
@@ -1066,7 +1099,12 @@ export function elementRefs(doc, f) {
     line("face.left", P(-hw, -hd), P(-hw, hd)); line("face.right", P(hw, -hd), P(hw, hd)); line("face.front", P(-hw, -hd), P(hw, -hd)); line("face.back", P(-hw, hd), P(hw, hd));
     return out;
   }
-  if ((t === "Floor" || t === "Generic" || t === "SiteBoundary") && p) { ring(p.foot && p.foot.length >= 3 ? p.foot : p.pts); return out; }
+  if ((t === "Floor" || t === "Generic" || t === "SiteBoundary") && p) {
+    const R = p.foot && p.foot.length >= 3 ? p.foot : p.pts; ring(R);
+    // a generic body (an imported column, a pier) is dimensioned by its centre axis, as a column is
+    if (t === "Generic" && R && R.length >= 3) { const xs = R.map(q => q[0]), ys = R.map(q => q[1]); point("centre", [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2]); }
+    return out;
+  }
   if (t === "FilledRegion") { ring(F.json(f, "boundary")); return out; }
   if (t === "Opening" || t === "Door" || t === "Window") {
     const fr = d && d.frame, host = fr && doc.element(fr.host), w = host && doc.plan(host);
@@ -1076,7 +1114,7 @@ export function elementRefs(doc, f) {
     }
     return out;
   }
-  if (d && d.refs) for (const r of d.refs) out.push(r);
+  if (d && d.refs) for (const r of d.refs) out.push(Object.assign({}, r));
   return out;
 }
 /** A dimension's value between two references, measured on the analytic geometry. */
@@ -1206,7 +1244,7 @@ export function newDocument(name = "Untitled") {
   doc.meta.name = name;
   Object.assign(doc.lib, {
     categories: clone(CATEGORIES), paramSpecs: clone(PARAM_SPECS), pens: { "PEN-ISO": clone(PEN_ISO) }, patterns: clone(PATTERNS),
-    materials: clone(MATERIALS), symbols: clone(SYMBOLS), families: clone(FAMILIES), types: clone(TYPES), textTypes: clone(TEXT_TYPES),
+    materials: clone(MATERIALS), symbols: clone(SYMBOLS), families: clone(FAMILIES), types: clone(TYPES), textTypes: clone(TEXT_TYPES), dimTypes: clone(DIM_TYPES),
     viewStyles: { "VS-PRESENTATION": clone(VS_PRESENTATION), "VS-CONSTRUCTION": clone(VS_CONSTRUCTION) },
   });
   attach(doc);
@@ -1237,6 +1275,8 @@ export function openDocument(json) {
   const defaults = newDocument();
   // categories added since the file was written (roofs, ducts, topography...) join the ones it has
   if (doc.lib.categories && Object.keys(doc.lib.categories).length) for (const [c, v] of Object.entries(defaults.lib.categories)) if (!doc.lib.categories[c]) doc.lib.categories[c] = v;
+  // dimension types are newer than most files: they arrive quietly
+  if (!Object.keys(doc.lib.dimTypes || {}).length) doc.lib.dimTypes = defaults.lib.dimTypes;
   for (const k of Object.keys(defaults.lib)) if (!Object.keys(doc.lib[k]).length && Object.keys(defaults.lib[k]).length) { doc.lib[k] = defaults.lib[k]; doc.loadReport.push(`no ${k} in the file: using the defaults`); doc._filledLibs = (doc._filledLibs || []).concat(k); }
   attach(doc);
   return doc;

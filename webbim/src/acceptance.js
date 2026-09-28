@@ -12,6 +12,8 @@ import { newDocument, openDocument, measureRefs, resolveReference, importPlacer 
 import { Editor, propagate, massingStoreys, geomKey } from "./ops.js";
 import { sectionRows, findSection, sectionType } from "./sectionlib.js";
 import { elementRefs } from "./bim.js";
+import { viewReferences, viewMeasure } from "./scene.js";
+import { DIM_ARROWS, dimStyleOf, formatDimension } from "./dimstyles.js";
 import { viewLineGeometry, viewContext, sectionBoxKey, dimText, deriveView, planScene, elevationScene, placements, textWidth, sheetScene, visibilityKey, sectionCut, cutOutline, SHEET_DISPLAYS, sheetDisplayOf, dimensionGeometry } from "./scene.js";
 import { chainLoop } from "./crop.js";
 import { importIfc } from "./ifcimport.js";
@@ -2185,4 +2187,48 @@ testCase("M75", "A reference-view IFC of triangles comes in as a model: the wall
   const pageOk = unwrapped.text.trim() === text.trim() && /GitHub/.test(unwrapped.note) && /raw\/refs\/heads\/main\/big\.ifc/.test(err) && /web page/.test(err);
   return R(ok && pageOk, "1 wall (3-point gable, 10° bevel, 2 openings), 1 roof 30° square-cut in its colour, 1 beam turned 30°, 1 duct Ø250 on Exhaust air, room Kitchen G.01 of 12 m², a plant in 2 colours, topography, the zone left out, nothing missed; the GitHub page read, the bare one explained",
     JSON.stringify({ res: res.ok, missed: r.report.missed, made: r.report.made, wall: W && [F.json(W, "topProfile"), F.json(W, "slope"), of("Opening").length], roof: Rf && [F.real(Rf, "pitch"), F.choice(Rf, "rafterCut"), F.text(Rf, "colour")], beam: Bm && F.real(Bm, "rotation"), duct: Du && [F.real(Du, "width"), F.text(Du, "system")], space: Sp && [Sp.get("Name"), doc.getParam(Sp, "Number"), (doc.data(Sp) || {}).value], tree: tree && [categoryOf(doc, tree), treeShape && (treeShape.groups || []).length], soil: soil && categoryOf(doc, soil), gens: gens.length, notes: r.report.notes, pageOk, err }).slice(0, 3000));
+});
+
+testCase("M76", "A dimension in a section binds to the planes behind the lines it was drawn to: a slab's top and underside give its thickness and follow a thicker type, two wall faces give the width between them and follow a thicker wall. Its type (AutoCAD's dimension style) draws it: every terminator - ticks, arrows, dots - its font and height on paper, units and precision, alternate units and tolerances; changing the type restyles it", () => {
+  const { doc, ed } = fixture();
+  wall(doc, "A", [0, 0], [6000, 0], "T-300"); wall(doc, "B", [0, 6000], [6000, 6000], "T-300");
+  ed.apply([{ op: "add", element: { id: "FL", type: "Floor", args: { boundary: [[0, 0], [6000, 0], [6000, 6000], [0, 6000]], floorType: { ref: "T-SLAB200" }, level: { ref: "L0" }, heightOffset: 3000 } } },
+    { op: "add", element: { id: "S", type: "SectionView", name: "S", args: { line: { type: "line", start: [3000, -1500], end: [3000, 7500] }, depth: 8000, scale: 50, baseLevel: { ref: "L0" }, top: 4500, style: { ref: "VS-CONSTRUCTION" }, detailLevel: "Fine" } } }]);
+  const sv = doc.element("S"), refs = viewReferences(doc, sv), has = k => refs.some(r => r.key === k);
+  const found = has("FL:face.top") && has("FL:face.bottom") && has("A:face.exterior") && has("B:face.interior") && has("L0:plane") && has("A:top");
+  const d1 = ed.apply({ op: "add", element: { type: "Dimension", args: { of: ["FL:face.top", "FL:face.bottom"], offset: 1000, view: { ref: "S" }, locked: false } } });
+  const d2 = ed.apply({ op: "add", element: { type: "Dimension", args: { of: ["A:face.interior", "B:face.interior"], offset: 1500, view: { ref: "S" }, locked: false } } });
+  const val = r => viewMeasure(doc, sv, F.json(doc.element(r.id), "of")).value;
+  const texts = id => deriveView(doc, sv).prims.filter(p => p.id === id && p.t === "text").map(p => p.text);
+  const v1 = val(d1), v2 = val(d2), t1 = texts(d1.id)[0];
+  ed.apply({ op: "set", id: "FL", key: "floorType", value: { ref: "T-SLAB300" } });
+  ed.apply({ op: "set", id: "A", key: "wallType", value: { ref: "T-400" } });
+  const v1b = val(d1), v2b = val(d2), t1b = texts(d1.id)[0];
+  const follows = v1 === 200 && v1b === 300 && t1 === "200" && t1b === "300" && Math.abs(v2 - 6000) < 1e-6 && Math.abs(v2b - 5950) < 1e-6;
+  // columns by their centre axes, centre to centre, in the section as in plan - a turned column too
+  ed.apply([{ op: "add", element: { id: "C1", type: "Column", args: { position: [4000, 1000], columnType: { ref: "T-COL400" }, baseLevel: { ref: "L0" }, height: 3000, rotation: 0 } } },
+    { op: "add", element: { id: "C2", type: "Column", args: { position: [4000, 4000], columnType: { ref: "T-COL400" }, baseLevel: { ref: "L0" }, height: 3000, rotation: 30 } } }]);
+  const vr2 = viewReferences(doc, sv), cc = viewMeasure(doc, sv, ["C1:centre", "C2:centre"]);
+  const cols = vr2.some(r => r.key === "C1:centre" && r.dir === "v" && r.z1 - r.z0 === 3000) && cc.kind === "across" && Math.abs(cc.value - 3000) < 1e-6 && Math.abs(measureRefs(doc, ["C1:centre", "C2:centre"]).value - 3000) < 1e-6;
+  // a height against a width cannot be measured
+  const bad = viewMeasure(doc, sv, ["FL:face.top", "A:face.interior"]).value == null;
+  // every terminator draws something, and none draws nothing
+  const plan = ed.apply({ op: "add", element: { type: "Dimension", args: { of: ["A:face.interior", "B:face.interior"], offset: 1000, view: { ref: "V" }, locked: false, dimType: { ref: "DT-X" } } } });
+  const arrows = {};
+  for (const k of DIM_ARROWS) {
+    ed.apply({ op: "type", lib: "dimTypes", id: "DT-X", value: { name: "X", arrow1: k, arrow2: k, arrowSize: 3 } });
+    arrows[k] = deriveView(doc, doc.element("V")).prims.filter(p => p.id === plan.id && p.t !== "text").length;
+  }
+  const arrowsOk = DIM_ARROWS.every(k => k === "None" ? arrows[k] < arrows["Closed filled"] : arrows[k] > arrows["None"]);
+  // font, height, units, precision, alternate units, tolerances
+  ed.apply({ op: "type", lib: "dimTypes", id: "DT-X", value: { name: "X", font: "Arial", textHeight: 3.5, unit: "m", precision: 3, altUnits: true, altUnit: "in", altPrecision: 1, tolerance: "Symmetrical", tolUpper: 5, tolPrecision: 3, textColour: "#c00000" } });
+  const tp = deriveView(doc, doc.element("V")).prims.find(p => p.id === plan.id && p.t === "text") || {};
+  const textOk = tp.font === "Arial" && tp.height === 3.5 && tp.colour === "#c00000" && tp.text === '5.950 ±0.005 [234.3"]';
+  const st = dimStyleOf(doc, "DT-X"), dev = formatDimension(doc, Object.assign({}, st, { tolerance: "Deviation", tolUpper: 2, tolLower: 1, unit: "mm", precision: 0 }), 5700);
+  const lim = formatDimension(doc, Object.assign({}, st, { tolerance: "Limits", tolUpper: 2, tolLower: 1, unit: "mm", precision: 0, altUnits: false }), 5700);
+  const fmtOk = dev.tol.up === "+2.000" && dev.tol.low === "-1.000" && lim.main === "5702" && lim.tol.low === "5699" && formatDimension(doc, st, 5700, { value: "<> TYP" }).main === "5.700 TYP";
+  // the type change restyles it; a PDF of it names Helvetica
+  const pdfOk = /Helvetica/.test(pdfText(writePDF([{ size: [297, 210], prims: [tp], title: "t" }]).bytes));
+  return R(found && follows && cols && bad && arrowsOk && textOk && fmtOk && pdfOk, "section lines are planes: slab 200 → 300 with its type, faces 6000 → 5950 with a thicker wall; columns centre to centre 3000 in section and plan; a height and a width refuse; 16 terminators draw; Arial 3.5 red, 5.950 ±0.005 [234.3\"]; deviation and limits; <> override; the PDF names Helvetica",
+    JSON.stringify({ found, cols, cc: cc.value, keys: refs.map(r => r.key).slice(0, 40), v1, v1b, v2, v2b, t1, t1b, bad, arrows, tp: [tp.text, tp.font, tp.height, tp.colour], dev, lim, pdfOk }));
 });

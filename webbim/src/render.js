@@ -5,7 +5,7 @@
 
 import { isAnnotationLayer } from "./crop.js";
 import { segStart, segEnd, samplePath, bboxOf } from "./geom2d.js";
-import { emOf, textWidth } from "./scene.js";
+import { emOf, textWidth, TEXT_FONTS } from "./scene.js";
 
 export const FONT_FAMILY = "WebBIMSans";
 
@@ -60,14 +60,16 @@ export function drawScene(g, scene, view, opts = {}) {
       hatchLines(g, p, b, X, Y, view.z);
       g.restore();
     } else if (p.t === "text") {
-      const em = emOf(p.height) * view.z; if (em < 1.5) return;
+      const em = emOf(p.height, p.font) * view.z; if (em < 1.5) return;
+      const wf = p.widthFactor || 1, fcss = (TEXT_FONTS[p.font] || {}).css;
       g.save();
       g.translate(X(p.at[0]), Y(p.at[1])); g.rotate(-(p.rot || 0) * Math.PI / 180);
       g.fillStyle = tint(p, p.colour || "#000");
-      g.font = `${em}px ${FONT_FAMILY}, "DejaVu Sans", Verdana, sans-serif`;
-      const w = textWidth(p.text, p.height) * view.z;
+      g.font = `${em}px ${fcss || `${FONT_FAMILY}, "DejaVu Sans", Verdana, sans-serif`}`;
+      const w = textWidth(p.text, p.height, p.font, wf) * view.z;
       const dx = p.align === "centre" ? -w / 2 : p.align === "right" ? -w : 0;
-      g.fillText(p.text, dx, p.valign === "middle" ? p.height * view.z / 2 : 0);
+      if (wf !== 1) g.scale(wf, 1);
+      g.fillText(p.text, dx / wf, p.valign === "middle" ? p.height * view.z / 2 : 0);
       g.restore();
     } else if (p.t === "raster" && (p.img || p.url)) {
       const img = p.img || rasterImage(p.url);
@@ -119,7 +121,7 @@ function hatchLines(g, p, bb, X, Y, z) {
 }
 export function primBBox(p) {
   if (p.path) return bboxOf(samplePath(p.path, 8));
-  if (p.t === "text") { const w = textWidth(p.text, p.height); return [p.at[0] - w, p.at[1] - p.height, p.at[0] + w, p.at[1] + p.height * 2]; }
+  if (p.t === "text") { const w = textWidth(p.text, p.height, p.font, p.widthFactor || 1); return [p.at[0] - w, p.at[1] - p.height, p.at[0] + w, p.at[1] + p.height * 2]; }
   if (p.rect) return [p.rect[0], p.rect[1], p.rect[0] + p.rect[2], p.rect[1] + p.rect[3]];
   return [-Infinity, -Infinity, Infinity, Infinity];
 }

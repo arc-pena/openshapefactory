@@ -22,8 +22,9 @@ import { wallRegions, coarseMaterial, blocks, wallAt, leanInvolved } from "./joi
 import { pointAt, uOf, wallSurfaces, cutAtHeight, plane, LAYER_PRIORITY, wallTop, topBreaks } from "./walls.js";
 import { cropLoop, loopBBox, annotationRect, isAnnotationLayer } from "./crop.js";
 import { resolveGraphics, categoryOf, penWeight, rulesFor, categoryVisible, mix, LINE_TYPES, matches, effectiveStyle } from "./styles.js";
-import { measureRefs, resolveReference, sheetSize, regionAreas, importPlacer, importLayerMap, sketchPath } from "./bim.js";
+import { measureRefs, resolveReference, elementRefs, sheetSize, regionAreas, importPlacer, importLayerMap, sketchPath } from "./bim.js";
 import { FONT_WIDTHS, FONT_METRICS } from "./fontdata.js";
+import { dimStyleOf, formatDimension } from "./dimstyles.js";
 import { paramText, scheduleTable } from "./schedules.js";
 import { readDXF } from "./dxf.js";
 import { sunOf, planShadows } from "./sun.js";
@@ -32,11 +33,23 @@ import { NORTH_DXF } from "./library.js";
 // ---------------------------------------------------------------- text metrics
 /** Text height is cap height in paper mm (the drafting convention); the em
  *  follows from the font's cap height, identically on canvas and in the PDF. */
-export const emOf = h => h / (FONT_METRICS.capHeight / 1000);
-export function textWidth(str, h) {
+/** The fonts text can be set in. Sans is the embedded DejaVu; the others are the PDF standard fonts (no
+ *  embedding needed) and their screen equivalents. Text height is cap height in every font, as in CAD:
+ *  `cap` is each font's cap height per em, `k` scales DejaVu's widths to its own, a mono font is 0.6 em. */
+export const TEXT_FONTS = {
+  Sans:  { label: "Sans (DejaVu)", css: null, cap: null, k: 1, pdf: "F1" },
+  Arial: { label: "Arial / Helvetica", css: 'Arial, Helvetica, "Liberation Sans", sans-serif', cap: 0.716, k: 0.88, pdf: "F2" },
+  Serif: { label: "Serif (Times)", css: '"Times New Roman", Times, "Liberation Serif", serif', cap: 0.662, k: 0.82, pdf: "F3" },
+  Mono:  { label: "Mono (Courier)", css: '"Courier New", Courier, "Liberation Mono", monospace', cap: 0.571, mono: 0.6, pdf: "F4" },
+};
+const fontOf = name => TEXT_FONTS[name] || TEXT_FONTS.Sans;
+export const emOf = (h, font) => { const F0 = fontOf(font); return h / (F0.cap || FONT_METRICS.capHeight / 1000); };
+export function textWidth(str, h, font, widthFactor = 1) {
+  const F0 = fontOf(font), em = emOf(h, font);
+  if (F0.mono) return [...String(str)].length * F0.mono * em * widthFactor;
   let w = 0;
   for (const ch of String(str)) { const code = FONT_METRICS.unicodeToCode[ch.codePointAt(0)] ?? 63; w += FONT_WIDTHS[code] || 600; }
-  return w / 1000 * emOf(h);
+  return w / 1000 * em * F0.k * widthFactor;
 }
 export function wrapText(str, h, width) {
   const out = [];
@@ -786,26 +799,154 @@ export function dimAxis(m) {
 function drawDimension(doc, ctx, B, f) {
   const id = doc.idOf(f), keys = F.json(f, "of") || [];
   const m = measureRefs(doc, keys);
-  const g = { weight: penWeight(doc, "hairline", ctx.scale), colour: "#000" };
-  if (m.lost) {
-    // Survives with a note naming the lost reference; never silently rebinds (test 30).
-    const any = keys.map(k => resolveReference(doc, k)).find(Boolean);
-    const p = any ? (any.kind === "point" ? any.geom : any.geom.p) : [0, 0];
-    B.text(add(B.P(p), [2, 2]), `⚠ ${m.lost.length} reference${m.lost.length > 1 ? "s" : ""} lost: ${m.lost.join(", ")}`, 2, { colour: "#b3261e", layer: "Annotation-Dimension", id });
+  if (m.lost) return drawLostDimension(doc, B, f, keys, m);
+  if (m.value == null) return;
+  const { a, b, A, Bp } = dimensionGeometry(doc, f, m);
+  drawStyledDim(doc, B, f, m.value, { a, b, A, Bp });
+  B.hit(id, [a, b, Bp, A]);
+}
+/** Survives with a note naming the lost reference; never silently rebinds (test 30). */
+function drawLostDimension(doc, B, f, keys, m, at) {
+  const any = keys.map(k => resolveReference(doc, k)).find(r => r && r.kind !== "plane");
+  const p = at || (any ? (any.kind === "point" ? any.geom : any.geom.p) : [0, 0]);
+  B.text(add(B.P(p), [2, 2]), `⚠ ${m.lost.length} reference${m.lost.length > 1 ? "s" : ""} lost: ${m.lost.join(", ")}`, 2, { colour: "#b3261e", layer: "Annotation-Dimension", id: doc.idOf(f) });
+}
+/** A dimension drawn as its type says (AutoCAD's DIMSTYLE): extension lines with their offset from the
+ *  object and their extension past the dimension line, the dimension line and its extension past the
+ *  ticks, the terminators (ticks, arrows, dots…), and the text - font, height, colour, width factor,
+ *  placement above, centred in or below the line, aligned or horizontal - with the fit rules deciding what
+ *  goes inside when the space is tight, alternate units and tolerances. Sizes are paper mm. g gives the
+ *  feet a, b (on what is measured) and the dimension line's ends A, Bp, in model (or view) coordinates. */
+export function drawStyledDim(doc, B, f, valueMm, g, opt = {}) {
+  const arg = k => f ? (k === "locked" ? F.bool(f, k) : F.text(f, k)) : (opt.inst || {})[k] || "";
+  const id = f ? doc.idOf(f) : opt.id || null, st = opt.style || dimStyleOf(doc, f ? F.refId(f, "dimType") : null);
+  const over = { value: arg("valueOverride"), prefix: arg("prefix"), suffix: arg("suffix") };
+  const fmt = formatDimension(doc, st, valueMm, over), k = st.overallScale || 1, layer = "Annotation-Dimension";
+  const pa = B.P(g.a), pb = B.P(g.b), pA = B.P(g.A), pB = B.P(g.Bp);
+  let u = normalise(sub(pB, pA)); if (!Number.isFinite(u[0])) u = [1, 0];
+  const nrm = perp(u), side = v => { const w = sub(v.A, v.a); return Math.hypot(w[0], w[1]) > 1e-9 ? normalise(w) : nrm; };
+  const n1 = side({ a: pa, A: pA }), n2 = side({ a: pb, A: pB });
+  const gl = { weight: st.lineWeight, colour: st.lineColour }, ge = { weight: st.extWeight, colour: st.extColour };
+  // extension lines: from the object (less the offset) - or a fixed length back from the dimension line - to past it
+  const ext = (foot, at, n, sup) => {
+    if (sup) return;
+    const reach = dot(sub(at, foot), n), from = st.extFixed > 0 ? Math.max(0, reach - st.extFixed * k) : Math.min(reach, st.extOffset * k);
+    if (reach + st.extBeyond * k - from < 1e-6) return;
+    B.stroke([lineSeg(add(foot, mul(n, from)), add(at, mul(n, st.extBeyond * k)))], ge, layer, id, true);
+  };
+  ext(pa, pA, n1, st.suppressExt1); ext(pb, pB, n2, st.suppressExt2);
+  // the text: what it says, and how wide it runs
+  const h = st.textHeight * k, font = st.font, wf = st.widthFactor || 1, gap = st.textGap * k;
+  let main = fmt.main;
+  if (fmt.tol && fmt.tol.kind === "sym") main += " " + fmt.tol.up;
+  if (fmt.alt && !fmt.altBelow) main += ` [${fmt.alt}]`;
+  const th = h * (st.tolHeight || 0.7), stacked = fmt.tol && (fmt.tol.kind === "dev" || fmt.tol.kind === "lim");
+  const stackW = stacked ? Math.max(textWidth(fmt.tol.up || "", th, font, wf), textWidth(fmt.tol.low || "", th, font, wf)) + h * 0.3 : 0;
+  const mainW = textWidth(main, h, font, wf), tw = mainW + stackW;
+  // fit: the arrows and the text inside the extension lines when there is room, else as the type says
+  const L = dist(pA, pB), as = st.arrowSize * k, need = st.arrow1 === "None" && st.arrow2 === "None" ? 0 : 2 * as;
+  let textIn = true, arrowsIn = true;
+  if (st.fit !== "Keep inside" && L < tw + need + 2 * gap) {
+    if (st.fit === "Text outside") { textIn = false; arrowsIn = L >= need; }
+    else if (st.fit === "Arrows outside") { arrowsIn = false; textIn = L >= tw + 2 * gap; }
+    else { arrowsIn = L >= need + gap; textIn = L >= tw + 2 * gap + (arrowsIn ? need : 0); if (!textIn && L >= tw + 2 * gap) { textIn = true; arrowsIn = false; } }
+  }
+  // where the text stands along the line, and its angle
+  const readable = ang => (ang > 90 + 1e-6 || ang <= -90 + 1e-6 ? ang + 180 : ang);
+  const lineAng = readable(Math.atan2(u[1], u[0]) * 180 / Math.PI);
+  const horizontal = st.textAlign === "Horizontal" || (st.textAlign === "ISO standard" && !textIn);
+  const rot = horizontal ? 0 : lineAng, rr = rot * Math.PI / 180, tx = [Math.cos(rr), Math.sin(rr)], ty = [-Math.sin(rr), Math.cos(rr)];
+  // "up" is the side the extension lines stand out to, so text above sits away from the object
+  const upN = dot(n1, ty) >= 0 ? 1 : -1;
+  let along;
+  if (!textIn) along = L + (arrowsIn ? 0 : 2 * as) + gap + tw / 2;
+  else if (st.textHorizontal === "At extension line 1") along = (arrowsIn ? as : 0) + gap + tw / 2;
+  else if (st.textHorizontal === "At extension line 2") along = L - (arrowsIn ? as : 0) - gap - tw / 2;
+  else along = L / 2;
+  const onLine = add(pA, mul(u, along));
+  // the dimension line: past the extension lines by dimExtend, out beyond them when the arrows are outside,
+  // out to the text when the text is, broken round centred text
+  const e0 = add(pA, mul(u, -(arrowsIn ? st.dimExtend * k : 2 * as))), e1 = add(pB, mul(u, arrowsIn ? st.dimExtend * k : 2 * as));
+  const tEnd = !textIn ? add(pA, mul(u, along + tw / 2)) : null;
+  const segs = [];
+  const brk = st.textVertical === "Centred" && !horizontal ? [along - tw / 2 - gap, along + tw / 2 + gap] : null;
+  const pushLine = (p, q) => { if (dist(p, q) > 1e-6) segs.push(lineSeg(p, q)); };
+  const lo = dot(sub(e0, pA), u), hi = dot(sub(tEnd && dot(sub(tEnd, pA), u) > dot(sub(e1, pA), u) ? tEnd : e1, pA), u);
+  const from = st.suppressDim1 ? L / 2 : lo, to = st.suppressDim2 ? L / 2 : hi;
+  if (brk && textIn) { pushLine(add(pA, mul(u, from)), add(pA, mul(u, Math.min(to, brk[0])))); pushLine(add(pA, mul(u, Math.max(from, brk[1]))), add(pA, mul(u, to))); }
+  else pushLine(add(pA, mul(u, from)), add(pA, mul(u, to)));
+  B.stroke(segs, gl, layer, id, true);
+  // terminators: pointing out to the extension lines, or in from outside them
+  if (!st.suppressDim1) drawDimArrow(B, st.arrow1, pA, arrowsIn ? u : mul(u, -1), as, st, id);
+  if (!st.suppressDim2) drawDimArrow(B, st.arrow2, pB, arrowsIn ? mul(u, -1) : u, as, st, id);
+  // the text, placed above, centred on or below the line
+  const vOff = st.textVertical === "Centred" || (horizontal && textIn && st.textAlign !== "Horizontal") ? 0 : st.textVertical === "Below" ? -(gap + h) : gap;
+  let at = horizontal && !textIn ? add(onLine, mul(ty, gap)) : add(onLine, mul(ty, upN * vOff + (st.textVertical === "Centred" ? 0 : 0)));
+  if (st.textVertical === "Below" && upN < 0) at = add(onLine, mul(ty, gap));
+  if (st.textVertical === "Above" && upN < 0) at = add(onLine, mul(ty, -(gap + h)));
+  const valign = st.textVertical === "Centred" ? "middle" : "baseline";
+  const mid0 = add(at, mul(tx, -tw / 2)), yb = valign === "middle" ? -h / 2 : 0;
+  const box = (x0, x1, y0, y1) => [add(add(mid0, mul(tx, x0)), mul(ty, yb + y0)), add(add(mid0, mul(tx, x1)), mul(ty, yb + y0)), add(add(mid0, mul(tx, x1)), mul(ty, yb + y1)), add(add(mid0, mul(tx, x0)), mul(ty, yb + y1))];
+  const pad = gap * 0.8, frame = box(-pad, tw + pad, -pad, h + pad);
+  if (st.textFill) B.fill(polyPath(frame), st.textFill, layer, id, true);
+  if (st.textFrame || (fmt.tol && fmt.tol.kind === "basic")) B.stroke(polyPath(frame), { weight: st.lineWeight, colour: st.textColour }, layer, id, true);
+  const T = (p, str, hh, extra = {}) => B.text(p, str, hh, Object.assign({ align: "left", valign, rot, colour: st.textColour, layer, id, font, widthFactor: wf }, extra));
+  T(mid0, main, h);
+  if (stacked) {
+    const sx = add(mid0, mul(tx, mainW + h * 0.3));
+    if (fmt.tol.kind === "lim") { T(add(mid0, mul(ty, h * 0.6)), main, h * 0.7); }
+    T(add(sx, mul(ty, h * 0.55)), fmt.tol.up || main, th, { valign });
+    T(add(sx, mul(ty, -h * 0.25)), fmt.tol.low || "", th, { valign });
+  }
+  // Revit's text above and below the value, and alternate units under the line
+  const aboveT = arg("above"), belowT = arg("below"), lineBelow = [fmt.altBelow && fmt.alt ? `[${fmt.alt}]` : "", belowT].filter(Boolean);
+  const cx = add(at, mul(ty, 0));
+  if (aboveT) B.text(add(cx, mul(ty, upN * (h * 1.5))), aboveT, h * 0.8, { align: "centre", valign, rot, colour: st.textColour, layer, id, font, widthFactor: wf });
+  lineBelow.forEach((str, i) => B.text(add(onLine, mul(ty, -upN * (gap + h * (1 + 1.4 * i)) + (upN < 0 ? h : 0))), str, h * 0.9, { align: "centre", valign: "baseline", rot, colour: st.textColour, layer, id, font, widthFactor: wf }));
+  if (arg("locked")) drawPadlock(B, add(at, add(mul(tx, tw / 2 + 2.5 * k), mul(ty, h * 0.2))), id);
+  return { text: main, at, rot, textIn, arrowsIn, width: tw };
+}
+/** A dimension type drawn on its own, as AutoCAD's style dialog previews it: a plate with a long width, a
+ *  tight one and a height (paper mm, at 1:100). */
+export function dimStylePreview(doc, st) {
+  const B = new SceneBuilder(1), obj = { weight: 0.25, colour: "#8a8f98" }, S = 100;
+  B.stroke(polyPath([[0, 0], [60, 0], [60, 30], [66, 30], [66, 0], [70, 0], [70, 40], [0, 40]]), obj, "Preview", null, true);
+  drawStyledDim(doc, B, null, 60 * S, { a: [0, 40], b: [60, 40], A: [0, 48], Bp: [60, 48] }, { style: st, inst: {} });
+  drawStyledDim(doc, B, null, 6 * S, { a: [60, 30], b: [66, 30], A: [60, 36], Bp: [66, 36] }, { style: st, inst: {} });
+  drawStyledDim(doc, B, null, 40 * S, { a: [70, 0], b: [70, 40], A: [80, 0], Bp: [80, 40] }, { style: st, inst: {} });
+  drawStyledDim(doc, B, null, Math.hypot(60, 30) * S, { a: [0, 0], b: [60, 30], A: [-3.6, 7.2], Bp: [56.4, 37.2] }, { style: st, inst: {} });
+  const scene = { prims: B.prims, hits: [], links: [], scale: 1, kind: "preview" };
+  scene.bbox = sceneBBox(B.prims);
+  return scene;
+}
+/** One terminator at `tip`, its body running along `into` (a unit vector along the dimension line). */
+export function drawDimArrow(B, kind, tip, into, s, st, id) {
+  if (!kind || kind === "None") return;
+  const layer = "Annotation-Dimension", c = st.lineColour, n = perp(into), g = { weight: st.lineWeight, colour: c };
+  const P = (x, y) => add(tip, add(mul(into, x), mul(n, y)));
+  const tri = w => [tip, P(s, w), P(s, -w)];
+  if (kind === "Architectural tick" || kind === "Oblique") {
+    // a 45° stroke through the tip, leaning the same way at both ends (as a drawn tick does)
+    const c0 = Math.abs(into[0]) > 1e-9 ? mul(into, Math.sign(into[0])) : [0, Math.abs(into[1])], d = normalise(add(c0, perp(c0)));
+    const t = mul(d, s / 2);
+    B.stroke([lineSeg(sub(tip, t), add(tip, t))], { weight: kind === "Architectural tick" ? st.tickWeight : st.lineWeight, colour: c }, layer, id, true);
     return;
   }
-  if (m.value == null) return;
-  const { a, b, dir, along, off, A, Bp } = dimensionGeometry(doc, f, m);
-  B.stroke([lineSeg(A, Bp)], g, "Annotation-Dimension", id);
-  B.stroke([lineSeg(a, add(A, mul(along, 150 * Math.sign(off || 1)))), lineSeg(b, add(Bp, mul(along, 150 * Math.sign(off || 1))))], g, "Annotation-Dimension", id);
-  for (const p of [A, Bp]) { const pp = B.P(p), t = mul(normalise(add(dir, along)), 1.2); B.stroke([lineSeg(sub(pp, t), add(pp, t))], { weight: penWeight(doc, "medium", ctx.scale), colour: "#000" }, "Annotation-Dimension", id, true); }
-  const mid = B.P(lerp(A, Bp, 0.5)), ang = Math.atan2(dir[1], dir[0]) * 180 / Math.PI;
-  const rot = ang > 90 || ang <= -90 ? ang + 180 : ang;
-  const txt = dimText(doc, m.value);
-  const up = [-Math.sin(rot * Math.PI / 180), Math.cos(rot * Math.PI / 180)];
-  B.text(add(mid, mul(up, 0.8)), txt, 2.5, { align: "centre", rot, layer: "Annotation-Dimension", id });
-  if (F.bool(f, "locked")) drawPadlock(B, add(mid, add(mul(up, 1), mul([Math.cos(rot * Math.PI / 180), Math.sin(rot * Math.PI / 180)], textWidth(txt, 2.5) / 2 + 2.5))), id);
-  B.hit(id, [a, b, Bp, A]);
+  if (kind === "Closed filled") { B.fill(polyPath(tri(s / 6)), c, layer, id, true); return; }
+  if (kind === "Closed blank") { B.fill(polyPath(tri(s / 6)), "#ffffff", layer, id, true); B.stroke(polyPath(tri(s / 6)), g, layer, id, true); return; }
+  if (kind === "Closed") { B.stroke(polyPath(tri(s / 6)), g, layer, id, true); return; }
+  if (kind === "Open") { B.stroke([lineSeg(P(s, s / 6), tip), lineSeg(tip, P(s, -s / 6))], g, layer, id, true); return; }
+  if (kind === "Open 30") { const w = s * Math.tan(15 * Math.PI / 180); B.stroke([lineSeg(P(s, w), tip), lineSeg(tip, P(s, -w))], g, layer, id, true); return; }
+  if (kind === "Right angle") { B.stroke([lineSeg(P(s / 2, s / 2), tip), lineSeg(tip, P(s / 2, -s / 2))], g, layer, id, true); return; }
+  if (kind === "Dot") { B.fill(circlePath(tip, s / 4), c, layer, id, true); return; }
+  if (kind === "Dot small") { B.fill(circlePath(tip, s / 8), c, layer, id, true); return; }
+  if (kind === "Dot blank") { B.fill(circlePath(tip, s / 4), "#ffffff", layer, id, true); B.stroke(circlePath(tip, s / 4), g, layer, id, true); return; }
+  if (kind === "Origin indicator") { B.stroke(circlePath(tip, s / 2), g, layer, id, true); return; }
+  if (kind === "Box filled" || kind === "Box blank") {
+    const q = [P(-s / 4, -s / 4), P(s / 4, -s / 4), P(s / 4, s / 4), P(-s / 4, s / 4)];
+    B.fill(polyPath(q), kind === "Box filled" ? c : "#ffffff", layer, id, true); if (kind === "Box blank") B.stroke(polyPath(q), g, layer, id, true); return;
+  }
+  if (kind === "Datum triangle filled") { B.fill(polyPath([P(0, s / 2), P(0, -s / 2), P(s * 0.87, 0)]), c, layer, id, true); return; }
 }
 export function drawPadlock(B, p, id, colour = "#1d6fd8") {
   B.fill(rectPath(p[0] - 1, p[1] - 0.2, p[0] + 1, p[1] + 1.3), colour, "Annotation-Constraint", id);
@@ -826,6 +967,55 @@ function drawConstraintGlyphs(doc, ctx, B) {
 }
 
 // ---------------------------------------------------------------- elevation (§6.3)
+/** What a dimension placed in an elevation or a section measures. Every line there is a plane in the model:
+ *  a horizontal one (a level, a slab's top or underside, a layer between, a wall's base or top, a beam's
+ *  soffit, a sill or a head) or an upright one seen edge-on (a wall face, a column face, a grid, a jamb).
+ *  Two horizontal planes give a height ("levels"); two upright ones square to the view give a width
+ *  ("across") - measured from the planes themselves, so a thicker slab or wall carries its dimension. */
+export function viewMeasure(doc, v, keys) {
+  const R = keys.map(k => resolveReference(doc, k)), lost = keys.filter((k, i) => !R[i]);
+  if (lost.length) return { lost };
+  const [a, b] = R;
+  if (a.kind === "plane" && b.kind === "plane") return { value: Math.abs(b.z - a.z), signed: b.z - a.z, a, b, kind: "levels" };
+  const G = viewLineGeometry(doc, v), sa = sAcross(G, a), sb = sAcross(G, b);
+  if (sa != null && sb != null) return { value: Math.abs(sb - sa), signed: sb - sa, a, b, sa, sb, kind: "across" };
+  return { value: null, why: a.kind === "plane" || b.kind === "plane" ? "a height needs two horizontal planes" : "these planes are not square to this view" };
+}
+/** Where an upright plane (a plan line square to the view) or edge (a plan point) stands along the view. */
+function sAcross(G, r) {
+  if (r.kind === "point") return G.sOf(r.geom);
+  if (r.kind === "line" && Math.abs(dot(r.geom.d, G.d)) < 1e-3) return G.sOf(r.geom.p);
+  return null;
+}
+/** Every plane an elevation or a section shows as a line, in view coordinates: horizontal ones
+ *  { dir: "h", z, s0, s1 } and upright ones { dir: "v", s, z0, z1 } - what its dimension tool snaps to. */
+export function viewReferences(doc, v) {
+  const G = viewLineGeometry(doc, v), ctx = viewContext(doc, v), out = [], Z0 = G.Z0, far = G.depthMax || Infinity;
+  // how far behind the view plane a thing starts (0 when the section cuts it): nearer wins a tie, as the drawing shows it
+  const nearest = pts => pts && pts.length ? Math.max(0, Math.min(...pts.map(G.depthOf))) : Infinity;
+  const inDepth = pts => { if (!pts || !pts.length) return true; const ds = pts.map(G.depthOf); return Math.max(...ds) >= -1 && Math.min(...ds) <= far + 1; };
+  for (const f of doc.elements()) {
+    if (f.get("Integer") === 0 || doc.error(f)) continue;
+    const t = doc.typeOf(f), id = doc.idOf(f);
+    if (t === "Level") { if (!categoryVisible(ctx, "IfcBuildingStorey")) continue; const z = ((doc.data(f) || {}).value || 0) - Z0; out.push({ key: id + ":plane", of: id, name: "level", dir: "h", z, s0: -1500, s1: G.Lv + 1500 }); continue; }
+    if (!doc.plan(f) && t !== "Grid") continue;
+    if (t !== "Grid" && !categoryVisible(ctx, categoryOf(doc, f))) continue;
+    let refs; try { refs = elementRefs(doc, f); } catch (e) { continue; }
+    for (const r of refs) {
+      if (r.kind === "plane") {
+        const pts = r.foot && r.foot.length ? r.foot : null; if (!pts || !inDepth(pts)) continue;
+        const ss = pts.map(G.sOf); out.push({ key: id + ":" + r.key, of: id, name: r.key, dir: "h", z: r.z - Z0, s0: Math.min(...ss), s1: Math.max(...ss), depth: nearest(pts) });
+        continue;
+      }
+      const s = sAcross(G, r); if (s == null) continue;
+      if (!inDepth(r.kind === "point" ? [r.geom] : [r.a, r.b].filter(Boolean))) continue;
+      const z0 = r.z0 != null ? r.z0 - Z0 : -300, z1 = r.z1 != null ? r.z1 - Z0 : G.topZ - Z0;
+      out.push({ key: id + ":" + r.key, of: id, name: r.key, dir: "v", s, z0, z1, depth: nearest(r.kind === "point" ? [r.geom] : [r.a, r.b].filter(Boolean)) });
+    }
+  }
+  return out;
+}
+
 /** Occlusion is a 2D problem: front to back, each element's curves minus the
  *  union of silhouettes in front of it; depth banding grades the weight. */
 export function elevationScene(doc, v, opts = {}) {
@@ -898,17 +1088,30 @@ function drawDatums(doc, ctx, B, v, G) {
     B.text(add(hp, [5.5, -3.2]), (z + Z0 >= 0 ? "+" : "") + ((z + Z0) / 1000).toFixed(3), 2.0, { layer: "IfcBuildingStorey", id: doc.idOf(f) });
     B.hit(doc.idOf(f), [[ext[0], z - 50], [ext[1], z - 50], [ext[1], z + 50], [ext[0], z + 50]]);
   }
-  // dimensions between levels, drawn in the view they were placed in: a vertical string at their offset
-  if (categoryVisible(ctx, "Annotation")) for (const f of doc.elements()) {
-    if (doc.typeOf(f) !== "Dimension" || F.refId(f, "view") !== doc.idOf(v)) continue;
-    const m = measureRefs(doc, F.json(f, "of") || []); if (m.kind !== "levels") continue;
-    const sx = F.real(f, "offset"), za = m.a.z - Z0, zb = m.b.z - Z0, id = doc.idOf(f), g = { weight: penWeight(doc, "hairline", S), colour: "#000" };
-    B.stroke([lineSeg([sx, za], [sx, zb])], g, "Annotation-Dimension", id);
-    for (const z of [za, zb]) { const pp = B.P([sx, z]); B.stroke([lineSeg(add(pp, [-1.2, -1.2]), add(pp, [1.2, 1.2]))], { weight: penWeight(doc, "medium", S), colour: "#000" }, "Annotation-Dimension", id, true); B.stroke([lineSeg([sx - 250, z], [sx + 250, z])], g, "Annotation-Dimension", id); }
-    const mid = B.P([sx, (za + zb) / 2]);
-    B.text(add(mid, [-0.9, 0]), dimText(doc, m.value), 2.5, { align: "centre", rot: 90, layer: "Annotation-Dimension", id });
-    if (F.bool(f, "locked")) drawPadlock(B, add(mid, [-2.2, textWidth(dimText(doc, m.value), 2.5) / 2 + 3]), id);
-    B.hit(id, [[sx - 300, Math.min(za, zb)], [sx + 300, Math.min(za, zb)], [sx + 300, Math.max(za, zb)], [sx - 300, Math.max(za, zb)]]);
+  // dimensions placed in this view: heights between horizontal planes (levels, a slab's faces, a sill…) as a
+  // vertical string at their offset along the view, widths between upright planes (wall faces, grids…) as a
+  // horizontal one at their offset height. Each extension line runs from the plane's own extent in this view
+  if (categoryVisible(ctx, "Annotation")) {
+    let spans = null;
+    const span = key => { if (!spans) { spans = new Map(); for (const r of viewReferences(doc, v)) spans.set(r.key, r); } return spans.get(key); };
+    const clamp = (x, lo, hi) => Math.max(Math.min(lo, hi), Math.min(Math.max(lo, hi), x));
+    for (const f of doc.elements()) {
+      if (doc.typeOf(f) !== "Dimension" || F.refId(f, "view") !== doc.idOf(v)) continue;
+      const keys = F.json(f, "of") || [], m = viewMeasure(doc, v, keys), id = doc.idOf(f), off = F.real(f, "offset");
+      if (m.lost) { drawLostDimension(doc, B, f, keys, m, [off, 0]); continue; }
+      if (m.value == null) continue;
+      let g;
+      if (m.kind === "levels") {
+        const za = m.a.z - Z0, zb = m.b.z - Z0, ra = span(keys[0]), rb = span(keys[1]);
+        g = { a: [ra ? clamp(off, ra.s0, ra.s1) : off, za], b: [rb ? clamp(off, rb.s0, rb.s1) : off, zb], A: [off, za], Bp: [off, zb] };
+      } else {
+        const ra = span(keys[0]), rb = span(keys[1]);
+        g = { a: [m.sa, ra ? clamp(off, ra.z0, ra.z1) : off], b: [m.sb, rb ? clamp(off, rb.z0, rb.z1) : off], A: [m.sa, off], Bp: [m.sb, off] };
+      }
+      drawStyledDim(doc, B, f, m.value, g);
+      const xs = [g.A[0], g.Bp[0]], ys = [g.A[1], g.Bp[1]], pad = 300;
+      B.hit(id, [[Math.min(...xs) - pad, Math.min(...ys) - pad], [Math.max(...xs) + pad, Math.min(...ys) - pad], [Math.max(...xs) + pad, Math.max(...ys) + pad], [Math.min(...xs) - pad, Math.max(...ys) + pad]]);
+    }
   }
   // other sections that cross this view: a line where their cut plane passes, with their name - picked and dragged here as in plan
   if (categoryVisible(ctx, "Annotation")) for (const f of doc.elements()) {

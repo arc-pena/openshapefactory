@@ -7,7 +7,7 @@
 
 import { FONT_WIDTHS, FONT_METRICS, FONT_TTF_B64, FONT_NAME } from "./fontdata.js";
 import { segStart, segEnd, TAU } from "./geom2d.js";
-import { emOf, textWidth } from "./scene.js";
+import { emOf, textWidth, TEXT_FONTS } from "./scene.js";
 
 export const PT_PER_MM = 72 / 25.4;
 const K = "2.834645669";
@@ -22,6 +22,7 @@ export function writePDF(pages, meta = {}) {
   const alloc = () => { objs.push(null); return objs.length; };
   const set = (id, v) => { objs[id - 1] = v; };
   const catalogId = alloc(), pagesId = alloc(), fontId = alloc(), fontDescId = alloc(), fontFileId = alloc(), outlinesId = alloc(), infoId = alloc();
+  const stdFonts = { F2: alloc(), F3: alloc(), F4: alloc() };
   const pageIds = pages.map(() => alloc());
   const layerNames = [...new Set(pages.flatMap(p => collectLayers(p.prims)))].sort();
   const ocgIds = layerNames.map(() => alloc());
@@ -70,14 +71,14 @@ export function writePDF(pages, meta = {}) {
         }
       }
       else if (p.t === "text") {
-        const em = emOf(p.height);
-        const w = textWidth(p.text, p.height);
+        const em = emOf(p.height, p.font), wf = p.widthFactor || 1, fk = (TEXT_FONTS[p.font] || TEXT_FONTS.Sans).pdf;
+        const w = textWidth(p.text, p.height, p.font, wf);
         const dx = p.align === "centre" ? -w / 2 : p.align === "right" ? -w : 0;
         const dy = p.valign === "middle" ? -p.height / 2 : 0;
         const a = (p.rot || 0) * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
         const x = p.at[0] + dx * c - dy * s, y = p.at[1] + dx * s + dy * c;
         out.push(col(p.colour, "rg")); out.push("BT");
-        out.push(`/F1 ${n4(em)} Tf`);
+        out.push(`/${fk} ${n4(em)} Tf`); if (wf !== 1) out.push(`${n3(wf * 100)} Tz`); else out.push("100 Tz");
         out.push(`${n4(c)} ${n4(s)} ${n4(-s)} ${n4(c)} ${n3(x)} ${n3(y)} Tm`);
         out.push(`(${encodeText(p.text)}) Tj`); out.push("ET");
       }
@@ -91,7 +92,7 @@ export function writePDF(pages, meta = {}) {
     const content = out.join("\n");
     const contentId = alloc();
     set(contentId, { dict: "", stream: content });
-    const pageRes = `/Font << /F1 ${fontId} 0 R >>` +
+    const pageRes = `/Font << /F1 ${fontId} 0 R /F2 ${stdFonts.F2} 0 R /F3 ${stdFonts.F3} 0 R /F4 ${stdFonts.F4} 0 R >>` +
       (localPats.size ? ` /Pattern << ${[...localPats].map(id => `/${id} ${patterns.find(p => p.id === id).obj} 0 R`).join(" ")} >>` : "") +
       (localAlpha.size ? ` /ExtGState << ${[...localAlpha].map(a => `/GA${a} << /ca ${(a / 100).toFixed(2)} >>`).join(" ")} >>` : "") +
       (localImgs.size ? ` /XObject << ${[...localImgs].map(id => `/${id} ${images.find(p => p.id === id).obj} 0 R`).join(" ")} >>` : "") +
@@ -113,6 +114,10 @@ export function writePDF(pages, meta = {}) {
   for (const p of patterns) set(p.obj, { dict: `/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 ${n4(p.cellW)} ${n4(p.cellH)}] /XStep ${n4(p.cellW)} /YStep ${n4(p.cellH)} /Resources << >> /Matrix [${p.matrix.map(n4).join(" ")}]`, stream: p.stream });
   for (const im of images) set(im.obj, { dict: `/Type /XObject /Subtype /Image /Width ${im.w} /Height ${im.h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode`, bin: im.jpeg });
 
+  // The PDF standard fonts: every reader has them, so they are named, not embedded
+  set(stdFonts.F2, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>");
+  set(stdFonts.F3, "<< /Type /Font /Subtype /Type1 /BaseFont /Times-Roman /Encoding /WinAnsiEncoding >>");
+  set(stdFonts.F4, "<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding /WinAnsiEncoding >>");
   // The font: embedded, subset, one encoding (§12.3).
   const tag = "WBSUBS";
   const widths = []; for (let c = 32; c <= 255; c++) widths.push(FONT_WIDTHS[c] ?? 0);

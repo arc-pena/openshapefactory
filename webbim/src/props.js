@@ -105,6 +105,7 @@ export function referenceOptions(doc, arg, self) {
     if (libKind[k]) for (const [id, t] of Object.entries(doc.lib.types)) { const r = doc.resolveType(id); if (r && r.category === libKind[k]) out.push({ value: id, label: t.name || id }); }
     if (k === "viewStyle") for (const [id, s] of Object.entries(doc.lib.viewStyles)) out.push({ value: id, label: s.name || id });
     if (k === "textType") for (const [id, s] of Object.entries(doc.lib.textTypes)) out.push({ value: id, label: s.name || id });
+    if (k === "dimType") for (const [id, s] of Object.entries(doc.lib.dimTypes || {})) out.push({ value: id, label: s.name || id });
     if (k === "symbol") for (const [id, s] of Object.entries(doc.lib.symbols)) out.push({ value: id, label: s.name || id });
   }
   return out;
