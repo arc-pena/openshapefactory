@@ -2259,3 +2259,31 @@ testCase("M77", "Material tag in an oblong: with its leader off it reads what li
   return R(ok, `on the slab ${mk("M-CONC")} in an oblong, no leader; moved onto the wall ${mk(wallCut.material)}; over nothing ?; the wall's Mark W-07, its type's ${wt.mark}`,
     JSON.stringify({ t1, arcs, leaderless, t2, t3, t4, t5, wall: wallCut.id }));
 });
+
+testCase("M78", "Everything deletes: one element of every type in the model - model, datum, view, detail, annotation, import - goes with Delete, the views still draw, and undo brings it back", () => {
+  const doc = buildSample(), ed = new Editor(doc), line = (a, b) => ({ type: "line", start: a, end: b });
+  const add = el => ed.apply({ op: "add", element: el });
+  const plan = "V-P00", sec = doc.idOf(doc.elements().find(f => doc.typeOf(f) === "SectionView"));
+  add({ type: "DetailLine", args: { curve: line([0, -3000], [3000, -3000]), pen: "thin", view: { ref: plan } } });
+  add({ type: "FilledRegion", args: { boundary: [[-6000, 0], [-5000, 0], [-5000, 1000], [-6000, 1000]], view: { ref: plan } } });
+  add({ type: "RepeatingDetail", args: { path: line([0, -4000], [3000, -4000]), component: "Batt insulation", width: 100, spacing: 0, layout: "Fill available", justify: "Centre", rotation: 0, view: { ref: plan } } });
+  add({ type: "CADImport", args: { file: "t.dxf", drawing: dxfDrawing(readDXF(DXF_SMALL)).drawing, view: { ref: plan }, offsetX: 0, offsetY: -6000, scale: 1, rotation: 0, pinned: true } });
+  add({ type: "Roof", args: { boundary: [[0, -12000], [6000, -12000], [6000, -8000], [0, -8000]], level: { ref: "L0" }, heightOffset: 3000, pivot: [0, -12000], pitch: 20, direction: 90, thickness: 250 } });
+  add({ type: "Duct", args: { path: [[1000, -14000, 500], [5000, -14000, 500]], level: { ref: "L0" }, shape: "Round", width: 250, height: 250, thickness: 1 } });
+  add({ type: "Pipe", args: { path: [[1000, -15000, 500], [5000, -15000, 500]], level: { ref: "L0" }, shape: "Round", width: 50, height: 50, thickness: 3 } });
+  add({ type: "RoomSeparator", args: { line: line([0, -16000], [3000, -16000]), level: { ref: "L0" } } });
+  add({ type: "MaterialTag", args: { target: [0, 0], position: [800, -2000], show: "Mark", frame: "Oblong", leader: true, textSize: 2.5, view: { ref: plan } } });
+  add({ type: "Dimension", args: { of: ["L0:plane", "L1:plane"], offset: 500, view: { ref: sec }, locked: false } });
+  const first = new Map(); for (const f of doc.elements()) if (!first.has(doc.typeOf(f))) first.set(doc.typeOf(f), doc.idOf(f));
+  const views = ["V-P00", sec, doc.idOf(doc.elements().find(f => doc.typeOf(f) === "ElevationView"))];
+  const bad = [];
+  for (const [t, id] of first) {
+    const r = ed.apply({ op: "delete", ids: [id] });
+    let err = r.ok ? "" : r.error;
+    if (r.ok && doc.element(id)) err = "still there";
+    if (r.ok) for (const v of views) { if (!doc.element(v)) continue; try { deriveView(doc, doc.element(v)); } catch (e) { err = `${v} fails to draw: ${e.message}`; } }
+    if (r.ok) { ed.undo(); if (!doc.element(id)) err = "undo did not bring it back"; }
+    if (err) bad.push(`${t} ${id}: ${err}`);
+  }
+  return R(!bad.length && first.size >= 30, `${first.size} types, each deleted and undone, every view drawing`, bad.length ? bad.join("; ") : `${first.size} types: ${[...first.keys()].join(", ")}`);
+});

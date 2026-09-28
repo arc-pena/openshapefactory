@@ -875,11 +875,24 @@ function updateStatus() {
 }
 
 // ---------------------------------------------------------------- commands' bodies
+/** Delete whatever is selected, in any view: elements (with what they host), and what a sheet places - its
+ *  viewports and diagrams (selected as "sheet:item"). Nothing selectable is ever left undeletable, and a
+ *  refusal is said, never swallowed. */
 function deleteSelection() {
-  const ids = [...app.selection].filter(id => app.doc.element(id)), vps = [...app.selection].filter(id => id.includes(":VP"));
-  if (!ids.length && !vps.length) return app.say("nothing selected to delete", "note");
-  if (ids.length) { const r = app.apply({ op: "delete", ids }); if (r.ok) app.say(`Deleted ${r.deleted.join(", ")}`, "ok"); }
-  for (const k of vps) { const [sh, vp] = k.split(":"); app.apply({ op: "sheet", id: sh, viewport: vp, remove: true }); }
+  const doc = app.doc, sel = [...app.selection];
+  const ids = sel.filter(id => doc.element(id));
+  const onSheet = sel.filter(k => !doc.element(k) && k.includes(":")).map(k => { const i = k.indexOf(":"); return [k.slice(0, i), k.slice(i + 1)]; })
+    .filter(([sh]) => doc.element(sh) && doc.typeOf(doc.element(sh)) === "Sheet");
+  if (!ids.length && !onSheet.length) return app.say("nothing selected to delete", "note");
+  const said = [];
+  if (ids.length) { const r = app.apply({ op: "delete", ids }); if (r.ok) said.push(...r.deleted); else { app.say(`Could not delete: ${r.error}`, "error"); return; } }
+  for (const [sh, item] of onSheet) {
+    const f = doc.element(sh); if (!f) continue;
+    if ((doc.argValue(f, "viewports") || []).some(v => v.id === item)) { const r = app.apply({ op: "sheet", id: sh, viewport: item, remove: true }); if (r.ok) said.push(`viewport ${item} of ${sh}`); continue; }
+    const dgs = doc.argValue(f, "diagrams") || [];
+    if (dgs.some((d, i) => (d.id || "D" + (i + 1)) === item)) { const r = app.apply({ op: "set", id: sh, key: "diagrams", value: dgs.filter((d, i) => (d.id || "D" + (i + 1)) !== item) }); if (r.ok) said.push(`diagram ${item} of ${sh}`); }
+  }
+  if (said.length) app.say(`Deleted ${said.join(", ")}`, "ok");
   app.select([]);
 }
 function selectAllInstances() {

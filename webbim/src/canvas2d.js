@@ -595,6 +595,8 @@ export class View2D {
     if (this.kind === "Sheet") {
       const hits = [];
       for (const g of sc.prims.filter(x => x.t === "group")) { const bb = g.clip || primsBBox(g.prims); if (p[0] >= bb[0] && p[0] <= bb[2] && p[1] >= bb[1] && p[1] <= bb[3]) hits.push({ id: g.vp, view: g.view, area: (bb[2] - bb[0]) * (bb[3] - bb[1]), bb }); }
+      // a brief-analysis diagram placed on the sheet is picked (and deleted) as a viewport is
+      (this.doc.argValue(this.view, "diagrams") || []).forEach((dg, i) => { const [x, y, w, hh] = dg.rect || [0, 0, 0, 0]; if (p[0] >= x && p[0] <= x + w && p[1] >= y && p[1] <= y + hh) hits.push({ id: dg.id || "D" + (i + 1), diagram: true, area: w * hh, bb: [x, y, x + w, y + hh] }); });
       hits.sort((a, b) => a.area - b.area); return hits[0] || null;
     }
     // Tab has chosen among what is under the cursor: that choice holds until the cursor moves away
@@ -927,7 +929,7 @@ export class View2D {
     const hit = this.hitAt(sx, sy);
     if (!hit) return;
     // double-click is "step into": a viewport opens its view; anything else goes where it is edited
-    if (this.kind === "Sheet") return this.app.openView(hit.view);
+    if (this.kind === "Sheet") return hit.view ? this.app.openView(hit.view) : undefined;
     this.app.stepInto(hit.id, this);
   }
   /** Viewports snap to the sheet's margins, the other viewports' edges and centres, with guides. */
