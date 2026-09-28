@@ -698,6 +698,17 @@ export class View2D {
       if (op && od && od.frame) { const w = this.doc.plan(this.doc.element(od.frame.host)); if (w) { this.drag.slide = { op, host: od.frame.host, at0: (F.json(this.doc.element(op), "profile") || {}).at, u0: uOf(w, this.toModel(sx, sy)) }; return; } }
       if (movable.length) this.drag.body = { ids: movable, grab: this.toModel(sx, sy) };
     } else if (!hit) this.drag.box = true;
+    // in an elevation or section a material tag drags anywhere: by its head (the leader's point stays), or by
+    // its leader's point when pressed there
+    if (hit && (this.kind === "ElevationView" || this.kind === "SectionView")) {
+      const f = this.doc.element(hit.id);
+      if (f && this.doc.typeOf(f) === "MaterialTag") {
+        if (!this.app.selection.has(hit.id)) { this.app.selection.clear(); this.app.selection.add(hit.id); this.pressSelected = true; }
+        const grab = this.toModel(sx, sy), tq = F.point(f, "target"), onPoint = this.doc.argValue(f, "leader") !== false && dist(this.toScreen(tq), [sx, sy]) < 8;
+        this.drag.tag = { id: hit.id, key: onPoint ? "target" : "position", at0: F.point(f, onPoint ? "target" : "position"), grab };
+        return;
+      }
+    }
     // in an elevation or section a dimension between levels slides sideways: its offset along the view
     if (hit && (this.kind === "ElevationView" || this.kind === "SectionView")) {
       const f = this.doc.element(hit.id);
@@ -836,6 +847,8 @@ export class View2D {
       }
       if (d.level && d.moved) return this.dragLevel(d, sx, sy);
       if (d.datum && d.moved) return this.dragDatum(d, sx, sy);
+      if (d.tag && d.moved) { const p = this.toModel(sx, sy), T = d.tag, at = [Math.round(T.at0[0] + p[0] - T.grab[0]), Math.round(T.at0[1] + p[1] - T.grab[1])];
+        this.app.apply({ op: "set", id: T.id, key: T.key, value: at }, { quiet: true, coalesce: `tag:${T.id}:${d.start.join(",")}` }); this.showHud(sx, sy, T.key === "target" ? "leader point: it reads what lies here" : "tag"); return; }
       if (d.levelDim && d.moved) return this.dragLevelDim(d, sx, sy, e);
       if (d.dim && d.moved) { this.slideDimension(d.dim.id, d.dim.g, d.dim.grab, this.toModel(sx, sy), `dimoff:${d.dim.id}:${d.start.join(",")}`); this.showHud(sx, sy, `offset ${fmtLen(F.real(this.doc.element(d.dim.id), "offset"))}`); return; }
       if (d.box && d.moved) { this.box = [d.start, [sx, sy]]; this.draw(); return; }
@@ -856,6 +869,7 @@ export class View2D {
     if (d.viewport) { this.guides = []; this.app.editor.seal(); this.draw(); if (d.moved) { this.app.refresh({ keepMain: true }); return; } }
     if (d.body && d.moved) { const ends = wallEnds(this.doc, d.body.ids); if (ends.length) this.app.apply({ op: "autojoin", ends }, { quiet: true, coalesce: `move:${d.body.ids.join(",")}:${d.start.join(",")}` }); this.app.editor.seal(); this.app.repackMoved(d.body.ids); this.showSnap(null); this.hideHud(); this.app.refresh({ keepMain: true }); return; }
     if (d.dim && d.moved) { this.app.editor.seal(); this.hideHud(); this.app.refresh({ keepMain: true }); return; }
+    if (d.tag && d.moved) { this.app.editor.seal(); this.hideHud(); this.app.refresh({ keepMain: true }); return; }
     if (d.levelDim && d.moved) { this.guides = []; this.app.editor.seal(); this.hideHud(); this.app.refresh({ keepMain: true }); return; }
     if (d.datum && d.moved) { this.app.editor.seal(); this.hideHud(); this.app.refresh({ keepMain: true }); return; }
     if (d.level && d.moved) { this.app.editor.seal(); this.hideHud(); this.app.refresh({ keepMain: true }); this.app.say("Level moved: walls, rooms and views bound to it followed", "ok"); return; }
@@ -1095,7 +1109,7 @@ export class View2D {
       // first click: the point that rests on the material; second: where the tag sits
       T.pts.push(q); if (T.pts.length < 2) { this.app.say("Now click where the tag goes", "note"); this.draw(); return; }
       const [a, b] = T.pts; T.pts = [];
-      return addEl({ type: "MaterialTag", args: { target: a, position: b, show: o.mtagShow || "Mark", frame: o.mtagFrame || "Keynote box", textSize: 2.5, view: { ref: this.viewId } } }, "Material tag placed: move its point and it reads the material there");
+      return addEl({ type: "MaterialTag", args: { target: a, position: b, show: o.mtagShow || "Mark", frame: o.mtagFrame || "Oblong", leader: true, textSize: 2.5, view: { ref: this.viewId } } }, "Material tag placed: move its point and it reads the material there");
     }
     if (tool === "text") {
       const sp = this.toScreen(q);

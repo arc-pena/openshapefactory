@@ -113,6 +113,37 @@ shadows and the 3D light, so they cannot disagree.
   The elevation shows the true outline of the lofted solid, not the plan
   outline extruded straight up.
 
+## Dimensions and tags
+
+- A dimension's look belongs to its type, AutoCAD's DIMSTYLE, not to the instance.
+  That covers extension-line offset and extension, dimension-line extension past
+  the ticks, terminators (tick, oblique, arrows, dots, boxes, datum, none) and
+  their size, text font/height/colour/width factor/fill/frame and placement
+  (above, centred with a break, below; aligned, horizontal or ISO), and the fit
+  rules. It also covers units, precision, rounding, zero suppression,
+  alternate units and tolerances. Every size is paper mm. Changing the type
+  restyles every dimension of that type.
+- Instances keep only Revit's overrides: a value with `<>` standing for the
+  measurement, a prefix, a suffix, and text above and below the value.
+- **Bind to the plane that drives the line, never to the line.** In a section
+  or elevation, every drawn line is a plane:
+  - horizontal: a level, a slab's top, its underside, or a layer interface; a
+    wall's base or top; a beam's top or soffit; a sill or a head;
+  - upright, seen edge-on: a wall face, a column face or its centre axis, a
+    grid, a jamb.
+
+  Two horizontal planes give a height. Two upright planes square to the view
+  give a width. A slab made thicker moves its dimension with it.
+- Where lines coincide (a wall's base on a slab's top), offer what the section
+  cuts, or what stands nearest, first. Put datums after elements. Tab reaches
+  the rest.
+- Columns, and generic bodies imported as columns, carry a centre axis, so
+  centre-to-centre works in any projection.
+- Material tags read what lies beneath them: at the leader's point, or under
+  the tag itself with the leader off. Re-read on every move and show `?` over
+  nothing. They can show the element's Mark or its type's Mark instead of the
+  material's. The frame is an oblong by default.
+
 ## Check it looks right, then measure it
 
 Render the sheet in a real browser and look at the screenshot. Then assert

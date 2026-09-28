@@ -749,29 +749,68 @@ export function elementMaterial(doc, f) {
   const pl = doc.plan(f); return pl && pl.material || null;
 }
 function paramValue(doc, f, k) { try { const v = propertyOf(doc, f, k); return v && !v.error ? v.v : null; } catch (e) { return null; } }
-/** What a material tag says, from the material it rests on. */
-export function materialTagText(doc, mat, show) {
+/** The model element at a point of a view: the smallest cut or seen region there, else the smallest
+ *  hit region of a model element (never an annotation, a view or a datum). */
+export function elementUnder(doc, B, q) {
+  const found = materialAt(doc, B, q); if (found && found.id && doc.element(found.id)) return found.id;
+  let best = null, ba = Infinity;
+  for (const hh of B.hits) {
+    if (!hh.pts || hh.pts.length < 3 || hh.kind === "curve" || !pointInPoly(q, hh.pts)) continue;
+    const f = doc.element(hh.id), d = f && doc.declOf(f); if (!d || ["annotation", "view", "datum", "detail", "dimension"].includes(d.kind) || d.category === "Annotation") continue;
+    const a = Math.abs(polyArea(hh.pts)); if (a < ba) { ba = a; best = hh.id; }
+  }
+  return best;
+}
+/** An element's Mark (its own, an instance parameter) and its type's Mark. */
+function elementMarks(doc, id) {
+  const f = id && doc.element(id); if (!f) return { mark: "", typeMark: "" };
+  const own = paramValue(doc, f, "Mark");
+  const tk = ["wallType", "floorType", "columnType", "beamType", "doorType", "windowType"].find(k => F.refId(f, k)), t = tk && doc.resolveType(F.refId(f, tk));
+  return { mark: own != null && own !== "" ? String(own) : "", typeMark: t ? String(t.mark || (t.params && t.params.TypeMark) || "") : "" };
+}
+/** What a material tag says, from the material it rests on (and the element, for the element's marks). */
+export function materialTagText(doc, mat, show, elementId) {
+  if (show === "Element Mark" || show === "Type Mark" || show === "Element Mark · Material Mark") {
+    const em = elementMarks(doc, elementId), m = mat && doc.lib.materials[mat];
+    if (show === "Type Mark") return em.typeMark || "?";
+    if (show === "Element Mark") return em.mark || em.typeMark || "?";
+    const a = em.mark || em.typeMark, b = m ? m.mark || mat : "";
+    return a || b ? [a || "?", b || "?"].join(" · ") : "?";
+  }
   const m = mat && doc.lib.materials[mat]; if (!m) return "?";
   const mark = m.mark || mat;
   return { Mark: mark, Name: m.name || mat, "Mark · Name": `${mark} ${m.name || ""}`.trim(), Description: m.description || m.name || mat, "Mark · Description": `${mark} ${m.description || m.name || ""}`.trim() }[show || "Mark"] || mark;
 }
+/** A rounded rectangle whose ends are half circles (an oblong, a stadium), in paper mm. */
+function oblongPath(x0, y0, x1, y1) {
+  const r = (y1 - y0) / 2, cy = (y0 + y1) / 2, a = x0 + r, b = Math.max(a, x1 - r);
+  return [lineSeg([a, y0], [b, y0]), { k: "A", c: [b, cy], r, a0: -Math.PI / 2, a1: Math.PI / 2 }, lineSeg([b, y1], [a, y1]), { k: "A", c: [a, cy], r, a0: Math.PI / 2, a1: 3 * Math.PI / 2 }];
+}
 function drawMaterialTag(doc, ctx, B, f) {
-  const id = doc.idOf(f), tq = F.point(f, "target"), pq = F.point(f, "position");
-  const found = materialAt(doc, B, tq), text = materialTagText(doc, found && found.material, F.choice(f, "show"));
+  const id = doc.idOf(f), pq = F.point(f, "position"), leader = doc.argValue(f, "leader") !== false;
+  // what it reads: at its leader's point, or - leader off - under the tag itself
+  const tq = leader ? F.point(f, "target") : pq, show = F.choice(f, "show");
+  const found = materialAt(doc, B, tq), elId = /Element|Type/.test(show || "") ? elementUnder(doc, B, tq) : null;
+  const text = materialTagText(doc, found && found.material, show, elId || (found && found.id));
   const ts = F.real(f, "textSize") || 2.5, frame = F.choice(f, "frame") || "Keynote box";
   const T = B.P(tq), P = B.P(pq), w = textWidth(text, ts), pad = ts * 0.45;
-  const col = found ? "#000000" : "#b3261e", g = { weight: penWeight(doc, "hairline", ctx.scale), colour: col };
+  const col = text !== "?" && !/\?/.test(text.split(" · ").join("")) ? "#000000" : "#b3261e", g = { weight: penWeight(doc, "hairline", ctx.scale), colour: col };
   const right = P[0] >= T[0];
-  // the leader: from the point to the near side of the tag, a dot where it rests
   const box = [P[0] - w / 2 - pad, P[1] - ts / 2 - pad, P[0] + w / 2 + pad, P[1] + ts / 2 + pad];
-  const end = frame === "Circle" ? add(P, mul(normalise(sub(T, P)), Math.max(w / 2, ts / 2) + pad)) : [right ? box[0] : box[2], P[1]];
-  B.stroke([lineSeg(T, end)], g, "Annotation-Tag", id, true);
-  B.fill(circlePath(T, 0.45), col, "Annotation-Tag", id, true);
-  if (frame === "Keynote box") { B.fill(polyPath([[box[0], box[1]], [box[2], box[1]], [box[2], box[3]], [box[0], box[3]]]), "#ffffff", "Annotation-Tag", id, true); B.stroke(polyPath([[box[0], box[1]], [box[2], box[1]], [box[2], box[3]], [box[0], box[3]]]), g, "Annotation-Tag", id, true); }
+  if (frame === "Oblong") { const r = (box[3] - box[1]) / 2; box[0] -= r * 0.5; box[2] += r * 0.5; }
+  // the leader: from the point to the near side of the tag, a dot where it rests
+  if (leader && dist(T, P) > 1e-6) {
+    const end = frame === "Circle" ? add(P, mul(normalise(sub(T, P)), Math.max(w / 2, ts / 2) + pad)) : [right ? box[0] : box[2], P[1]];
+    B.stroke([lineSeg(T, end)], g, "Annotation-Tag", id, true);
+    B.fill(circlePath(T, 0.45), col, "Annotation-Tag", id, true);
+  }
+  const rect = polyPath([[box[0], box[1]], [box[2], box[1]], [box[2], box[3]], [box[0], box[3]]]);
+  if (frame === "Keynote box") { B.fill(rect, "#ffffff", "Annotation-Tag", id, true); B.stroke(rect, g, "Annotation-Tag", id, true); }
+  if (frame === "Oblong") { const ob = oblongPath(...box); B.fill(ob, "#ffffff", "Annotation-Tag", id, true); B.stroke(ob, g, "Annotation-Tag", id, true); }
   if (frame === "Circle") { const r = Math.max(w / 2, ts / 2) + pad; B.fill(circlePath(P, r), "#ffffff", "Annotation-Tag", id, true); B.stroke(circlePath(P, r), g, "Annotation-Tag", id, true); }
   B.text([P[0], P[1] - ts * 0.36], text, ts, { align: "centre", layer: "Annotation-Tag", id, colour: col });
   const S = ctx.scale; B.hit(id, [[box[0] * S, box[1] * S], [box[2] * S, box[1] * S], [box[2] * S, box[3] * S], [box[0] * S, box[3] * S]]);
-  B.hit(id, [tq, pq], "curve");
+  if (leader) B.hit(id, [tq, pq], "curve");
 }
 /** View-owned annotation for views that are not plans (sections, elevations): material tags. */
 function drawViewAnnotations(doc, ctx, B, v) {

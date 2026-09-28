@@ -2232,3 +2232,27 @@ testCase("M76", "A dimension in a section binds to the planes behind the lines i
   return R(found && follows && cols && bad && arrowsOk && textOk && fmtOk && pdfOk, "section lines are planes: slab 200 → 300 with its type, faces 6000 → 5950 with a thicker wall; columns centre to centre 3000 in section and plan; a height and a width refuse; 16 terminators draw; Arial 3.5 red, 5.950 ±0.005 [234.3\"]; deviation and limits; <> override; the PDF names Helvetica",
     JSON.stringify({ found, cols, cc: cc.value, keys: refs.map(r => r.key).slice(0, 40), v1, v1b, v2, v2b, t1, t1b, bad, arrows, tp: [tp.text, tp.font, tp.height, tp.colour], dev, lim, pdfOk }));
 });
+
+testCase("M77", "Material tag in an oblong: with its leader off it reads what lies under the tag itself, and re-reads when moved; over nothing it shows ?; it can show the element's Mark or its type's instead of the material's", () => {
+  const doc = buildSample(), ed = new Editor(doc);
+  const sv = doc.elements().find(f => doc.typeOf(f) === "SectionView"), svid = doc.idOf(sv);
+  const cut = sectionCut(doc, sv).rects.find(x => x.kind === "floor" && x.material === "M-CONC");
+  const wallCut = sectionCut(doc, sv).rects.find(x => x.kind === "wall");
+  const mid = r => [(r.s0 + r.s1) / 2, (r.z0 + r.z1) / 2];
+  const r = ed.apply({ op: "add", element: { type: "MaterialTag", args: { target: [0, 0], position: mid(cut), show: "Mark", frame: "Oblong", leader: false, textSize: 2.5, view: { ref: svid } } } });
+  const prims = () => deriveView(doc, doc.element(svid)).prims.filter(p => p.id === r.id);
+  const txt = () => (prims().find(p => p.t === "text") || {}).text;
+  const t1 = txt(), arcs = prims().filter(p => p.t === "stroke" && p.path.some(s => s.k === "A")).length, leaderless = !prims().some(p => p.t === "fill" && p.path.length === 1 && p.path[0].k === "A" && p.path[0].r < 1);
+  ed.apply({ op: "set", id: r.id, key: "position", value: mid(wallCut) }); const t2 = txt();
+  ed.apply({ op: "set", id: r.id, key: "position", value: [-50000, 90000] }); const t3 = txt();
+  // the element's own Mark, and its type's
+  ed.apply({ op: "set", id: r.id, key: "position", value: mid(wallCut) });
+  ed.apply({ op: "set", id: wallCut.id, key: "params.Mark", value: "W-07" });
+  ed.apply({ op: "set", id: r.id, key: "show", value: "Element Mark" }); const t4 = txt();
+  ed.apply({ op: "set", id: r.id, key: "show", value: "Type Mark" }); const t5 = txt();
+  const wt = doc.resolveType(F.refId(doc.element(wallCut.id), "wallType"));
+  const mk = m => doc.lib.materials[m].mark;
+  const ok = t1 === mk("M-CONC") && arcs >= 1 && leaderless && t2 === mk(wallCut.material) && t3 === "?" && t4 === "W-07" && t5 === String(wt.mark || "?");
+  return R(ok, `on the slab ${mk("M-CONC")} in an oblong, no leader; moved onto the wall ${mk(wallCut.material)}; over nothing ?; the wall's Mark W-07, its type's ${wt.mark}`,
+    JSON.stringify({ t1, arcs, leaderless, t2, t3, t4, t5, wall: wallCut.id }));
+});

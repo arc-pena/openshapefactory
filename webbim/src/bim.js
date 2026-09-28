@@ -993,10 +993,11 @@ BUILDERS.RepeatingDetail = { build: () => ({ data: {} }) };
 /** Revit's Material Tag / Keynote: a leader whose point rests on something; the tag reads the material
  *  there - the wall layer, the floor layer, the column - and shows its Mark (or name, or description). */
 declare({ type: "MaterialTag", guid: "wb-0707", category: "Annotation", kind: "detail", idPrefix: "MT",
-  summary: "A material tag: its leader's point finds the element and layer beneath it and shows that material's Mark.",
+  summary: "A material tag: it reads what lies beneath it - at its leader's point, or under the tag itself when the leader is off - and shows that material's Mark, Name or Description, or the element's own Mark or its type's. Nothing recognised there: it shows ?",
   args: [ point2d("target", "Leader point", [0, 0]), point2d("position", "Tag position", [600, 600]),
-          choice("show", "Shows", ["Mark", "Name", "Mark · Name", "Description", "Mark · Description"], 0),
-          choice("frame", "Frame", ["Keynote box", "None", "Circle"], 0, { group: "Graphics" }),
+          choice("show", "Shows", ["Mark", "Name", "Mark · Name", "Description", "Mark · Description", "Element Mark", "Type Mark", "Element Mark · Material Mark"], 0),
+          choice("frame", "Frame", ["Keynote box", "None", "Circle", "Oblong"], 0, { group: "Graphics" }),
+          bool("leader", "Leader", true, { group: "Graphics" }),
           real("textSize", "Text size (paper mm)", 2.5, 0.5, 30, 0.1, "", { group: "Graphics" }),
           ref("view", "View", ["view"], { view: true }) ],
   handles: (f) => [{ key: "target", at: F.point(f, "target"), constraint: "free2d", writes: "target" }, { key: "move", at: F.point(f, "position"), constraint: "free2d", writes: "position" }] });
