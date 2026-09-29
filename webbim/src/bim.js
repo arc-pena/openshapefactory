@@ -18,6 +18,7 @@ import { findLoops, claimLoops, filterWallFaces, interiorPoint } from "./spaces.
 import { regionsOf, regionPaths, FINE, elementSegs, bridgeHoles } from "./bimsketch.js";
 import { placeMesh, meshBox, meshMeasure, levelsIn, weldTriangles } from "./massing.js";
 import { DIM_TYPES } from "./dimstyles.js";
+import { footprintRoofBody } from "./archelements.js";
 import {
   PEN_ISO, PATTERNS, MATERIALS, PARAM_SPECS, CATEGORIES, FAMILIES, TYPES, TEXT_TYPES, SYMBOLS, VS_PRESENTATION, VS_CONSTRUCTION,
 } from "./library.js";
@@ -611,12 +612,18 @@ declare({ type: "Roof", guid: "wb-0404", category: "IfcRoof", kind: "roof", idPr
           real("thickness", "Thickness", 200, 1, 3000, 1, "mm", { group: "Dimensions" }),
           text("material", "Material", "M-TILE", { group: "Materials" }), text("colour", "Colour", "", { group: "Graphics" }),
           // Revit's Rafter Cut: edges plumb (upright), or square to the slope (the footprint is then the mid-plane's)
-          choice("rafterCut", "Rafter cut", ["Plumb", "Square"], 0, { group: "Construction" }) ],
+          choice("rafterCut", "Rafter cut", ["Plumb", "Square"], 0, { group: "Construction" }),
+          // Revit's footprint roof: per boundary edge its slope in degrees (or null: a gable, no slope); blank keeps
+          // the single plane above. A ridge height, when given, sets the pitch that brings the top to it.
+          json("edgeSlopes", "Edge slopes (footprint roof)", [], { group: "Dimensions" }),
+          real("ridgeHeight", "Ridge height above eave (0: from the slopes)", 0, 0, 100000, 1, "mm", { group: "Dimensions" }) ],
   handles: (f) => { const b = F.json(f, "boundary") || []; return b.map((p, i) => ({ key: "v" + i, at: p, constraint: "free2d", writes: `boundary.${i}` })); } });
 BUILDERS.Roof = {
   precondition: (f) => { const b = F.json(f, "boundary"); return Array.isArray(b) && b.length >= 3 ? null : "a roof needs a footprint of three points or more"; },
   build: (f, doc) => {
     const outer = F.json(f, "boundary"), holes = (F.json(f, "holes") || []).filter(h => Array.isArray(h) && h.length >= 3);
+    const edgeSlopes = F.json(f, "edgeSlopes") || [];
+    if (edgeSlopes.length) return footprintRoof(f, doc, outer, edgeSlopes);
     const z0 = levelElev(doc, f, "level") + F.real(f, "heightOffset"), pv = F.point(f, "pivot"), a = F.real(f, "pitch") * Math.PI / 180, dirA = F.real(f, "direction") * Math.PI / 180;
     const d = [Math.cos(dirA), Math.sin(dirA)], k = Math.tan(a), tv = F.real(f, "thickness") / Math.cos(a);
     const top = p => z0 + k * ((p[0] - pv[0]) * d[0] + (p[1] - pv[1]) * d[1]);
@@ -648,6 +655,20 @@ BUILDERS.Roof = {
         Volume: { kind: "Volume", v: area * tv }, "Lowest point": L(Math.min(...zs)), "Highest point": L(Math.max(...zs)) } } };
   },
 };
+/** The footprint roof: its planes from the eave at each sloped edge, the lowest of them the roof (see archelements.js). */
+function footprintRoof(f, doc, outer, edgeSlopes) {
+  const z0 = levelElev(doc, f, "level") + F.real(f, "heightOffset"), th = F.real(f, "thickness");
+  const R = footprintRoofBody(outer, edgeSlopes, z0, F.real(f, "ridgeHeight"), th);
+  const soup = []; for (const t of R.tris) for (const p of t) soup.push(p[0], p[1], p[2]);
+  const mesh = weldTriangles(soup, 0.01), zs = []; for (let i = 2; i < mesh.positions.length; i += 3) zs.push(mesh.positions[i]);
+  const O = polyArea(outer) >= 0 ? outer : outer.slice().reverse(), foot = O.map(p => [p[0], p[1]]);
+  let area = 0; for (const r of R.regions) area += Math.abs(polyArea(r.poly)) * Math.sqrt(1 + r.e.t * r.e.t);
+  const mat = F.text(f, "material") || "M-TILE", colour = F.text(f, "colour") || ((doc.lib.materials[mat] || {}).shading || {}).colour || "#c9a27a";
+  const pitch = Math.max(0, ...R.regions.map(r => Math.atan(r.e.t) * 180 / Math.PI));
+  return { plan: { path: polyPath(foot), foot, z0: Math.min(...zs), z1: Math.max(...zs), material: mat, parts: [], mesh, mesh3d: [{ positions: mesh.positions, index: mesh.index, colour }], ridges: R.ridges },
+    data: { value: area, kind: "Area", props: { Area: { kind: "Area", v: area }, "Footprint area": { kind: "Area", v: Math.abs(polyArea(foot)) }, Slope: { kind: "Angle", v: pitch },
+      "Lowest point": L(Math.min(...zs)), "Highest point": L(Math.max(...zs)), Ridges: N(R.ridges.length) } } };
+}
 // ---------------------------------------------------------------- building services: ducts and pipes
 //! Revit's Duct and Pipe: a run through space - a path of points (height measured from its level), a
 //! round or rectangular section, a wall thickness, a system. The body is built from those numbers, so

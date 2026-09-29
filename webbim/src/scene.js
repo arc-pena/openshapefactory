@@ -8,7 +8,7 @@
 //!       {t:"text", at, text, height, rot, align, valign, colour} · {t:"raster", rect, url}
 //!       {t:"link", rect, sheet}   — all carry {layer, id} for OCGs and picking.
 
-import { fmtLength, fmtArea } from "./units.js";
+import { fmtLength, fmtArea, isImperial } from "./units.js";
 import { outline, elementSegs, bridgeHoles } from "./bimsketch.js";
 import { buildableArea } from "./spacegraph.js";
 import { plateAt, featureEdges, sliceMesh } from "./massing.js";
@@ -303,6 +303,8 @@ export function planScene(doc, v, opts = {}) {
       }
       continue;
     }
+    if (t === "Stair" && vis(f)) { const p = doc.plan(f); if (p && p.stair) drawStairPlan(doc, ctx, B, f, p, { cutZ, topZ, botZ, E }); continue; }
+    if (t === "Toposurface" && vis(f)) { const p = doc.plan(f); if (p && p.mesh) drawTopoPlan(doc, ctx, B, f, p); continue; }
     if ((t === "Generic" || t === "Roof") && vis(f)) {
       const p = doc.plan(f); if (!p) continue;
       const catG = categoryOf(doc, f);
@@ -558,6 +560,82 @@ function drawSpace(doc, ctx, B, f) {
 }
 /** A detail line's line style: solid, or Revit's hidden (short dashes) or centre line. */
 const detailDash = f => ({ Hidden: LINE_TYPES.hidden, Centre: LINE_TYPES.centre })[F.choice(f, "lineStyle")] || null;
+/** A stair in plan, as Revit draws it: its treads and sides up to the cut, a break line where the cut crosses a
+ *  flight and what lies above it dashed; the walking line with its arrow and UP (DN in a plan above it), and each
+ *  riser numbered. In a plan wholly above the stair it is all seen, thin. */
+function drawStairPlan(doc, ctx, B, f, p, V) {
+  const S = p.stair, id = doc.idOf(f), cat = "IfcStair";
+  if (S.z0 > V.topZ + 1 || S.z1 < V.E - 4000) return;
+  const below = S.z1 <= V.cutZ + 1, gCut = resolveGraphics(doc, ctx, f, "projection"), gT = { weight: penWeight(doc, "thin", ctx.scale), colour: gCut.colour || "#000" };
+  const gH = Object.assign({}, gT, { dash: LINE_TYPES.hidden }), num = F.bool(f, "numbers") !== false;
+  const at = (q, s, side) => add(add(q.from, mul(q.d, s)), mul(q.n, side * S.W / 2));
+  let broke = false;
+  for (const q of S.flights) {
+    // where the cut plane passes through this flight: a riser whose step rises past it
+    let kCut = below ? Infinity : q.steps.findIndex(st => st.z > V.cutZ + 1); if (kCut < 0) kCut = Infinity;
+    const sCut = kCut === Infinity ? Infinity : q.steps[kCut].s - (kCut > 0 ? 0 : 0);
+    const solid = [], dashed = [];
+    q.steps.forEach((st, i) => (i < kCut ? solid : dashed).push(lineSeg(at(q, st.s, 1), at(q, st.s, -1))));
+    const sEnd = q.steps[q.steps.length - 1].s;
+    for (const side of [1, -1]) {
+      if (sCut === Infinity) solid.push(lineSeg(at(q, 0, side), at(q, sEnd, side)));
+      else { if (sCut > 0) solid.push(lineSeg(at(q, 0, side), at(q, sCut, side))); dashed.push(lineSeg(at(q, sCut, side), at(q, sEnd, side))); }
+    }
+    B.stroke(solid, gT, cat, id); if (dashed.length) B.stroke(dashed, gH, cat, id);
+    if (sCut !== Infinity && !broke) {
+      // the break line: across the flight on a slant with a zig at its middle, a little before the cut riser
+      const s0 = Math.max(0, sCut - q.g * 0.5), a = at(q, s0 - q.g * 0.4, 1), b = at(q, s0 + q.g * 0.4, -1), m = add(mul(add(a, b), 0.5), [0, 0]), z = mul(q.d, q.g * 0.3);
+      B.stroke([lineSeg(a, add(m, z)), lineSeg(add(m, z), sub(m, z)), lineSeg(sub(m, z), b)], { weight: penWeight(doc, "medium", ctx.scale), colour: "#000" }, cat, id); broke = true;
+    }
+    if (num) q.steps.forEach((st, i) => { if (i === q.steps.length - 1) return; const c = add(q.from, mul(q.d, (st.s + q.steps[i + 1].s) / 2)), off = add(c, mul(q.n, -S.W * 0.28));
+      B.text(B.P(off), String(st.no), 1.8, { align: "centre", valign: "middle", layer: "Annotation-Text", id, rot: 0 }); });
+  }
+  for (const l of S.landings) B.stroke(polyPath(l.poly), below || l.z <= V.cutZ ? gT : gH, cat, id);
+  // the walking line, from the first riser to the last, its arrow at the top
+  const up = S.z0 >= V.E - 1, pts = [];
+  S.flights.forEach(q => { pts.push(q.from); pts.push(q.to); });
+  const path = up ? pts : pts.slice().reverse();
+  const segs = []; for (let i = 0; i + 1 < path.length; i++) if (Math.hypot(path[i + 1][0] - path[i][0], path[i + 1][1] - path[i][1]) > 1) segs.push(lineSeg(path[i], path[i + 1]));
+  B.stroke(segs, gT, cat, id);
+  const e = path[path.length - 1], e0 = path[path.length - 2] || path[0], d = normalise(sub(e, e0)), n = perp(d), hs = 2 * ctx.scale;
+  B.stroke(polyPath([e, add(sub(e, mul(d, hs)), mul(n, hs * 0.45)), add(sub(e, mul(d, hs)), mul(n, -hs * 0.45))]), gT, cat, id);
+  B.fill(polyPath([e, add(sub(e, mul(d, hs)), mul(n, hs * 0.45)), add(sub(e, mul(d, hs)), mul(n, -hs * 0.45))]), "#000", cat, id);
+  const s0 = path[0], d0 = normalise(sub(path[1] || e, s0));
+  B.text(B.P(sub(s0, mul(d0, 1.5 * ctx.scale))), up ? "UP" : "DN", 2.2, { align: "centre", valign: "middle", layer: "Annotation-Text", id });
+  B.hit(id, p.foot);
+}
+/** The ground in plan, as a survey draws it: contour lines at the surface's interval, every nth heavier and
+ *  labelled with its height, the surface's edge dashed. */
+function drawTopoPlan(doc, ctx, B, f, p) {
+  const id = doc.idOf(f), gp = resolveGraphics(doc, ctx, f, "projection"), iv = Math.max(10, F.real(f, "interval") || 500), mj = Math.max(1, F.int(f, "major") || 5);
+  const P = p.mesh.positions, I = p.mesh.index, minor = [], major = [], majSegs = new Map();
+  for (let k = 0; k < I.length; k += 3) {
+    const q = [0, 1, 2].map(e => { const a = I[k + e] * 3; return [P[a], P[a + 1], P[a + 2]]; });
+    const nz = (q[1][0] - q[0][0]) * (q[2][1] - q[0][1]) - (q[1][1] - q[0][1]) * (q[2][0] - q[0][0]);
+    if (nz <= 1e-6 || Math.min(q[0][2], q[1][2], q[2][2]) <= p.z0 + 1) continue;
+    const zl = Math.min(q[0][2], q[1][2], q[2][2]), zh = Math.max(q[0][2], q[1][2], q[2][2]);
+    for (let z = Math.ceil((zl - 1e-6) / iv) * iv; z <= zh + 1e-6; z += iv) {
+      const pts = [];
+      for (let i = 0; i < 3; i++) { const a = q[i], b = q[(i + 1) % 3], da = a[2] - z, db = b[2] - z; if ((da < 0 && db >= 0) || (da >= 0 && db < 0)) { const t = da / (da - db); pts.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]); } }
+      if (pts.length !== 2) continue;
+      const isMaj = Math.round(z / iv) % mj === 0;
+      (isMaj ? major : minor).push(lineSeg(pts[0], pts[1]));
+      if (isMaj) { const key = Math.round(z); if (!majSegs.has(key)) majSegs.set(key, []); majSegs.get(key).push(pts); }
+    }
+  }
+  const col = gp.colour && gp.colour !== "#000000" ? gp.colour : "#000";
+  if (minor.length) B.stroke(minor, { weight: penWeight(doc, "hairline", ctx.scale), colour: col }, "Topography", id);
+  if (major.length) B.stroke(major, { weight: penWeight(doc, "thin", ctx.scale), colour: col }, "Topography", id);
+  if (F.bool(f, "labels") !== false) for (const [z, segs] of majSegs) {
+    // the label on the longest piece of the contour, turned to read along it
+    const s = segs.reduce((m, q) => (Math.hypot(q[1][0] - q[0][0], q[1][1] - q[0][1]) > Math.hypot(m[1][0] - m[0][0], m[1][1] - m[0][1]) ? q : m), segs[0]);
+    let a = Math.atan2(s[1][1] - s[0][1], s[1][0] - s[0][0]) * 180 / Math.PI; if (a > 90) a -= 180; if (a < -90) a += 180;
+    B.text(B.P(mul(add(s[0], s[1]), 0.5)), fmtLevel(doc, z), 1.8, { align: "centre", valign: "middle", rot: a, layer: "Annotation-Text", id, colour: col });
+  }
+  B.stroke(p.path, { weight: penWeight(doc, "thin", ctx.scale), colour: col, dash: LINE_TYPES.dashed2 }, "Topography", id); B.hit(id, p.foot);
+}
+/** A height as the project writes it: millimetres, or feet and inches in an imperial project. */
+function fmtLevel(doc, z) { const u = doc.meta && doc.meta.displayUnits; return isImperial(u) ? fmtLength(z, { unit: u }) : String(Math.round(z)); }
 function ruleMatch(doc, f, rule) { try { return matches(doc, f, rule.when); } catch (e) { return false; } }
 const DEPT = ["#dce9f7", "#f8e3cf", "#dff1e2", "#f3dcec", "#fff2c4", "#e4e0f7", "#d8f0f0"];
 export function departmentColour(v) { let h = 0; for (const c of v) h = (h * 31 + c.charCodeAt(0)) >>> 0; return DEPT[h % DEPT.length]; }
@@ -1294,7 +1372,7 @@ function gatherElevationItems(doc, ctx, G, skip = null) {
     if (!categoryVisible(ctx, categoryOf(doc, f)) || hiddenByRule(doc, ctx, f)) continue;
     const t = doc.typeOf(f);
     if (t === "Wall") { const w = doc.plan(f); if (!w) continue; const it = elevWall(doc, f, w, V, sOf, depthOf, ctx); if (it) items.push(it); }
-    if ((t === "Generic" || t === "Duct" || t === "Pipe" || t === "Roof" || t === "Lattice") && doc.plan(f) && doc.plan(f).mesh) {
+    if ((t === "Generic" || t === "Duct" || t === "Pipe" || t === "Roof" || t === "Lattice" || t === "Stair" || t === "Toposurface") && doc.plan(f) && doc.plan(f).mesh) {
       // a body of its own shape: its feature edges, projected; hidden by what stands in front of it
       const p = doc.plan(f), P = p.mesh.positions, curves = [];
       let d0 = Infinity, d1 = -Infinity, s0 = Infinity, s1 = -Infinity, z0 = Infinity, z1 = -Infinity;
@@ -1605,7 +1683,7 @@ export function sectionCut(doc, v) {
         }
       }
     }
-    if ((t === "Generic" || t === "Duct" || t === "Pipe" || t === "Roof" || t === "Lattice") && p.mesh) {
+    if ((t === "Generic" || t === "Duct" || t === "Pipe" || t === "Roof" || t === "Lattice" || t === "Stair" || t === "Toposurface") && p.mesh) {
       // a body of its own shape, cut by the section plane: turned into (along, up, depth) and sliced at depth 0
       const P = p.mesh.positions, Q = new Array(P.length); let lo = Infinity, hi = -Infinity;
       for (let i = 0; i < P.length; i += 3) { const q = [P[i], P[i + 1]], dd = G.depthOf(q); Q[i] = G.sOf(q); Q[i + 1] = P[i + 2] - G.Z0; Q[i + 2] = dd; lo = Math.min(lo, dd); hi = Math.max(hi, dd); }
