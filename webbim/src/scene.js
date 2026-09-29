@@ -876,14 +876,18 @@ function textLookup(doc, f) { return name => { const g = doc.element(name.split(
 const SYMBOL_CACHE = new Map();
 export function symbolGeometry(sym) {
   if (!sym || !sym.source) return null;
-  const k = JSON.stringify(sym);
+  const k = sym.cadlib ? "cadlib:" + sym.cadlib : JSON.stringify(sym);           // a library symbol is known by its id
   if (SYMBOL_CACHE.has(k)) return SYMBOL_CACHE.get(k);
   // a symbol drawn as polylines (entourage lifted from a drawing: people, cars, trees), in its own units -
   // model mm for a model symbol - with its insertion point at (0, 0): the feet of a person, the wheels of a car
   if (sym.source.polylines) {
-    const P = sym.source.polylines, xs = P.flat().map(q => q[0]), ys = P.flat().map(q => q[1]);
+    const P = sym.source.polylines;
     const closed = pl => pl.length > 3 && Math.hypot(pl[0][0] - pl[pl.length - 1][0], pl[0][1] - pl[pl.length - 1][1]) < 1e-6;
-    const r = { paths: P.map(pl => ({ path: pl.slice(1).map((q, i) => ({ k: "L", a: pl[i], b: q })), closed: closed(pl) })), fills: [], texts: [], bbox: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)] };
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const pl of P.concat(sym.source.fills || [])) for (const q of pl) { if (q[0] < x0) x0 = q[0]; if (q[0] > x1) x1 = q[0]; if (q[1] < y0) y0 = q[1]; if (q[1] > y1) y1 = q[1]; }
+    const seg = pl => pl.slice(1).map((q, i) => ({ k: "L", a: pl[i], b: q }));
+    // solid areas (a hatch drawn solid in the block) fill black
+    const r = { paths: P.map(pl => ({ path: seg(pl), closed: closed(pl) })), fills: (sym.source.fills || []).filter(pl => pl.length >= 3).map(pl => ({ path: seg(pl.concat([pl[0]])) })), texts: [], bbox: [x0, y0, x1, y1] };
     const out = { r, scale: 1, bbox: r.bbox, origin: [0, 0], measured: { w: r.bbox[2] - r.bbox[0], h: r.bbox[3] - r.bbox[1] } };
     SYMBOL_CACHE.set(k, out);
     return out;
@@ -902,8 +906,9 @@ export function drawSymbol(doc, B, sym, atPaper, rotDeg = 0, layer = "Annotation
   const geo = symbolGeometry(sym); if (!geo) return null;
   const model = sym.space === "model", o = geo.origin;
   const cx = o ? o[0] : (geo.bbox[0] + geo.bbox[2]) / 2, cy = o ? o[1] : (geo.bbox[1] + geo.bbox[3]) / 2, k = geo.scale * (model ? 1 / (B.S || 1) : 1), a = rotDeg * Math.PI / 180;
-  const T = p => { const x = (p[0] - cx) * k, y = (p[1] - cy) * k; return [atPaper[0] + x * Math.cos(a) - y * Math.sin(a), atPaper[1] + x * Math.sin(a) + y * Math.cos(a)]; };
-  const tp = path => path.map(s => s.k === "L" ? { k: "L", a: T(s.a), b: T(s.b) } : s.k === "A" ? { k: "A", c: T(s.c), r: s.r * k, a0: s.a0 + a, a1: s.a1 + a } : { k: "C", a: T(s.a), c1: T(s.c1), c2: T(s.c2), b: T(s.b) });
+  const kx = sym.__k ? sym.__k[0] : 1, ky = sym.__k ? sym.__k[1] : 1;
+  const T = p => { const x = (p[0] - cx) * k * kx, y = (p[1] - cy) * k * ky; return [atPaper[0] + x * Math.cos(a) - y * Math.sin(a), atPaper[1] + x * Math.sin(a) + y * Math.cos(a)]; };
+  const tp = path => path.map(s => s.k === "L" ? { k: "L", a: T(s.a), b: T(s.b) } : s.k === "A" ? { k: "A", c: T(s.c), r: s.r * k * Math.abs(ky), a0: s.a0 + a, a1: s.a1 + a } : { k: "C", a: T(s.a), c1: T(s.c1), c2: T(s.c2), b: T(s.b) });
   for (const p of geo.r.fills) B.prims.push({ t: "fill", path: tp(p.path), colour: "#000000", layer, id });
   // a silhouette is white inside, so it stands in front of the facade behind it
   if (sym.fill) for (const p of geo.r.paths) if (p.closed) B.prims.push({ t: "fill", path: tp(p.path), colour: sym.fill, layer, id });
@@ -915,7 +920,9 @@ export function drawSymbol(doc, B, sym, atPaper, rotDeg = 0, layer = "Annotation
 /** A placed symbol, in a plan or an elevation or a section: drawn, and picked by its outline. */
 function drawSymbolInstance(doc, B, f) {
   const sym = doc.lib.symbols[F.refId(f, "symbol")]; if (!sym) return;
-  const box = drawSymbol(doc, B, sym, B.P(F.point(f, "position")), F.real(f, "rotation"), sym.space === "model" ? "Entourage" : "Annotation", doc.idOf(f));
+  // a placed symbol's own scale (a tree drawn larger, a car mirrored with -1)
+  const sc = F.real(f, "scale") || 1, mir = F.bool(f, "mirrored"), s2 = sc !== 1 || mir ? Object.assign({}, sym, { __k: [sc * (mir ? -1 : 1), sc] }) : sym;
+  const box = drawSymbol(doc, B, s2, B.P(F.point(f, "position")), F.real(f, "rotation"), sym.space === "model" ? "Entourage" : "Annotation", doc.idOf(f));
   if (box) B.hit(doc.idOf(f), box.map(q => [q[0] * B.S, q[1] * B.S]));
 }
 

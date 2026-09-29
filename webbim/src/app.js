@@ -16,6 +16,7 @@ import { buildSchaefferSample } from "./sample_schaeffer.js";
 import { buildWalnutSample } from "./sample_walnut.js";
 import { buildFpcSample } from "./sample_fpc.js";
 import { buildAiaSample } from "./sample_aia.js";
+import { cadLibraryIndex, cadLibraryCategories, cadLibrarySymbol, cadLibraryPreview } from "./cadlib.js";
 import { contoursFromDXF } from "./archelements.js";
 import { inflateBase64 } from "./inflate.js";
 import { openDocument, newDocument, sheetSize } from "./bim.js";
@@ -272,7 +273,7 @@ const COMMANDS = {
   save: { label: "Save", icon: "save", key: "", run: () => saveModel() },
   importdxf: { label: "Import DXF Symbol", icon: "importI", run: () => importDXF() },
   importifc: { label: "Import IFC", icon: "importI", hint: "IfcWall, IfcSlab, IfcFooting, IfcColumn, IfcBeam, IfcDoor, IfcWindow and IfcBuildingElementProxy come in as walls, floors, columns, beams, doors, windows and generic models; each storey gets its floor plan", run: () => importIfcFile() },
-  placesymbol: { label: "Symbol", icon: "symbol", run: () => placeSymbol(Object.keys(app.doc.lib.symbols).find(k => app.doc.lib.symbols[k].source) || "SY-NORTH") },
+  placesymbol: { label: "Symbol Library", icon: "symbol", key: "SY", hint: "People, vehicles, trees, furniture, fixtures, doors, site furniture, sports fields, north arrows - 978 symbols by category and view; place one in any 2D view", run: () => symbolLibraryDialog() },
   export: { label: "Export", icon: "exportI", run: () => exportDialog() },
   selectall: { label: "Select All Instances", icon: "select", key: "SA", run: () => selectAllInstances() },
   flip: { label: "Flip", icon: "mirror", run: () => { for (const id of app.selection) { const f = app.doc.element(id); if (f && app.doc.typeOf(f) === "Wall") app.apply({ op: "set", id, key: "flipped", value: !F.bool(f, "flipped") }); if (f && app.doc.typeOf(f) === "Door") app.apply({ op: "set", id, key: "flipFacing", value: !F.bool(f, "flipFacing") }); } } },
@@ -977,9 +978,54 @@ function newSheet() {
 }
 function placeSymbol(symId) {
   const v = app.activeView && app.doc.element(app.activeView);
-  if (!v || app.doc.typeOf(v) !== "PlanView") return app.say("open a plan view to place a symbol in", "note");
-  const view = app.views.get(app.activeView), c = view.toModel(view.W / 2, view.H / 2);
-  app.apply({ op: "add", element: { type: "SymbolInstance", args: { symbol: { ref: symId }, position: c.map(Math.round), rotation: 0, view: { ref: app.activeView } } } });
+  if (!v || !["PlanView", "ElevationView", "SectionView", "DraftingView"].includes(app.doc.typeOf(v))) return app.say("open a plan, elevation, section or drafting view to place a symbol in", "note");
+  // a library symbol is loaded into the project the first time it is placed, as Revit loads a family
+  if (!app.doc.lib.symbols[symId]) { const def = cadLibrarySymbol(symId); if (!def) return app.say(`no symbol ${symId}`, "error"); app.apply({ op: "type", lib: "symbols", id: symId, value: def }); }
+  const view = app.views.get(app.activeView), c = view && view.toModel ? view.toModel(view.W / 2, view.H / 2) : [0, 0];
+  const res = app.apply({ op: "add", element: { type: "SymbolInstance", args: { symbol: { ref: symId }, position: c.map(Math.round), rotation: 0, view: { ref: app.activeView } } } });
+  if (res && res.ok) { app.select([res.id]); app.say(`${app.doc.lib.symbols[symId].name}: placed at the view's centre - drag it where it goes; Scale and Mirrored in Properties`, "ok"); }
+}
+app.placeSymbol = placeSymbol;
+/** The symbol library's browser: categories down the left with their counts, a search over names and blocks,
+ *  the views (plan, elevation...) as filters, and a sheet of previews - click one to see it, double-click or
+ *  Place to put it in the active view. Symbols already in the project are listed first. */
+function symbolLibraryDialog() {
+  const index = cadLibraryIndex(), cats = cadLibraryCategories();
+  const own = Object.entries(app.doc.lib.symbols).filter(([id, s]) => s.source && !s.cadlib).map(([id, s]) => ({ id, n: s.name || id, c: "In this project", v: s.space === "model" ? "Model" : "Paper", b: id, w: (s.size || {}).w || 0, h: (s.size || {}).h || 0, own: true }));
+  const all = own.concat(index);
+  // the view filter starts from the open view: plan symbols in a plan, elevations in an elevation or a section
+  const av = app.activeView && app.doc.element(app.activeView), avt = av && app.doc.typeOf(av);
+  let cat = "All", view = avt === "PlanView" ? "Plan" : avt === "ElevationView" || avt === "SectionView" ? "Elevation" : "All", q = "", sel = null, shown = 90;
+  const views = ["All", "Plan", "Elevation", "Front elevation", "Side elevation", "Section"];
+  const list = h("div", { style: { display: "flex", flexDirection: "column", gap: "2px", overflowY: "auto", maxHeight: "60vh", minWidth: "190px" } });
+  const grid = h("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(112px, 1fr))", gap: "6px", overflowY: "auto", maxHeight: "56vh", alignContent: "start" } });
+  const info = h("div", { class: "muted small", style: { minHeight: "18px" } }, " ");
+  const search = h("input", { type: "search", placeholder: "Search: tree, sofa, car, toilet, north...", "aria-label": "Search symbols", style: { width: "100%" } });
+  const vsel = h("select", { "aria-label": "View" }, views.map(v => h("option", { value: v, selected: v === view }, v)));
+  const matches = () => all.filter(s => (cat === "All" || s.c === cat) && (view === "All" || s.v === view || (view === "Elevation" && /elevation/i.test(s.v))) && (!q || (s.n + " " + s.b + " " + s.c).toLowerCase().includes(q)));
+  const tile = s => {
+    const pv = s.own ? null : cadLibraryPreview(s.id, 96);
+    const t = h("button", { class: "btn ghost", title: `${s.n}\nblock ${s.b}`, style: { display: "flex", flexDirection: "column", alignItems: "center", padding: "4px", height: "auto", border: sel === s.id ? "2px solid var(--accent, #2f6fde)" : "1px solid #d8dbe0", background: "#fff" },
+      onclick: () => { sel = s.id; info.textContent = `${s.n} · ${s.c} · block ${s.b}`; render(); }, ondblclick: () => { place(s.id); } });
+    const box = h("div", { style: { width: "96px", height: "96px" } });
+    box.innerHTML = pv ? `<svg width="96" height="96" viewBox="0 0 96 96"><path d="${pv.fill}" fill="#222"/><path d="${pv.stroke}" fill="none" stroke="#222" stroke-width="0.6"/></svg>` : `<svg width="96" height="96"><text x="48" y="52" text-anchor="middle" font-size="10" fill="#666">${s.b}</text></svg>`;
+    t.append(box, h("div", { style: { fontSize: "10px", lineHeight: "12px", textAlign: "center", maxWidth: "104px", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" } }, s.n));
+    return t;
+  };
+  const render = () => {
+    list.replaceChildren(...[["All", all.length], ...(own.length ? [["In this project", own.length]] : []), ...cats].map(([c, n]) => h("button", { class: "btn ghost small", style: { justifyContent: "space-between", display: "flex", fontWeight: c === cat ? "700" : "400", background: c === cat ? "#e8eefb" : "" }, onclick: () => { cat = c; shown = 90; render(); } }, h("span", {}, c), h("span", { class: "muted" }, String(n)))));
+    const m = matches();
+    grid.replaceChildren(...m.slice(0, shown).map(tile), ...(m.length > shown ? [h("button", { class: "btn", onclick: () => { shown += 120; render(); } }, `Show more (${m.length - shown})`)] : []));
+    if (!m.length) grid.append(h("div", { class: "muted" }, "Nothing matches."));
+  };
+  const place = id => { placeSymbol(id); };
+  search.addEventListener("input", () => { q = search.value.trim().toLowerCase(); shown = 90; render(); });
+  vsel.addEventListener("change", () => { view = vsel.value; shown = 90; render(); });
+  render();
+  dialog("Symbol Library", h("div", { style: { display: "grid", gridTemplateColumns: "200px 1fr", gap: "12px", width: "min(980px, 88vw)" } },
+    h("div", {}, list), h("div", { style: { display: "grid", gap: "8px" } }, h("div", { style: { display: "flex", gap: "8px" } }, search, h("label", {}, "View ", vsel)), grid, info)),
+    [{ label: "Close", run: () => true }, { label: "Place", primary: true, run: () => { if (!sel) { app.say("pick a symbol first", "note"); return false; } place(sel); return true; } }]);
+  setTimeout(() => search.focus(), 30);
 }
 /** Revit's Project Units (UN). The model is millimetres whatever is chosen: this is how lengths are
  *  written - in Properties, temporary dimensions, schedules and on the drawings - and what a number

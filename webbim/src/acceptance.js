@@ -36,6 +36,7 @@ import { buildRmuhSample, RMUH_BRIEF } from "./sample_rmuh.js";
 import { buildPavilionSample } from "./sample_pavilion.js";
 import { buildMazatlanSample } from "./sample_mazatlan.js";
 import { buildSchaefferSample } from "./sample_schaeffer.js";
+import { cadLibraryIndex, cadLibraryCategories, cadLibraryGeometry, cadLibrarySymbol } from "./cadlib.js";
 import { parseOBJ, storeysFor, plateAt, weldTriangles } from "./massing.js";
 
 export const CASES = [];
@@ -2343,5 +2344,20 @@ testCase("M80", "Architecture components: a stair counts and numbers its risers 
   const sch = buildSchaefferSample(), errs = sch.elements().filter(f => sch.error(f)).length;
   const sheet = sheetScene(sch, sch.element("SH-A202")).prims.some(p => p.t === "text" && p.text === "A202");
   return { pass: stair && roof && tree && ramp && rail && drawn && errs === 0 && sheet, detail: { stair, roof, roofTop: P("RF").z1, tree, treeZ: P("TR").z0, ramp, slope: d("RA").props.Slope.v, rail, drawn, errs, sheet } };
+});
+
+testCase("M81", "The CAD goodies library: 978 blocks decode, each named and in a category and a view; a symbol's polylines fill the size its index gives; loaded into a project and placed, it draws in a plan at its true size, scaled and mirrored as asked", () => {
+  const idx = cadLibraryIndex(), cats = cadLibraryCategories();
+  const named = idx.every(s => s.n && s.c && s.v && (s.w > 0 || s.h > 0)), counts = cats.reduce((a, [, n]) => a + n, 0) === idx.length;
+  const tree = idx.find(s => s.c === "Planting" && s.v === "Plan"), g = cadLibraryGeometry(tree.id), pts = g.polylines.flat();
+  const w = Math.max(...pts.map(q => q[0])) - Math.min(...pts.map(q => q[0])), fits = Math.abs(w - tree.w) < tree.w * 0.05 + 5;
+  const people = idx.filter(s => s.c === "People" && s.v === "Elevation"), tall = people.filter(s => s.h > 1400 && s.h < 2100).length > people.length * 0.6;
+  const doc = newDocument("lib"), ed = new Editor(doc);
+  ed.apply({ op: "add", element: { id: "L0", type: "Level", args: { name: "L0", elevation: 0 } } }); ed.apply({ op: "add", element: { id: "V", type: "PlanView", args: { level: { ref: "L0" }, scale: 100 } } });
+  ed.apply({ op: "type", lib: "symbols", id: tree.id, value: cadLibrarySymbol(tree.id) });
+  const r = ed.apply({ op: "add", element: { id: "SY1", type: "SymbolInstance", args: { symbol: { ref: tree.id }, position: [0, 0], rotation: 0, view: { ref: "V" }, scale: 2, mirrored: true } } });
+  const prims = planScene(doc, doc.element("V")).prims.filter(p => p.id === "SY1"), xs = prims.flatMap(p => (p.path || []).flatMap(s => [s.a, s.b].filter(Boolean).map(q => q[0])));
+  const drawnW = (Math.max(...xs) - Math.min(...xs)) * 100, sized = Math.abs(drawnW - 2 * tree.w) < 0.1 * tree.w;
+  return { pass: idx.length === 978 && named && counts && fits && tall && r.ok && prims.length > 0 && sized, detail: { n: idx.length, cats: cats.length, named, counts, fits, tall, placed: r.ok, prims: prims.length, drawnW, treeW: tree.w } };
 });
 

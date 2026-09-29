@@ -1066,6 +1066,7 @@ BUILDERS.FilledRegion = { build: (f) => {
 declare({ type: "SymbolInstance", guid: "wb-0704", category: "Annotation", kind: "detail", idPrefix: "SY",
   summary: "A placed symbol. Paper symbols keep their size on the sheet; model symbols scale with the drawing.",
   args: [ ref("symbol", "Symbol", ["symbol"], { view: true }), point2d("position", "Position", [0, 0]), real("rotation", "Rotation", 0, -360, 360, 1, "°"), ref("view", "View", ["view"], { view: true }),
+          real("scale", "Scale", 1, 0.01, 100, 0.05, "", { group: "Graphics" }), bool("mirrored", "Mirrored", false, { group: "Graphics" }),
           bool("pinned", "Pinned", false, { group: "Constraints" }) ],
   handles: (f) => [{ key: "move", at: F.point(f, "position"), constraint: "free2d", writes: "position" }] });
 BUILDERS.SymbolInstance = { build: () => ({ data: {} }) };
