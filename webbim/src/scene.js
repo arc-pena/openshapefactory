@@ -219,7 +219,9 @@ export function planScene(doc, v, opts = {}) {
   // floors first: a floor meeting a wall disappears under the wall's cut, as it does on paper
   const els = doc.elements().filter(f => (f.get("Integer") !== 0 && !doc.error(f) || doc.typeOf(f) === "Wall") && !hiddenByRule(doc, ctx, f))
     .map((f, i) => [f, i]).sort((a, b) => (doc.typeOf(b[0]) === "Floor") - (doc.typeOf(a[0]) === "Floor") || a[1] - b[1]).map(([f]) => f);
-  const vis = f => categoryVisible(ctx, categoryOf(doc, f)) && f.get("Integer") !== 0;
+  // Revit's Hide in View: an element the view's overrides mark invisible is left out here only
+  const hov = doc.argValue(v, "overrides") || {};
+  const vis = f => categoryVisible(ctx, categoryOf(doc, f)) && f.get("Integer") !== 0 && (hov[doc.idOf(f)] || {}).visible !== false;
   const onlyHere = f => { const r = F.refId(f, "view"); return !r || r === doc.idOf(v); };
   const place = placements(doc);
   const stat = { walls: 0, offsetsBefore: doc.stats.offsets };
@@ -256,7 +258,7 @@ export function planScene(doc, v, opts = {}) {
       B.stroke(polyPath(p.pts), { weight: penWeight(doc, "bold", S), colour: "#1b1f24", dash: [9, 1.5, 1.2, 1.5, 1.2, 1.5] }, "Site", id);
       if (p.setbacks.some(x => x > 0)) B.stroke(polyPath(p.buildable), { weight: penWeight(doc, "thin", S), colour: "#d0312d", dash: LINE_TYPES.dashed1 }, "Site", id);
       const c = p.pts.reduce((a, q) => add(a, q), [0, 0]).map(v => v / p.pts.length), d = doc.data(f);
-      if (d && d.props) B.text(add(B.P(c), [0, 0]), `SITE ${fmtArea(d.props["Site area"].v)}`, 3.5, { align: "centre", layer: "Site", id, colour: "#1b1f24" });
+      if (d && d.props && F.bool(f, "label") !== false) B.text(add(B.P(c), [0, 0]), `SITE ${fmtArea(d.props["Site area"].v)}`, 3.5, { align: "centre", layer: "Site", id, colour: "#1b1f24" });
       B.hit(id, p.pts, "curve");
     }
     if (t === "Massing" && vis(f)) {
@@ -308,6 +310,7 @@ export function planScene(doc, v, opts = {}) {
     }
     if (t === "Stair" && vis(f)) { const p = doc.plan(f); if (p && p.stair) drawStairPlan(doc, ctx, B, f, p, { cutZ, topZ, botZ, E }); continue; }
     if (t === "Toposurface" && vis(f)) { const p = doc.plan(f); if (p && p.mesh) drawTopoPlan(doc, ctx, B, f, p); continue; }
+    if (t === "Planting" && vis(f)) { const p = doc.plan(f); if (p && p.planting) drawPlantingPlan(doc, ctx, B, f, p); continue; }
     if ((t === "Generic" || t === "Roof") && vis(f)) {
       const p = doc.plan(f); if (!p) continue;
       const catG = categoryOf(doc, f);
@@ -612,6 +615,10 @@ function drawStairPlan(doc, ctx, B, f, p, V) {
 function drawTopoPlan(doc, ctx, B, f, p) {
   const id = doc.idOf(f), gp = resolveGraphics(doc, ctx, f, "projection"), iv = Math.max(10, F.real(f, "interval") || 500), mj = Math.max(1, F.int(f, "major") || 5);
   const P = p.mesh.positions, I = p.mesh.index, minor = [], major = [], majSegs = new Map();
+  // the grade runs under the building: contours stop at the floors' footprints, as a site plan draws them
+  const bld = [];
+  for (const g of doc.elements()) if (doc.typeOf(g) === "Floor") { const q = doc.plan(g); if (q && Array.isArray(q.foot) && q.foot.length > 2 && Array.isArray(q.foot[0])) bld.push(q.foot); }
+  const under = (a, b) => { const m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]; return bld.some(poly => pointInPoly(m, poly)); };
   for (let k = 0; k < I.length; k += 3) {
     const q = [0, 1, 2].map(e => { const a = I[k + e] * 3; return [P[a], P[a + 1], P[a + 2]]; });
     const nz = (q[1][0] - q[0][0]) * (q[2][1] - q[0][1]) - (q[1][1] - q[0][1]) * (q[2][0] - q[0][0]);
@@ -620,7 +627,7 @@ function drawTopoPlan(doc, ctx, B, f, p) {
     for (let z = Math.ceil((zl - 1e-6) / iv) * iv; z <= zh + 1e-6; z += iv) {
       const pts = [];
       for (let i = 0; i < 3; i++) { const a = q[i], b = q[(i + 1) % 3], da = a[2] - z, db = b[2] - z; if ((da < 0 && db >= 0) || (da >= 0 && db < 0)) { const t = da / (da - db); pts.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]); } }
-      if (pts.length !== 2) continue;
+      if (pts.length !== 2 || under(pts[0], pts[1])) continue;
       const isMaj = Math.round(z / iv) % mj === 0;
       (isMaj ? major : minor).push(lineSeg(pts[0], pts[1]));
       if (isMaj) { const key = Math.round(z); if (!majSegs.has(key)) majSegs.set(key, []); majSegs.get(key).push(pts); }
@@ -637,8 +644,34 @@ function drawTopoPlan(doc, ctx, B, f, p) {
   }
   B.stroke(p.path, { weight: penWeight(doc, "thin", ctx.scale), colour: col, dash: LINE_TYPES.dashed2 }, "Topography", id); B.hit(id, p.foot);
 }
+/** A tree in plan as a landscape drawing has it: the canopy's outline, branches out from the trunk, the trunk
+ *  (a conifer's canopy a star of needles, a shrub's a scalloped cloud). Seeded by its id so it never flickers. */
+function drawPlantingPlan(doc, ctx, B, f, p) {
+  const id = doc.idOf(f), { c, R, rt, form } = p.planting, S = ctx.scale, g = resolveGraphics(doc, ctx, f, "projection");
+  const col = g.colour && g.colour !== "#000000" ? g.colour : "#000", thin = penWeight(doc, "thin", S), hair = penWeight(doc, "hairline", S);
+  let seed = 0; for (const ch of id) seed = (seed * 31 + ch.charCodeAt(0)) >>> 0; const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+  const at = (r, a) => [c[0] + r * Math.cos(a), c[1] + r * Math.sin(a)], N = 48, rim = [];
+  if (form === "Conifer") for (let i = 0; i < 40; i++) rim.push(at(R * (i % 2 ? 0.94 : 1), i / 40 * TAU));
+  else if (form === "Shrub") for (let i = 0; i < N; i++) rim.push(at(R * (0.9 + 0.1 * Math.abs(Math.sin(i / N * TAU * 5))), i / N * TAU));
+  else for (let i = 0; i < N; i++) rim.push(at(R, i / N * TAU));
+  B.stroke(polyPath(rim), { weight: thin, colour: col }, "Planting", id);
+  if (form !== "Shrub") {
+    const br = [], nb = form === "Conifer" ? 16 : 7 + Math.floor(rnd() * 3);
+    for (let i = 0; i < nb; i++) { const a = (i + rnd() * 0.5) / nb * TAU, r1 = R * (form === "Conifer" ? 0.8 : 0.55 + 0.4 * rnd()); br.push(lineSeg(at(rt, a), at(r1, a)));
+      if (form !== "Conifer") { const m = at(r1 * 0.55, a), k = a + (rnd() > 0.5 ? 0.5 : -0.5); br.push(lineSeg(m, [m[0] + r1 * 0.3 * Math.cos(k), m[1] + r1 * 0.3 * Math.sin(k)])); } }
+    B.stroke(br, { weight: hair, colour: col }, "Planting", id);
+    const tk = []; for (let i = 0; i < 16; i++) tk.push(at(Math.max(rt, 40 * S / 50), i / 16 * TAU));
+    B.fill(polyPath(tk), col, "Planting", id);
+  }
+  B.hit(id, rim);
+}
 /** A height as the project writes it: millimetres, or feet and inches in an imperial project. */
-function fmtLevel(doc, z) { const u = doc.meta && doc.meta.displayUnits; return isImperial(u) ? fmtLength(z, { unit: u }) : String(Math.round(z)); }
+function fmtLevel(doc, z) {
+  // on the survey's datum when the project has one (the height of the model's zero): metres, or feet
+  const u = doc.meta && doc.meta.displayUnits, sd = doc.meta && doc.meta.surveyElevation;
+  if (sd != null) { const a = z + sd; return isImperial(u) ? `${Math.round(a / 304.8 * 10) / 10}'` : (a / 1000).toFixed(2); }
+  return isImperial(u) ? fmtLength(z, { unit: u }) : String(Math.round(z));
+}
 function ruleMatch(doc, f, rule) { try { return matches(doc, f, rule.when); } catch (e) { return false; } }
 const DEPT = ["#dce9f7", "#f8e3cf", "#dff1e2", "#f3dcec", "#fff2c4", "#e4e0f7", "#d8f0f0"];
 export function departmentColour(v) { let h = 0; for (const c of v) h = (h * 31 + c.charCodeAt(0)) >>> 0; return DEPT[h % DEPT.length]; }
@@ -1375,7 +1408,7 @@ function gatherElevationItems(doc, ctx, G, skip = null) {
     if (!categoryVisible(ctx, categoryOf(doc, f)) || hiddenByRule(doc, ctx, f)) continue;
     const t = doc.typeOf(f);
     if (t === "Wall") { const w = doc.plan(f); if (!w) continue; const it = elevWall(doc, f, w, V, sOf, depthOf, ctx); if (it) items.push(it); }
-    if ((t === "Generic" || t === "Duct" || t === "Pipe" || t === "Roof" || t === "Lattice" || t === "Stair" || t === "Toposurface") && doc.plan(f) && doc.plan(f).mesh) {
+    if ((t === "Generic" || t === "Duct" || t === "Pipe" || t === "Roof" || t === "Lattice" || t === "Stair" || t === "Toposurface" || t === "Planting") && doc.plan(f) && doc.plan(f).mesh) {
       // a body of its own shape: its feature edges, projected; hidden by what stands in front of it
       const p = doc.plan(f), P = p.mesh.positions, curves = [];
       let d0 = Infinity, d1 = -Infinity, s0 = Infinity, s1 = -Infinity, z0 = Infinity, z1 = -Infinity;
@@ -1437,7 +1470,9 @@ function drawDatums(doc, ctx, B, v, G) {
     const hp = B.P([ext[1], z]);
     B.stroke(polyPath([hp, add(hp, [2, 2]), add(hp, [4, 0]), add(hp, [2, -2])]), { weight: 0.25, colour: "#000" }, "IfcBuildingStorey", doc.idOf(f), true);
     B.text(add(hp, [5.5, 0.6]), F.text(f, "name"), 2.5, { layer: "IfcBuildingStorey", id: doc.idOf(f) });
-    B.text(add(hp, [5.5, -3.2]), (z + Z0 >= 0 ? "+" : "") + ((z + Z0) / 1000).toFixed(3), 2.0, { layer: "IfcBuildingStorey", id: doc.idOf(f) });
+    // the height from the project's zero, or on the survey's datum when the project has one
+    const sd = (doc.meta && doc.meta.surveyElevation) || 0, zz = z + Z0 + sd, im = sd && isImperial(doc.meta.displayUnits);
+    B.text(add(hp, [5.5, -3.2]), im ? `${Math.round(zz / 304.8 * 10) / 10}'` : (zz >= 0 ? "+" : "") + (zz / 1000).toFixed(3), 2.0, { layer: "IfcBuildingStorey", id: doc.idOf(f) });
     B.hit(doc.idOf(f), [[ext[0], z - 50], [ext[1], z - 50], [ext[1], z + 50], [ext[0], z + 50]]);
   }
   // dimensions placed in this view: heights between horizontal planes (levels, a slab's faces, a sill…) as a
@@ -1686,7 +1721,7 @@ export function sectionCut(doc, v) {
         }
       }
     }
-    if ((t === "Generic" || t === "Duct" || t === "Pipe" || t === "Roof" || t === "Lattice" || t === "Stair" || t === "Toposurface") && p.mesh) {
+    if ((t === "Generic" || t === "Duct" || t === "Pipe" || t === "Roof" || t === "Lattice" || t === "Stair" || t === "Toposurface" || t === "Planting") && p.mesh) {
       // a body of its own shape, cut by the section plane: turned into (along, up, depth) and sliced at depth 0
       const P = p.mesh.positions, Q = new Array(P.length); let lo = Infinity, hi = -Infinity;
       for (let i = 0; i < P.length; i += 3) { const q = [P[i], P[i + 1]], dd = G.depthOf(q); Q[i] = G.sOf(q); Q[i + 1] = P[i + 2] - G.Z0; Q[i + 2] = dd; lo = Math.min(lo, dd); hi = Math.max(hi, dd); }

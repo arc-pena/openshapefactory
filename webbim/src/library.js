@@ -125,6 +125,7 @@ export const CATEGORIES = {
   StructuralConnections: { name: "Structural Connections", subcategories: { Common: { cut: "thin", projection: "thin", beyond: "hairline" } } },
   Topography:        { name: "Topography", subcategories: { Common: { cut: "medium", projection: "hairline", beyond: "hairline" } } },
   Planting:          { name: "Planting", subcategories: { Common: { cut: "thin", projection: "thin", beyond: "hairline" } } },
+  Planting:          { name: "Planting", subcategories: { Common: { cut: "thin", projection: "thin", beyond: "hairline" } } },
   Earthworks:        { name: "Earthworks", subcategories: { Common: { cut: "medium", projection: "thin", beyond: "hairline" } } },
 };
 

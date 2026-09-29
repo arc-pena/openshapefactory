@@ -36,7 +36,7 @@ import { bimToCad, cadEditsToOps, cadDiff, mergeModel } from "./cadbridge.js";
 import { importIfc } from "./ifcimport.js";
 
 const VIEW_TYPES = ["PlanView", "ElevationView", "SectionView", "View3D", "Schedule", "Sheet", "DraftingView"];
-const PLACE_TOOLS = new Set(["section", "floor", "beam", "wall", "opening", "door", "window", "column", "grid", "text", "dim", "space", "elev", "sep", "mtag"]);
+const PLACE_TOOLS = new Set(["section", "floor", "beam", "wall", "opening", "door", "window", "column", "planting", "grid", "text", "dim", "space", "elev", "sep", "mtag"]);
 
 const app = {
   doc: null, editor: null, selection: new Set(), activeView: null, tabs: [], tool: "select",
@@ -193,6 +193,7 @@ const COMMANDS = {
   window: tool("window", "Window", "window", "WN", "Click a wall to place a window (plan or 3D)."),
   opening: tool("opening", "Wall Opening", "opening", "OP", "Click a wall: an opening with nothing in it."),
   column: tool("column", "Column", "column", "CL", "Click to place (plan or 3D)."),
+  planting: tool("planting", "Tree", "planting", "TR", "Click to plant: it stands on the toposurface under it (or the level); form, height and canopy in the options bar."),
   floor: { label: "Floor", icon: "floor", key: "SB", hint: "Sketch the floor's boundary: lines, arcs, circles, splines, Pick Walls. Closed loops inside are holes. Finish ✓ makes the floor; its layers hang down from the level.", run: () => startFloorSketch(), active: () => !!(app.sketch && app.sketch.target.kind === "floor") },
   stair: { label: "Stair", icon: "stair", key: "ST", hint: "Draw each flight as a line, bottom first (first riser to last): landings join them. It rises to the next level; its risers are counted and numbered.", run: () => startKindSketch("stair", "a stair") },
   roof: { label: "Roof", icon: "roof", key: "RO", hint: "Sketch the roof's footprint (with its overhang): every edge slopes; set an edge to null for a gable, or a ridge height. Ridges, hips and valleys are found.", run: () => startKindSketch("roof", "a roof") },
@@ -292,7 +293,7 @@ const RIBBON = [
   { tab: "Architecture", panels: [
     { title: "Build", items: [big("wall"), big("door"), big("window"), big("column"), big("floor"), big("roof")] },
     { title: "Circulation", items: [big("stair")] },
-    { title: "Site", items: [big("topo")] },
+    { title: "Site", items: [big("topo"), big("planting")] },
     { title: "Opening", items: [big("opening")] },
     { title: "Room & Area", items: [big("space"), small("sep"), small("schedule")] },
     { title: "Program", items: [big("spacegraph"), small("sgimport"), small("sgbrief")] },
@@ -556,6 +557,7 @@ function renderOptionsBar() {
     // a catalogue section (American, European, British, Australian) loads as a type and is picked at once
     const loadSec = (key, cat) => h("button", { class: "btn small", title: "Wide flange, rectangular and circular hollow sections from the AISC, EN, BS and AS/NZS catalogues", onclick: () => sectionPicker(app, cat, id => { o[key] = id; app.refresh(); }) }, "Load section…");
     if (t === "beam") kids = [sel("beamType", typesOf("IfcBeam").map(([id, x]) => [id, x.name]), "Type:"), loadSec("beamType", "IfcBeam"), num("beamTop", "Top offset:")];
+    if (t === "planting") { o.treeHeight ??= 9000; o.treeCanopy ??= 6000; kids = [sel("treeForm", [["Deciduous", "Deciduous"], ["Conifer", "Conifer"], ["Shrub", "Shrub"]], "Form:"), num("treeHeight", "Height:"), num("treeCanopy", "Canopy:")]; }
     if (t === "column") kids = [sel("columnType", typesOf("IfcColumn").map(([id, x]) => [id, x.name]), "Type:"), loadSec("columnType", "IfcColumn"), levelPicker()];
     if (t === "space") kids = [h("label", {}, "Name: ", h("input", { type: "text", value: o.spaceName, style: { width: "110px" }, onchange: e => { o.spaceName = e.target.value; } })), sel("boundaryAt", [["finishFace", "Finish face (net)"], ["coreFace", "Core face"], ["coreCentre", "Core centre"], ["wallCentre", "Wall centre (gross)"]], "Boundary:")];
     if (t === "move") kids = [chk("moveCopy", "Copy")];
@@ -639,7 +641,7 @@ function rowClick(key, single, dbl) {
 }
 const ELEMENT_ICON = { Wall: "wall", Door: "door", Window: "window", Column: "column", Floor: "floor", Beam: "beam", Grid: "grid", Level: "level", Space: "room", Text: "text", Dimension: "dim",
   SectionView: "section", ElevationView: "elevview", PlanView: "plan", RoomSeparator: "sepline", DetailLine: "skline", FilledRegion: "skrect", SymbolInstance: "symbol", CADImport: "importI", Generic: "column", Furniture: "select" };
-const BODY_TYPES = new Set(["Wall", "Column", "Door", "Window", "Floor", "Beam", "Generic", "Duct", "Pipe", "Roof", "Stair", "Toposurface"]);
+const BODY_TYPES = new Set(["Wall", "Column", "Door", "Window", "Floor", "Beam", "Generic", "Duct", "Pipe", "Roof", "Stair", "Toposurface", "Planting"]);
 /** What a view shows that can be picked in it - the inclusion test is "visible and editable here": the
  *  ids its drawing publishes as hits (plans, elevations, sections), or the bodies it shows (3D).
  *  Cached per model and view revision; with `quick`, an uncached view is worked out in the background

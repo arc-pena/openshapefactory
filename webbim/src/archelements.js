@@ -331,3 +331,47 @@ export function attachedProfile(doc, rf, a, b, z0, fallback) {
     return [Math.round(t * L * 10) / 10, z == null ? fallback : Math.max(1, Math.round((z - z0) * 10) / 10)]; });
   return prof;
 }
+
+// ---------------------------------------------------------------- planting: a tree or shrub, standing on the ground
+declare({ type: "Planting", guid: "wb-0412", category: "Planting", kind: "planting", idPrefix: "PL",
+  summary: "A tree or shrub: trunk and canopy in 3D, standing on a toposurface (or a level); in plan its canopy with branches and trunk.",
+  args: [ json("position", "Position", [0, 0]), ref("topo", "Stands on toposurface", ["topo"], { group: "Constraints" }),
+          ref("level", "Level (without a toposurface)", ["level"], { group: "Constraints" }), real("offset", "Offset", 0, -1e5, 1e5, 1, "mm", { group: "Constraints" }),
+          choice("form", "Form", ["Deciduous", "Conifer", "Shrub"], 0), real("height", "Height", 9000, 300, 60000, 1, "mm", { group: "Dimensions" }),
+          real("canopy", "Canopy diameter", 6000, 300, 40000, 1, "mm", { group: "Dimensions" }), real("trunk", "Trunk diameter", 300, 20, 3000, 1, "mm", { group: "Dimensions" }),
+          text("species", "Species", ""), bool("existing", "Existing (to remain)", true, { group: "Phasing" }) ],
+  handles: (f) => [{ key: "move", at: F.json(f, "position"), constraint: "free2d", writes: "position" }] });
+/** The ground's height under a point: the toposurface's top triangles (null off its edge). */
+export function groundAt(doc, topo, q) {
+  const p = topo && doc.plan(topo); if (!p || !p.mesh) return null;
+  const P = p.mesh.positions, I = p.mesh.index; let best = null;
+  for (let k = 0; k < I.length; k += 3) {
+    const a = I[k] * 3, b = I[k + 1] * 3, c = I[k + 2] * 3, ax = P[a], ay = P[a + 1], bx = P[b], by = P[b + 1], cx = P[c], cy = P[c + 1];
+    const d = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy); if (d <= 1e-9) continue;   // upward faces only
+    const u = ((by - cy) * (q[0] - cx) + (cx - bx) * (q[1] - cy)) / d, v = ((cy - ay) * (q[0] - cx) + (ax - cx) * (q[1] - cy)) / d, w = 1 - u - v;
+    if (u < -1e-9 || v < -1e-9 || w < -1e-9) continue;
+    const z = u * P[a + 2] + v * P[b + 2] + w * P[c + 2]; if (best == null || z > best) best = z;
+  }
+  return best;
+}
+BUILDERS.Planting = {
+  build: (f, doc) => {
+    const c = F.json(f, "position") || [0, 0], topo = F.reference(f, "topo"), lv = F.reference(f, "level");
+    const g = topo ? groundAt(doc, topo, c) : null, z0 = (g != null ? g : lv ? (doc.data(lv) || {}).value || 0 : 0) + (F.real(f, "offset") || 0);
+    const form = F.choice(f, "form"), H = F.real(f, "height"), R = F.real(f, "canopy") / 2, rt = F.real(f, "trunk") / 2, tris = [];
+    const n = 12, ring = (r, z) => Array.from({ length: n }, (_, i) => [c[0] + r * Math.cos(i / n * 2 * Math.PI), c[1] + r * Math.sin(i / n * 2 * Math.PI), z]);
+    const band = (A, B) => { for (let i = 0; i < n; i++) { const j = (i + 1) % n; tris.push([A[i], A[j], B[j]], [A[i], B[j], B[i]]); } };
+    const cap = (A, z, up) => { const m = [c[0], c[1], z]; for (let i = 0; i < n; i++) { const j = (i + 1) % n; tris.push(up ? [m, A[i], A[j]] : [m, A[j], A[i]]); } };
+    // the trunk up into the canopy, then the canopy: a lathe of rings (a round head, a cone, a low mound)
+    const cz0 = form === "Shrub" ? z0 : form === "Conifer" ? z0 + H * 0.15 : z0 + H * 0.35, tt = form === "Shrub" ? z0 : cz0 + (H - cz0 + z0) * 0.3;
+    if (form !== "Shrub") { const t0 = ring(rt, z0), t1 = ring(rt * 0.7, tt); band(t0, t1); cap(t0, z0, false); }
+    const prof = form === "Conifer" ? [[0.9, 0], [0.55, 0.45], [0.25, 0.8], [0.02, 1]] : [[0.25, 0], [0.8, 0.15], [1, 0.45], [0.85, 0.75], [0.45, 0.95], [0.02, 1]];
+    const rings = prof.map(([r, t]) => ring(R * r, cz0 + (z0 + H - cz0) * t));
+    for (let i = 0; i + 1 < rings.length; i++) band(rings[i], rings[i + 1]);
+    cap(rings[0], cz0, false); cap(rings[rings.length - 1], z0 + H, true);
+    const body = bodyOf(tris), foot = ring(R, 0).map(p => [p[0], p[1]]);
+    const colour = F.bool(f, "existing") ? "#7f9a6a" : "#93b07a";
+    return { plan: { path: polyPath(foot), foot, z0, z1: z0 + H, mesh: body, mesh3d: [{ positions: body.positions, index: body.index, colour }], planting: { c, R, rt, form } },
+      data: { props: { Species: { kind: "Text", v: F.text(f, "species") || form }, Height: LEN(H), "Canopy diameter": LEN(2 * R), "Ground height": LEN(z0) } } };
+  },
+};

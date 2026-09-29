@@ -1083,7 +1083,8 @@ declare({ type: "SiteBoundary", guid: "wb-0903", category: "Site", kind: "site",
   args: [ json("sketch", "Boundary sketch", { elements: [], constraints: [], dims: [] }), json("edges", "Edges", {}),
           real("setback", "Default setback", 0, 0, 1e6, 1, "mm", { group: "Setbacks" }),
           ref("level", "Level", ["level"]), bool("showPlanes", "Show zoning planes in 3D", false, { group: "Zoning" }),
-          real("planeHeight", "Zoning planes drawn to", 60000, 1000, 1e6, 1, "mm", { group: "Zoning" }) ] });
+          real("planeHeight", "Zoning planes drawn to", 60000, 1000, 1e6, 1, "mm", { group: "Zoning" }),
+          bool("label", "Write the site area in plan", true, { group: "Graphics" }) ] });
 /** A closed sketch as one loop of points, counter-clockwise, with the sketch element each segment came from. */
 export function siteLoop(sketch) {
   const polys = [];

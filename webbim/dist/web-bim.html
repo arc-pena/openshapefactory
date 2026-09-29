@@ -2034,6 +2034,7 @@ const CATEGORIES = {
   StructuralConnections: { name: "Structural Connections", subcategories: { Common: { cut: "thin", projection: "thin", beyond: "hairline" } } },
   Topography:        { name: "Topography", subcategories: { Common: { cut: "medium", projection: "hairline", beyond: "hairline" } } },
   Planting:          { name: "Planting", subcategories: { Common: { cut: "thin", projection: "thin", beyond: "hairline" } } },
+  Planting:          { name: "Planting", subcategories: { Common: { cut: "thin", projection: "thin", beyond: "hairline" } } },
   Earthworks:        { name: "Earthworks", subcategories: { Common: { cut: "medium", projection: "thin", beyond: "hairline" } } },
 };
 
@@ -7331,6 +7332,81 @@ function contoursFromDXF(text, unitless = "mm") {
   return { contours: out, flat };
 }
 
+/** A roof's underside as a height anywhere under it, and the lines where it folds (so a wall attached to it can
+ *  put a corner of its top exactly there): the footprint roof's planes each less its thickness along the slope,
+ *  or the single plane. null outside the roof's footprint. */
+function roofUnderside(doc, rf) {
+  const outer = F.json(rf, "boundary"); if (!Array.isArray(outer) || outer.length < 3) return null;
+  const z0 = levelZ(doc, rf, "level") + F.real(rf, "heightOffset"), th = F.real(rf, "thickness"), es = F.json(rf, "edgeSlopes") || [];
+  const O = ccwOf(outer);
+  if (es.length) {
+    const { regions, at } = roofPlanes(outer, es, z0, F.real(rf, "ridgeHeight"));
+    const under = p => { for (const r of regions) if (pointInPoly(p, r.poly)) return at(r.e, p) - th * Math.sqrt(1 + r.e.t * r.e.t); return null; };
+    return { under, polys: regions.map(r => r.poly), inside: p => pointInPoly(p, O) };
+  }
+  const pv = F.point(rf, "pivot"), a = F.real(rf, "pitch") * Math.PI / 180, dA = F.real(rf, "direction") * Math.PI / 180, d = [Math.cos(dA), Math.sin(dA)], k = Math.tan(a), tv = th / Math.cos(a);
+  return { under: p => (pointInPoly(p, O) ? z0 + k * ((p[0] - pv[0]) * d[0] + (p[1] - pv[1]) * d[1]) - tv : null), polys: [O], inside: p => pointInPoly(p, O) };
+}
+/** A wall's top profile under a roof: [distance along the wall, height above its base] at its ends and wherever
+ *  the roof folds over it; where the wall runs out from under the roof it keeps `fallback`. */
+function attachedProfile(doc, rf, a, b, z0, fallback) {
+  const R = roofUnderside(doc, rf); if (!R) return null;
+  const d = sub(b, a), L = Math.hypot(d[0], d[1]); if (!L) return null;
+  const ts = new Set([0, 1]);
+  for (const poly of R.polys) for (let i = 0; i < poly.length; i++) {
+    const p = poly[i], q = poly[(i + 1) % poly.length], e = sub(q, p), den = d[0] * e[1] - d[1] * e[0]; if (Math.abs(den) < 1e-9) continue;
+    const w = sub(p, a), t = (w[0] * e[1] - w[1] * e[0]) / den, s = (w[0] * d[1] - w[1] * d[0]) / den;
+    if (t > 1e-6 && t < 1 - 1e-6 && s >= -1e-6 && s <= 1 + 1e-6) ts.add(Math.round(t * 1e6) / 1e6);
+  }
+  const prof = [...ts].sort((x, y) => x - y).map(t => { const p = [a[0] + d[0] * t, a[1] + d[1] * t], z = R.under(p) ?? R.under([p[0] + (t < 0.5 ? 1 : -1) * d[0] * 1e-4, p[1] + (t < 0.5 ? 1 : -1) * d[1] * 1e-4]);
+    return [Math.round(t * L * 10) / 10, z == null ? fallback : Math.max(1, Math.round((z - z0) * 10) / 10)]; });
+  return prof;
+}
+
+// ---------------------------------------------------------------- planting: a tree or shrub, standing on the ground
+declare({ type: "Planting", guid: "wb-0412", category: "Planting", kind: "planting", idPrefix: "PL",
+  summary: "A tree or shrub: trunk and canopy in 3D, standing on a toposurface (or a level); in plan its canopy with branches and trunk.",
+  args: [ json("position", "Position", [0, 0]), ref("topo", "Stands on toposurface", ["topo"], { group: "Constraints" }),
+          ref("level", "Level (without a toposurface)", ["level"], { group: "Constraints" }), real("offset", "Offset", 0, -1e5, 1e5, 1, "mm", { group: "Constraints" }),
+          choice("form", "Form", ["Deciduous", "Conifer", "Shrub"], 0), real("height", "Height", 9000, 300, 60000, 1, "mm", { group: "Dimensions" }),
+          real("canopy", "Canopy diameter", 6000, 300, 40000, 1, "mm", { group: "Dimensions" }), real("trunk", "Trunk diameter", 300, 20, 3000, 1, "mm", { group: "Dimensions" }),
+          text("species", "Species", ""), bool("existing", "Existing (to remain)", true, { group: "Phasing" }) ],
+  handles: (f) => [{ key: "move", at: F.json(f, "position"), constraint: "free2d", writes: "position" }] });
+/** The ground's height under a point: the toposurface's top triangles (null off its edge). */
+function groundAt(doc, topo, q) {
+  const p = topo && doc.plan(topo); if (!p || !p.mesh) return null;
+  const P = p.mesh.positions, I = p.mesh.index; let best = null;
+  for (let k = 0; k < I.length; k += 3) {
+    const a = I[k] * 3, b = I[k + 1] * 3, c = I[k + 2] * 3, ax = P[a], ay = P[a + 1], bx = P[b], by = P[b + 1], cx = P[c], cy = P[c + 1];
+    const d = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy); if (d <= 1e-9) continue;   // upward faces only
+    const u = ((by - cy) * (q[0] - cx) + (cx - bx) * (q[1] - cy)) / d, v = ((cy - ay) * (q[0] - cx) + (ax - cx) * (q[1] - cy)) / d, w = 1 - u - v;
+    if (u < -1e-9 || v < -1e-9 || w < -1e-9) continue;
+    const z = u * P[a + 2] + v * P[b + 2] + w * P[c + 2]; if (best == null || z > best) best = z;
+  }
+  return best;
+}
+BUILDERS.Planting = {
+  build: (f, doc) => {
+    const c = F.json(f, "position") || [0, 0], topo = F.reference(f, "topo"), lv = F.reference(f, "level");
+    const g = topo ? groundAt(doc, topo, c) : null, z0 = (g != null ? g : lv ? (doc.data(lv) || {}).value || 0 : 0) + (F.real(f, "offset") || 0);
+    const form = F.choice(f, "form"), H = F.real(f, "height"), R = F.real(f, "canopy") / 2, rt = F.real(f, "trunk") / 2, tris = [];
+    const n = 12, ring = (r, z) => Array.from({ length: n }, (_, i) => [c[0] + r * Math.cos(i / n * 2 * Math.PI), c[1] + r * Math.sin(i / n * 2 * Math.PI), z]);
+    const band = (A, B) => { for (let i = 0; i < n; i++) { const j = (i + 1) % n; tris.push([A[i], A[j], B[j]], [A[i], B[j], B[i]]); } };
+    const cap = (A, z, up) => { const m = [c[0], c[1], z]; for (let i = 0; i < n; i++) { const j = (i + 1) % n; tris.push(up ? [m, A[i], A[j]] : [m, A[j], A[i]]); } };
+    // the trunk up into the canopy, then the canopy: a lathe of rings (a round head, a cone, a low mound)
+    const cz0 = form === "Shrub" ? z0 : form === "Conifer" ? z0 + H * 0.15 : z0 + H * 0.35, tt = form === "Shrub" ? z0 : cz0 + (H - cz0 + z0) * 0.3;
+    if (form !== "Shrub") { const t0 = ring(rt, z0), t1 = ring(rt * 0.7, tt); band(t0, t1); cap(t0, z0, false); }
+    const prof = form === "Conifer" ? [[0.9, 0], [0.55, 0.45], [0.25, 0.8], [0.02, 1]] : [[0.25, 0], [0.8, 0.15], [1, 0.45], [0.85, 0.75], [0.45, 0.95], [0.02, 1]];
+    const rings = prof.map(([r, t]) => ring(R * r, cz0 + (z0 + H - cz0) * t));
+    for (let i = 0; i + 1 < rings.length; i++) band(rings[i], rings[i + 1]);
+    cap(rings[0], cz0, false); cap(rings[rings.length - 1], z0 + H, true);
+    const body = bodyOf(tris), foot = ring(R, 0).map(p => [p[0], p[1]]);
+    const colour = F.bool(f, "existing") ? "#7f9a6a" : "#93b07a";
+    return { plan: { path: polyPath(foot), foot, z0, z1: z0 + H, mesh: body, mesh3d: [{ positions: body.positions, index: body.index, colour }], planting: { c, R, rt, form } },
+      data: { props: { Species: { kind: "Text", v: F.text(f, "species") || form }, Height: LEN(H), "Canopy diameter": LEN(2 * R), "Ground height": LEN(z0) } } };
+  },
+};
+
 // ===== bim.js =====
 //! The application layer (spec §4–§11): every element type is two declarations —
 //! a catalogue entry and a driver — and nothing else. The panel, the tree, the
@@ -7445,6 +7521,8 @@ declare({ type: "Wall", guid: "wb-0101", category: "IfcWall", kind: "wall", idPr
     json("slope", "Inclination & top slope", { top: 0, lean: 0 }, { group: "Constraints" }),
     // Revit's Edit Profile for the top: [distance along the wall, height above the base] - a gable, steps
     json("topProfile", "Top profile", null, { group: "Constraints" }),
+    // Revit's Attach Top: the wall's top follows the underside of a roof above it (a gable end, a clerestory)
+    ref("attachTop", "Top attached to roof", ["roof"], { group: "Constraints" }),
   ],
   handles: (f, doc) => {
     const c = F.json(f, "centreline"), w = doc.plan(f);
@@ -7467,10 +7545,16 @@ BUILDERS.Wall = {
     if (!t.layers || !t.layers.length) throw new Error(`${t.name || t.id} has no layers`);
     const z0 = levelElev(doc, f) + F.real(f, "baseOffset");
     const top = F.reference(f, "topLevel");
-    const height = top ? levelElev(doc, f, "topLevel") + (F.real(f, "topOffset") || 0) - z0 : F.real(f, "height");
+    let height = top ? levelElev(doc, f, "topLevel") + (F.real(f, "topOffset") || 0) - z0 : F.real(f, "height");
+    let topProfile = F.json(f, "topProfile");
+    const roofTop = F.reference(f, "attachTop");
+    if (roofTop && F.json(f, "centreline").type === "line") {
+      const c = F.json(f, "centreline"), pr = attachedProfile(doc, roofTop, c.start, c.end, z0, height);
+      if (pr && pr.length >= 2) { topProfile = pr; height = Math.max(...pr.map(q => q[1])); }
+    }
     if (!(height > 0)) throw new Error(top ? `its top (${F.text(top, "name") || doc.idOf(top)} ${(F.real(f, "topOffset") || 0) >= 0 ? "+" : ""}${F.real(f, "topOffset") || 0}) is not above its base: ${Math.round(height)}mm` : `a wall ${height}mm high has nothing to draw`);
     const w = wallRecord({ id: doc.idOf(f), centreline: F.json(f, "centreline"), type: t, mounting: F.choice(f, "mounting"),
-      mountOffset: F.real(f, "mountOffset"), flipped: F.bool(f, "flipped"), z0, height, slope: F.json(f, "slope"), stats: doc.stats, zFloor: levelElev(doc, f) + ((F.json(f, "slope") || {}).pivotZ || 0), topProfile: F.json(f, "topProfile") });
+      mountOffset: F.real(f, "mountOffset"), flipped: F.bool(f, "flipped"), z0, height, slope: F.json(f, "slope"), stats: doc.stats, zFloor: levelElev(doc, f) + ((F.json(f, "slope") || {}).pivotZ || 0), topProfile });
     if (w.L < TOL) throw new Error("the centreline has no length");
     const len = w.L, thick = w.stack.T;
     // the face's area: under its top profile (a gable), or its length times its height
@@ -8401,7 +8485,8 @@ declare({ type: "SiteBoundary", guid: "wb-0903", category: "Site", kind: "site",
   args: [ json("sketch", "Boundary sketch", { elements: [], constraints: [], dims: [] }), json("edges", "Edges", {}),
           real("setback", "Default setback", 0, 0, 1e6, 1, "mm", { group: "Setbacks" }),
           ref("level", "Level", ["level"]), bool("showPlanes", "Show zoning planes in 3D", false, { group: "Zoning" }),
-          real("planeHeight", "Zoning planes drawn to", 60000, 1000, 1e6, 1, "mm", { group: "Zoning" }) ] });
+          real("planeHeight", "Zoning planes drawn to", 60000, 1000, 1e6, 1, "mm", { group: "Zoning" }),
+          bool("label", "Write the site area in plan", true, { group: "Graphics" }) ] });
 /** A closed sketch as one loop of points, counter-clockwise, with the sketch element each segment came from. */
 function siteLoop(sketch) {
   const polys = [];
@@ -12198,7 +12283,9 @@ function planScene(doc, v, opts = {}) {
   // floors first: a floor meeting a wall disappears under the wall's cut, as it does on paper
   const els = doc.elements().filter(f => (f.get("Integer") !== 0 && !doc.error(f) || doc.typeOf(f) === "Wall") && !hiddenByRule(doc, ctx, f))
     .map((f, i) => [f, i]).sort((a, b) => (doc.typeOf(b[0]) === "Floor") - (doc.typeOf(a[0]) === "Floor") || a[1] - b[1]).map(([f]) => f);
-  const vis = f => categoryVisible(ctx, categoryOf(doc, f)) && f.get("Integer") !== 0;
+  // Revit's Hide in View: an element the view's overrides mark invisible is left out here only
+  const hov = doc.argValue(v, "overrides") || {};
+  const vis = f => categoryVisible(ctx, categoryOf(doc, f)) && f.get("Integer") !== 0 && (hov[doc.idOf(f)] || {}).visible !== false;
   const onlyHere = f => { const r = F.refId(f, "view"); return !r || r === doc.idOf(v); };
   const place = placements(doc);
   const stat = { walls: 0, offsetsBefore: doc.stats.offsets };
@@ -12235,7 +12322,7 @@ function planScene(doc, v, opts = {}) {
       B.stroke(polyPath(p.pts), { weight: penWeight(doc, "bold", S), colour: "#1b1f24", dash: [9, 1.5, 1.2, 1.5, 1.2, 1.5] }, "Site", id);
       if (p.setbacks.some(x => x > 0)) B.stroke(polyPath(p.buildable), { weight: penWeight(doc, "thin", S), colour: "#d0312d", dash: LINE_TYPES.dashed1 }, "Site", id);
       const c = p.pts.reduce((a, q) => add(a, q), [0, 0]).map(v => v / p.pts.length), d = doc.data(f);
-      if (d && d.props) B.text(add(B.P(c), [0, 0]), `SITE ${fmtArea(d.props["Site area"].v)}`, 3.5, { align: "centre", layer: "Site", id, colour: "#1b1f24" });
+      if (d && d.props && F.bool(f, "label") !== false) B.text(add(B.P(c), [0, 0]), `SITE ${fmtArea(d.props["Site area"].v)}`, 3.5, { align: "centre", layer: "Site", id, colour: "#1b1f24" });
       B.hit(id, p.pts, "curve");
     }
     if (t === "Massing" && vis(f)) {
@@ -12287,6 +12374,7 @@ function planScene(doc, v, opts = {}) {
     }
     if (t === "Stair" && vis(f)) { const p = doc.plan(f); if (p && p.stair) drawStairPlan(doc, ctx, B, f, p, { cutZ, topZ, botZ, E }); continue; }
     if (t === "Toposurface" && vis(f)) { const p = doc.plan(f); if (p && p.mesh) drawTopoPlan(doc, ctx, B, f, p); continue; }
+    if (t === "Planting" && vis(f)) { const p = doc.plan(f); if (p && p.planting) drawPlantingPlan(doc, ctx, B, f, p); continue; }
     if ((t === "Generic" || t === "Roof") && vis(f)) {
       const p = doc.plan(f); if (!p) continue;
       const catG = categoryOf(doc, f);
@@ -12591,6 +12679,10 @@ function drawStairPlan(doc, ctx, B, f, p, V) {
 function drawTopoPlan(doc, ctx, B, f, p) {
   const id = doc.idOf(f), gp = resolveGraphics(doc, ctx, f, "projection"), iv = Math.max(10, F.real(f, "interval") || 500), mj = Math.max(1, F.int(f, "major") || 5);
   const P = p.mesh.positions, I = p.mesh.index, minor = [], major = [], majSegs = new Map();
+  // the grade runs under the building: contours stop at the floors' footprints, as a site plan draws them
+  const bld = [];
+  for (const g of doc.elements()) if (doc.typeOf(g) === "Floor") { const q = doc.plan(g); if (q && Array.isArray(q.foot) && q.foot.length > 2 && Array.isArray(q.foot[0])) bld.push(q.foot); }
+  const under = (a, b) => { const m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]; return bld.some(poly => pointInPoly(m, poly)); };
   for (let k = 0; k < I.length; k += 3) {
     const q = [0, 1, 2].map(e => { const a = I[k + e] * 3; return [P[a], P[a + 1], P[a + 2]]; });
     const nz = (q[1][0] - q[0][0]) * (q[2][1] - q[0][1]) - (q[1][1] - q[0][1]) * (q[2][0] - q[0][0]);
@@ -12599,7 +12691,7 @@ function drawTopoPlan(doc, ctx, B, f, p) {
     for (let z = Math.ceil((zl - 1e-6) / iv) * iv; z <= zh + 1e-6; z += iv) {
       const pts = [];
       for (let i = 0; i < 3; i++) { const a = q[i], b = q[(i + 1) % 3], da = a[2] - z, db = b[2] - z; if ((da < 0 && db >= 0) || (da >= 0 && db < 0)) { const t = da / (da - db); pts.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]); } }
-      if (pts.length !== 2) continue;
+      if (pts.length !== 2 || under(pts[0], pts[1])) continue;
       const isMaj = Math.round(z / iv) % mj === 0;
       (isMaj ? major : minor).push(lineSeg(pts[0], pts[1]));
       if (isMaj) { const key = Math.round(z); if (!majSegs.has(key)) majSegs.set(key, []); majSegs.get(key).push(pts); }
@@ -12616,8 +12708,34 @@ function drawTopoPlan(doc, ctx, B, f, p) {
   }
   B.stroke(p.path, { weight: penWeight(doc, "thin", ctx.scale), colour: col, dash: LINE_TYPES.dashed2 }, "Topography", id); B.hit(id, p.foot);
 }
+/** A tree in plan as a landscape drawing has it: the canopy's outline, branches out from the trunk, the trunk
+ *  (a conifer's canopy a star of needles, a shrub's a scalloped cloud). Seeded by its id so it never flickers. */
+function drawPlantingPlan(doc, ctx, B, f, p) {
+  const id = doc.idOf(f), { c, R, rt, form } = p.planting, S = ctx.scale, g = resolveGraphics(doc, ctx, f, "projection");
+  const col = g.colour && g.colour !== "#000000" ? g.colour : "#000", thin = penWeight(doc, "thin", S), hair = penWeight(doc, "hairline", S);
+  let seed = 0; for (const ch of id) seed = (seed * 31 + ch.charCodeAt(0)) >>> 0; const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+  const at = (r, a) => [c[0] + r * Math.cos(a), c[1] + r * Math.sin(a)], N = 48, rim = [];
+  if (form === "Conifer") for (let i = 0; i < 40; i++) rim.push(at(R * (i % 2 ? 0.94 : 1), i / 40 * TAU));
+  else if (form === "Shrub") for (let i = 0; i < N; i++) rim.push(at(R * (0.9 + 0.1 * Math.abs(Math.sin(i / N * TAU * 5))), i / N * TAU));
+  else for (let i = 0; i < N; i++) rim.push(at(R, i / N * TAU));
+  B.stroke(polyPath(rim), { weight: thin, colour: col }, "Planting", id);
+  if (form !== "Shrub") {
+    const br = [], nb = form === "Conifer" ? 16 : 7 + Math.floor(rnd() * 3);
+    for (let i = 0; i < nb; i++) { const a = (i + rnd() * 0.5) / nb * TAU, r1 = R * (form === "Conifer" ? 0.8 : 0.55 + 0.4 * rnd()); br.push(lineSeg(at(rt, a), at(r1, a)));
+      if (form !== "Conifer") { const m = at(r1 * 0.55, a), k = a + (rnd() > 0.5 ? 0.5 : -0.5); br.push(lineSeg(m, [m[0] + r1 * 0.3 * Math.cos(k), m[1] + r1 * 0.3 * Math.sin(k)])); } }
+    B.stroke(br, { weight: hair, colour: col }, "Planting", id);
+    const tk = []; for (let i = 0; i < 16; i++) tk.push(at(Math.max(rt, 40 * S / 50), i / 16 * TAU));
+    B.fill(polyPath(tk), col, "Planting", id);
+  }
+  B.hit(id, rim);
+}
 /** A height as the project writes it: millimetres, or feet and inches in an imperial project. */
-function fmtLevel(doc, z) { const u = doc.meta && doc.meta.displayUnits; return isImperial(u) ? fmtLength(z, { unit: u }) : String(Math.round(z)); }
+function fmtLevel(doc, z) {
+  // on the survey's datum when the project has one (the height of the model's zero): metres, or feet
+  const u = doc.meta && doc.meta.displayUnits, sd = doc.meta && doc.meta.surveyElevation;
+  if (sd != null) { const a = z + sd; return isImperial(u) ? `${Math.round(a / 304.8 * 10) / 10}'` : (a / 1000).toFixed(2); }
+  return isImperial(u) ? fmtLength(z, { unit: u }) : String(Math.round(z));
+}
 function ruleMatch(doc, f, rule) { try { return matches(doc, f, rule.when); } catch (e) { return false; } }
 const DEPT = ["#dce9f7", "#f8e3cf", "#dff1e2", "#f3dcec", "#fff2c4", "#e4e0f7", "#d8f0f0"];
 function departmentColour(v) { let h = 0; for (const c of v) h = (h * 31 + c.charCodeAt(0)) >>> 0; return DEPT[h % DEPT.length]; }
@@ -13354,7 +13472,7 @@ function gatherElevationItems(doc, ctx, G, skip = null) {
     if (!categoryVisible(ctx, categoryOf(doc, f)) || hiddenByRule(doc, ctx, f)) continue;
     const t = doc.typeOf(f);
     if (t === "Wall") { const w = doc.plan(f); if (!w) continue; const it = elevWall(doc, f, w, V, sOf, depthOf, ctx); if (it) items.push(it); }
-    if ((t === "Generic" || t === "Duct" || t === "Pipe" || t === "Roof" || t === "Lattice" || t === "Stair" || t === "Toposurface") && doc.plan(f) && doc.plan(f).mesh) {
+    if ((t === "Generic" || t === "Duct" || t === "Pipe" || t === "Roof" || t === "Lattice" || t === "Stair" || t === "Toposurface" || t === "Planting") && doc.plan(f) && doc.plan(f).mesh) {
       // a body of its own shape: its feature edges, projected; hidden by what stands in front of it
       const p = doc.plan(f), P = p.mesh.positions, curves = [];
       let d0 = Infinity, d1 = -Infinity, s0 = Infinity, s1 = -Infinity, z0 = Infinity, z1 = -Infinity;
@@ -13416,7 +13534,9 @@ function drawDatums(doc, ctx, B, v, G) {
     const hp = B.P([ext[1], z]);
     B.stroke(polyPath([hp, add(hp, [2, 2]), add(hp, [4, 0]), add(hp, [2, -2])]), { weight: 0.25, colour: "#000" }, "IfcBuildingStorey", doc.idOf(f), true);
     B.text(add(hp, [5.5, 0.6]), F.text(f, "name"), 2.5, { layer: "IfcBuildingStorey", id: doc.idOf(f) });
-    B.text(add(hp, [5.5, -3.2]), (z + Z0 >= 0 ? "+" : "") + ((z + Z0) / 1000).toFixed(3), 2.0, { layer: "IfcBuildingStorey", id: doc.idOf(f) });
+    // the height from the project's zero, or on the survey's datum when the project has one
+    const sd = (doc.meta && doc.meta.surveyElevation) || 0, zz = z + Z0 + sd, im = sd && isImperial(doc.meta.displayUnits);
+    B.text(add(hp, [5.5, -3.2]), im ? `${Math.round(zz / 304.8 * 10) / 10}'` : (zz >= 0 ? "+" : "") + (zz / 1000).toFixed(3), 2.0, { layer: "IfcBuildingStorey", id: doc.idOf(f) });
     B.hit(doc.idOf(f), [[ext[0], z - 50], [ext[1], z - 50], [ext[1], z + 50], [ext[0], z + 50]]);
   }
   // dimensions placed in this view: heights between horizontal planes (levels, a slab's faces, a sill…) as a
@@ -13665,7 +13785,7 @@ function sectionCut(doc, v) {
         }
       }
     }
-    if ((t === "Generic" || t === "Duct" || t === "Pipe" || t === "Roof" || t === "Lattice" || t === "Stair" || t === "Toposurface") && p.mesh) {
+    if ((t === "Generic" || t === "Duct" || t === "Pipe" || t === "Roof" || t === "Lattice" || t === "Stair" || t === "Toposurface" || t === "Planting") && p.mesh) {
       // a body of its own shape, cut by the section plane: turned into (along, up, depth) and sliced at depth 0
       const P = p.mesh.positions, Q = new Array(P.length); let lo = Infinity, hi = -Infinity;
       for (let i = 0; i < P.length; i += 3) { const q = [P[i], P[i + 1]], dd = G.depthOf(q); Q[i] = G.sOf(q); Q[i + 1] = P[i + 2] - G.Z0; Q[i + 2] = dd; lo = Math.min(lo, dd); hi = Math.max(hi, dd); }
@@ -14227,7 +14347,7 @@ function buildHLRModel(doc, opts = {}) {
       for (let i = 0; i < ft.length; i++) { const a = ft[i], b = ft[(i + 1) % ft.length];
         edges.push({ a: [a[0], a[1], p.z0], b: [b[0], b[1], p.z0], kind: "sharp" }, { a: [a[0], a[1], p.z1], b: [b[0], b[1], p.z1], kind: "sharp" }, { a: [a[0], a[1], p.z0], b: [a[0], a[1], p.z1], kind: "sharp" }); }
       continue; }
-    if ((t === "Generic" || t === "Duct" || t === "Pipe" || t === "Roof" || t === "Lattice" || t === "Stair" || t === "Toposurface") && doc.plan(f) && doc.plan(f).mesh) { const m = doc.plan(f).mesh, P = m.positions; for (const [a, b] of featureEdges(m)) edges.push({ a: [P[a * 3], P[a * 3 + 1], P[a * 3 + 2]], b: [P[b * 3], P[b * 3 + 1], P[b * 3 + 2]], kind: "sharp" }); continue; }
+    if ((t === "Generic" || t === "Duct" || t === "Pipe" || t === "Roof" || t === "Lattice" || t === "Stair" || t === "Toposurface" || t === "Planting") && doc.plan(f) && doc.plan(f).mesh) { const m = doc.plan(f).mesh, P = m.positions; for (const [a, b] of featureEdges(m)) edges.push({ a: [P[a * 3], P[a * 3 + 1], P[a * 3 + 2]], b: [P[b * 3], P[b * 3 + 1], P[b * 3 + 2]], kind: "sharp" }); continue; }
     if (t === "Door" || t === "Window" || t === "Floor" || t === "Beam" || t === "Generic") { for (const pt of elementParts(doc, f)) if (pt.foot && pt.foot.length >= 3) {
       prism(pt.foot, pt.z0, pt.z1, solids, edges, "auto", pt.topFoot);
       // a hole's edges are drawn; its opening does not yet let the line-work see through (the occluder is the outline)
@@ -15929,6 +16049,304 @@ function buildMazatlanSample() {
 
   doc.graph.layout = {};
   doc.browser = { organisation: "by-discipline", expanded: ["Views", "Sheets"] };
+  doc.regenerate();
+  return doc;
+}
+
+// ===== sample_fha.js =====
+//! Frank Harmon Architect's drawing standards, shared by the four sample projects rebuilt from the firm's sets
+//! (Schaeffer Residence, Walnut Creek Environmental Education Center, First Presbyterian Church, AIA NC Center):
+//! the title strip along the right edge of an ARCH D sheet, Futura lettering, the firm's materials and wall,
+//! floor and roof types, its dimension and text types and view styles - and the helpers every one of the models
+//! is built with, so each is 3D first: walls from a base level to a top level (or attached to the roof), floors
+//! on their levels, roofs by footprint, stairs counted from their levels, the ground from its contours. The sets
+//! are imperial; the models are metric (feet are only how the source dimensions were read: ft()).
+
+
+
+
+const ft = v => Math.round(v * 304.8);                  // a dimension read in feet, in mm
+const FT = pts => pts.map(p => [ft(p[0]), ft(p[1])]);
+const PT = (x, y) => [ft(x), ft(y)];
+
+/** A new FHA project: the firm's standards in its library, and the helpers to build it with. */
+function fhaProject(name, project) {
+  const doc = newDocument(name);
+  doc.meta.displayUnits = "mm";
+  doc.meta.project = Object.assign({ firm: "FRANK HARMON ARCHITECT", firmAddress: "14 E PEACE STREET\nRALEIGH NORTH CAROLINA 27604", phone: "919 829 9464", fax: "919 829 2202",
+    drawn: "JB", checked: "FH", issue: "PERMIT SET" }, project);
+  doc.meta.annotation = { kind: "revit", font: "Futura", gridHead: 8, gridText: 4.2, gridEnd: 4, gridCentreColour: "#000000",
+    markerRadius: 4.5, markerText: 2.2, markerSheetText: 2.0, levelText: 2.0, levelValueText: 2.0, levelHeads: "Right" };
+  const ed = new Editor(doc), L = doc.lib;
+  const add = element => { const r = ed.apply({ op: "add", element }, { regenerate: false }); if (!r.ok) throw new Error(`${element.id || element.type}: ${r.error}`); return r.id; };
+  const set = (id, key, value) => ed.apply({ op: "set", id, key, value }, { regenerate: false });
+  const line = (a, b) => ({ type: "line", start: a, end: b });
+
+  // ---------------------------------------------------------------- pens, lettering, dimensions
+  L.pens["PEN-ISO"] = { name: "Frank Harmon Architect", pens: { gossamer: { weight: 0.1 }, hairline: { weight: 0.13 }, thin: { weight: 0.18 }, light: { weight: 0.23 },
+    medium: { weight: 0.35 }, heavy: { weight: 0.5 }, bold: { weight: 0.6 }, extra: { weight: 0.8 }, primary: { weight: 1.0 } }, perScale: {} };
+  Object.assign(L.textTypes, {
+    "TT-FH-15": { name: "Futura 1.5 (notes, keynotes)", height: 1.5, font: "Futura", widthFactor: 1, colour: "#000000", pen: "thin", lineSpacing: 1.6 },
+    "TT-FH-20": { name: "Futura 2.0 (room sizes, labels)", height: 2.0, font: "Futura", widthFactor: 1, colour: "#000000", pen: "thin", lineSpacing: 1.6 },
+    "TT-FH-25": { name: "Futura 2.5 (room names)", height: 2.5, font: "Futura", widthFactor: 1, colour: "#000000", pen: "thin", lineSpacing: 1.6 },
+    "TT-FH-35": { name: "Futura 3.5 (view titles)", height: 3.5, font: "Futura", widthFactor: 1, colour: "#000000", pen: "thin", lineSpacing: 1.6 },
+  });
+  L.dimTypes["DT-FH"] = { name: "FHA - architectural tick, Futura 2.0", arrow1: "Oblique", arrow2: "Oblique", arrowSize: 2.0, tickWeight: 0.35, lineWeight: 0.13, extWeight: 0.13,
+    dimExtend: 1.5, extFixed: 2.5, extBeyond: 1.5, font: "Futura", textHeight: 2.0, textGap: 1.0, unit: "Project", precision: 0, roundOff: 5, textSide: "Readable", fit: "Keep inside" };
+  doc.meta.defaultDimType = "DT-FH";
+
+  // ---------------------------------------------------------------- patterns and materials
+  Object.assign(L.patterns, {
+    "P-FH-SEAM": { name: "Standing seam, 406 (16\") o.c.", kind: "model", lines: [{ angle: 90, origin: [0, 0], delta: [0, 406] }] },
+    "P-FH-SIDING": { name: "Board siding, 203 (8\")", kind: "model", lines: [{ angle: 0, origin: [0, 0], delta: [0, 203] }] },
+    "P-FH-PANEL": { name: "Panel joints 1219 (4') grid", kind: "model", lines: [{ angle: 0, origin: [0, 0], delta: [0, 2438] }, { angle: 90, origin: [0, 0], delta: [0, 1219] }] },
+    "P-FH-CLAD": { name: "Vertical cladding, 305 (12\")", kind: "model", lines: [{ angle: 90, origin: [0, 0], delta: [0, 305] }] },
+    "P-FH-EARTH": { name: "Earth", kind: "drafting", lines: [{ angle: 45, origin: [0, 0], delta: [0, 1.6] }, { angle: 45, origin: [0.8, 0], delta: [0, 1.6], dashes: [0.6, -1.0] }] },
+    "P-FH-GRAVEL": { name: "Gravel", kind: "drafting", lines: [{ angle: 30, origin: [0, 0], delta: [0.9, 1.2], dashes: [0.25, -1.1] }, { angle: 120, origin: [0.4, 0.2], delta: [0.9, 1.2], dashes: [0.25, -1.3] }] },
+  });
+  const mat = (id, name, mark, cut, proj, shade) => { L.materials[id] = { name, mark, description: name, cut, projection: proj, shading: { colour: shade } }; };
+  mat("M-FH-CONC", "Architectural concrete", "21", { pattern: "P-CONC", pen: "heavy", lineColour: "#000000", background: "#ffffff" }, { pen: "thin" }, "#c9c7c2");
+  mat("M-FH-STUD", "Wood stud and batt", "66", { pattern: "P-INSUL", pen: "heavy", lineColour: "#000000", background: "#ffffff" }, { pen: "thin" }, "#e8e1d4");
+  mat("M-FH-PLY", "Plywood siding", "60", { pattern: null, pen: "medium", lineColour: "#000000", background: "#ffffff" }, { pen: "thin", pattern: "P-FH-PANEL", lineColour: "#9a9a9a" }, "#c9a47a");
+  mat("M-FH-CEMENT", "Fiber cement panel", "72", { pattern: null, pen: "medium", lineColour: "#000000", background: "#ffffff" }, { pen: "thin", pattern: "P-FH-PANEL", lineColour: "#9a9a9a" }, "#b8b7b1");
+  mat("M-FH-POLY", "Polygal clip system", "82", { pattern: null, pen: "medium", lineColour: "#000000", background: "#ffffff" }, { pen: "thin", pattern: "P-FH-CLAD", lineColour: "#b0b0b0" }, "#e4ecee");
+  mat("M-FH-GYP", "Gypsum board", "90", { pattern: null, pen: "thin", lineColour: "#000000", background: "#ffffff" }, { pen: "thin" }, "#f2f0ec");
+  mat("M-FH-METAL", "Standing seam metal roof", "70", { pattern: null, pen: "heavy", lineColour: "#000000", background: "#ffffff" }, { pen: "thin", pattern: "P-FH-SEAM", lineColour: "#8c8c8c" }, "#8d949b");
+  mat("M-FH-WOOD", "Wood decking / siding", "62", { pattern: "P-TIMBER", pen: "medium", lineColour: "#000000", background: "#ffffff" }, { pen: "thin", pattern: "P-FH-SIDING", lineColour: "#a0a0a0" }, "#b58c5e");
+  mat("M-FH-BRICK", "Brick", "BR", { pattern: "P-BRICK", pen: "heavy", lineColour: "#000000", background: "#ffffff" }, { pen: "thin", pattern: "P-FH-SIDING", lineColour: "#b8b8b8" }, "#9c5c46");
+  mat("M-FH-STEEL", "Structural steel, galvanized", "51", { pattern: null, pen: "heavy", lineColour: "#000000", background: "#555555" }, { pen: "thin" }, "#7c8288");
+  mat("M-SOIL", "Earth", "20", { pattern: "P-FH-EARTH", pen: "medium", lineColour: "#000000", background: "#ffffff" }, { pen: "thin" }, "#a89779");
+
+  // ---------------------------------------------------------------- types: walls, floors, doors, windows
+  const wt = (id, name, mark, layers, fn = "Exterior", family = "F-BASICWALL") => { L.types[id] = { family, name, mark, layers, coreStart: layers.length > 2 ? 1 : 0, coreEnd: layers.length > 2 ? layers.length - 1 : layers.length, params: { Function: fn } }; };
+  wt("T-FH-EXT6", "Exterior 2x6 wood stud, siding", "A", [{ function: "Finish 1", thickness: 19, material: "M-FH-PLY" }, { function: "Structure", thickness: 140, material: "M-FH-STUD" }, { function: "Finish 2", thickness: 16, material: "M-FH-GYP" }]);
+  wt("T-FH-EXT6C", "Exterior 2x6 wood stud, fiber cement", "B", [{ function: "Finish 1", thickness: 19, material: "M-FH-CEMENT" }, { function: "Structure", thickness: 140, material: "M-FH-STUD" }, { function: "Finish 2", thickness: 16, material: "M-FH-GYP" }]);
+  wt("T-FH-POLY", "Polygal clip wall on 2x6", "C", [{ function: "Finish 1", thickness: 16, material: "M-FH-POLY" }, { function: "Structure", thickness: 140, material: "M-FH-STUD" }, { function: "Finish 2", thickness: 16, material: "M-FH-GYP" }]);
+  wt("T-FH-CONC8", "Concrete wall 8\"", "D", [{ function: "Structure", thickness: 203, material: "M-FH-CONC" }]);
+  wt("T-FH-CONC12", "Concrete wall 12\"", "E", [{ function: "Structure", thickness: 305, material: "M-FH-CONC" }]);
+  wt("T-FH-INT4", "Interior 2x4 partition", "1", [{ function: "Finish 1", thickness: 16, material: "M-FH-GYP" }, { function: "Structure", thickness: 89, material: "M-FH-STUD" }, { function: "Finish 2", thickness: 16, material: "M-FH-GYP" }], "Interior", "F-PARTITION");
+  wt("T-FH-INT6", "Interior 2x6 partition", "2", [{ function: "Finish 1", thickness: 16, material: "M-FH-GYP" }, { function: "Structure", thickness: 140, material: "M-FH-STUD" }, { function: "Finish 2", thickness: 16, material: "M-FH-GYP" }], "Interior", "F-PARTITION");
+  wt("T-FH-BRICK", "Brick masonry 12\" (existing)", "M", [{ function: "Structure", thickness: 305, material: "M-FH-BRICK" }]);
+  wt("T-FH-GLASS", "Storefront / curtain wall", "G", [{ function: "Structure", thickness: 60, material: "M-GLASS" }]);
+  const flt = (id, name, mark, layers) => { L.types[id] = { family: "F-FLOOR", name, mark, layers, coreStart: 0, coreEnd: layers.length }; };
+  flt("T-FH-SOG", "Concrete slab on grade 4\"", "S1", [{ function: "Structure", thickness: 102, material: "M-FH-CONC" }]);
+  flt("T-FH-CEIL", "Plywood ceiling under trusses", "C1", [{ function: "Finish 1", thickness: 19, material: "M-FH-PLY" }]);
+  flt("T-FH-WOOD", "Wood floor on 18\" trusses", "F1", [{ function: "Finish 1", thickness: 19, material: "M-FH-WOOD" }, { function: "Structure", thickness: 457, material: "M-FH-STUD" }]);
+  flt("T-FH-JOIST", "Wood floor on 2x10 joists", "F2", [{ function: "Finish 1", thickness: 19, material: "M-FH-WOOD" }, { function: "Structure", thickness: 235, material: "M-FH-STUD" }]);
+  flt("T-FH-DECK", "Wood deck", "F3", [{ function: "Finish 1", thickness: 38, material: "M-FH-WOOD" }, { function: "Structure", thickness: 235, material: "M-TIMBER" }]);
+  flt("T-FH-CONCDECK", "Concrete deck on metal deck 6\"", "S2", [{ function: "Structure", thickness: 152, material: "M-FH-CONC" }]);
+  const door = (id, name, mark, w, h, extra = {}) => { L.types[id] = Object.assign({ family: "F-SINGLEDOOR", name, mark, width: w, height: h, leafThickness: 44, frame: 40 }, extra); };
+  door("T-FH-D30", "Flush wood door 3'-0\"x7'-0\"", "D1", 914, 2134);
+  door("T-FH-D28", "Flush wood door 2'-8\"x7'-0\"", "D2", 813, 2134);
+  door("T-FH-D30G", "Aluminum clad door 3'-0\"x7'-0\" glazed", "D3", 914, 2134, { glazed: true, leafThickness: 44 });
+  door("T-FH-D60G", "Aluminum clad door pair 6'-0\"x7'-0\" glazed", "D4", 1829, 2134, { glazed: true });
+  door("T-FH-GARAGE", "Polygal garage door 18'-0\"x9'-6\"", "D5", 5486, 2896, { glazed: false, leafThickness: 60 });
+  const win = (id, name, mark, w, h, mullions = 0) => { L.types[id] = { family: "F-CASEMENT", name, mark, width: w, height: h, frame: 50, mullions }; };
+  win("T-FH-W24", "Aluminum clad window 2'-0\"x4'-0\"", "W1", 610, 1219);
+  win("T-FH-W44", "Aluminum clad window 4'-0\"x4'-0\"", "W2", 1219, 1219);
+  win("T-FH-W46", "Aluminum clad window 4'-0\"x6'-0\"", "W3", 1219, 1829);
+  win("T-FH-W84", "Aluminum clad window 8'-0\"x4'-0\"", "W4", 2438, 1219, 1);
+  win("T-FH-W86", "Aluminum clad window 8'-0\"x6'-0\"", "W5", 2438, 1829, 1);
+  win("T-FH-W48", "Aluminum clad window 4'-0\"x8'-0\"", "W6", 1219, 2438);
+  win("T-FH-W1210", "Storefront 12'-0\"x10'-0\"", "W7", 3658, 3048, 2);
+  win("T-FH-W42", "Aluminum clad awning 4'-0\"x2'-0\"", "W8", 1219, 610);
+  win("T-FH-W417", "Stair glazing 4'-0\"x16'-0\"", "W9", 1219, 4877);
+  win("T-FH-SF1615", "Storefront 16'-0\"x15'-0\"", "W10", 4877, 4572, 3);
+  win("T-FH-SF2111", "Storefront 21'-0\"x11'-0\"", "W11", 6401, 3353, 4);
+
+  // ---------------------------------------------------------------- view styles
+  const base = JSON.parse(JSON.stringify(L.viewStyles["VS-CONSTRUCTION"] || {}));
+  L.viewStyles["VS-FH-PLAN"] = Object.assign(JSON.parse(JSON.stringify(base)), { name: "FHA - plans", rules: [] });
+  L.viewStyles["VS-FH-ELEV"] = Object.assign(JSON.parse(JSON.stringify(base)), { name: "FHA - elevations", rules: [] });
+  L.viewStyles["VS-FH-SEC"] = Object.assign(JSON.parse(JSON.stringify(base)), { name: "FHA - sections (cut poché black)", rules: [
+    { id: "FH-SEC-POCHE", when: { param: "Category", in: ["IfcWall", "IfcStair", "IfcColumn", "IfcBeam"] }, then: { cut: { fill: "#000000", pattern: "none" } } }] });
+  L.viewStyles["VS-FH-3D"] = Object.assign(JSON.parse(JSON.stringify(base)), { name: "FHA - 3D" });
+  // the site plan: the plans' style with the planting and the ground shown
+  L.viewStyles["VS-FH-SITE"] = Object.assign(JSON.parse(JSON.stringify(L.viewStyles["VS-FH-PLAN"])), { name: "FHA - site plan" });
+  for (const k of ["VS-FH-PLAN", "VS-FH-ELEV", "VS-FH-SEC"]) { const s = L.viewStyles[k]; s.byCategory = Object.assign({}, s.byCategory, { Furniture: { visible: false }, Planting: { visible: false } }); }
+
+  // ---------------------------------------------------------------- the helpers the models are built with
+  const R = (x0, y0, x1, y1) => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+  const H = {
+    doc, ed, add, set, line, R,
+    level: (id, name, z) => add({ id, type: "Level", name, args: { name, elevation: z } }),
+    grid: (id, name, a, b) => add({ id, type: "Grid", name: `Grid ${name}`, args: { name, line: line(a, b), ends: "End", headSize: 8, textSize: 4.2 } }),
+    /** A wall from its base level to its top level (or up a height), or up to the roof it is attached to. */
+    wall: (id, a, b, type, base, top, o = {}) => add({ id, type: "Wall", name: o.name || id, args: Object.assign({ centreline: line(a, b), mounting: "Centred", wallType: { ref: type }, baseLevel: { ref: base }, baseOffset: o.baseOffset || 0,
+      topLevel: top ? { ref: top } : null, topOffset: o.topOffset || 0, height: o.height || 3000, flipped: false }, o.roof ? { attachTop: { ref: o.roof } } : {}) }),
+    /** A chain of walls through points (closed if asked): ids id1, id2, ... */
+    walls: (id, pts, type, base, top, o = {}) => { const n = o.closed ? pts.length : pts.length - 1; for (let i = 0; i < n; i++) H.wall(`${id}${i + 1}`, pts[i], pts[(i + 1) % pts.length], type, base, top, o); },
+    floor: (id, name, boundary, type, lev, off = 0) => add({ id, type: "Floor", name, args: { boundary, floorType: { ref: type }, level: { ref: lev }, heightOffset: off } }),
+    roof: (id, name, boundary, lev, off, slopes, o = {}) => add({ id, type: "Roof", name, args: Object.assign({ boundary, level: { ref: lev }, heightOffset: off, thickness: o.thickness || 250, material: o.material || "M-FH-METAL", edgeSlopes: slopes, ridgeHeight: o.ridge || 0 }, o.args || {}) }),
+    stair: (id, name, base, top, flights, o = {}) => add({ id, type: "Stair", name, args: Object.assign({ baseLevel: { ref: base }, topLevel: top ? { ref: top } : null, flights, width: o.width || 914, material: o.material || "M-FH-WOOD", railings: o.railings || "Both" }, o.args || {}) }),
+    topo: (id, name, contours, boundary, base) => add({ id, type: "Toposurface", name, args: { contours, boundary, base, interval: 305, major: 5, material: "M-SOIL" } }),
+    /** An opening at distance `at` (its centre) along a wall, filled with a door or a window of a type. */
+    door: (id, host, at, type, o = {}) => { const t = L.types[type]; add({ id: `OP-${id}`, type: "Opening", args: { host: { ref: host }, profile: { kind: "rect", at, sill: o.sill || 0, w: t.width, h: t.height }, farProfile: null, depth: "through" } });
+      add({ id, type: "Door", args: Object.assign({ fills: { ref: `OP-${id}` }, doorType: { ref: type }, flipHand: !!o.flipHand, flipFacing: !!o.flipFacing, clearance: "None" }, o.args || {}), params: { Mark: o.mark || id } }); },
+    window: (id, host, at, type, sill, o = {}) => { const t = L.types[type]; add({ id: `OP-${id}`, type: "Opening", args: { host: { ref: host }, profile: { kind: "rect", at, sill, w: o.w || t.width, h: o.h || t.height }, farProfile: null, depth: "through" } });
+      add({ id, type: "Window", args: { fills: { ref: `OP-${id}` }, windowType: { ref: type } }, params: { Mark: o.mark || id } }); },
+    text: (id, view, content, at, tt = "TT-FH-20", o = {}) => add({ id, type: "Text", args: Object.assign({ content, position: at, rotation: o.rot || 0, textType: { ref: tt }, wrapWidth: 1000, leaders: [], view: { ref: view } }, o.align ? { align: o.align } : {}) }),
+    plan: (id, name, lev, range, crop, scale = 50, style = "VS-FH-PLAN") => add({ id, type: "PlanView", name, args: { level: { ref: lev }, scale, viewRange: range, detailLevel: "Medium", style: { ref: style }, clip: { rect: crop, visible: false, active: !!crop } } }),
+    elev: (id, name, a, b, depth, base, crop, scale = 50, o = {}) => add({ id, type: "ElevationView", name, args: { line: line(a, b), depth, scale, baseLevel: { ref: base }, top: o.top || 12000, style: { ref: "VS-FH-ELEV" }, detailLevel: "Medium",
+      clip: { rect: crop, visible: false, active: !!crop, annotation: [80, 20, 70, 50] }, groundLine: true, levelExtent: o.levelExtent || (crop ? [crop[0], crop[2]] : undefined), overrides: { __gridTop: o.gridTop ?? (crop ? crop[3] + 400 : 9000), __gridBottom: o.gridBottom ?? (crop ? crop[1] + 800 : -300) } } }),
+    sect: (id, name, a, b, depth, base, crop, scale = 50, o = {}) => add({ id, type: "SectionView", name, args: { line: line(a, b), depth, scale, baseLevel: { ref: base }, top: o.top || 12000, style: { ref: "VS-FH-SEC" }, detailLevel: "Medium",
+      clip: { rect: crop, visible: false, active: !!crop, annotation: [80, 20, 70, 50] }, heads: o.heads || "End", groundLine: false, levelExtent: o.levelExtent || (crop ? [crop[0], crop[2]] : undefined), overrides: { __gridTop: o.gridTop ?? (crop ? crop[3] + 400 : 9000), __gridBottom: o.gridBottom ?? (crop ? crop[1] + 800 : -300) } } }),
+    view3d: (id, name, cam, scale = 100) => add({ id, type: "View3D", name, args: { camera: cam, scale, style: { ref: "VS-FH-3D" }, visualStyle: "Shaded", render: { display: "renderedEdges", rasterDPI: 200, silhouetteWeight: 0.35 } } }),
+    /** An ARCH D sheet in the firm's title strip; viewports [view, at (paper mm), extra]. */
+    sheet: (number, name, vps, size = "ARCH D") => add({ id: `SH-${number}`, type: "Sheet", name: `${number} ${name}`, args: { number, sheetName: name, size, orientation: "landscape", titleBlock: { ref: "SY-TB-FHA" },
+      viewports: vps.map(([view, at, extra], i) => Object.assign({ id: `VP${i + 1}`, view: { ref: view }, at, clipVisible: false }, extra || {})), revision: "" } }),
+    /** Where a viewport goes so that the drawing sits where the source set has it: a model point `m` the set draws
+     *  at paper point `p` at its scale (1:srcScale), matched at the drawing's middle `c` so a small difference of
+     *  scale spreads evenly to both ends. */
+    place: (p, m, c, crop, scale, srcScale = 48) => { const pc = [p[0] + (c[0] - m[0]) / srcScale, p[1] + (c[1] - m[1]) / srcScale]; return [pc[0] + ((crop[0] + crop[2]) / 2 - c[0]) / scale, pc[1] + ((crop[1] + crop[3]) / 2 - c[1]) / scale]; },
+    /** Where a viewport goes so that a model point lands on a paper point: the crop's centre, from that pair. */
+    at: (paper, model, crop, scale) => [paper[0] + ((crop[0] + crop[2]) / 2 - model[0]) / scale, paper[1] + ((crop[1] + crop[3]) / 2 - model[1]) / scale],
+  };
+  return H;
+}
+
+// ===== sample_schaeffer.js =====
+//! Schaeffer Residence, Raleigh NC (Frank Harmon Architect, permit set 12.11.2014): a long timber house on a
+//! slope, one standing-seam gable 33' x 79'-5" over a split section - the garage and a lower office dug into the
+//! hill, the living floor over them, a studio at the entry level at the north end and the master suite over it.
+//! Read off the set's plans (A201-A203), elevations (A301-A302) and sections (A401): x east from the living
+//! room's west face, y north from the south face, in feet converted to mm. Heights from the garage floor (380'):
+//! studio/lower 382', office 387', living 392', master 396', top of wall 405'.
+
+
+
+function buildSchaefferSample() {
+  const H = fhaProject("Schaeffer Residence\nRaleigh, NC", { number: "1310", issued: "07 07 2014", issueDate: "12.11.2014", place: "Raleigh, NC" });
+  const { doc, add, wall, walls, floor, roof, stair, topo } = H; const RECT = H.R;
+  doc.meta.surveyElevation = ft(380);                           // the garage floor on the survey's datum: levels and contours read as the set's
+  const Z = f => ft(f - 380);                                   // an elevation of the set (feet above sea level), in mm above the garage floor
+
+  // ---------------------------------------------------------------- levels
+  H.level("L-GAR", "GARAGE FFE", Z(380)); H.level("L-LOW", "STUDIO FFE", Z(382)); H.level("L-OFF", "OFFICE FFE", Z(387));
+  H.level("L-LIV", "LIVING LEVEL FFE", Z(392)); H.level("L-MB", "MASTER BED FFE", Z(396)); H.level("L-TOW", "TOP OF WALL", Z(405));
+  // grids 1 and 2 of the elevations: the north face, and 4' south of it (the entry)
+  H.grid("G-1", "1", [ft(-8), ft(70.42)], [ft(36), ft(70.42)]); H.grid("G-2", "2", [ft(-8), ft(66.42)], [ft(36), ft(66.42)]);
+
+  // ---------------------------------------------------------------- the roof: one gable, 4' over the long sides, 4' and 5' over the ends
+  const RF = [[-2, -5], [31, -5], [31, 74.42], [-2, 74.42]];
+  roof("RF-1", "Standing seam roof", FT(RF), "L-TOW", 0, [null, 14.04, null, 14.04], { thickness: 200 });   // 3:12
+
+  // ---------------------------------------------------------------- the ground floor: concrete, dug into the slope
+  const C = "T-FH-CONC8", S = "T-FH-EXT6", PG = "T-FH-POLY";
+  // the garage (south, 380') and the lower office (382'): concrete walls up to the living floor
+  walls("W-GAR", FT([[2.28, 0.28], [28.72, 0.28], [28.72, 22.28]]), C, "L-GAR", "L-OFF");
+  // the polygal band between the concrete and the living floor, south and east
+  walls("W-PGB", FT([[2.28, 0.28], [28.72, 0.28], [28.72, 36.42]]), PG, "L-OFF", "L-LIV");
+  wall("W-GARW", PT(2.28, 22.28), PT(2.28, 0.28), C, "L-GAR", "L-LIV");
+  wall("W-GARN", PT(2.28, 22.28), PT(28.72, 22.28), C, "L-GAR", "L-LOW");
+  walls("W-OFF", FT([[0.28, 22.28], [0.28, 42.42], [26.72, 42.42]]), C, "L-LOW", "L-LIV");
+  wall("W-OFFE", PT(28.72, 22.28), PT(28.72, 36.42), C, "L-LOW", "L-OFF");
+  wall("W-OFFJ", PT(28.72, 36.42), PT(26.72, 36.42), C, "L-LOW", "L-LIV");
+  wall("W-OFFE2", PT(26.72, 36.42), PT(26.72, 42.42), C, "L-LOW", "L-LIV");
+  // the north block's crawl space and foundation, up to the office floor
+  walls("W-CRL", FT([[2.28, 42.42], [2.28, 70.14], [26.72, 70.14], [26.72, 42.42]]), C, "L-LOW", "L-OFF");
+  floor("FL-GAR", "Garage slab", FT(RECT(2.28, 0.28, 28.72, 22.28)), "T-FH-SOG", "L-GAR");
+  floor("FL-LOW", "Office slab", FT(RECT(0.28, 22.28, 28.72, 42.42)), "T-FH-SOG", "L-LOW");
+
+  // ---------------------------------------------------------------- the timber house over it, walls to the top of wall
+  wall("W-S", PT(2.28, 0.28), PT(28.72, 0.28), S, "L-LIV", "L-TOW", { roof: "RF-1" });
+  wall("W-E1", PT(28.72, 0.28), PT(28.72, 36.42), S, "L-LIV", "L-TOW");
+  wall("W-EJ", PT(28.72, 36.42), PT(26.72, 36.42), S, "L-LIV", "L-TOW");
+  wall("W-E2", PT(26.72, 36.42), PT(26.72, 42.42), S, "L-LIV", "L-TOW");
+  wall("W-E3", PT(26.72, 42.42), PT(26.72, 70.14), S, "L-OFF", "L-TOW");
+  wall("W-N", PT(26.72, 70.14), PT(2.28, 70.14), S, "L-OFF", "L-TOW", { roof: "RF-1" });
+  wall("W-W3", PT(2.28, 70.14), PT(2.28, 42.42), S, "L-OFF", "L-TOW");
+  wall("W-WJN", PT(2.28, 42.42), PT(0.28, 42.42), S, "L-LIV", "L-TOW");
+  wall("W-W2", PT(0.28, 42.42), PT(0.28, 22.28), PG, "L-LIV", "L-TOW");
+  wall("W-WJS", PT(0.28, 22.28), PT(2.28, 22.28), S, "L-LIV", "L-TOW");
+  wall("W-W1", PT(2.28, 22.28), PT(2.28, 0.28), PG, "L-LIV", "L-TOW");
+  // inside: the screened porch's wall and the bedroom wing's partition at the south; the studio's bath and
+  // laundry and the pantry
+  const I = "T-FH-INT4";
+  wall("W-I1", PT(2.28, 22.28), PT(18.28, 22.28), I, "L-LIV", "L-MB");
+  wall("W-I2", PT(18.28, 0.28), PT(18.28, 22.28), I, "L-LIV", "L-TOW");
+  walls("W-BTH", FT([[2.28, 42.8], [18.25, 42.8], [18.25, 48.46], [2.28, 48.46]]), I, "L-OFF", "L-LIV");
+  wall("W-BTH5", PT(11.8, 42.8), PT(11.8, 48.46), I, "L-OFF", "L-LIV");
+  walls("W-PAN", FT([[26.72, 30.2], [18.75, 30.2], [18.75, 36.3], [22.4, 36.3]]), I, "L-LIV", "L-MB");
+  walls("W-MBB", FT([[2.28, 54.2], [11.4, 54.2], [11.4, 48.46]]), I, "L-MB", "L-TOW", { topOffset: -300 });
+  wall("W-MBS", PT(2.28, 48.46), PT(26.72, 48.46), I, "L-MB", "L-TOW");
+
+  // ---------------------------------------------------------------- floors
+  floor("FL-OFF", "Studio floor", FT(RECT(2.28, 42.42, 26.72, 70.14)), "T-FH-WOOD", "L-OFF");
+  floor("FL-LIV", "Living floor", FT([[2.28, 0.28], [28.72, 0.28], [28.72, 36.42], [26.72, 36.42], [26.72, 42.42], [0.28, 42.42], [0.28, 22.28], [2.28, 22.28]]), "T-FH-WOOD", "L-LIV");
+  // the master suite over the studio; the living room is open to the roof
+  // the ceiling under the roof trusses, at the top of wall everywhere
+  floor("FL-CEIL", "Ceiling", FT([[2.28, 0.28], [28.72, 0.28], [28.72, 36.42], [26.72, 36.42], [26.72, 70.14], [2.28, 70.14], [2.28, 42.42], [0.28, 42.42], [0.28, 22.28], [2.28, 22.28]]), "T-FH-CEIL", "L-TOW");
+  floor("FL-MB", "Master suite floor", FT([[2.28, 48.46], [20.2, 48.46], [20.2, 45.9], [26.72, 45.9], [26.72, 70.14], [2.28, 70.14]]), "T-FH-JOIST", "L-MB");
+
+  // ---------------------------------------------------------------- stairs (counted from their levels, numbered in plan)
+  stair("ST-1", "Stair, lower to office", "L-LOW", "L-OFF", [{ from: [ft(24.6), ft(44.2)], to: [ft(24.6), ft(51.4)] }], { width: ft(3.2) });
+  stair("ST-2", "Stair, office to living", "L-OFF", "L-LIV", [{ from: PT(19.6, 44.1), to: PT(26.0, 44.1) }], { width: ft(2.7) });
+  stair("ST-3", "Stair, living to master", "L-LIV", "L-MB", [{ from: PT(22.3, 53.9), to: PT(22.3, 49.6) }], { width: ft(3.0) });
+  // the garden stair from the driving deck to the entry, outside the west wall
+  stair("ST-4", "Garden stair", "L-GAR", "L-LOW", [{ from: PT(-1.2, 18.5), to: PT(-1.2, 21.3) }], { width: ft(3.0), railings: "Left" });
+
+  // ---------------------------------------------------------------- windows and doors, read off the elevations
+  const w = H.window, d = H.door;
+  // west: the master suite's and studio's windows at the north end; the living room's storefront; the garage door under it
+  w("WN-W1", "W-W3", ft(5.3), "T-FH-W86", ft(3.1)); w("WN-W2", "W-W3", ft(17.4), "T-FH-W44", ft(13.4)); w("WN-W3", "W-W3", ft(22.7), "T-FH-W24", ft(4.6));
+  w("WN-W4", "W-W1", ft(11.0), "T-FH-SF2111", ft(0.3));
+  d("DR-G1", "W-GARW", ft(9.9), "T-FH-GARAGE");
+  // east: the kitchen's ribbon of awnings, the stair's full-height glazing, the master bed window
+  [2.2, 6.4, 10.6, 14.8, 19.0].forEach((x, i) => w("WN-E" + (i + 2), "W-E1", ft(x), "T-FH-W42", ft(3.4)));
+  w("WN-E1", "W-E3", ft(1.9), "T-FH-W417", ft(1.0)); w("WN-E7", "W-E3", ft(13.9), "T-FH-W44", ft(4.1));
+  // south: the living room's storefront up into the gable; north: the entry door and the studio's windows
+  w("WN-S1", "W-S", ft(8.9), "T-FH-SF1615", ft(0.1)); w("WN-S2", "W-S", ft(22.0), "T-FH-W44", ft(4.5));
+  d("DR-N1", "W-N", ft(3.0), "T-FH-D30G"); w("WN-N1", "W-N", ft(14.0), "T-FH-W44", ft(9.5)); w("WN-N2", "W-N", ft(14.0), "T-FH-W44", ft(2.5));
+  d("DR-I1", "W-I2", ft(12.0), "T-FH-D30", { flipFacing: true }); d("DR-I2", "W-I1", ft(8.0), "T-FH-D60G");
+  d("DR-B1", "W-BTH3", ft(4.0), "T-FH-D28"); d("DR-B2", "W-BTH1", ft(14.0), "T-FH-D28");
+
+  // ---------------------------------------------------------------- the ground: contours of the grading plan (L001), falling south
+  const contours = [[378.5, -38], [379, -28], [380, -12], [381, 8], [382, 20], [383, 33], [384, 46], [385, 58], [386, 70], [387, 82], [388, 94], [389, 106], [390, 120], [391, 136], [392, 152]].map(([e, y]) => ({ z: Z(e),
+    points: [-40, -30, -20, -10, 0, 10, 20, 30, 40, 50].map(x => [ft(x), ft(y + 0.06 * (x - 14) + 1.6 * Math.sin((x + y) / 9))]) }));
+  topo("TS-1", "Existing grade", contours, FT(RECT(-40, -34, 50, 150)), Z(372));
+  // the lot, read off the grading plan (L001): Barmettler Road along the north line
+  const LOT = [[-28.4, -13.9], [37.6, -17.6], [34.6, 135.5], [-30.7, 138.5]];
+  H.add({ id: "SITE", type: "SiteBoundary", name: "Property line", args: { sketch: { elements: LOT.map((a, i) => ({ type: "line", a: PT(...a), b: PT(...LOT[(i + 1) % 4]) })), constraints: [], dims: [] },
+    edges: {}, setback: 0, level: { ref: "L-GAR" }, showPlanes: false, planeHeight: 12000, label: false } });
+  // the trees the survey keeps: they stand on the grade
+  const tree = (id, sp, x, y, cd, ht, form = "Deciduous") => H.add({ id, type: "Planting", name: sp, args: { position: PT(x, y), topo: { ref: "TS-1" }, form, species: sp, canopy: ft(cd), height: ft(ht), trunk: ft(cd / 30), existing: true } });
+  tree("PL-1", "Existing holly", 23, 142.4, 14, 20); tree("PL-2", "32\" pine", 19.6, 119.4, 30, 70, "Conifer");
+  tree("PL-3", "15\" Drake's elm (to remain)", -32.3, 28.1, 10, 30); tree("PL-4", "17\" pine", 32.3, 0.4, 14, 55, "Conifer");
+  tree("PL-5", "31\" pine", 24.2, -8.8, 21, 65, "Conifer"); tree("PL-6", "15\" pine", 17.3, -23.8, 18, 50, "Conifer");
+
+  // ---------------------------------------------------------------- views
+  const lot = [ft(-38), ft(-30), ft(46), ft(150)];
+  H.plan("V-L001", "GRADING PLAN", "L-GAR", { top: 30000, cut: 29000, bottom: -3000, depth: -5000 }, lot, 125, "VS-FH-SITE");
+  // under the roof in the site plan: the stairs hidden in this view
+  H.set("V-L001", "overrides", { "ST-1": { visible: false }, "ST-2": { visible: false }, "ST-3": { visible: false } });
+  H.plan("V-A201", "LOWER LEVEL GARAGE + OFFICE", "L-GAR", { top: 2300, cut: 1500, bottom: -300, depth: -600 }, [ft(-7), ft(-7), ft(35), ft(77)], 50);
+  H.plan("V-A202", "LOWER LEVEL LIVING + STUDIO", "L-LIV", { top: 2300, cut: 1200, bottom: -1600, depth: -1700 }, [ft(-7), ft(-7), ft(35), ft(77)], 50);
+  H.plan("V-A203", "UPPER LEVEL MASTER SUITE", "L-MB", { top: 2300, cut: 1200, bottom: 0, depth: -1400 }, [ft(-7), ft(-7), ft(35), ft(77)], 50);
+  H.plan("V-A203R", "ROOF PLAN", "L-TOW", { top: 6000, cut: 5000, bottom: -500, depth: -1000 }, [ft(-4), ft(-7), ft(33), ft(76)], 50);
+  // elevations: east and west along the long sides, south and north on the ends
+  H.elev("V-E", "EAST ELEVATION", PT(40, 85), PT(40, -15), ft(30), "L-GAR", [ft(-6), -ft(8), ft(96), ft(34)]);
+  H.elev("V-W", "WEST ELEVATION", PT(-12, -15), PT(-12, 85), ft(30), "L-GAR", [ft(-6), -ft(8), ft(96), ft(34)]);
+  H.elev("V-S", "SOUTH ELEVATION", PT(38, -14), PT(-8, -14), ft(30), "L-GAR", [ft(-4), -ft(8), ft(44), ft(34)]);
+  H.elev("V-N", "NORTH ELEVATION", PT(-8, 80), PT(38, 80), ft(30), "L-GAR", [ft(-4), -ft(8), ft(44), ft(34)]);
+  H.sect("V-S1", "SECTION", PT(14.5, 85), PT(14.5, -15), ft(15), "L-GAR", [ft(5), -ft(8), ft(105), ft(34)]);
+  H.sect("V-S2", "SECTION", PT(23.5, -15), PT(23.5, 85), ft(8), "L-GAR", [ft(5), -ft(8), ft(105), ft(34)]);
+  H.view3d("V-3D", "AXONOMETRIC", { azimuth: 225, elevation: 28, target: [ft(14), ft(35), ft(12)] }, 100);
+
+  // ---------------------------------------------------------------- sheets: the set's, on ARCH D
+  // each drawing where the set has it: a point of the model read against where the set's sheet draws it
+  const PL = [ft(-7), ft(-7), ft(35), ft(77)], RP = [ft(-4), ft(-7), ft(33), ft(76)], EL = [ft(-6), -ft(8), ft(96), ft(34)], EN = [ft(-4), -ft(8), ft(44), ft(34)], SE = [ft(5), -ft(8), ft(105), ft(34)];
+  const c = [ft(14.5), ft(35.2)], pl = (p0) => H.place(p0, [0, 0], c, PL, 50);
+  H.sheet("L001", "Grading Plan", [["V-L001", H.place([244, 253], [ft(14.5), ft(35.2)], [ft(4), ft(60)], lot, 125, 120)]]);
+  H.sheet("A201", "Floor Plans Garage/Office", [["V-A201", pl([559.3, 91.3])]]);
+  H.sheet("A202", "Floor Plans Studio + Living", [["V-A202", pl([569.45, 82.26])]]);
+  H.sheet("A203", "Plans Master Suite + Roof", [["V-A203", pl([184, 85.5])], ["V-A203R", H.place([569.7, 88.6], [0, 0], c, RP, 50)]]);
+  // elevations and sections: grid 1 (the north face) and the garage floor, as each sheet draws them
+  const ev = (p0, sN, crop) => H.place(p0, [ft(sN), 0], [ft(sN) - ft(35), ft(12)], crop, 50);
+  H.sheet("A301", "Elevations", [["V-E", ev([704, 339.4], 85.42, EL)], ["V-W", H.place([257.7, 76.2], [ft(14.58), 0], [ft(14.58) + ft(35), ft(12)], EL, 50)]]);
+  H.sheet("A302", "Elevations", [["V-S", H.place([746, 353], [ft(36), 0], [ft(36) - ft(12.5), ft(12)], EN, 50)], ["V-N", H.place([584, 64], [ft(11), 0], [ft(11) + ft(12.5), ft(12)], EN, 50)]]);
+  H.sheet("A401", "Sections", [["V-S1", ev([644, 346.4], 85.42, SE)], ["V-S2", H.place([277, 86.4], [ft(14.58), 0], [ft(14.58) + ft(35), ft(12)], SE, 50)]]);
+  H.sheet("A901", "Axonometric", [["V-3D", [420, 320]]]);
   doc.regenerate();
   return doc;
 }
@@ -21793,6 +22211,7 @@ const ICONS = {
   floor: P('<path d="M2 12l8-4 8 4-8 4z"/><path d="M2 12v2l8 4 8-4v-2"/>'),
   stair: P('<path d="M3 17h4v-4h4v-4h4v-4h3"/><path d="M3 17v1h15V5"/>'),
   roof: P('<path d="M2 11l8-7 8 7"/><path d="M4 9.5V17h12V9.5"/>'),
+  planting: P('<circle cx="10" cy="8" r="6"/><path d="M10 14v4M10 8l-3-3M10 8l3-2M10 10l3 2"/>'),
   topo: P('<path d="M2 15c3-3 5-3 8-1s5 2 8-1"/><path d="M3 11c3-3 5-3 7-1s5 1 7-2"/><path d="M5 7c2-2 4-2 6-1s4 0 5-2"/>'),
   beam: P('<path d="M2 6h16M2 14h16M10 6v8"/><path d="M2 6v2M18 6v2M2 12v2M18 12v2"/>'),
   grid: P('<circle cx="10" cy="4" r="2.5"/><path d="M10 6.5V18" stroke-dasharray="3 1.5 1 1.5"/>'),
@@ -24923,7 +25342,7 @@ function sgDiagramSheet(app, f) {
 const SNAP_PX = 8;
 const SNAP_KINDS = ["endpoint", "midpoint", "centre", "intersection", "perpendicular", "nearest", "grid", "angle"];
 const SNAP_SHORT = { endpoint: "end", midpoint: "mid", centre: "cen", intersection: "int", perpendicular: "perp", nearest: "near", grid: "grid", angle: "ang" };
-const TOOLS_NEED_PLAN = new Set(["section", "floor", "beam", "wall", "opening", "door", "window", "column", "grid", "text", "dim", "space", "elev", "sep", "move", "copy", "rotate", "mirror", "split", "corner"]);
+const TOOLS_NEED_PLAN = new Set(["section", "floor", "beam", "wall", "opening", "door", "window", "column", "planting", "grid", "text", "dim", "space", "elev", "sep", "move", "copy", "rotate", "mirror", "split", "corner"]);
 const MODIFY_TOOLS = new Set(["move", "copy", "rotate", "mirror"]);
 
 class View2D {
@@ -26007,6 +26426,8 @@ class View2D {
       if (r.ok && r.id) this.app.select([r.id]);
       return;
     }
+    if (tool === "planting") { const tp = [...doc.elements()].find(e => doc.typeOf(e) === "Toposurface" && doc.plan(e) && doc.plan(e).foot && doc.plan(e).foot.length > 2 && pointInPoly(q, doc.plan(e).foot));
+      return addEl({ type: "Planting", args: { position: q, topo: tp ? { ref: doc.idOf(tp) } : null, level: level ? { ref: level } : null, form: o.treeForm || "Deciduous", height: o.treeHeight || 9000, canopy: o.treeCanopy || 6000, trunk: 300 } }); }
     if (tool === "column") return addEl({ type: "Column", args: { position: q, columnType: { ref: o.columnType }, baseLevel: level ? { ref: level } : null, height: 3000, rotation: 0 } });
     if (tool === "space") return addEl({ type: "Space", name: o.spaceName || "Room", args: { level: level ? { ref: level } : null, upperLimit: { mode: "offset", offset: 3000 }, anchor: q, boundaryAt: o.boundaryAt || "finishFace" }, params: { Number: "", Department: "" } }, "Space placed: it keeps its name by this anchor");
     if (tool === "mtag") {
@@ -27199,8 +27620,9 @@ const roundCam = c => ({ azimuth: Math.round(((c.azimuth % 360) + 360) % 360 * 1
 
 
 
+
 const VIEW_TYPES = ["PlanView", "ElevationView", "SectionView", "View3D", "Schedule", "Sheet", "DraftingView"];
-const PLACE_TOOLS = new Set(["section", "floor", "beam", "wall", "opening", "door", "window", "column", "grid", "text", "dim", "space", "elev", "sep", "mtag"]);
+const PLACE_TOOLS = new Set(["section", "floor", "beam", "wall", "opening", "door", "window", "column", "planting", "grid", "text", "dim", "space", "elev", "sep", "mtag"]);
 
 const app = {
   doc: null, editor: null, selection: new Set(), activeView: null, tabs: [], tool: "select",
@@ -27357,6 +27779,7 @@ const COMMANDS = {
   window: tool("window", "Window", "window", "WN", "Click a wall to place a window (plan or 3D)."),
   opening: tool("opening", "Wall Opening", "opening", "OP", "Click a wall: an opening with nothing in it."),
   column: tool("column", "Column", "column", "CL", "Click to place (plan or 3D)."),
+  planting: tool("planting", "Tree", "planting", "TR", "Click to plant: it stands on the toposurface under it (or the level); form, height and canopy in the options bar."),
   floor: { label: "Floor", icon: "floor", key: "SB", hint: "Sketch the floor's boundary: lines, arcs, circles, splines, Pick Walls. Closed loops inside are holes. Finish ✓ makes the floor; its layers hang down from the level.", run: () => startFloorSketch(), active: () => !!(app.sketch && app.sketch.target.kind === "floor") },
   stair: { label: "Stair", icon: "stair", key: "ST", hint: "Draw each flight as a line, bottom first (first riser to last): landings join them. It rises to the next level; its risers are counted and numbered.", run: () => startKindSketch("stair", "a stair") },
   roof: { label: "Roof", icon: "roof", key: "RO", hint: "Sketch the roof's footprint (with its overhang): every edge slopes; set an edge to null for a gable, or a ridge height. Ridges, hips and valleys are found.", run: () => startKindSketch("roof", "a roof") },
@@ -27456,7 +27879,7 @@ const RIBBON = [
   { tab: "Architecture", panels: [
     { title: "Build", items: [big("wall"), big("door"), big("window"), big("column"), big("floor"), big("roof")] },
     { title: "Circulation", items: [big("stair")] },
-    { title: "Site", items: [big("topo")] },
+    { title: "Site", items: [big("topo"), big("planting")] },
     { title: "Opening", items: [big("opening")] },
     { title: "Room & Area", items: [big("space"), small("sep"), small("schedule")] },
     { title: "Program", items: [big("spacegraph"), small("sgimport"), small("sgbrief")] },
@@ -27720,6 +28143,7 @@ function renderOptionsBar() {
     // a catalogue section (American, European, British, Australian) loads as a type and is picked at once
     const loadSec = (key, cat) => h("button", { class: "btn small", title: "Wide flange, rectangular and circular hollow sections from the AISC, EN, BS and AS/NZS catalogues", onclick: () => sectionPicker(app, cat, id => { o[key] = id; app.refresh(); }) }, "Load section…");
     if (t === "beam") kids = [sel("beamType", typesOf("IfcBeam").map(([id, x]) => [id, x.name]), "Type:"), loadSec("beamType", "IfcBeam"), num("beamTop", "Top offset:")];
+    if (t === "planting") { o.treeHeight ??= 9000; o.treeCanopy ??= 6000; kids = [sel("treeForm", [["Deciduous", "Deciduous"], ["Conifer", "Conifer"], ["Shrub", "Shrub"]], "Form:"), num("treeHeight", "Height:"), num("treeCanopy", "Canopy:")]; }
     if (t === "column") kids = [sel("columnType", typesOf("IfcColumn").map(([id, x]) => [id, x.name]), "Type:"), loadSec("columnType", "IfcColumn"), levelPicker()];
     if (t === "space") kids = [h("label", {}, "Name: ", h("input", { type: "text", value: o.spaceName, style: { width: "110px" }, onchange: e => { o.spaceName = e.target.value; } })), sel("boundaryAt", [["finishFace", "Finish face (net)"], ["coreFace", "Core face"], ["coreCentre", "Core centre"], ["wallCentre", "Wall centre (gross)"]], "Boundary:")];
     if (t === "move") kids = [chk("moveCopy", "Copy")];
@@ -27803,7 +28227,7 @@ function rowClick(key, single, dbl) {
 }
 const ELEMENT_ICON = { Wall: "wall", Door: "door", Window: "window", Column: "column", Floor: "floor", Beam: "beam", Grid: "grid", Level: "level", Space: "room", Text: "text", Dimension: "dim",
   SectionView: "section", ElevationView: "elevview", PlanView: "plan", RoomSeparator: "sepline", DetailLine: "skline", FilledRegion: "skrect", SymbolInstance: "symbol", CADImport: "importI", Generic: "column", Furniture: "select" };
-const BODY_TYPES = new Set(["Wall", "Column", "Door", "Window", "Floor", "Beam", "Generic", "Duct", "Pipe", "Roof", "Stair", "Toposurface"]);
+const BODY_TYPES = new Set(["Wall", "Column", "Door", "Window", "Floor", "Beam", "Generic", "Duct", "Pipe", "Roof", "Stair", "Toposurface", "Planting"]);
 /** What a view shows that can be picked in it - the inclusion test is "visible and editable here": the
  *  ids its drawing publishes as hits (plans, elevations, sections), or the bodies it shows (3D).
  *  Cached per model and view revision; with `quick`, an uncached view is worked out in the background
@@ -28182,6 +28606,7 @@ async function saveModel() { const r = await saveFile(`${app.doc.meta.name || "m
 /** The drawing sets the tool carries. Each is also a template: a new project can take its standards. */
 const SAMPLES = [
   { id: "mazatlan", name: "Casa Mazatlan (INAH drawing set)", build: () => buildMazatlanSample(), open: "SH-A101" },
+  { id: "schaeffer", name: "Schaeffer Residence (Frank Harmon Architect)", build: () => buildSchaefferSample(), open: "SH-A202" },
 ];
 app.samples = SAMPLES;
 /** A new project with a sample's standards and none of its building: its materials, wall/floor/door types,

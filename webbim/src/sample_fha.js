@@ -11,7 +11,7 @@ import { Editor } from "./ops.js";
 
 export const ft = v => Math.round(v * 304.8);                  // a dimension read in feet, in mm
 export const FT = pts => pts.map(p => [ft(p[0]), ft(p[1])]);
-export const P = (x, y) => [ft(x), ft(y)];
+export const PT = (x, y) => [ft(x), ft(y)];
 
 /** A new FHA project: the firm's standards in its library, and the helpers to build it with. */
 export function fhaProject(name, project) {
@@ -74,6 +74,7 @@ export function fhaProject(name, project) {
   wt("T-FH-GLASS", "Storefront / curtain wall", "G", [{ function: "Structure", thickness: 60, material: "M-GLASS" }]);
   const flt = (id, name, mark, layers) => { L.types[id] = { family: "F-FLOOR", name, mark, layers, coreStart: 0, coreEnd: layers.length }; };
   flt("T-FH-SOG", "Concrete slab on grade 4\"", "S1", [{ function: "Structure", thickness: 102, material: "M-FH-CONC" }]);
+  flt("T-FH-CEIL", "Plywood ceiling under trusses", "C1", [{ function: "Finish 1", thickness: 19, material: "M-FH-PLY" }]);
   flt("T-FH-WOOD", "Wood floor on 18\" trusses", "F1", [{ function: "Finish 1", thickness: 19, material: "M-FH-WOOD" }, { function: "Structure", thickness: 457, material: "M-FH-STUD" }]);
   flt("T-FH-JOIST", "Wood floor on 2x10 joists", "F2", [{ function: "Finish 1", thickness: 19, material: "M-FH-WOOD" }, { function: "Structure", thickness: 235, material: "M-FH-STUD" }]);
   flt("T-FH-DECK", "Wood deck", "F3", [{ function: "Finish 1", thickness: 38, material: "M-FH-WOOD" }, { function: "Structure", thickness: 235, material: "M-TIMBER" }]);
@@ -83,7 +84,7 @@ export function fhaProject(name, project) {
   door("T-FH-D28", "Flush wood door 2'-8\"x7'-0\"", "D2", 813, 2134);
   door("T-FH-D30G", "Aluminum clad door 3'-0\"x7'-0\" glazed", "D3", 914, 2134, { glazed: true, leafThickness: 44 });
   door("T-FH-D60G", "Aluminum clad door pair 6'-0\"x7'-0\" glazed", "D4", 1829, 2134, { glazed: true });
-  door("T-FH-GARAGE", "Polygal garage door 16'-0\"x7'-0\"", "D5", 4877, 2134, { glazed: false, leafThickness: 60 });
+  door("T-FH-GARAGE", "Polygal garage door 18'-0\"x9'-6\"", "D5", 5486, 2896, { glazed: false, leafThickness: 60 });
   const win = (id, name, mark, w, h, mullions = 0) => { L.types[id] = { family: "F-CASEMENT", name, mark, width: w, height: h, frame: 50, mullions }; };
   win("T-FH-W24", "Aluminum clad window 2'-0\"x4'-0\"", "W1", 610, 1219);
   win("T-FH-W44", "Aluminum clad window 4'-0\"x4'-0\"", "W2", 1219, 1219);
@@ -92,15 +93,21 @@ export function fhaProject(name, project) {
   win("T-FH-W86", "Aluminum clad window 8'-0\"x6'-0\"", "W5", 2438, 1829, 1);
   win("T-FH-W48", "Aluminum clad window 4'-0\"x8'-0\"", "W6", 1219, 2438);
   win("T-FH-W1210", "Storefront 12'-0\"x10'-0\"", "W7", 3658, 3048, 2);
+  win("T-FH-W42", "Aluminum clad awning 4'-0\"x2'-0\"", "W8", 1219, 610);
+  win("T-FH-W417", "Stair glazing 4'-0\"x16'-0\"", "W9", 1219, 4877);
+  win("T-FH-SF1615", "Storefront 16'-0\"x15'-0\"", "W10", 4877, 4572, 3);
+  win("T-FH-SF2111", "Storefront 21'-0\"x11'-0\"", "W11", 6401, 3353, 4);
 
   // ---------------------------------------------------------------- view styles
   const base = JSON.parse(JSON.stringify(L.viewStyles["VS-CONSTRUCTION"] || {}));
   L.viewStyles["VS-FH-PLAN"] = Object.assign(JSON.parse(JSON.stringify(base)), { name: "FHA - plans", rules: [] });
   L.viewStyles["VS-FH-ELEV"] = Object.assign(JSON.parse(JSON.stringify(base)), { name: "FHA - elevations", rules: [] });
   L.viewStyles["VS-FH-SEC"] = Object.assign(JSON.parse(JSON.stringify(base)), { name: "FHA - sections (cut poché black)", rules: [
-    { id: "FH-SEC-POCHE", when: { param: "Category", in: ["IfcWall", "IfcSlab", "IfcRoof", "IfcStair", "IfcColumn", "IfcBeam"] }, then: { cut: { fill: "#000000", pattern: "none" } } }] });
+    { id: "FH-SEC-POCHE", when: { param: "Category", in: ["IfcWall", "IfcStair", "IfcColumn", "IfcBeam"] }, then: { cut: { fill: "#000000", pattern: "none" } } }] });
   L.viewStyles["VS-FH-3D"] = Object.assign(JSON.parse(JSON.stringify(base)), { name: "FHA - 3D" });
-  for (const k of ["VS-FH-PLAN", "VS-FH-ELEV", "VS-FH-SEC"]) { const s = L.viewStyles[k]; s.byCategory = Object.assign({}, s.byCategory, { Furniture: { visible: false } }); }
+  // the site plan: the plans' style with the planting and the ground shown
+  L.viewStyles["VS-FH-SITE"] = Object.assign(JSON.parse(JSON.stringify(L.viewStyles["VS-FH-PLAN"])), { name: "FHA - site plan" });
+  for (const k of ["VS-FH-PLAN", "VS-FH-ELEV", "VS-FH-SEC"]) { const s = L.viewStyles[k]; s.byCategory = Object.assign({}, s.byCategory, { Furniture: { visible: false }, Planting: { visible: false } }); }
 
   // ---------------------------------------------------------------- the helpers the models are built with
   const R = (x0, y0, x1, y1) => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
@@ -123,11 +130,11 @@ export function fhaProject(name, project) {
     window: (id, host, at, type, sill, o = {}) => { const t = L.types[type]; add({ id: `OP-${id}`, type: "Opening", args: { host: { ref: host }, profile: { kind: "rect", at, sill, w: o.w || t.width, h: o.h || t.height }, farProfile: null, depth: "through" } });
       add({ id, type: "Window", args: { fills: { ref: `OP-${id}` }, windowType: { ref: type } }, params: { Mark: o.mark || id } }); },
     text: (id, view, content, at, tt = "TT-FH-20", o = {}) => add({ id, type: "Text", args: Object.assign({ content, position: at, rotation: o.rot || 0, textType: { ref: tt }, wrapWidth: 1000, leaders: [], view: { ref: view } }, o.align ? { align: o.align } : {}) }),
-    plan: (id, name, lev, range, crop, scale = 50) => add({ id, type: "PlanView", name, args: { level: { ref: lev }, scale, viewRange: range, detailLevel: "Medium", style: { ref: "VS-FH-PLAN" }, clip: { rect: crop, visible: false, active: !!crop } } }),
+    plan: (id, name, lev, range, crop, scale = 50, style = "VS-FH-PLAN") => add({ id, type: "PlanView", name, args: { level: { ref: lev }, scale, viewRange: range, detailLevel: "Medium", style: { ref: style }, clip: { rect: crop, visible: false, active: !!crop } } }),
     elev: (id, name, a, b, depth, base, crop, scale = 50, o = {}) => add({ id, type: "ElevationView", name, args: { line: line(a, b), depth, scale, baseLevel: { ref: base }, top: o.top || 12000, style: { ref: "VS-FH-ELEV" }, detailLevel: "Medium",
-      clip: { rect: crop, visible: false, active: !!crop, annotation: [80, 20, 20, 50] }, groundLine: true, levelExtent: o.levelExtent || (crop ? [crop[0], crop[2]] : undefined), overrides: { __gridTop: o.gridTop ?? (crop ? crop[3] - 800 : 9000), __gridBottom: o.gridBottom ?? (crop ? crop[1] + 800 : -300) } } }),
+      clip: { rect: crop, visible: false, active: !!crop, annotation: [80, 20, 70, 50] }, groundLine: true, levelExtent: o.levelExtent || (crop ? [crop[0], crop[2]] : undefined), overrides: { __gridTop: o.gridTop ?? (crop ? crop[3] + 400 : 9000), __gridBottom: o.gridBottom ?? (crop ? crop[1] + 800 : -300) } } }),
     sect: (id, name, a, b, depth, base, crop, scale = 50, o = {}) => add({ id, type: "SectionView", name, args: { line: line(a, b), depth, scale, baseLevel: { ref: base }, top: o.top || 12000, style: { ref: "VS-FH-SEC" }, detailLevel: "Medium",
-      clip: { rect: crop, visible: false, active: !!crop, annotation: [80, 20, 20, 50] }, heads: o.heads || "End", groundLine: false, levelExtent: o.levelExtent || (crop ? [crop[0], crop[2]] : undefined), overrides: { __gridTop: o.gridTop ?? (crop ? crop[3] - 800 : 9000), __gridBottom: o.gridBottom ?? (crop ? crop[1] + 800 : -300) } } }),
+      clip: { rect: crop, visible: false, active: !!crop, annotation: [80, 20, 70, 50] }, heads: o.heads || "End", groundLine: false, levelExtent: o.levelExtent || (crop ? [crop[0], crop[2]] : undefined), overrides: { __gridTop: o.gridTop ?? (crop ? crop[3] + 400 : 9000), __gridBottom: o.gridBottom ?? (crop ? crop[1] + 800 : -300) } } }),
     view3d: (id, name, cam, scale = 100) => add({ id, type: "View3D", name, args: { camera: cam, scale, style: { ref: "VS-FH-3D" }, visualStyle: "Shaded", render: { display: "renderedEdges", rasterDPI: 200, silhouetteWeight: 0.35 } } }),
     /** An ARCH D sheet in the firm's title strip; viewports [view, at (paper mm), extra]. */
     sheet: (number, name, vps, size = "ARCH D") => add({ id: `SH-${number}`, type: "Sheet", name: `${number} ${name}`, args: { number, sheetName: name, size, orientation: "landscape", titleBlock: { ref: "SY-TB-FHA" },

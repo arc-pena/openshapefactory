@@ -21,7 +21,7 @@ import { shapeFromClicks, SHAPE_CLICKS, filletCorners, toCentreline, weld, offse
 export const SNAP_PX = 8;
 export const SNAP_KINDS = ["endpoint", "midpoint", "centre", "intersection", "perpendicular", "nearest", "grid", "angle"];
 const SNAP_SHORT = { endpoint: "end", midpoint: "mid", centre: "cen", intersection: "int", perpendicular: "perp", nearest: "near", grid: "grid", angle: "ang" };
-const TOOLS_NEED_PLAN = new Set(["section", "floor", "beam", "wall", "opening", "door", "window", "column", "grid", "text", "dim", "space", "elev", "sep", "move", "copy", "rotate", "mirror", "split", "corner"]);
+const TOOLS_NEED_PLAN = new Set(["section", "floor", "beam", "wall", "opening", "door", "window", "column", "planting", "grid", "text", "dim", "space", "elev", "sep", "move", "copy", "rotate", "mirror", "split", "corner"]);
 export const MODIFY_TOOLS = new Set(["move", "copy", "rotate", "mirror"]);
 
 export class View2D {
@@ -1105,6 +1105,8 @@ export class View2D {
       if (r.ok && r.id) this.app.select([r.id]);
       return;
     }
+    if (tool === "planting") { const tp = [...doc.elements()].find(e => doc.typeOf(e) === "Toposurface" && doc.plan(e) && doc.plan(e).foot && doc.plan(e).foot.length > 2 && pointInPoly(q, doc.plan(e).foot));
+      return addEl({ type: "Planting", args: { position: q, topo: tp ? { ref: doc.idOf(tp) } : null, level: level ? { ref: level } : null, form: o.treeForm || "Deciduous", height: o.treeHeight || 9000, canopy: o.treeCanopy || 6000, trunk: 300 } }); }
     if (tool === "column") return addEl({ type: "Column", args: { position: q, columnType: { ref: o.columnType }, baseLevel: level ? { ref: level } : null, height: 3000, rotation: 0 } });
     if (tool === "space") return addEl({ type: "Space", name: o.spaceName || "Room", args: { level: level ? { ref: level } : null, upperLimit: { mode: "offset", offset: 3000 }, anchor: q, boundaryAt: o.boundaryAt || "finishFace" }, params: { Number: "", Department: "" } }, "Space placed: it keeps its name by this anchor");
     if (tool === "mtag") {
