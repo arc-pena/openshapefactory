@@ -701,6 +701,13 @@ function drawText(doc, ctx, B, f) {
   const lines = wrapText(content, h, F.real(f, "wrapWidth"), font);
   const at = B.P(F.point(f, "position")), lh = h * (tt.lineSpacing || 1.6), rot = F.real(f, "rotation") || 0, rr = rot * Math.PI / 180;
   const width = Math.max(...lines.map(l => textWidth(l, h, font, wf)));
+  // Revit's opaque background: the paper white behind the words, masking what is drawn under them
+  if (tt.background === "opaque") {
+    const al = F.choice(f, "align") || "left", x0 = al === "centre" ? -width / 2 : al === "right" ? -width : 0, pad = h * 0.25;
+    const q = [[x0 - pad, -h * 0.3 - (lines.length - 1) * lh], [x0 + width + pad, -h * 0.3 - (lines.length - 1) * lh], [x0 + width + pad, h * 1.3], [x0 - pad, h * 1.3]];
+    const c = Math.cos(rr), sn = Math.sin(rr);
+    B.fill(polyPath(q.map(([x, y]) => [at[0] + x * c - y * sn, at[1] + x * sn + y * c])), "#ffffff", "Annotation-Text", id, true);
+  }
   // lines step down across the text's own direction, so rotated text stays a paragraph
   lines.forEach((ln, i) => B.text([at[0] + Math.sin(rr) * i * lh, at[1] - Math.cos(rr) * i * lh], ln, h, { layer: "Annotation-Text", id, colour: tt.colour, rot, font, widthFactor: wf !== 1 ? wf : undefined, align: F.choice(f, "align") || "left" }));
   const midY = at[1] - (lines.length - 1) * lh / 2 + h / 2;

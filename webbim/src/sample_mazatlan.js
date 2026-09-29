@@ -49,6 +49,7 @@ export function buildMazatlanSample() {
     "TT-MZ-17": { name: "Arial 1.67 (legend)", height: 1.67, font: "Arial", widthFactor: 1, colour: "#000000", pen: "thin", lineSpacing: 1.6 },
     "TT-MZ-20": { name: "Arial 2.0", height: 2.01, font: "Arial", widthFactor: 1, colour: "#000000", pen: "thin", lineSpacing: 1.6 },
     "TT-MZ-12": { name: "Arial 1.2 (stair numbers)", height: 1.19, font: "Arial", widthFactor: 1, colour: "#000000", pen: "thin", lineSpacing: 1.6 },
+    "TT-MZ-17O": { name: "Arial 1.7 (room names on a picture, opaque)", height: 1.7, font: "Arial", widthFactor: 1, colour: "#000000", pen: "thin", lineSpacing: 1.6, background: "opaque" },
     "TT-MZ-20N": { name: "Arial Narrow 2.0", height: 2.06, font: "Arial", widthFactor: 0.82, colour: "#000000", pen: "thin", lineSpacing: 1.6 },
     "TT-MZ-30B": { name: "Arial Bold 3.0 (streets)", height: 3.03, font: "ArialBold", widthFactor: 1, colour: "#000000", pen: "thin", lineSpacing: 1.6 },
   });
@@ -458,7 +459,7 @@ export function buildMazatlanSample() {
     }
     for (const t of data.texts) {
       if (roomText.has(t.text)) continue;
-      add({ id: `TX-${v}-${++n}`, type: "Text", args: { content: t.text, position: t.at, rotation: t.rot || 0, textType: { ref: TT(t.cap, t.font) }, wrapWidth: 1000, leaders: [], view: { ref: v } } });
+      add({ id: `TX-${v}-${++n}`, type: "Text", args: Object.assign({ content: t.text, position: t.at, rotation: t.rot || 0, textType: { ref: t.type || TT(t.cap, t.font) }, wrapWidth: 1000, leaders: [], view: { ref: v } }, t.align ? { align: t.align } : {}) });
     }
     data.npts.forEach((q, i) => add({ id: `NP-${v}-${i + 1}`, type: "SpotElevation", args: { position: [q.at[0], q.at[1] - 212], view: { ref: v }, prefix: "NPT ", units: "m", textSize: 1.0 } }));
     // the references a dimension may bind to: lines square to what it measures, crossing the cut
@@ -573,7 +574,7 @@ export function buildMazatlanSample() {
     let n = 0;
     for (const t of data.texts) {
       if (Math.abs(t.cap - 2.04) < 0.05 && t.at[0] < headS + 450) continue;          // the level heads' own words
-      add({ id: `TX-${v}-${++n}`, type: "Text", args: { content: t.text, position: t.at, rotation: t.rot || 0, textType: { ref: TT(t.cap, t.font) }, wrapWidth: 1000, leaders: [], view: { ref: v } } });
+      add({ id: `TX-${v}-${++n}`, type: "Text", args: Object.assign({ content: t.text, position: t.at, rotation: t.rot || 0, textType: { ref: t.type || TT(t.cap, t.font) }, wrapWidth: 1000, leaders: [], view: { ref: v } }, t.align ? { align: t.align } : {}) });
     }
     const levels = doc.elements().filter(f => doc.typeOf(f) === "Level").map(f => ({ id: doc.idOf(f), z: doc.argValue(f, "elevation") }));
     const grids = doc.elements().filter(f => doc.typeOf(f) === "Grid").map(f => { const c = doc.argValue(f, "line"), vert = Math.abs(c.start[0] - c.end[0]) < 1;
@@ -603,11 +604,11 @@ export function buildMazatlanSample() {
   secNotes("V-S1", pdfS.MZ_S1, 373); secNotes("V-S2", pdfS.MZ_S2, 3333); secNotes("V-S3", pdfS.MZ_S3, 373); secNotes("V-S4", pdfS.MZ_S4, 373);
   figure("EN-S1", "SY-ENT-WOMAN2", "V-S1", [8045, -713]);
   // sections 5 and 6 are pictures in the set (shaded, with shadows): their notes and strings read off them
-  const T13 = (text, at) => ({ text, at, cap: 1.7, font: "Arial", rot: 0 });
+  const T13 = (text, at) => ({ text, at, cap: 1.7, font: "Arial", rot: 0, type: "TT-MZ-17O", align: "centre" });
   const H = (at, from, to) => ({ h: true, at, from, to }), V = (at, from, to) => ({ h: false, at, from, to });
-  secNotes("V-S5", { import: { elements: [] }, texts: [T13("HABITACION", [7380, 747]), T13("PASILLO", [8908, 747]), T13("COMEDOR", [15740, 747]), T13("STUDIO DR", [17965, 3502])],
+  secNotes("V-S5", { import: { elements: [] }, texts: [T13("HABITACION", [7380, 682]), T13("PASILLO", [8908, 682]), T13("COMEDOR", [15740, 682]), T13("STUDIO DR", [17965, 3437])],
     dims: [H(6148, 4513, 8213), H(6148, 8213, 9563), H(6148, 9563, 14663), H(6148, 14663, 19083), V(3677, 2330, 4730), V(3677, -170, 2330), V(19190, -713, 2110), V(19615, -693, 2330)] }, 2642);
-  secNotes("V-S6", { import: { elements: [] }, texts: [T13("HABITACION", [7164, 908]), T13("COCINA/SALA", [16220, 908])],
+  secNotes("V-S6", { import: { elements: [] }, texts: [T13("HABITACION", [7164, 843]), T13("COCINA/SALA", [16220, 843])],
     dims: [H(7045, 5040, 9515), H(7045, 9515, 14640), H(7045, 14640, 18490), V(10230, 4730, 5830), V(10230, 5830, 6535), V(4095, 2330, 3429), V(4095, -713, 2110)] }, 2677);
   // a section draws the footings it cuts, not those it would see beyond under the ground (as the set's do)
   for (const [v, axis, c] of [["V-S1", 0, 1302], ["V-S2", 1, 11012], ["V-S3", 0, 6602], ["V-S4", 0, 5404], ["V-S5", 0, 10006], ["V-S6", 1, 6016]]) {
