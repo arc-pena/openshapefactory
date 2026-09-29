@@ -70,9 +70,9 @@ export function buildMazatlanSample() {
   Object.assign(L.materials, {
     "M-MZ-ROSA": { name: "Aplanado de cal, rosa", mark: "AP-01", description: "Lime render, pale pink (the street facades)", cut: { pattern: null, pen: "heavy", lineColour: "#000000", background: MZ_FACADE }, projection: { pen: "thin", pattern: "P-MZ-STIPPLE", background: "#fff3ee", patternColour: "#a6a6a6" }, shading: { colour: "#f1d5ca" } },
     "M-MZ-TERRA": { name: "Aplanado de cal, terracota", mark: "AP-02", description: "Lime render pigmented terracotta (the courtyard)", cut: { pattern: null, pen: "heavy", lineColour: "#000000", background: "#ffffff" }, projection: { pen: "thin" }, shading: { colour: "#d98468" } },
-    "M-MZ-LADRILLO": { name: "Mampostería existente", mark: "MA-01", description: "Existing brick and stone masonry", cut: { pattern: "P-MZ-DIAG", pen: "heavy", lineColour: "#000000", background: "#ffffff" }, projection: { pen: "thin" }, shading: { colour: "#e4a58f" } },
-    "M-MZ-BLOCK": { name: "Block de concreto", mark: "MA-02", description: "New concrete block, rendered", cut: { pattern: null, pen: "heavy", lineColour: "#000000", background: "#ffffff" }, projection: { pen: "thin" }, shading: { colour: "#d98468" } },
-    "M-MZ-CONC": { name: "Concreto armado", mark: "CO-01", description: "Reinforced concrete (the new frame)", cut: { pattern: null, pen: "heavy", lineColour: "#000000", background: MZ_RED }, projection: { pen: "thin" }, shading: { colour: "#d98468" } },
+    "M-MZ-LADRILLO": { name: "Mampostería existente", mark: "MA-01", description: "Existing brick and stone masonry", cut: { pattern: "P-MZ-DIAG", pen: "heavy", lineColour: "#000000", background: "#ffffff" }, projection: { pen: "thin" }, shading: { colour: "#f2e6e1" } },
+    "M-MZ-BLOCK": { name: "Block de concreto", mark: "MA-02", description: "New concrete block, rendered", cut: { pattern: null, pen: "heavy", lineColour: "#000000", background: "#ffffff" }, projection: { pen: "thin" }, shading: { colour: "#f3efeb" } },
+    "M-MZ-CONC": { name: "Concreto armado", mark: "CO-01", description: "Reinforced concrete (the new frame)", cut: { pattern: null, pen: "heavy", lineColour: "#000000", background: MZ_RED }, projection: { pen: "thin" }, shading: { colour: "#f3efeb" } },
     "M-MZ-BARRO": { name: "Piso de barro en espiga", mark: "PI-01", description: "Handmade clay tile, herringbone", cut: { pattern: null, pen: "thin", lineColour: "#000000", background: "#ffffff" }, projection: { pen: "hairline", pattern: "P-HERRING", lineColour: "#d1d1d1" }, shading: { colour: "#b8613f" } },
     "M-MZ-GRAVA": { name: "Grava", mark: "PI-02", description: "Crushed stone, loose", cut: { pattern: null, pen: "thin", lineColour: "#000000", background: "#ffffff" }, projection: { pen: "hairline" }, shading: { colour: "#8f8984" } },
     "M-MZ-DECK": { name: "Duela de madera", mark: "PI-03", description: "Timber deck (the roof terrace)", cut: { pattern: null, pen: "thin", lineColour: "#000000", background: "#ffffff" }, projection: { pen: "hairline" }, shading: { colour: "#b58a5e" } },
@@ -399,8 +399,10 @@ export function buildMazatlanSample() {
   sect("V-S4", "Section 4", [5404, -4485], [5404, 16517], 8300, "End", [1500, -1950, 17300, 6700], [373, 18270], 7255, only("L-T", "L-PA", "L-PB1", "L-BE"));
   sect("V-S5", "Section 5", [10006, 16532], [10006, -4513], 10300, "Start", [3900, -1950, 19300, 6700], [2642, 20290], 9234, only("L-T", "L-PA", "L-PB1", "L-PB2"));
   sect("V-S6", "Section 6", [17128, 6016], [-5040, 6016], 8700, "End", [4400, -1950, 18900, 6700], [2677, 21024], 7902, only("L-T", "L-PA", "L-PB1", "L-PB2"));
-  const axo = (id, name, az, el, scale = 100) => add({ id, type: "View3D", name, args: { camera: { azimuth: az, elevation: el, target: [6700, 7200, 1500] }, scale, style: { ref: "VS-MZ" }, visualStyle: "Shaded" } });
-  axo("V-3D-SO", "PERSPECTIVA SUR-OESTE", 225, 18); axo("V-3D-UB", "VISTA DE UBICACION", 225, 25, 250); axo("V-3D-SE", "AXO SUR-ESTE", 315, 30); axo("V-3D-SO2", "AXO SUR-OESTE", 225, 35); axo("V-3D-NE", "AXO NORTE-ESTE", 45, 35);
+  // the set's 3D sheets: shaded, the sun on, the edges drawn, sized as the set sizes them (about 1:80)
+  const axo = (id, name, az, el, scale = 80) => add({ id, type: "View3D", name, args: { camera: { azimuth: az, elevation: el, target: [6700, 7200, 1500] }, scale, style: { ref: "VS-MZ" }, visualStyle: "Shaded",
+    render: { display: "renderedEdges", rasterDPI: 200, silhouetteWeight: 0.35 } } });
+  axo("V-3D-SO", "PERSPECTIVA SUR-OESTE", 225, 18, 60); axo("V-3D-UB", "VISTA DE UBICACION", 225, 25, 250); axo("V-3D-SE", "AXO SUR-ESTE", 315, 30); axo("V-3D-SO2", "AXO SUR-OESTE", 225, 35); axo("V-3D-NE", "AXO NORTE-ESTE", 45, 35);
   add({ id: "SC-P", type: "Schedule", name: "Cuadro de puertas", args: { of: "IfcDoor", fields: ["Mark", "TypeMark", "Width", "Height"] } });
   add({ id: "SC-L", type: "Schedule", name: "Cuadro de locales", args: { of: "IfcSpace", fields: ["Number", "Name", "Area"] } });
 
@@ -607,10 +609,9 @@ export function buildMazatlanSample() {
   const sketch = (n, rect, name = "Croquis a mano") => { const f = doc.element(`SH-${n}`), im = MZ_IMAGES[n]; ed.apply({ op: "set", id: `SH-${n}`, key: "images", value: [{ rect, url: im.url, w: im.w, h: im.h, blend: "multiply", name }] }, { regenerate: false }); };
   sketch("A101", [93.5, 0, 145.7, 242.8]); sketch("A102", [84.4, 93.7, 144.6, 203.3]); sketch("A303", [262.2, 137.7, 134.7, 61.3]); sketch("A304", [76.5, 79.3, 209.9, 134.0]);
   sketch("A001", [255.67, 49.18, 93.73, 53.09], "Vista 3D");
-  sheet("A901", "Perspectiva Sur-Oeste", [["V-3D-SO", [210, 165]]]);
-  sheet("A902", "Axo Sur-Este", [["V-3D-SE", [210, 165]]]);
-  sheet("A903", "Axo Sur-Oeste", [["V-3D-SO2", [210, 165]]]);
-  sheet("A904", "Axo Norte-Este", [["V-3D-NE", [210, 165]]]);
+  // the 3D sheets: the picture where the set has it, no title, no scale in the band
+  for (const [n, name, v, at] of [["A901", "Perspectiva Sur-Oeste", "V-3D-SO", [204, 165]], ["A902", "Axo Sur-Este", "V-3D-SE", [192, 157]], ["A903", "Axo Sur-Oeste", "V-3D-SO2", [202, 165]], ["A904", "Axo Norte-Este", "V-3D-NE", [197, 162]]]) {
+    sheet(n, name, [[v, at, { noTitle: true }]]); ed.apply({ op: "set", id: `SH-${n}`, key: "scaleLabel", value: " " }, { regenerate: false }); }
 
   doc.graph.layout = {};
   doc.browser = { organisation: "by-discipline", expanded: ["Views", "Sheets"] };

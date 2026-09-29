@@ -37,6 +37,12 @@ export function buildHLRModel(doc, opts = {}) {
     if (opts.visible && !opts.visible(f)) continue;           // the view's Visibility/Graphics
     const t = doc.typeOf(f);
     // a body of its own shape draws its feature edges (it does not hide others: it is not a convex solid)
+    // a brick screen: its envelope's outline (every brick's edges would read as a black block at a sheet's scale;
+    // the shaded picture under the lines shows the bricks), and it hides nothing: it is open
+    if (t === "Lattice" && doc.plan(f) && doc.plan(f).foot && doc.plan(f).foot.length >= 3) { const p = doc.plan(f), ft = p.foot;
+      for (let i = 0; i < ft.length; i++) { const a = ft[i], b = ft[(i + 1) % ft.length];
+        edges.push({ a: [a[0], a[1], p.z0], b: [b[0], b[1], p.z0], kind: "sharp" }, { a: [a[0], a[1], p.z1], b: [b[0], b[1], p.z1], kind: "sharp" }, { a: [a[0], a[1], p.z0], b: [a[0], a[1], p.z1], kind: "sharp" }); }
+      continue; }
     if ((t === "Generic" || t === "Duct" || t === "Pipe" || t === "Roof" || t === "Lattice") && doc.plan(f) && doc.plan(f).mesh) { const m = doc.plan(f).mesh, P = m.positions; for (const [a, b] of featureEdges(m)) edges.push({ a: [P[a * 3], P[a * 3 + 1], P[a * 3 + 2]], b: [P[b * 3], P[b * 3 + 1], P[b * 3 + 2]], kind: "sharp" }); continue; }
     if (t === "Door" || t === "Window" || t === "Floor" || t === "Beam" || t === "Generic") { for (const pt of elementParts(doc, f)) if (pt.foot && pt.foot.length >= 3) {
       prism(pt.foot, pt.z0, pt.z1, solids, edges, "auto", pt.topFoot);
