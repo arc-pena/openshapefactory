@@ -222,6 +222,7 @@ export function buildMazatlanSample() {
   wall("W-K2", "Muro escalera norte", [5802, 12616], [9352.5, 12616], "T-MZ-CONC150", "L-PB2", -220, H0, "New");
   wall("W-K3", "Muro escalera oriente", [9278, 12541.5], [9278, 11439], "T-MZ-CONC150", "L-PB2", -220, H0, "New");
   wall("W-K4", "Muro descanso", [6971, 11513], [8270, 11513], "T-MZ-CONC150", "L-PB2", -220, H0, "New");
+  wall("W-K5", "Muro escalera sur (puerta)", [8270, 11513], [9203, 11513], "T-MZ-CONC150", "L-PB2", -220, H0, "New");
   // the courtyard's glass: sliding doors to the living room (east)
   wall("W-GE", "Cancel patio oriente", [8552, 5250], [8552, 10076], "T-MZ-CANCEL", "L-PB2", -220, H0, "New");
   wall("W-GS", "Cancel patio sur", [6602, 5051], [8577, 5051], "T-MZ-CANCEL", "L-PB2", -220, H0, "New");
@@ -281,6 +282,8 @@ export function buildMazatlanSample() {
   opAt("OP-U1b", "W-U1", 10081, 12693, 13696, 499, 1539, "New"); win("WN-U1b", "OP-U1b", "T-MZ-V1000", "V06");
   opAt("OP-U3", "W-U3", 10233, 10271, 10995, 0, 2100, "New"); door("D-U3", "OP-U3", "T-MZ-P700", "P09");
   opAt("OP-U5", "W-U5", 5996, 6047, 6966, 0, 2100, "New"); door("D-U5", "OP-U5", "T-MZ-P900", "P10");
+  // the dining room's door into the stair (section 2 draws it; the plan its swing)
+  opAt("OP-K5", "W-K5", 8270, 8270, 9203, 220, 2100, "New"); door("D-K5", "OP-K5", "T-MZ-P900", "P12");
   opAt("OP-U7", "W-U7", 9345, 9345, 13248, 0, 2250, "New"); door("D-U7", "OP-U7", "T-MZ-PC", "PC2", { operation: "Sliding" });
   opAt("OP-H1", "W-H1", 7024, 8262, 9201, 0, 1750, "New"); door("D-H1", "OP-H1", "T-MZ-P900", "P11");
 
@@ -308,12 +311,16 @@ export function buildMazatlanSample() {
   floor("FL-R-PATIOC", "Relleno patio central", R(4422, 5250, 8503, 10076), "T-MZ-REL-C", "L-PB2", -200);
   floor("FL-TERRENO", "Terreno", R(201, 200, 13253, 14292), "T-MZ-TERRENO", "L-BQ", 0, "Existing");
   // strip footings: the old walls' under the facades and party walls, the new ones' under the bearing walls
-  const foot = (id, a, b, w, z0, z1) => { const d = [b[0] - a[0], b[1] - a[1]], L0 = Math.hypot(...d), n = [-d[1] / L0 * w / 2, d[0] / L0 * w / 2];
+  const FOOTS = [];
+  const foot = (id, a, b, w, z0, z1) => { FOOTS.push({ id, a, b }); const d = [b[0] - a[0], b[1] - a[1]], L0 = Math.hypot(...d), n = [-d[1] / L0 * w / 2, d[0] / L0 * w / 2];
     add({ id, type: "Generic", name: "Cimiento", args: { boundary: [[a[0] + n[0], a[1] + n[1]], [b[0] + n[0], b[1] + n[1]], [b[0] - n[0], b[1] - n[1]], [a[0] - n[0], a[1] - n[1]]], level: { ref: "L-BN" }, baseOffset: z0, height: z1 - z0, ifcClass: "IfcFooting", material: "M-MZ-CIMIENTO", colour: "" }, params: { Phase: "New" } }); };
   for (const [k, a, b, w] of [["N", [-198, 14432], [13651, 14432], 280], ["S", [-198, 1], [13651, 1], 398], ["O", [2, -198], [2, 14572], 398], ["E", [13452, -198], [13452, 14572], 398]]) {
     foot(`CI-${k}1`, a, b, w, -1520, -1300); foot(`CI-${k}2`, a, b, 790, -1920, -1520); }
   for (const [k, a, b] of [["I1", [201, 10150], [4422, 10150]], ["I3", [201, 5051], [6602, 5051]], ["I2", [4222, 5250], [4222, 9919]], ["K0", [4422, 10152], [13253, 10152]], ["N4", [8503, 3652], [13253, 3652]]]) {
     foot(`CI-${k}1`, a, b, 460, -1160, -913); foot(`CI-${k}2`, a, b, 865, -1395, -1160); }
+  // the stair core's walls stand on deeper T footings (section 2)
+  for (const [k, a, b] of [["K1", [5901.5, 10076], [5901.5, 14292]], ["K3", [9278, 10152], [9278, 12616]]]) {
+    foot(`CI-${k}1`, a, b, 200, -1395, -370); foot(`CI-${k}2`, a, b, 906, -1795, -1395); }
   // the new slab at +2330: the whole house but the courtyard, the open patio, and the stair
   floor("FL-PA1", "Losa planta alta - terraza", [[201, 200], [13253, 200], [13253, 10076], [8503, 10076], [8503, 5250], [4422, 5250], [4422, 10076], [201, 10076]], "T-MZ-LOSA", "L-PA");
   floor("FL-PA2", "Losa estudio", [[5802, 10076], [13253, 10076], [13253, 14292], [5802, 14292], [5802, 12688], [9201, 12688], [9201, 11587], [5802, 11587]], "T-MZ-LOSA", "L-PA");
@@ -602,6 +609,11 @@ export function buildMazatlanSample() {
     dims: [H(6148, 4513, 8213), H(6148, 8213, 9563), H(6148, 9563, 14663), H(6148, 14663, 19083), V(3677, 2330, 4730), V(3677, -170, 2330), V(19190, -713, 2110), V(19615, -693, 2330)] }, 2642);
   secNotes("V-S6", { import: { elements: [] }, texts: [T13("HABITACION", [7164, 908]), T13("COCINA/SALA", [16220, 908])],
     dims: [H(7045, 5040, 9515), H(7045, 9515, 14640), H(7045, 14640, 18490), V(10230, 4730, 5830), V(10230, 5830, 6535), V(4095, 2330, 3429), V(4095, -713, 2110)] }, 2677);
+  // a section draws the footings it cuts, not those it would see beyond under the ground (as the set's do)
+  for (const [v, axis, c] of [["V-S1", 0, 1302], ["V-S2", 1, 11012], ["V-S3", 0, 6602], ["V-S4", 0, 5404], ["V-S5", 0, 10006], ["V-S6", 1, 6016]]) {
+    const ov = Object.assign({}, doc.argValue(doc.element(v), "overrides"));
+    for (const { id, a, b } of FOOTS) if (!(Math.min(a[axis], b[axis]) <= c && Math.max(a[axis], b[axis]) >= c)) ov[id] = { visible: false };
+    ed.apply({ op: "set", id: v, key: "overrides", value: ov }, { regenerate: false }); }
   figure("EN-S5a", "SY-ENT-WALK", "V-S5", [8926, 2330]); figure("EN-S5b", "SY-ENT-WOMAN1", "V-S5", [6290, -713]);
 
   // ---------------------------------------------------------------- the sheets: every page of the set, A3, in its title band
