@@ -130,7 +130,8 @@ export function resolveGraphics(doc, ctx, f, role, sub = "Common", material = nu
     if (!material || !doc.lib.materials[material] || prio === "none") return;
     const m = doc.lib.materials[material];
     const mg = role === "cut" || role === "cutPattern" ? m.cut : m.projection;
-    if (mg) apply({ pen: role === "cutPattern" ? "hairline" : mg.pen, colour: mg.lineColour, pattern: role === "cut" || role === "cutPattern" ? mg.pattern : undefined, fill: mg.background }, `material ${material}`);
+    // a material's hatch may have its own colour (a green hatch in a black outline)
+    if (mg) apply({ pen: role === "cutPattern" ? "hairline" : mg.pen, colour: role === "cutPattern" && mg.patternColour ? mg.patternColour : mg.lineColour, pattern: role === "cut" || role === "cutPattern" ? mg.pattern : undefined, fill: mg.background }, `material ${material}`);
   };
   if (prio === "view") applyMaterial();
   // 4. category style

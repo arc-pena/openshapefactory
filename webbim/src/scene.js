@@ -1438,8 +1438,12 @@ function surfaceOf(doc, it) {
 }
 function drawSurfaces(doc, ctx, B, vis) {
   const out = [], S = ctx.scale;
+  // only worth it where some surface is coloured: then every nearer face covers it (a white wall too)
+  if (!vis.some(it => surfaceOf(doc, it)) && !(ctx.style && ctx.style.surfaceShade)) return out;
   for (const it of vis.slice().reverse()) {
-    const sf = surfaceOf(doc, it); if (!sf) continue;
+    // a face with no colour of its own is paper white - or the style's shade (a shaded view's walls in shadow)
+    const shade = (ctx.style && ctx.style.surfaceShade) || "#ffffff";
+    const sf = surfaceOf(doc, it) || (it.cat === "IfcWall" || it.cat === "IfcSlab" || it.cat === "IfcColumn" || it.face ? { bg: it.cat === "IfcWall" ? shade : "#ffffff", pat: null } : null); if (!sf) continue;
     let polys = it.sil && it.sil.length ? it.sil : null;
     if (doc.typeOf(it.f) === "Lattice") polys = it.bricks || null;
     else if (!polys && it.face) polys = it.face;
@@ -1700,7 +1704,9 @@ function elevWall(doc, f, w, V, sOf, depthOf, ctx) {
     const na = sOf(pointAt(w, nearS, op.u0)), nb = sOf(pointAt(w, nearS, op.u1));
     const lo = Math.min(na, nb), hi = Math.max(na, nb);
     curves.push([[lo, za], [hi, za]], [[hi, za], [hi, zb2]], [[hi, zb2], [lo, zb2]], [[lo, zb2], [lo, za]]);
-    if (!op.recess) { const sa = Math.max(Math.min(a1, b1), Math.min(a2, b2)), sb = Math.min(Math.max(a1, b1), Math.max(a2, b2)); if (sb - sa > 1) holes.push([sa, sb, za, zb2]); }
+    // a hole to see through, unless a door or window drawn here fills it (its leaf or glass stands in front)
+    const filled = ctx && doc.elements().some(g => (doc.typeOf(g) === "Door" || doc.typeOf(g) === "Window") && F.refId(g, "fills") === op.id && categoryVisible(ctx, categoryOf(doc, g)));
+    if (!op.recess && !filled) { const sa = Math.max(Math.min(a1, b1), Math.min(a2, b2)), sb = Math.min(Math.max(a1, b1), Math.max(a2, b2)); if (sb - sa > 1) holes.push([sa, sb, za, zb2]); }
     // a bare opening is picked by its own outline here (a filled one through its door or window, below)
     if (op.id && !doc.elements().some(g => (doc.typeOf(g) === "Door" || doc.typeOf(g) === "Window") && F.refId(g, "fills") === op.id)) fillerHits.push({ id: op.id, poly: [[lo, za], [hi, za], [hi, zb2], [lo, zb2]] });
     // the filler's own elevation rep, mapped from host (u, z)
@@ -1932,6 +1938,12 @@ export function sheetScene(doc, sh, opts = {}) {
       prims.push(...B2.prims);
     }
   });
+  // pictures laid on the sheet (a hand sketch over the drawing multiplies: its paper vanishes, its ink stays)
+  for (const im of doc.argValue(sh, "images") || []) if (im && im.url && im.rect) {
+    const p = { t: "raster", rect: im.rect.slice(), url: im.url, blend: im.blend || null, layer: "Viewport" };
+    if (im.url.startsWith("data:image/jpeg") && typeof atob === "function") { const bin = atob(im.url.split(",")[1]), bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i); Object.assign(p, { jpeg: bytes, pxW: im.w, pxH: im.h }); }
+    prims.push(p);
+  }
   // diagrams of the brief analysis: drawn by the page from the space graph as it is now (see SHEET_DIAGRAMS)
   (doc.argValue(sh, "diagrams") || []).forEach((im, i) => {
     const [x, y, w, hh] = im.rect, url = im.url || (SHEET_DIAGRAMS.url ? SHEET_DIAGRAMS.url(doc, im) : null);
@@ -1980,7 +1992,7 @@ function titleBand(doc, sh, W, H, put, txt) {
   txt([R(388.57), 8.13], doc.argValue(sh, "number") || "", 9.47, Object.assign({ align: "centre" }, A));
   // the scale over the rule: one scale, or "As indicated" when the views differ
   const sc = viewportScales(doc, sh), scales = sc && sc !== "—" ? sc.split(", ") : [];
-  const scaleText = scales.length === 1 ? scales[0].replace(":", " : ") : scales.length ? "As indicated" : "";
+  const scaleText = doc.argValue(sh, "scaleLabel") ? doc.argValue(sh, "scaleLabel") : scales.length === 1 ? scales[0].replace(":", " : ") : scales.length ? "As indicated" : "";
   if (scaleText) txt([R(398.76), 35.05], scaleText, 5.07, Object.assign({ align: "centre" }, A));
 }
 function viewportScales(doc, sh) {

@@ -38,7 +38,7 @@ export function writePDF(pages, meta = {}) {
     const out = [];
     out.push(`${K} 0 0 ${K} 0 0 cm`);             // mm from here on; stroke widths are mm
     out.push("1 J 1 j");
-    const localPats = new Set(), localImgs = new Set(), localOC = new Set(), localAlpha = new Set();
+    const localPats = new Set(), localImgs = new Set(), localOC = new Set(), localAlpha = new Set(), localBlend = new Set();
     const emit = (p) => {
       if (p.t === "group") {
         out.push("q");
@@ -84,7 +84,8 @@ export function writePDF(pages, meta = {}) {
       }
       else if (p.t === "raster" && p.jpeg) {
         const id = "Im" + (images.length + 1); images.push({ id, obj: alloc(), jpeg: p.jpeg, w: p.pxW, h: p.pxH }); localImgs.add(id);
-        out.push(`q ${n3(p.rect[2])} 0 0 ${n3(p.rect[3])} ${n3(p.rect[0])} ${n3(p.rect[1])} cm /${id} Do Q`);
+        if (p.blend === "multiply") localBlend.add("GBM");
+        out.push(`q ${p.blend === "multiply" ? "/GBM gs " : ""}${n3(p.rect[2])} 0 0 ${n3(p.rect[3])} ${n3(p.rect[0])} ${n3(p.rect[1])} cm /${id} Do Q`);
       }
       if (oc) out.push("EMC");
     };
@@ -94,7 +95,7 @@ export function writePDF(pages, meta = {}) {
     set(contentId, { dict: "", stream: content });
     const pageRes = `/Font << /F1 ${fontId} 0 R /F2 ${stdFonts.F2} 0 R /F3 ${stdFonts.F3} 0 R /F4 ${stdFonts.F4} 0 R /F5 ${stdFonts.F5} 0 R >>` +
       (localPats.size ? ` /Pattern << ${[...localPats].map(id => `/${id} ${patterns.find(p => p.id === id).obj} 0 R`).join(" ")} >>` : "") +
-      (localAlpha.size ? ` /ExtGState << ${[...localAlpha].map(a => `/GA${a} << /ca ${(a / 100).toFixed(2)} >>`).join(" ")} >>` : "") +
+      (localAlpha.size || localBlend.size ? ` /ExtGState << ${[...localAlpha].map(a => `/GA${a} << /ca ${(a / 100).toFixed(2)} >>`).join(" ")}${localBlend.size ? " /GBM << /BM /Multiply >>" : ""} >>` : "") +
       (localImgs.size ? ` /XObject << ${[...localImgs].map(id => `/${id} ${images.find(p => p.id === id).obj} 0 R`).join(" ")} >>` : "") +
       (localOC.size ? ` /Properties << ${[...localOC].map(oc => `/${oc} ${ocgIds[layerNames.findIndex(l => ocgOf[l] === oc)]} 0 R`).join(" ")} >>` : "");
     // Internal links: a marker links to the sheet it refers to (§12.1).

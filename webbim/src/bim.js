@@ -384,6 +384,7 @@ BUILDERS.Door = {
     const elev = { rects: [{ u0: fr.u0, u1: fr.u1, z0: fr.sill, z1: fr.sill + fr.h, sub: "Frame" }, { u0: fr.u0 + fw, u1: fr.u1 - fw, z0: fr.sill, z1: fr.sill + fr.h - fw, sub: "Panel" }],
       handle: leaves.length ? { u: leaves[0].uo - Math.sign(leaves[0].uo - leaves[0].uh) * 80, z: fr.sill + hz } : null, glazed: !!t.glazed };
     if (sliding) elev.lines = [{ u0: (ua + ub) / 2, z0: fr.sill, u1: (ua + ub) / 2, z1: fr.sill + fr.h - fw }];
+    if (t.openingMark) elev.lines = (elev.lines || []).concat(openingMark(t, ua, ub, fr.sill, fr.sill + fr.h - fw));
     // the glazing bars, seen in elevation: each leaf's panes
     if (t.glazed && t.bars) {
       elev.lines = [];
@@ -406,6 +407,13 @@ BUILDERS.Door = {
       note: Math.abs(fr.w - t.width) > 1 ? `type is ${t.width}mm wide; its opening is ${fr.w}mm` : null };
   },
 };
+/** Revit's opening mark on a leaf seen in elevation: two lines from the hinge side's corners meeting on the
+ *  far side at mid-height (a casement, a door). The type says which side is the far one ("Left", "Right"). */
+function openingMark(t, u0, u1, z0, z1) {
+  const m = t.openingMark; if (!m || m === "None") return [];
+  const [far, near] = m === "Left" ? [u0, u1] : [u1, u0], zm = (z0 + z1) / 2;
+  return [{ u0: near, z0, u1: far, z1: zm, sub: "Swing" }, { u0: near, z0: z1, u1: far, z1: zm, sub: "Swing" }];
+}
 BUILDERS.Window = {
   precondition: fillerPre("windowType"),
   build: (f, doc) => {
@@ -444,6 +452,7 @@ BUILDERS.Window = {
     const zb_ = w.z0 + fr.sill, zt_ = w.z0 + top;
     const incline = inclineFiller(f, w, fr, plan, parts, { band: [s0, s1], frame: [[fr.u0, fr.u0 + fwid, zb_, zt_], [fr.u1 - fwid, fr.u1, zb_, zt_], [fr.u0 + fwid, fr.u1 - fwid, zb_, zb_ + fwid], [fr.u0 + fwid, fr.u1 - fwid, zt_ - fwid, zt_]] });
     colourParts(parts, t);
+    lines.push(...openingMark(t, fr.u0 + fwid, fr.u1 - fwid, fr.sill + fwid, top - fwid));
     return { plan, elev: { rects, lines }, data: { value: t.width, kind: "Length", host: fr.host, frame: fr, parts, incline, props: { Width: L(t.width), Height: L(t.height), TypeMark: T(t.mark || t.id), "Sill height": L(fr.sill) } } };
   },
 };
@@ -965,7 +974,12 @@ declare({ type: "Sheet", guid: "wb-0601", category: "Sheet", kind: "sheet", idPr
           // Placement is a view-side link: moving a viewport never rebuilds the model (§6.5).
           json("viewports", "Viewports", [], { view: true }), text("revision", "Revision", "P01", { group: "Identity Data" }),
           // diagrams drawn from a space graph, placed in paper mm: [{ id, title, rect: [x, y, w, h], diagram: { sg, kind, by } }]
-          json("diagrams", "Diagrams", [], { view: true }) ] });
+          json("diagrams", "Diagrams", [], { view: true }),
+          // pictures placed on the paper (a scan, a hand sketch over the drawing): [{ rect: [x, y, w, h], url, w, h, blend }],
+          // "multiply" laying a sketch's paper white away so only its strokes darken what is under them
+          json("images", "Images", [], { view: true }),
+          // the title block's scale, when the set writes it by hand ("As indicated" over a page of notes); blank reads it from the views
+          text("scaleLabel", "Scale Label", "", { group: "Identity Data" }) ] });
 BUILDERS.Sheet = { build: (f) => ({ data: { size: sheetSize(f) } }) };
 export function sheetSize(f) {
   const s = F.choice(f, "size");

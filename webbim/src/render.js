@@ -75,7 +75,11 @@ export function drawScene(g, scene, view, opts = {}) {
       g.restore();
     } else if (p.t === "raster" && (p.img || p.url)) {
       const img = p.img || rasterImage(p.url);
-      if (img && img.complete && img.naturalWidth) g.drawImage(img, X(p.rect[0]), Y(p.rect[1] + p.rect[3]), p.rect[2] * view.z, p.rect[3] * view.z);
+      if (img && img.complete && img.naturalWidth) {
+        if (p.blend === "multiply") { g.save(); g.globalCompositeOperation = "multiply"; }
+        g.drawImage(img, X(p.rect[0]), Y(p.rect[1] + p.rect[3]), p.rect[2] * view.z, p.rect[3] * view.z);
+        if (p.blend === "multiply") g.restore();
+      }
     }
   };
   if (scene.annoClip) {
