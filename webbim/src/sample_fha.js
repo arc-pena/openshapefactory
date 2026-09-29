@@ -142,7 +142,7 @@ export function fhaProject(name, project) {
     floor: (id, name, boundary, type, lev, off = 0) => add({ id, type: "Floor", name, args: { boundary, floorType: { ref: type }, level: { ref: lev }, heightOffset: off } }),
     roof: (id, name, boundary, lev, off, slopes, o = {}) => add({ id, type: "Roof", name, args: Object.assign({ boundary, level: { ref: lev }, heightOffset: off, thickness: o.thickness || 250, material: o.material || "M-FH-METAL", edgeSlopes: slopes, ridgeHeight: o.ridge || 0 }, o.args || {}) }),
     stair: (id, name, base, top, flights, o = {}) => add({ id, type: "Stair", name, args: Object.assign({ baseLevel: { ref: base }, topLevel: top ? { ref: top } : null, flights, width: o.width || 914, material: o.material || "M-FH-WOOD", railings: o.railings || "Both" }, o.args || {}) }),
-    topo: (id, name, contours, boundary, base) => add({ id, type: "Toposurface", name, args: { contours, boundary, base, interval: 305, major: 5, material: "M-SOIL" } }),
+    topo: (id, name, contours, boundary, base, pads = []) => add({ id, type: "Toposurface", name, args: { contours, boundary, base, pads, interval: 305, major: 5, material: "M-SOIL" } }),
     /** An opening at distance `at` (its centre) along a wall, filled with a door or a window of a type. */
     door: (id, host, at, type, o = {}) => { const t = L.types[type]; add({ id: `OP-${id}`, type: "Opening", args: { host: { ref: host }, profile: { kind: "rect", at, sill: o.sill || 0, w: t.width, h: t.height }, farProfile: null, depth: "through" } });
       add({ id, type: "Door", args: Object.assign({ fills: { ref: `OP-${id}` }, doorType: { ref: type }, flipHand: !!o.flipHand, flipFacing: !!o.flipFacing, clearance: "None" }, o.args || {}), params: { Mark: o.mark || id } }); },

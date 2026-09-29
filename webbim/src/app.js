@@ -15,6 +15,7 @@ import { buildMazatlanSample } from "./sample_mazatlan.js";
 import { buildSchaefferSample } from "./sample_schaeffer.js";
 import { buildWalnutSample } from "./sample_walnut.js";
 import { buildFpcSample } from "./sample_fpc.js";
+import { buildAiaSample } from "./sample_aia.js";
 import { contoursFromDXF } from "./archelements.js";
 import { inflateBase64 } from "./inflate.js";
 import { openDocument, newDocument, sheetSize } from "./bim.js";
@@ -1027,6 +1028,7 @@ const SAMPLES = [
   { id: "schaeffer", name: "Schaeffer Residence (Frank Harmon Architect)", build: () => buildSchaefferSample(), open: "SH-A202" },
   { id: "walnut", name: "Walnut Creek Environmental Education Center (Frank Harmon Architect)", build: () => buildWalnutSample(), open: "SH-A201" },
   { id: "fpc", name: "First Presbyterian Church, new construction and renovation (Frank Harmon Architect)", build: () => buildFpcSample(), open: "SH-A202" },
+  { id: "aia", name: "AIA North Carolina Headquarters (Frank Harmon Architect)", build: () => buildAiaSample(), open: "SH-A301" },
 ];
 app.samples = SAMPLES;
 /** A new project with a sample's standards and none of its building: its materials, wall/floor/door types,

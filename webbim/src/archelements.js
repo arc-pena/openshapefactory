@@ -198,6 +198,7 @@ declare({ type: "Toposurface", guid: "wb-0411", category: "Topography", kind: "t
   summary: "A topographic surface from contour lines at their heights (and spot points), triangulated; contours in plan.",
   args: [ json("contours", "Contours [{ z, points: [[x, y], ...] }]", []), json("points", "Spot points [[x, y, z], ...]", []),
           json("boundary", "Boundary (blank: the points' hull)", []),
+          json("pads", "Building pads [{ boundary: [[x, y], ...], z }] (the ground cut or filled flat under a building)", []),
           real("base", "Base elevation (bottom of the earth)", -3000, -1e6, 1e6, 1, "mm", { group: "Constraints" }),
           real("interval", "Contour interval", 500, 10, 100000, 1, "mm", { group: "Graphics" }), integer("major", "Every nth contour heavier", 5, 1, 100, { group: "Graphics" }),
           bool("labels", "Label the heavier contours", true, { group: "Graphics" }), text("material", "Material", "M-SOIL", { group: "Materials" }) ] });
@@ -236,6 +237,13 @@ export function topoSurface(doc, f) {
     const B = ccwOf(bnd);
     for (let i = 0; i < B.length; i++) { const a = B[i], b = B[(i + 1) % B.length], L = Math.hypot(b[0] - a[0], b[1] - a[1]), n = Math.max(1, Math.ceil(L / 3000)); for (let k = 0; k < n; k++) { const q = [a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n]; pts.push([q[0], q[1], idw(q)]); } }
     for (let i = pts.length - 1; i >= 0; i--) if (!pointInPoly(pts[i], B) && !B.some((a, j) => { const b = B[(j + 1) % B.length], d = sub(b, a), L = Math.hypot(d[0], d[1]); return L && Math.abs((pts[i][0] - a[0]) * d[1] - (pts[i][1] - a[1]) * d[0]) / L < 1 && dot(sub(pts[i], a), d) >= -1 && dot(sub(pts[i], a), d) <= L * L + 1; })) pts.splice(i, 1);
+  }
+  // building pads (Revit's): the ground inside each is taken out and laid flat at its height, its edge at that height
+  for (const pad of F.json(f, "pads") || []) {
+    const pb = (pad && pad.boundary || []).filter(p => Array.isArray(p)); if (pb.length < 3) continue; const PB = ccwOf(pb), z = +pad.z || 0;
+    for (let i = pts.length - 1; i >= 0; i--) if (pointInPoly(pts[i], PB)) pts.splice(i, 1);
+    for (let i = 0; i < PB.length; i++) { const a = PB[i], b = PB[(i + 1) % PB.length], n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / 3000)); for (let k = 0; k < n; k++) pts.push([a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n, z]); }
+    const c = PB.reduce((m, q) => [m[0] + q[0] / PB.length, m[1] + q[1] / PB.length], [0, 0]); if (pointInPoly(c, PB)) pts.push([c[0], c[1], z]);
   }
   // one point per place: two contours meeting leave the lower
   const seen = new Map(); const P = []; for (const p of pts) { const k = Math.round(p[0]) + "," + Math.round(p[1]); if (!seen.has(k)) { seen.set(k, P.length); P.push(p); } }
