@@ -11,11 +11,8 @@ import { LENGTH_UNITS, setLengthUnit, fmtLength, parseLength } from "./units.js"
 import { formatValue } from "./expr.js";
 import { fromPolygon } from "./bimsketch.js";
 import { Editor } from "./ops.js";
-import { buildSample } from "./sample.js";
-import { buildPavilionSample } from "./sample_pavilion.js";
 import { buildMazatlanSample } from "./sample_mazatlan.js";
 import { inflateBase64 } from "./inflate.js";
-import { buildRmuhSample } from "./sample_rmuh.js";
 import { openDocument, newDocument, sheetSize } from "./bim.js";
 import { F, CATALOGUE } from "./ocaf.js";
 import { deriveView, sheetScene, shownInView, SHEET_DIAGRAMS, SHEET_DISPLAYS, sheetDisplayOf } from "./scene.js";
@@ -587,10 +584,7 @@ function fileMenu(anchor) {
   menuAt(r.left, r.bottom, [
     { label: "New", icon: "sheet", run: () => newEmpty() }, { label: "Open…", icon: "open", run: () => openFile() }, { label: "Save", icon: "save", run: () => saveModel() },
     "-", { label: "Export…", icon: "exportI", run: () => exportDialog() }, { label: "Import IFC…", icon: "importI", run: () => importIfcFile() }, { label: "Import DXF Symbol…", icon: "importI", run: () => importDXF() },
-    "-", { label: "Project Information…", icon: "info", run: () => projectInfo() }, { label: "Reset to Sample Project (D1 RMUH)", icon: "house", run: () => { forget("draft-v6"); forget("tabs"); setDocument(buildRmuhSample(), { msg: "D1 RMUH sample loaded: the brief analysed, the client's plot as the site boundary", kind: "ok" }); app.openView("__spacegraph"); } },
-    { label: "Studio House Sample", icon: "house", run: () => { forget("draft-v6"); forget("tabs"); setDocument(buildSample(), { msg: "Studio House sample loaded", kind: "ok" }); } },
-    { label: "Casa Mazatlan (INAH drawing set)", icon: "house", run: () => { forget("draft-v6"); forget("tabs"); setDocument(buildMazatlanSample(), { msg: "Casa Mazatlan: the INAH set rebuilt as a model - existing facades, courtyard, studio, roof terrace; 17 A3 sheets A001-A904 in the set's title band", kind: "ok" }); app.openView("SH-A101"); } },
-    { label: "Pavilion House Sample (drawing set)", icon: "house", run: () => { forget("draft-v6"); forget("tabs"); setDocument(buildPavilionSample(), { msg: "Pavilion House: a house after the Barcelona Pavilion - podium plan, roof plan, elevations, sections, axonometric and five A1 sheets", kind: "ok" }); app.openView("SH-A100"); } },
+    "-", { label: "Project Information…", icon: "info", run: () => projectInfo() }, { label: "Casa Mazatlan (INAH drawing set)", icon: "house", run: () => { forget("draft-v6"); forget("tabs"); setDocument(buildMazatlanSample(), { msg: "Casa Mazatlan: the INAH set rebuilt as a model - existing facades, courtyard, studio, roof terrace; 17 A3 sheets A001-A904 in the set's title band", kind: "ok" }); app.openView("SH-A101"); } },
   ]);
 }
 
@@ -1416,8 +1410,11 @@ async function boot() {
   let doc = null, note = null;
   const draft = store("draft-v6");
   if (draft) { try { doc = openDocument(draft); doc.regenerate(); note = { msg: "Restored your draft from this browser. File › New to start empty.", kind: "note" }; } catch (e) { doc = null; } }
-  if (!doc) { try { doc = buildRmuhSample(); } catch (e) { console.error(e); doc = buildSample(); } }
-  setDocument(doc, note || { msg: doc.meta.brief ? `D1 RMUH: the brief read into a space graph (${(doc.meta.brief.report || [])[0] || ""}) and a first massing built on the client's plot. File › Studio House Sample for the small house.` : `Studio House: ${doc.elements().length} elements.`, kind: "ok" });
+  // the one sample the tool carries: Casa Mazatlan, opened on its ground floor sheet
+  const fresh = !doc;
+  if (!doc) doc = buildMazatlanSample();
+  setDocument(doc, note || { msg: "Casa Mazatlan: the INAH set rebuilt as a model - 17 A3 sheets A001-A904 in the set's title band", kind: "ok" });
+  if (fresh) app.openView("SH-A101");
 }
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();
 /** Blocks of a massing study moved by hand (plan or 3D): the graph that built them re-packs around where they now are. */
