@@ -228,7 +228,7 @@ function fillerDecl(type, guid, typeKind, extraArgs, summary, idPrefix, category
     args: [ ref("fills", "Fills", ["opening"]), ref(typeKind, "Type", [typeKind]), ...extraArgs, ...INCLINE_ARGS() ] });
 }
 fillerDecl("Door", "wb-0202", "doorType", [bool("flipHand", "Flip hand", false), bool("flipFacing", "Flip facing", false),
-    choice("operation", "Operation", ["Single", "Double"], 0), real("swingAngle", "Swing angle", 90, 0, 180, 1, "°"),
+    choice("operation", "Operation", ["Single", "Double", "Sliding"], 0), real("swingAngle", "Swing angle", 90, 0, 180, 1, "°"),
     real("openAngle", "Open angle (3D)", 0, 0, 180, 1, "°"), choice("clearance", "ADA clearance", ["Front approach", "Hinge approach", "Latch approach", "None"], 0)],
   "A filler with a symbol: panel, frame and swing, drawn in its opening's host frame.", "D", "IfcDoor");
 fillerDecl("Window", "wb-0203", "windowType", [bool("flipFacing", "Flip facing", false)],
@@ -315,12 +315,13 @@ BUILDERS.Door = {
     const sFace = facing > 0 ? sInt : sExt, sFar = facing > 0 ? sExt : sInt;
     const dir = Math.sign(sFace - sFar) || 1;                          // +s toward the swing side
     const fw = t.frame || 40, lt = t.leafThickness || 44;
-    const pair = F.choice(f, "operation") === "Double";
+    const pair = F.choice(f, "operation") === "Double", sliding = F.choice(f, "operation") === "Sliding";
     const swingDeg = Math.max(0, Math.min(180, F.real(f, "swingAngle") ?? 90));
     const openDeg = Math.max(0, Math.min(swingDeg, F.real(f, "openAngle") ?? 0));
     const hingeAtU0 = !F.bool(f, "flipHand");
     const ua = fr.u0 + fw, ub = fr.u1 - fw;                            // clear opening between the jambs
-    const leaves = pair ? [{ uh: ua, uo: (ua + ub) / 2 }, { uh: ub, uo: (ua + ub) / 2 }]
+    // sliding: two glazed panels in the frame, one behind the other, overlapping by a stile at the middle
+    const leaves = sliding ? [] : pair ? [{ uh: ua, uo: (ua + ub) / 2 }, { uh: ub, uo: (ua + ub) / 2 }]
       : [hingeAtU0 ? { uh: ua, uo: ub } : { uh: ub, uo: ua }];
     const sMin = Math.min(sExt, sInt), sMax = Math.max(sExt, sInt);
     const plan = [], parts = [], swing = [];
@@ -356,6 +357,14 @@ BUILDERS.Door = {
       }
       swing.push({ hinge: H, closed: c, open: o, len, lt, turn, swingDeg, openDeg, z0: w.z0 + fr.sill, z1: w.z0 + fr.sill + fr.h });
     }
+    if (sliding) {
+      const sm = (sExt + sInt) / 2, mid = (ua + ub) / 2, ov = 25, slt = Math.min(lt, 30);
+      [[ua, mid + ov, sm - slt], [mid - ov, ub, sm]].forEach(([u0, u1, s0], k) => {
+        plan.push({ sub: "Panel", role: "cut", path: polyPath([hostPt(w, u0, s0), hostPt(w, u1, s0), hostPt(w, u1, s0 + slt), hostPt(w, u0, s0 + slt)]) });
+        parts.push(hostBox(w, u0, u1, s0, s0 + slt, fr.sill + 5, fr.sill + fr.h - fw - 3, t.glazed ? "Glass" : "Panel"));
+        if (t.glazed) for (const [a, b] of [[u0, u0 + 40], [u1 - 40, u1]]) parts.push(hostBox(w, a, b, s0 - 8, s0 + slt + 8, fr.sill + 5, fr.sill + fr.h - fw - 3, "Frame"));
+      });
+    }
     // frame: two jambs lining the reveal, and the head
     const frames = [[fr.u0, fr.u0 + fw], [fr.u1 - fw, fr.u1]].map(([u0, u1]) => [hostPt(w, u0, sExt), hostPt(w, u1, sExt), hostPt(w, u1, sInt), hostPt(w, u0, sInt)]);
     for (const p of frames) plan.push({ sub: "Frame", role: "cut", path: polyPath(p) });
@@ -373,7 +382,8 @@ BUILDERS.Door = {
       }
     }
     const elev = { rects: [{ u0: fr.u0, u1: fr.u1, z0: fr.sill, z1: fr.sill + fr.h, sub: "Frame" }, { u0: fr.u0 + fw, u1: fr.u1 - fw, z0: fr.sill, z1: fr.sill + fr.h - fw, sub: "Panel" }],
-      handle: { u: leaves[0].uo - Math.sign(leaves[0].uo - leaves[0].uh) * 80, z: fr.sill + hz }, glazed: !!t.glazed };
+      handle: leaves.length ? { u: leaves[0].uo - Math.sign(leaves[0].uo - leaves[0].uh) * 80, z: fr.sill + hz } : null, glazed: !!t.glazed };
+    if (sliding) elev.lines = [{ u0: (ua + ub) / 2, z0: fr.sill, u1: (ua + ub) / 2, z1: fr.sill + fr.h - fw }];
     // the glazing bars, seen in elevation: each leaf's panes
     if (t.glazed && t.bars) {
       elev.lines = [];
@@ -386,13 +396,13 @@ BUILDERS.Door = {
         for (let j = 1; j < rows; j++) { const z = zb + (zt - zb) * j / rows; elev.lines.push({ u0: a, z0: z, u1: b, z1: z }); }
       }
     }
-    const leafW = Math.abs(leaves[0].uo - leaves[0].uh);
+    const leafW = leaves.length ? Math.abs(leaves[0].uo - leaves[0].uh) : (ub - ua) / 2;
     const scen = SWING_SCENARIOS[(hingeAtU0 ? 0 : 1) + (facing > 0 ? 0 : 2)];
     const top_ = w.z0 + fr.sill + fr.h, bot_ = w.z0 + fr.sill;
     const incline = inclineFiller(f, w, fr, plan, parts, { band: [sMin, sMax], frame: [[fr.u0, fr.u0 + fw, bot_, top_], [fr.u1 - fw, fr.u1, bot_, top_], [fr.u0 + fw, fr.u1 - fw, top_ - fw, top_]] });
     colourParts(parts, t);
     return { plan, elev, data: { value: t.width, kind: "Length", host: fr.host, frame: fr, parts, swing, incline, props: {
-      Width: L(t.width), Height: L(t.height), TypeMark: T(t.mark || t.id), "Leaf width": L(leafW), "Clear width": L(leafW - lt), Swing: T(pair ? "Double" : scen), "ADA clearance": T(scenario) } },
+      Width: L(t.width), Height: L(t.height), TypeMark: T(t.mark || t.id), "Leaf width": L(leafW), "Clear width": L(leafW - lt), Swing: T(sliding ? "Sliding" : pair ? "Double" : scen), "ADA clearance": T(scenario) } },
       note: Math.abs(fr.w - t.width) > 1 ? `type is ${t.width}mm wide; its opening is ${fr.w}mm` : null };
   },
 };
@@ -649,7 +659,7 @@ declare({ type: "Lattice", guid: "wb-0605", category: "IfcRailing", kind: "latti
           real("brickLength", "Brick length", 240, 50, 1000, 1, "mm", { group: "Bricks" }), real("brickHeight", "Brick height (course)", 60, 20, 500, 1, "mm", { group: "Bricks" }),
           real("brickDepth", "Brick depth (wall thickness)", 120, 30, 600, 1, "mm", { group: "Bricks" }), real("gap", "Open joint", 120, 0, 1000, 1, "mm", { group: "Bricks" }),
           real("bed", "Bed joint", 10, 0, 200, 1, "mm", { group: "Bricks" }),
-          choice("bond", "Bond", ["Running (half brick)", "Stack", "Alternate solid course"], 0, { group: "Bricks" }),
+          choice("bond", "Bond", ["Running (half brick)", "Stack", "Alternate solid course", "Soldier screen"], 0, { group: "Bricks" }),
           text("material", "Material", "M-BRICK", { group: "Materials" }), text("colour", "Colour", "", { group: "Graphics" }) ] });
 BUILDERS.Lattice = { build: (f, doc) => {
   const c = F.json(f, "line"); if (!c || c.type !== "line") throw new Error("a lattice runs along a straight line");
@@ -666,6 +676,25 @@ BUILDERS.Lattice = { build: (f, doc) => {
     for (const t of [[0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7], [0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5], [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7]]) idx.push(b + t[0], b + t[1], b + t[2]);
     bricks.push({ u0, u1, z0: zb, z1: zt });
   };
+  // a soldier screen (the courtyard's balustrade): a flat course laid solid, then a tier of bricks stood on end
+  // with the open gap between them, the next tier's bricks over the last tier's gaps; a solid course caps it
+  if (bond === "Soldier screen") {
+    const tier = bl + bed + bh + bed, nT = Math.max(1, Math.floor((H - bh) / tier));
+    let z = z0;
+    const flat = () => { for (let u = 0; u < L - 1e-6; u += bl + bed) box(u, Math.min(L, u + bl), z, z + bh); z += bh + bed; };
+    for (let k = 0; k < nT; k++) {
+      flat();
+      const p2 = bh + gap, off = k % 2 ? p2 / 2 : 0;
+      for (let u = off; u < L - 1e-6; u += p2) { const a = u, b = Math.min(L, u + bh); if (b - a > 10) box(a, b, z, z + bl); }
+      z += bl + bed;
+    }
+    flat();
+    const zt = z - bed;
+    const foot = [add(c.start, mul(n, -bt / 2)), add(c.end, mul(n, -bt / 2)), add(c.end, mul(n, bt / 2)), add(c.start, mul(n, bt / 2))];
+    const material = F.text(f, "material") || "M-BRICK", colour = F.text(f, "colour") || ((doc.lib.materials[material] || {}).shading || {}).colour || "#b5613d";
+    return { plan: { path: polyPath(foot), foot, z0, z1: zt, material, mesh: { positions: pos, index: idx }, mesh3d: [{ positions: pos, index: idx, colour }], bricks, frame: { start: c.start, d, n, bt }, parts: [] },
+      data: { value: L, kind: "Length", props: { Length: { kind: "Length", v: L }, Height: { kind: "Length", v: zt - z0 }, Bricks: { kind: "Number", v: bricks.length }, Courses: { kind: "Number", v: 2 * nT + 1 } } } };
+  }
   const nCourses = Math.max(1, Math.floor((H + bed) / course));
   for (let k = 0; k < nCourses; k++) {
     const zb = z0 + k * course, zt = zb + bh;
@@ -749,13 +778,44 @@ declare({ type: "Generic", guid: "wb-0403", category: "IfcBuildingElementProxy",
           // document's mesh library and the frame that places it, z measured from the base
           json("mesh", "Body mesh", null, { group: "IFC" }),
           // the category it is filed under when its IFC class alone does not say (a tree among the terrain)
-          text("category", "Category", "", { group: "IFC" }) ],
-  handles: (f) => { if (F.json(f, "mesh")) return []; const b = F.json(f, "boundary") || []; return b.map((p, i) => ({ key: "v" + i, at: p, constraint: "free2d", writes: `boundary.${i}` })); } });
+          text("category", "Category", "", { group: "IFC" }),
+          // drawn in a vertical plane instead (Revit's in-place extrusion on a wall's face: a moulding round a
+          // door, a pediment): the plane is a line in plan, the profile is loops of [along the line, height
+          // above the base], pulled off the plane toward the line's right by the height (its depth here)
+          json("workPlane", "Work plane (vertical: a line in plan)", null, { group: "Constraints" }), json("profile", "Profile in the work plane", null, { group: "Dimensions" }) ],
+  handles: (f) => { if (F.json(f, "mesh") || F.json(f, "workPlane")) return []; const b = F.json(f, "boundary") || []; return b.map((p, i) => ({ key: "v" + i, at: p, constraint: "free2d", writes: `boundary.${i}` })); } });
 BUILDERS.Generic = {
-  precondition: (f) => { const b = F.json(f, "boundary"); return Array.isArray(b) && b.length >= 3 ? null : "a generic model needs an outline of three points or more"; },
+  precondition: (f) => { const b = F.json(f, "boundary"); return F.json(f, "workPlane") || (Array.isArray(b) && b.length >= 3) ? null : "a generic model needs an outline of three points or more"; },
   build: (f, doc) => {
     const b = F.json(f, "boundary"), z0 = levelElev(doc, f, "level") + F.real(f, "baseOffset"), h = F.real(f, "height"), material = F.text(f, "material") || "M-CONC";
     const colour = F.text(f, "colour") || null, mref = F.json(f, "mesh");
+    const wp = F.json(f, "workPlane"), prof = F.json(f, "profile");
+    if (wp && wp.start && wp.end && Array.isArray(prof) && prof.length) {
+      const loops = (Array.isArray(prof[0][0]) ? prof : [prof]).filter(l => l.length >= 3);
+      const d = normalise(sub(wp.end, wp.start)), n = [d[1], -d[0]];             // n: the line's right
+      const P3 = (u, z, t) => [wp.start[0] + d[0] * u + n[0] * t, wp.start[1] + d[1] * u + n[1] * t, z0 + z];
+      const pos = [], idx = [], face = [];
+      let lo = Infinity, hi = -Infinity, u0 = Infinity, u1 = -Infinity;
+      // the first loop is the outline, any others are holes through it (the opening a moulding frames)
+      const ccw = pts => polyArea(pts) >= 0 ? pts : pts.slice().reverse(), cw = pts => polyArea(pts) < 0 ? pts : pts.slice().reverse();
+      const cap = loops.length > 1 ? bridgeHoles(ccw(loops[0]), loops.slice(1).map(cw)) : loops[0];
+      { const base = pos.length / 3, k = cap.length;
+        for (const [u, z] of cap) pos.push(...P3(u, z, 0));
+        for (const [u, z] of cap) pos.push(...P3(u, z, h));
+        for (const [a, bb, c] of triangulate(cap)) { idx.push(base + a, base + c, base + bb); idx.push(base + k + a, base + k + bb, base + k + c); } }
+      for (const l of loops) {
+        const base = pos.length / 3, k = l.length;
+        for (const [u, z] of l) { pos.push(...P3(u, z, 0)); lo = Math.min(lo, z0 + z); hi = Math.max(hi, z0 + z); u0 = Math.min(u0, u); u1 = Math.max(u1, u); }
+        for (const [u, z] of l) pos.push(...P3(u, z, h));
+        for (let i = 0; i < k; i++) { const j = (i + 1) % k; idx.push(base + i, base + j, base + k + j, base + i, base + k + j, base + k + i); }
+        face.push(l.map(([u, z]) => { const q = P3(u, z, 0); return [q[0], q[1], q[2]]; }));
+      }
+      const foot = [P3(u0, 0, 0), P3(u1, 0, 0), P3(u1, 0, h), P3(u0, 0, h)].map(q => [q[0], q[1]]);
+      const mesh = { positions: pos, index: idx }, shade = colour || ((doc.lib.materials[material] || {}).shading || {}).colour || "#b9b2a6";
+      const area = Math.abs(polyArea(loops[0])) - loops.slice(1).reduce((a, l) => a + Math.abs(polyArea(l)), 0);
+      return { plan: { path: polyPath(foot), foot, z0: lo, z1: hi, material, parts: [], colour, mesh, mesh3d: [{ positions: pos, index: idx, colour: shade }], face },
+        data: { value: area * h, kind: "Volume", parts: [], props: { Volume: { kind: "Volume", v: area * h }, Area: { kind: "Area", v: area }, Depth: L(h), "IFC class": T(F.text(f, "ifcClass")) } } };
+    }
     if (mref && mref.shape) {
       const shape = doc.lib.meshes && doc.lib.meshes[mref.shape]; if (!shape) throw new Error(`its body mesh ${mref.shape} is missing from the document`);
       const fr = mref.frame || { o: [0, 0, 0], x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] }, P = shape.positions, W = new Array(P.length);
@@ -847,7 +907,8 @@ declare({ type: "ElevationView", guid: "wb-0502", category: "View", kind: "view"
           ref("style", "View style", ["viewStyle"], { group: "Graphics" }), choice("detailLevel", "Detail level", ["Coarse", "Medium", "Fine"], 0, { group: "Graphics" }),
           json("clip", "Crop region", { rect: null, visible: false, active: false }, { group: "Extents" }),
           json("vg", "Visibility/Graphics", {}, { group: "Graphics" }) ,
-          json("levelExtent", "Level lines (from, to along the view)", null, { group: "Graphics" }), bool("groundLine", "Ground line", true, { group: "Graphics" })],
+          json("levelExtent", "Level lines (from, to along the view)", null, { group: "Graphics" }), bool("groundLine", "Ground line", true, { group: "Graphics" }),
+          json("overrides", "Element overrides", {}, { group: "Graphics" })],
   handles: viewLineHandles });
 BUILDERS.ElevationView = { build: () => ({ data: {} }) };
 declare({ type: "SectionView", guid: "wb-0505", category: "View", kind: "view", idPrefix: "V-S",
@@ -858,7 +919,8 @@ declare({ type: "SectionView", guid: "wb-0505", category: "View", kind: "view", 
           json("clip", "Crop region", { rect: null, visible: false, active: false }, { group: "Extents" }),
           json("vg", "Visibility/Graphics", {}, { group: "Graphics" }),
           choice("heads", "Heads at", ["Both ends", "Start", "End"], 0, { group: "Graphics" }) ,
-          json("levelExtent", "Level lines (from, to along the view)", null, { group: "Graphics" }), bool("groundLine", "Ground line", true, { group: "Graphics" })],
+          json("levelExtent", "Level lines (from, to along the view)", null, { group: "Graphics" }), bool("groundLine", "Ground line", true, { group: "Graphics" }),
+          json("overrides", "Element overrides", {}, { group: "Graphics" })],
   handles: viewLineHandles });
 BUILDERS.SectionView = { build: () => ({ data: {} }) };
 
@@ -938,7 +1000,7 @@ BUILDERS.SpotElevation = { build: () => ({ data: {} }) };
 
 declare({ type: "DetailLine", guid: "wb-0702", category: "Detail", kind: "detail", idPrefix: "DL",
   summary: "A line that lives in one view. No 3D; appears nowhere else.",
-  args: [ curve2d("curve", "Curve", ["line", "arc", "spline"], { type: "line", start: [0, 0], end: [1000, 0] }), choice("pen", "Pen", ["hairline", "thin", "medium", "heavy", "bold"], 1), ref("view", "View", ["view"], { view: true }),
+  args: [ curve2d("curve", "Curve", ["line", "arc", "spline"], { type: "line", start: [0, 0], end: [1000, 0] }), choice("pen", "Pen", ["hairline", "thin", "medium", "heavy", "bold", "gossamer", "extra"], 1), ref("view", "View", ["view"], { view: true }),
           text("layer", "Layer", "", { group: "Graphics" }), text("colour", "Colour", "#000000", { group: "Graphics" }) ] });
 BUILDERS.DetailLine = { build: () => ({ data: {} }) };
 

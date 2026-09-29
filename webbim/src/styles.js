@@ -85,6 +85,7 @@ export function matches(doc, f, pred) {
   const norm = x => pred.param === "Category" ? (CATEGORY_ALIASES[x] || x) : x;
   if ("is" in pred) return String(v) === String(norm(pred.is));
   if ("not" in pred) return String(v) !== String(norm(pred.not));
+  if ("in" in pred) return (pred.in || []).some(x => String(v) === String(norm(x)));
   if ("gt" in pred) return cmp(v) > cmp(pred.gt);
   if ("lt" in pred) return cmp(v) < cmp(pred.lt);
   if ("gte" in pred) return cmp(v) >= cmp(pred.gte);

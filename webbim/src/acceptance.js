@@ -2297,7 +2297,7 @@ testCase("M78", "Everything deletes: one element of every type in the model - mo
   return R(!bad.length && first.size >= 30, `${first.size} types, each deleted and undone, every view drawing; a bare opening picked in plan; a door takes its opening`, bad.length ? bad.join("; ") : `${first.size} types: ${[...first.keys()].join(", ")}`);
 });
 
-testCase("M79", "Casa Mazatlan, from its INAH drawing set: every page of the set is a sheet (A001-A904, A3, in the set's title band, Arial); the rooms close as the plan draws them; the existing drawings show only what exists; elevations read as the eye sees them (Guillermo Nelson: grid 1 on the left); the set's people and car stand in its elevation and section at true size", () => {
+testCase("M79", "Casa Mazatlan, from its INAH drawing set: every page of the set is a sheet (A001-A904, A3, in the set's title band, Arial); the plans are the set's - walls where it draws them, its dimension strings as real dimensions reading its values, its 2D drawing imported; the existing drawings are a 2D drafting view; the courtyard's balustrade is a brick screen; elevations read as the eye sees them (Guillermo Nelson: grid 1 on the left)", () => {
   const doc = buildMazatlanSample();
   const PAGES = ["A001", "A010", "A101", "A102", "A103", "A201", "A202", "A301", "A302", "A303", "A304", "A305", "A306", "A901", "A902", "A903", "A904"];
   const sheets = doc.elements().filter(f => doc.typeOf(f) === "Sheet"), nums = sheets.map(f => doc.argValue(f, "number")).sort();
@@ -2307,14 +2307,18 @@ testCase("M79", "Casa Mazatlan, from its INAH drawing set: every page of the set
   const band = ["CASA MAZATLAN", "PLANTA BAJA", "A101", "PROJECT NO", "TORRES HERNANDEZ", "1 : 100", "NORTE"].every(t => texts.some(p => p.text === t)) && texts.every(p => /^Arial/.test(p.font || ""));
   const errs = doc.elements().filter(f => doc.error(f)).length;
   const room = n => { const f = doc.elements().find(g => doc.typeOf(g) === "Space" && g.get("Name") === n); return f && (doc.data(f) || {}).value / 1e6; };
-  const rooms = doc.elements().filter(f => doc.typeOf(f) === "Space").every(f => !doc.note(f)) && Math.abs(room("Patio central") - 4.13 * 5.0) < 0.5;
+  const rooms = doc.elements().filter(f => doc.typeOf(f) === "Space").every(f => !doc.note(f)) && Math.abs(room("Patio central") - 4.08 * 4.83) < 0.5;
+  // the plan's dimension strings: real dimensions, most of them on the model, every one reading as the set writes it
+  const dims = doc.elements().filter(f => doc.typeOf(f) === "Dimension" && (doc.argValue(f, "view") || {}).ref === "V-PB1");
+  const onModel = dims.filter(f => (doc.argValue(f, "of") || []).every(k => !k.startsWith("DL-"))).length;
+  const pb1 = deriveView(doc, doc.element("V-PB1")), dimTexts = pb1.prims.filter(p => p.t === "text" && p.layer === "Annotation-Dimension").map(p => p.text);
+  const dimsOk = dims.length >= 50 && onModel >= 40 && ["13050", "14090", "5600", "3550", "3900", "4825", "2180", "1910"].every(t => dimTexts.includes(t));
   const exist = deriveView(doc, doc.element("V-EX")), shown = new Set(exist.prims.map(p => p.id).filter(Boolean));
-  const existOk = shown.has("W-S") && shown.has("W-I1") && !shown.has("W-N4") && !shown.has("K1") && !shown.has("SP-07");
+  const existOk = doc.typeOf(doc.element("V-EX")) === "DraftingView" && shown.has("IM-EX") && !shown.has("W-S");
+  const screen = ["CE1", "CE2", "CE3"].every(id => doc.element(id) && doc.typeOf(doc.element(id)) === "Lattice" && doc.argValue(doc.element(id), "bond") === "Soldier screen" && (doc.data(doc.element(id)).props.Bricks.v > 100));
   const G = viewLineGeometry(doc, doc.element("V-E-GN")), handed = G.sOf([0, 14570]) < G.sOf([0, 0]);
-  const s2 = deriveView(doc, doc.element("V-S2")), car = s2.prims.filter(p => p.id === "EN6"), xs = car.flatMap(p => (p.path || []).flatMap(g => [g.a, g.b].filter(Boolean).map(q => q[0])));
-  const carW = xs.length ? (Math.max(...xs) - Math.min(...xs)) * 50 : 0;
   const views = doc.elements().filter(f => ["PlanView", "ElevationView", "SectionView"].includes(doc.typeOf(f))).every(v => deriveView(doc, v).prims.length > 50);
-  return R(pagesOk && band && !errs && rooms && existOk && handed && Math.abs(carW - 4720) < 60 && views,
-    "17 A3 sheets A001-A904 in the title band, Arial; no errors; every room enclosed, the courtyard ≈ 20.6 m²; A010 shows existing only; grid 1 left of grid 5 in A201; the car 4.72 m long at 1:50",
-    JSON.stringify({ nums, band, errs, courtyard: room("Patio central"), existOk, handed, carW, views }));
+  return R(pagesOk && band && !errs && rooms && dimsOk && existOk && screen && handed && views,
+    "17 A3 sheets A001-A904 in the title band, Arial; no errors; every room enclosed, the courtyard ≈ 19.7 m²; the plan's strings read the set's values on the model; A010 is a drafting view of the survey; the brick screen; grid 1 left of grid 5 in A201",
+    JSON.stringify({ nums, band, errs, courtyard: room("Patio central"), dims: dims.length, onModel, existOk, screen, handed, views }));
 });

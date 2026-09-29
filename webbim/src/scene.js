@@ -43,11 +43,17 @@ export const TEXT_FONTS = {
   Serif: { label: "Serif (Times)", css: '"Times New Roman", Times, "Liberation Serif", serif', cap: 0.662, k: 0.82, pdf: "F3" },
   Mono:  { label: "Mono (Courier)", css: '"Courier New", Courier, "Liberation Mono", monospace', cap: 0.571, mono: 0.6, pdf: "F4" },
 };
+// Helvetica's advance widths (Arial's are the same), WinAnsi 32-255: the PDF writer sets Arial as Helvetica, so
+// text placed by its width (right-aligned, centred) lands where it is drawn
+const HELV_WIDTHS = [278,278,355,556,556,889,667,191,333,333,389,584,278,333,278,278,556,556,556,556,556,556,556,556,556,556,278,278,584,584,584,556,1015,667,667,722,722,667,611,778,722,278,500,667,556,833,722,778,667,778,722,667,611,722,667,944,667,667,611,278,278,278,469,556,333,556,556,500,556,556,278,556,556,222,222,500,222,833,556,556,556,556,333,500,278,556,500,722,500,500,500,334,260,334,584,0,556,556,222,556,333,1000,556,556,333,1000,667,333,1000,556,611,556,556,222,222,333,333,350,556,1000,333,1000,500,333,944,556,500,667,278,333,556,556,556,556,260,556,333,737,370,556,584,333,737,333,400,584,333,333,333,556,537,278,333,333,365,556,834,834,834,611,667,667,667,667,667,667,1000,722,667,667,667,667,278,278,278,278,722,722,778,778,778,778,778,584,778,722,722,722,722,667,667,611,556,556,556,556,556,556,889,500,556,556,556,556,278,278,278,278,556,556,556,556,556,556,556,584,611,556,556,556,556,500,556,500];
+const HELV_BOLD_WIDTHS = [278,333,474,556,556,889,722,238,333,333,389,584,278,333,278,278,556,556,556,556,556,556,556,556,556,556,333,333,584,584,584,611,975,722,722,722,722,667,611,778,722,278,556,722,611,833,722,778,667,778,722,667,611,722,667,944,667,667,611,333,278,333,584,556,333,556,611,556,611,556,333,611,611,278,278,556,278,889,611,611,611,611,389,556,333,611,556,778,556,556,500,389,280,389,584,0,556,556,278,556,500,1000,556,556,333,1000,667,333,1000,556,611,556,556,278,278,500,500,350,556,1000,333,1000,556,333,944,556,500,667,278,333,556,556,556,556,280,556,333,737,370,556,584,333,737,333,400,584,333,333,333,611,556,278,333,333,365,556,834,834,834,611,722,722,722,722,722,722,1000,722,667,667,667,667,278,278,278,278,722,722,778,778,778,778,778,584,778,722,722,722,722,667,667,611,556,556,556,556,556,556,889,556,556,556,556,556,278,278,278,278,611,611,611,611,611,611,611,584,611,611,611,611,611,556,611,556];
+TEXT_FONTS.Arial.widths = HELV_WIDTHS; TEXT_FONTS.ArialBold.widths = HELV_BOLD_WIDTHS;
 const fontOf = name => TEXT_FONTS[name] || TEXT_FONTS.Sans;
 export const emOf = (h, font) => { const F0 = fontOf(font); return h / (F0.cap || FONT_METRICS.capHeight / 1000); };
 export function textWidth(str, h, font, widthFactor = 1) {
   const F0 = fontOf(font), em = emOf(h, font);
   if (F0.mono) return [...String(str)].length * F0.mono * em * widthFactor;
+  if (F0.widths) { let w = 0; for (const ch of String(str)) { const code = FONT_METRICS.unicodeToCode[ch.codePointAt(0)] ?? 63; w += F0.widths[code - 32] ?? 556; } return w / 1000 * em * widthFactor; }
   let w = 0;
   for (const ch of String(str)) { const code = FONT_METRICS.unicodeToCode[ch.codePointAt(0)] ?? 63; w += FONT_WIDTHS[code] || 600; }
   return w / 1000 * em * F0.k * widthFactor;
@@ -602,7 +608,9 @@ export function gridHead(doc, B, f, at, out, g, id) {
 }
 /** A section line in plan: a chain line with a head at each end, the arrows pointing the way it looks. */
 function drawSectionMarker(doc, ctx, B, f, place) {
-  const c = F.json(f, "line"), id = doc.idOf(f), S = ctx.scale;
+  const id = doc.idOf(f), S = ctx.scale;
+  // a view may draw the marker's ends elsewhere along the line (Revit's per-view section extents)
+  const ov = ctx.overrides && ctx.overrides[id], c = (ov && ov.markerLine) || F.json(f, "line");
   const d = normalise(sub(c.end, c.start)), look = mul(perp(d), -1);
   const AS = annotationStyle(doc);
   if (AS.kind === "revit") return drawSectionFlag(doc, ctx, B, f, place, c, d, look, AS);
@@ -646,8 +654,12 @@ function drawSectionFlag(doc, ctx, B, f, place, c, d, look, AS) {
       flagHead(B, at, look, AS, vpNo, sheetNo, id);
       if (pl) B.links.push({ t: "link", rect: [at[0] - R, at[1] - R, 2 * R, 2 * R], sheet: pl.sheet, layer: "Annotation-Marker", id });
     } else {
-      // the tail: a heavy bar from the line's end, toward the side the section looks at
-      B.stroke([lineSeg(P, add(P, mul(look, stub)))], { weight: 1.0, colour: "#000" }, "Annotation-Marker", id, true);
+      // the tail: a filled bar (9 x 2) from the line's end toward the side the section looks at, and the stub
+      // back toward the building from its edge
+      const a0 = add(P, mul(d, -1)), a1 = add(P, mul(d, 1));
+      B.fill(polyPath([a0, a1, add(a1, mul(look, 9)), add(a0, mul(look, 9))]), "#000000", "Annotation-Marker", id, true);
+      const e = add(P, mul(d, -sgn * 1));
+      B.stroke([lineSeg(e, add(e, mul(d, -sgn * stub)))], g, "Annotation-Marker", id, true);
     }
   }
   B.hit(id, [c.start, c.end], "curve");
@@ -944,10 +956,11 @@ function drawSpotElevation(doc, ctx, B, f, cutZ) {
   const id = doc.idOf(f), q = F.point(f, "position"), P = B.P(q), h = F.real(f, "textSize") || 1.0, font = annotationStyle(doc).font || undefined;
   const z = spotElevationValue(doc, q, cutZ), mm = F.choice(f, "units") === "mm";
   const val = z == null ? "?" : mm ? String(Math.round(z)) : (z < 0 ? "-" : "") + (Math.abs(z) / 1000).toFixed(3);
-  const r = 1.1, g = { weight: 0.13, colour: z == null ? "#b3261e" : "#000" };
+  // Revit's spot elevation symbol: a crosshair circle 2.5 across, the value over it
+  const r = 1.25, g = { weight: 0.085, colour: z == null ? "#b3261e" : "#000" };
   B.stroke(circlePath(P, r), g, "Annotation-Spot", id, true);
-  B.stroke([lineSeg(add(P, [-r * 1.45, 0]), add(P, [r * 1.45, 0])), lineSeg(add(P, [0, -r * 1.45]), add(P, [0, r * 1.45]))], g, "Annotation-Spot", id, true);
-  B.text(add(P, [0, r + 1.0]), (F.text(f, "prefix") || "") + val, h, { align: "centre", layer: "Annotation-Spot", id, font, colour: g.colour });
+  B.stroke([lineSeg(add(P, [-1.6, 0]), add(P, [1.6, 0])), lineSeg(add(P, [0, -1.6]), add(P, [0, 1.6]))], g, "Annotation-Spot", id, true);
+  B.text(add(P, [0, 2.12]), (F.text(f, "prefix") || "") + val, h, { align: "centre", layer: "Annotation-Spot", id, font, colour: g.colour });
   const S = ctx.scale; B.hit(id, [[q[0] - 4 * S, q[1] - 2 * S], [q[0] + 4 * S, q[1] - 2 * S], [q[0] + 4 * S, q[1] + 4 * S], [q[0] - 4 * S, q[1] + 4 * S]]);
 }
 /** A drafting view (Revit's): 2D only - no model, just what was drawn or imported in it: detail lines,
@@ -974,7 +987,7 @@ export function draftingScene(doc, v) {
 function drawFilledRegion(doc, ctx, B, f) {
   const S = ctx.scale, rs = regionAreas(f), pts = rs[0] ? rs[0].outer : F.json(f, "boundary"), path = sketchPath(f) || rs.flatMap(rg => [...polyPath(rg.outer), ...rg.holes.flatMap(hh => polyPath(hh))]), pid = F.text(f, "pattern");
   const bg = F.text(f, "background"), line = F.text(f, "lineColour"), pc = F.text(f, "patternColour");
-  B.fill(path, bg || "#ffffff", "Detail", doc.idOf(f));
+  if (bg !== "none") B.fill(path, bg || "#ffffff", "Detail", doc.idOf(f));
   if (pid && doc.lib.patterns[pid]) B.hatch(path, doc.lib.patterns[pid], pid, pc || "#000000", penWeight(doc, "hairline", S), "Detail", doc.idOf(f));
   if (line !== "none") B.stroke(path, { weight: penWeight(doc, "thin", S), colour: line || "#000000" }, "Detail", doc.idOf(f));
   B.hit(doc.idOf(f), pts);
@@ -982,9 +995,16 @@ function drawFilledRegion(doc, ctx, B, f) {
 /** View-owned annotation for views that are not plans (sections, elevations): material tags. */
 function drawViewAnnotations(doc, ctx, B, v) {
   if (!categoryVisible(ctx, "Annotation")) return;
-  for (const f of doc.elements()) if (F.refId(f, "view") === doc.idOf(v)) {
-    if (doc.typeOf(f) === "MaterialTag") drawMaterialTag(doc, ctx, B, f);
-    if (doc.typeOf(f) === "SymbolInstance") drawSymbolInstance(doc, B, f);
+  for (const f of doc.elements()) if (F.refId(f, "view") === doc.idOf(v) && !doc.error(f) && f.get("Integer") !== 0) {
+    const t = doc.typeOf(f);
+    if (t === "MaterialTag") drawMaterialTag(doc, ctx, B, f);
+    if (t === "SymbolInstance") drawSymbolInstance(doc, B, f);
+    // what is drawn in this view alone, in its own (along, height) coordinates: the ground's poché, a note,
+    // a line, an imported drawing
+    if (t === "FilledRegion") drawFilledRegion(doc, ctx, B, f);
+    if (t === "Text") drawText(doc, ctx, B, f);
+    if (t === "CADImport") drawImport(doc, ctx, B, f);
+    if (t === "DetailLine") { const segs = curveSegs(F.json(f, "curve")); B.stroke(segs, { weight: penWeight(doc, F.choice(f, "pen"), ctx.scale), colour: F.text(f, "colour") || "#000000" }, "Detail", doc.idOf(f)); B.hit(doc.idOf(f), samplePath(segs), "curve"); }
   }
 }
 
@@ -1066,7 +1086,8 @@ export function drawStyledDim(doc, B, f, valueMm, g, opt = {}) {
   const horizontal = st.textAlign === "Horizontal" || (st.textAlign === "ISO standard" && !textIn);
   const rot = horizontal ? 0 : lineAng, rr = rot * Math.PI / 180, tx = [Math.cos(rr), Math.sin(rr)], ty = [-Math.sin(rr), Math.cos(rr)];
   // "up" is the side the extension lines stand out to, so text above sits away from the object
-  const upN = dot(n1, ty) >= 0 ? 1 : -1;
+  // (Revit's way: "Readable" - always over the line as it reads, whichever side the object is)
+  const upN = st.textSide === "Readable" ? 1 : dot(n1, ty) >= 0 ? 1 : -1;
   let along;
   if (!textIn) along = L + (arrowsIn ? 0 : 2 * as) + gap + tw / 2;
   else if (st.textHorizontal === "At extension line 1") along = (arrowsIn ? as : 0) + gap + tw / 2;
@@ -1239,6 +1260,7 @@ export function elevationScene(doc, v, opts = {}) {
   drawViewAnnotations(doc, ctx, B, v);
   const scene = { prims: B.prims, hits: B.hits, links: [], scale: S, kind: "elevation", stats: { items: vis.length } };
   scene.bbox = sceneBBox(B.prims);
+  applyCrop(doc, v, doc.argValue(v, "clip"), scene, S);
   return scene;
 }
 /** An elevation's or a section's line in plan, and the maps from plan to view coordinates. */
@@ -1268,8 +1290,18 @@ function gatherElevationItems(doc, ctx, G, skip = null) {
       const p = doc.plan(f), P = p.mesh.positions, curves = [];
       let d0 = Infinity, d1 = -Infinity, s0 = Infinity, s1 = -Infinity, z0 = Infinity, z1 = -Infinity;
       for (let i = 0; i < P.length; i += 3) { const q = [P[i], P[i + 1]], dd = depthOf(q), ss = sOf(q); d0 = Math.min(d0, dd); d1 = Math.max(d1, dd); s0 = Math.min(s0, ss); s1 = Math.max(s1, ss); z0 = Math.min(z0, P[i + 2]); z1 = Math.max(z1, P[i + 2]); }
-      for (const [a, b] of meshEdges(doc, p.meshShape, p.mesh)) { const A = [P[a * 3], P[a * 3 + 1]], Bq = [P[b * 3], P[b * 3 + 1]]; curves.push([[sOf(A), P[a * 3 + 2] - Z0], [sOf(Bq), P[b * 3 + 2] - Z0]]); }
-      items.push({ id: doc.idOf(f), f, depth: d0, depthMax: d1, s0, s1, curves, sil: [], fillerHits: [{ id: doc.idOf(f), poly: [[s0, z0 - Z0], [s1, z0 - Z0], [s1, z1 - Z0], [s0, z1 - Z0]] }], cat: categoryOf(doc, f) });
+      // a body drawn in a work plane (a moulding) shows its own profile; any other body its feature edges
+      if (p.face) for (const l of p.face) for (let i = 0; i < l.length; i++) { const A = l[i], Bq = l[(i + 1) % l.length]; curves.push([[sOf(A), A[2] - Z0], [sOf(Bq), Bq[2] - Z0]]); }
+      else for (const [a, b] of meshEdges(doc, p.meshShape, p.mesh)) { const A = [P[a * 3], P[a * 3 + 1]], Bq = [P[b * 3], P[b * 3 + 1]]; curves.push([[sOf(A), P[a * 3 + 2] - Z0], [sOf(Bq), P[b * 3 + 2] - Z0]]); }
+      // its face toward the eye, for the surface fill: its box (a moulding, a frame), or brick by brick (a screen)
+      const box = [[s0, z0 - Z0], [s1, z0 - Z0], [s1, z1 - Z0], [s0, z1 - Z0]];
+      let bricks = null;
+      if (t === "Lattice" && p.bricks && p.frame) {
+        const at = u => sOf(add(p.frame.start, mul(p.frame.d, u)));
+        bricks = p.bricks.map(b => { const a = at(b.u0), c = at(b.u1); return [[Math.min(a, c), b.z0 - Z0], [Math.max(a, c), b.z0 - Z0], [Math.max(a, c), b.z1 - Z0], [Math.min(a, c), b.z1 - Z0]]; }).filter(q => q[1][0] - q[0][0] > 1);
+      }
+      const face = p.face ? p.face.map(l => l.map(q => [sOf(q), q[2] - Z0])) : null;
+      items.push({ id: doc.idOf(f), f, depth: d0, depthMax: d1, s0, s1, curves, sil: [], box, bricks, face, fillerHits: [{ id: doc.idOf(f), poly: box }], cat: categoryOf(doc, f) });
       continue;
     }
     if (t === "Floor" || t === "Beam" || t === "Generic") {
@@ -1291,7 +1323,10 @@ function drawDatums(doc, ctx, B, v, G) {
   const S = ctx.scale, { c, o, d, Lv, Z0, topZ } = G, AS = annotationStyle(doc);
   const le = doc.argValue(v, "levelExtent"), ext = Array.isArray(le) && le.length === 2 ? le : [-1500, Lv + 1500];
   if (doc.argValue(v, "groundLine") !== false) B.stroke([lineSeg([ext[0], 0], [ext[1], 0])], { weight: penWeight(doc, "bold", S), colour: "#000" }, "Ground", null);
+  const vov = doc.argValue(v, "overrides") || {};
   for (const f of doc.elements()) if (doc.typeOf(f) === "Level" && categoryVisible(ctx, "IfcBuildingStorey")) {
+    // a level hidden in this view (Revit's Hide in View) draws no line and no head here
+    if ((vov[doc.idOf(f)] || {}).visible === false) continue;
     const z = (doc.data(f) || {}).value - Z0; if (z + Z0 > topZ) continue;
     if (AS.levelHeads === "Left") {
       // Revit's level head at the left: the name, a heavy V with its point on the level, the height in mm; the
@@ -1301,8 +1336,10 @@ function drawDatums(doc, ctx, B, v, G) {
       B.stroke([lineSeg(add(hp, [-2.96, 0]), add(hp, [3.01, 0])), lineSeg(add(hp, [4.02, 0]), add(hp, [15.2, 0]))], { weight: 0.085, colour: "#000" }, "IfcBuildingStorey", id, true);
       const x1 = B.P([ext[1], z])[0];
       if (x1 > hp[0] + 15.2) B.stroke([lineSeg(add(hp, [15.2, 0]), [x1, hp[1]])], { weight: 0.085, colour: "#000", dash: LINE_TYPES.dashed2 }, "IfcBuildingStorey", id, true);
-      B.text(add(hp, [4.02, 1.12]), String(Math.round(z + Z0)), th, { layer: "IfcBuildingStorey", id, font });
-      String(F.text(f, "name")).split("\n").reverse().forEach((ln, i) => B.text(add(hp, [-3.4, 1.12 + i * th * 1.6]), ln, th, { layer: "IfcBuildingStorey", id, font, align: "right" }));
+      B.text(add(hp, [4.02, 1.5]), String(Math.round(z + Z0)), th, { layer: "IfcBuildingStorey", id, font });
+      // the name wraps as Revit's label does (29.5 wide): a block of left-aligned lines ending at the head
+      const lines = String(F.text(f, "name")).split("\n").flatMap(p => wrapText(p, th, 29.5, font)), bw = Math.max(...lines.map(l => textWidth(l, th, font)));
+      lines.forEach((ln, i) => B.text(add(hp, [-4.55 - bw, 1.58 + (lines.length - 1 - i) * th * 1.6]), ln, th, { layer: "IfcBuildingStorey", id, font }));
       B.hit(id, [[ext[0], z - 50], [ext[1], z - 50], [ext[1], z + 50], [ext[0], z + 50]]);
       continue;
     }
@@ -1347,6 +1384,22 @@ function drawDatums(doc, ctx, B, v, G) {
     // it shows where its cut plane passes through what this view sees: its line must reach into this view's depth
     const da = G.depthOf(sl.start), db = G.depthOf(sl.end), dMax = G.depthMax || Infinity;
     if (t < 0 || t > Lv || Math.max(da, db) < 0 || Math.min(da, db) > dMax) continue;
+    if (AS.kind === "revit") {
+      const place = placements(doc);
+      // Revit's: the flag head up top (its flag toward the side the section looks), a stub under it, and down at
+      // the ground the tail - a bar toward the look side and a stub up from it; where is the view's to set
+      const id = doc.idOf(f), ov = (doc.argValue(v, "overrides") || {})[id] || {}, R = AS.markerRadius;
+      const lookSec = mul(perp(sd), -1), side = Math.sign(dot(lookSec, d)) || 1;
+      const [tailZ, headZ] = ov.markerZ || [-1917, F.real(v, "top") - 700], [tailStub, headStub] = ov.stubs || [9, 5.6];
+      const pl = place.get(id), hp = B.P([t, headZ]), tp = B.P([t, tailZ]), g0 = { weight: 0.085, colour: "#000" };
+      flagHead(B, hp, [side, 0], AS, pl ? String(pl.vp) : "—", pl ? pl.number : "", id);
+      if (pl) B.links.push({ t: "link", rect: [hp[0] - R, hp[1] - R, 2 * R, 2 * R], sheet: pl.sheet, layer: "Annotation-Marker", id });
+      B.stroke([lineSeg(add(hp, [0, -R]), add(hp, [0, -R - headStub]))], g0, "Annotation-Marker", id, true);
+      B.fill(polyPath([add(tp, [0, -1]), add(tp, [9 * side, -1]), add(tp, [9 * side, 1]), add(tp, [0, 1])]), "#000000", "Annotation-Marker", id, true);
+      B.stroke([lineSeg(add(tp, [0, 1]), add(tp, [0, 1 + tailStub]))], g0, "Annotation-Marker", id, true);
+      B.hit(id, [[t, tailZ], [t, headZ]], "curve");
+      continue;
+    }
     // its head sits below the grid bubbles (they stand 600 above the view's top)
     const top = F.real(v, "top") - 700, id = doc.idOf(f), g = { weight: penWeight(doc, "thin", S), colour: "#000", dash: LINE_TYPES.dashed1 };
     B.stroke([lineSeg([t, -300], [t, top])], g, "Annotation-Marker", id);
@@ -1361,7 +1414,7 @@ function drawDatums(doc, ctx, B, v, G) {
     const den = d[0] * gd[1] - d[1] * gd[0]; if (Math.abs(den) < 1e-9) continue;
     const t = ((gl.start[0] - o[0]) * gd[1] - (gl.start[1] - o[1]) * gd[0]) / den;
     if (t < 0 || t > Lv) continue;
-    const top = F.real(v, "top") + 600;
+    const gt = (doc.argValue(v, "overrides") || {}).__gridTop, top = gt != null ? gt : F.real(v, "top") + 600;
     B.stroke([lineSeg([t, -300], [t, top])], { weight: penWeight(doc, "hairline", S), colour: "#000", dash: LINE_TYPES.centre }, "IfcGrid", doc.idOf(f));
     if ((F.choice(f, "ends") || "Both ends") !== "None") gridHead(doc, B, f, B.P([t, top]), [0, 1], { weight: penWeight(doc, "thin", S), colour: "#000" }, doc.idOf(f));
     // pickable along its line and by its bubble
@@ -1371,9 +1424,65 @@ function drawDatums(doc, ctx, B, v, G) {
   }
 }
 /** Items seen beyond the view plane, nearest first, each hidden by what is in front (and by the cut, in a section). */
+/** A body's face toward the viewer, filled as its material's surface: the render's colour and pattern (a lime
+ *  render's stipple, a brick's courses) under the lines, farthest first so nearer faces cover it. Only
+ *  materials that give their surface a background or a pattern are filled; the rest stay line drawings. */
+function surfaceOf(doc, it) {
+  const f = it.f, t = doc.typeOf(f);
+  let m = null;
+  if (t === "Wall") { const w = doc.plan(f); if (w && w.stack && w.stack.layers.length) { const L = w.stack.layers; m = L.length === 1 ? L[0].material : (it.nearMaterial || L[0].material); } }
+  else if (t === "Generic" || t === "Lattice") m = F.text(f, "material");
+  else if (t === "Floor" && it.cat === "IfcSlab") m = null;
+  const mp = m && (doc.lib.materials[m] || {}).projection;
+  return mp && (mp.background || mp.pattern) ? { m, bg: mp.background || null, pat: mp.pattern || null, colour: mp.patternColour || mp.lineColour || "#a6a6a6" } : null;
+}
+function drawSurfaces(doc, ctx, B, vis) {
+  const out = [], S = ctx.scale;
+  for (const it of vis.slice().reverse()) {
+    const sf = surfaceOf(doc, it); if (!sf) continue;
+    let polys = it.sil && it.sil.length ? it.sil : null;
+    if (doc.typeOf(it.f) === "Lattice") polys = it.bricks || null;
+    else if (!polys && it.face) polys = it.face;
+    else if (!polys && it.box) polys = [it.box];
+    if (!polys) continue;
+    const path = polys.flatMap(q => polyPath(q.map(p => B.P(p))));
+    if (sf.bg) out.push({ t: "fill", path, colour: sf.bg, layer: it.cat + "-Surface", id: it.id });
+    const pat = sf.pat && doc.lib.patterns[sf.pat];
+    if (pat) out.push({ t: "hatch", path, pattern: Object.assign({ id: sf.pat }, pat), scale: pat.kind === "model" ? 1 / S : 1, colour: sf.colour, weight: penWeight(doc, "hairline", S), layer: it.cat + "-Surface", id: it.id });
+  }
+  return out;
+}
+/** Walls whose faces toward the eye run on flush (a facade turning its rounded corner, a party wall's end in
+ *  the facade line) read as one surface: an upright edge of one lying on or in another, at the same depth,
+ *  is not drawn where the other stands. */
+function flushCut(it, vis) {
+  if (it.cat !== "IfcWall") return it.curves;
+  const others = vis.filter(o => o !== it && o.cat === "IfcWall" && Math.abs(o.depth - it.depth) < 5);
+  if (!others.length) return it.curves;
+  const out = [];
+  for (const [a, b] of it.curves) {
+    if (Math.abs(a[0] - b[0]) > 0.5) { out.push([a, b]); continue; }
+    let pieces = [[Math.min(a[1], b[1]), Math.max(a[1], b[1])]];
+    for (const o of others) {
+      if (a[0] < o.s0 - 2 || a[0] > o.s1 + 2) continue;
+      for (const q of o.sil || []) {
+        const qs = q.map(p => p[0]), zs = q.map(p => p[1]);
+        if (a[0] < Math.min(...qs) - 2 || a[0] > Math.max(...qs) + 2) continue;
+        const z0 = Math.min(...zs), z1 = Math.max(...zs), next = [];
+        for (const [p0, p1] of pieces) { if (p0 < z0) next.push([p0, Math.min(p1, z0)]); if (p1 > z1) next.push([Math.max(p0, z1), p1]); }
+        pieces = next.filter(([p0, p1]) => p1 - p0 > 1);
+      }
+    }
+    for (const [p0, p1] of pieces) out.push([[a[0], p0], [a[0], p1]]);
+  }
+  return out;
+}
 function drawProjection(doc, ctx, B, vis, G, occluders) {
   const S = ctx.scale;
-  for (const it of vis) {
+  // the faces first, under everything drawn so far (the level lines read across a facade)
+  B.prims.unshift(...drawSurfaces(doc, ctx, B, vis));
+  for (const it0 of vis) {
+    const it = it0.cat === "IfcWall" ? Object.assign({}, it0, { curves: flushCut(it0, vis) }) : it0;
     const bandIdx = Math.min(2, Math.floor(Math.max(0, it.depth) / (G.depthMax / 3 + 1e-9)));
     const pen = ["medium", "thin", "hairline"][bandIdx];
     const g = resolveGraphics(doc, ctx, it.f, "projection");
@@ -1793,18 +1902,21 @@ export function sheetScene(doc, sh, opts = {}) {
     for (const l of sc.links || []) links.push(translatePrim(l, off));
     if (vp.clipVisible && clip) put(rectPath(...clip), 0.18);
     // viewport title
+    if (vp.noTitle) return;
     const ty = (clip ? clip[1] : bb[1] + off[1]) - 9, tx0 = (clip ? clip[0] : bb[0] + off[0]);
     if (band) {
       // as the drawing set has it: a split circle (the view's number over the sheet it is on), the name large
       // in Arial on a rule, the scale small beneath
-      const A = { font: "Arial" }, name = view.get("Name") || "", nw = textWidth(name, 4.03, "Arial");
-      const cx = tx0 + 5, cy = ty + 1.5;
-      put(circlePath([cx, cy], 4.2), 0.25); put([lineSeg([cx - 4.2, cy], [cx + 4.2, cy])], 0.18);
-      txt([cx, cy + 1.1], String(i + 1), 2.1, Object.assign({ align: "centre" }, A));
-      txt([cx, cy - 3.0], doc.argValue(sh, "number") || "", 1.6, Object.assign({ align: "centre" }, A));
-      txt([cx + 6, cy + 0.6], name, 4.03, A);
-      put([lineSeg([cx + 4.2, cy], [cx + 6 + Math.max(30, nw + 2), cy])], 0.18);
-      if (doc.typeOf(view) !== "Schedule" && doc.typeOf(view) !== "View3D") txt([cx + 6.5, cy - 3.1], "1 : " + (F.int(view, "scale") || 100), 1.5, A);
+      // (Revit's view title: the circle 9 across, the number 3.5 over the sheet 2.0, the name 5.0 on a rule
+      // whose length the viewport sets, the scale 2.0 under it; placed where the viewport says)
+      const A = { font: "Arial" }, name = view.get("Name") || "", nw = textWidth(name, 5.07, "Arial");
+      const [cx, cy] = vp.titleAt || [tx0 + 5, ty + 1.5], R0 = 4.49;
+      put(circlePath([cx, cy], R0), 0.085);
+      txt([cx, cy + 0.17], String(i + 1), 3.55, Object.assign({ align: "centre" }, A));
+      txt([cx, cy - 2.68], doc.argValue(sh, "number") || "", 2.04, Object.assign({ align: "centre" }, A));
+      txt([cx + 5.04, cy + 0.76], name, 5.07, A);
+      put([lineSeg([cx + 4.57, cy], [cx + (vp.titleLength || 5.04 + nw + 1), cy])], 0.085);
+      if (doc.typeOf(view) !== "Schedule" && doc.typeOf(view) !== "View3D") txt([cx + 6.35, cy - 2.84], "1 : " + (F.int(view, "scale") || 100), 2.04, A);
       return;
     }
     put(circlePath([tx0 + 4.5, ty + 1.5], 4.5), 0.35);
@@ -1853,23 +1965,23 @@ function titleBand(doc, sh, W, H, put, txt) {
   txt([R(259.9), 24.6], (doc.meta.name || "").toUpperCase(), 4.03, A);
   const label = (x, y, t) => txt([R(x), y], t, 1.52, Object.assign({ align: "right" }, AB));
   const value = (x, y, t) => txt([R(x), y], t, 1.52, A);
-  label(274.6, 20.75, "PROJECT NO"); value(277.2, 20.55, P.number);
-  label(274.6, 17.65, "DIRECCION"); P.address.split("\n").slice(0, 3).forEach((l, i) => value(277.2, 17.65 - 2.35 * i, l.toUpperCase()));
-  label(274.6, 7.45, "CLIENTE"); value(277.2, 7.25, P.client.toUpperCase());
-  label(329.6, 17.55, "PRINT SIZE"); value(332.2, 17.35, doc.argValue(sh, "size") || "");
-  label(329.6, 14.25, "DRAFTED"); value(332.0, 14.15, P.drafted);
-  label(329.6, 10.75, "CHECKED"); value(332.0, 10.65, P.checked);
-  label(329.6, 7.45, "ORIG. ISSUE"); value(332.1, 7.25, P.issued);
+  label(274.57, 20.78, "PROJECT NO"); value(277.2, 20.55, P.number);
+  label(274.57, 17.65, "DIRECCION"); P.address.split("\n").slice(0, 3).forEach((l, i) => value(277.2, 17.65 - 2.35 * i, l.toUpperCase()));
+  label(274.57, 7.4, "CLIENTE"); value(277.2, 7.25, P.client.toUpperCase());
+  label(330.15, 17.56, "PRINT SIZE"); txt([R(332.19), 17.39], doc.argValue(sh, "size") || "", 1.52, AB);
+  label(330.15, 14.22, "DRAFTED"); value(332.0, 14.15, P.drafted);
+  label(330.15, 10.79, "CHECKED"); value(332.0, 10.65, P.checked);
+  label(330.15, 7.45, "ORIG. ISSUE"); value(332.1, 7.25, P.issued);
   // north
   put(circlePath([R(352.1), 15.05], 7.5), 0.21);
-  txt([R(352.1), 4.85], "NORTE", 1.52, Object.assign({ align: "centre" }, AB));
+  txt([R(352.2), 4.82], "NORTE", 1.52, Object.assign({ align: "centre" }, AB));
   // the drawing: its name, and its number large
-  txt([R(410), 24.4], String(doc.argValue(sh, "sheetName") || "").toUpperCase(), 4.03, Object.assign({ align: "right" }, A));
-  txt([R(389.4), 8.1], doc.argValue(sh, "number") || "", 9.47, Object.assign({ align: "centre" }, A));
+  txt([R(408.41), 24.38], String(doc.argValue(sh, "sheetName") || "").toUpperCase(), 4.03, Object.assign({ align: "right" }, A));
+  txt([R(388.57), 8.13], doc.argValue(sh, "number") || "", 9.47, Object.assign({ align: "centre" }, A));
   // the scale over the rule: one scale, or "As indicated" when the views differ
   const sc = viewportScales(doc, sh), scales = sc && sc !== "—" ? sc.split(", ") : [];
   const scaleText = scales.length === 1 ? scales[0].replace(":", " : ") : scales.length ? "As indicated" : "";
-  if (scaleText) txt([R(410), 35.0], scaleText, 5.07, Object.assign({ align: "right" }, A));
+  if (scaleText) txt([R(398.76), 35.05], scaleText, 5.07, Object.assign({ align: "centre" }, A));
 }
 function viewportScales(doc, sh) {
   const s = [...new Set((doc.argValue(sh, "viewports") || []).map(vp => doc.element(vp.view.ref)).filter(v => v && doc.typeOf(v) !== "Schedule").map(v => "1:" + (F.int(v, "scale") || 100)))];

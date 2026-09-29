@@ -134,7 +134,11 @@ function resolveNode(ends, row, say, P = null) {
       say(E.id, `mitre at ${Math.round(phi * 180 / Math.PI) - 180}° past the limit — bevelled`);
     } else { leftCorner[k] = C; rightCorner[(k + 1) % n] = C; }
   }
-  const sameType = n === 2 && ends[0].w.type.id === ends[1].w.type.id && ends[0].e !== ends[1].e && ends[0].w.stack.flipped === ends[1].w.stack.flipped;
+  const oneMat = w => w.stack.layers.length === 1 && w.stack.layers[0].material;
+  // one wall turning a corner into another of its type, or two single-material walls of the same material
+  // (a thick facade into a thinner party wall, both the same masonry): one mass, no line at the join
+  const sameType = n === 2 && ((ends[0].w.type.id === ends[1].w.type.id && ends[0].e !== ends[1].e && ends[0].w.stack.flipped === ends[1].w.stack.flipped) ||
+    (oneMat(ends[0].w) && oneMat(ends[0].w) === oneMat(ends[1].w)));
   for (let k = 0; k < n; k++) {
     const E = ends[k];
     const pts = n === 2 && !bevels.length ? [rightCorner[k], leftCorner[k]] : [rightCorner[k], P, leftCorner[k]];

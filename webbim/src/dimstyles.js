@@ -36,6 +36,7 @@ export const DIM_DEFAULTS = {
   textVertical: "Above", textHorizontal: "Centred", // DIMTAD, DIMJUST
   textGap: 0.625,                                   // DIMGAP: from the dimension line to the text
   textAlign: "Aligned with dimension line",         // DIMTIH / DIMTOH
+  textSide: "Object",                               // "Object": above means away from what it measures; "Readable": over the line as it reads (Revit)
   // Fit
   fit: "Best fit", overallScale: 1,                 // DIMATFIT, DIMSCALE
   // Primary units

@@ -22,7 +22,7 @@ export const DIM_TABS = [
   ["Text", [
     ["—", "Text appearance"], ["font", "Font", "choice", Object.keys(TEXT_FONTS)], ["textHeight", "Text height (on paper)", "mm"], ["textColour", "Text colour", "colour"],
     ["widthFactor", "Width factor", "num"], ["textFill", "Fill colour (blank: none)", "fill"], ["textFrame", "Draw frame around text", "bool"],
-    ["—", "Text placement"], ["textVertical", "Vertical", "choice", DIM_TEXT_V], ["textHorizontal", "Horizontal", "choice", DIM_TEXT_H], ["textGap", "Offset from dim line", "mm"],
+    ["—", "Text placement"], ["textVertical", "Vertical", "choice", DIM_TEXT_V], ["textHorizontal", "Horizontal", "choice", DIM_TEXT_H], ["textGap", "Offset from dim line", "mm"], ["textSide", "Above means", "choice", ["Object", "Readable"]],
     ["—", "Text alignment"], ["textAlign", "Alignment", "choice", DIM_TEXT_ALIGN]]],
   ["Fit", [
     ["—", "When there is not room for text and arrows inside the extension lines"], ["fit", "Move", "choice", DIM_FIT],

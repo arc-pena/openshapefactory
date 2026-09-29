@@ -37,4 +37,4 @@ export function annotationRect(clip, bbPaper) {
   return [bbPaper[0] - a[0], bbPaper[1] - a[1], bbPaper[2] + a[2], bbPaper[3] + a[3]];
 }
 /** Layers that belong to the annotation crop rather than the model crop. */
-export const isAnnotationLayer = layer => /^(Annotation|IfcGrid|Crop)/.test(layer || "");
+export const isAnnotationLayer = layer => /^(Annotation|IfcGrid|IfcBuildingStorey|Crop)/.test(layer || "");
