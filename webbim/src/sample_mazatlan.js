@@ -638,7 +638,7 @@ export function buildMazatlanSample() {
   for (let i = 1; i <= 6; i++) { const [px, s0, pz, crop, [tx, ty, tl]] = SEC[i]; sheet(`A30${i}`, `Seccion 0${i}`, [[`V-S${i}`, elevAt(px, s0, pz, crop), { titleAt: [tx, ty], titleLength: tl }]]); }
   // the set's hand markup over four of its sheets, as it was scanned onto them
   const sketch = (n, rect, name = "Croquis a mano") => { const f = doc.element(`SH-${n}`), im = MZ_IMAGES[n]; ed.apply({ op: "set", id: `SH-${n}`, key: "images", value: [{ rect, url: im.url, w: im.w, h: im.h, blend: "multiply", name }] }, { regenerate: false }); };
-  sketch("A101", [93.5, 0, 145.7, 242.8]); sketch("A102", [84.4, 93.7, 144.6, 203.3]); sketch("A303", [262.2, 137.7, 134.7, 61.3]); sketch("A304", [76.5, 79.3, 209.9, 134.0]);
+  sketch("A101", [93.53, 0, 145.7, 242.84]); sketch("A102", [84.4, 93.74, 144.64, 203.27]); sketch("A303", [262.2, 137.7, 134.7, 61.3]); sketch("A304", [76.5, 79.3, 209.9, 134.0]);
   sketch("A001", [255.67, 49.18, 93.73, 53.09], "Vista 3D");
   // the 3D sheets: the picture where the set has it, no title, no scale in the band
   for (const [n, name, v, at] of [["A901", "Perspectiva Sur-Oeste", "V-3D-SO", [204, 165]], ["A902", "Axo Sur-Este", "V-3D-SE", [192, 157]], ["A903", "Axo Sur-Oeste", "V-3D-SO2", [202, 165]], ["A904", "Axo Norte-Este", "V-3D-NE", [197, 162]]]) {
