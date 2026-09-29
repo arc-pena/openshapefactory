@@ -222,7 +222,7 @@ export function buildMazatlanSample() {
   wall("W-GE", "Cancel patio oriente", [8552, 5250], [8552, 10076], "T-MZ-CANCEL", "L-PB2", -220, H0, "New");
   wall("W-GS", "Cancel patio sur", [6602, 5051], [8577, 5051], "T-MZ-CANCEL", "L-PB2", -220, H0, "New");
   // upper floor: the studio, its bathroom and the stair
-  wall("W-U1", "Muro estudio poniente", [5896.5, 10081], [5896.5, 14297], "T-MZ-CONC200", "L-PA", 0, 5820 - 2330, "New");
+  wall("W-U1", "Muro estudio poniente", [5896.5, 10081], [5896.5, 14297], "T-MZ-CONC200", "L-PA", 0, 5830 - 2330, "New");
   // the terrace's wall over the open patio, 1100 high (the set's "Muro 1100mm")
   wall("W-M1", "Muro 1100 terraza", [201, 10148], [5802, 10148], "T-MZ-BLOCK150", "L-PA", 0, 1099, "New");
   wall("W-U2", "Muro estudio sur", [5996, 10159], [9345, 10159], "T-MZ-CONC150", "L-PA", 0, H1, "New");
@@ -231,11 +231,15 @@ export function buildMazatlanSample() {
   wall("W-U5", "Muro escalera norte (alta)", [5996, 12618.5], [9345, 12618.5], "T-MZ-CONC150", "L-PA", 0, H1, "New");
   wall("W-U6", "Muro escalera oriente (alta)", [9271, 12544], [9271, 11444], "T-MZ-CONC150", "L-PA", 0, H1, "New");
   wall("W-U7", "Cancel estudio (hueco puertas corredizas)", [9345, 10159], [13253, 10159], "T-MZ-CANCEL", "L-PA", 0, H1, "New");
-  // the stair's roof hut, 1805 over the roof
-  wall("W-H1", "Casetón sur", [8089.5, 11515], [9276, 11515], "T-MZ-BLOCK152", "L-T", 0, 1805, "New");
+  // the stair's roof hut, 1805 over the roof, from x 6974 (sections 3 and 6); the studio's parapet, 1100 over the
+  // roof along its south line from its west wall to grid D, and the stair's open head between the two
+  wall("W-H1", "Casetón sur", [7024, 11515], [9276, 11515], "T-MZ-BLOCK152", "L-T", 0, 1805, "New");
   wall("W-H2", "Casetón oriente", [9276, 11515], [9276, 12616], "T-MZ-BLOCK150", "L-T", 0, 1805, "New");
-  wall("W-H3", "Casetón norte", [9276, 12616], [8089.5, 12616], "T-MZ-BLOCK152", "L-T", 0, 1805, "New");
-  wall("W-H4", "Casetón poniente", [8089.5, 12616], [8089.5, 11515], "T-MZ-BLOCK100", "L-T", 0, 1805, "New");
+  wall("W-H3", "Casetón norte", [9276, 12616], [7024, 12616], "T-MZ-BLOCK152", "L-T", 0, 1805, "New");
+  wall("W-H4", "Casetón poniente", [7024, 12616], [7024, 11515], "T-MZ-BLOCK100", "L-T", 0, 1805, "New");
+  wall("W-PR1", "Pretil estudio sur", [5996, 10159], [13253, 10159], "T-MZ-CONC150", "L-T", 0, 1100, "New");
+  wall("W-PR2", "Pretil escalera sur", [5996, 11515], [6974, 11515], "T-MZ-BLOCK152", "L-T", 0, 1100, "New");
+  wall("W-PR3", "Pretil escalera norte", [5996, 12616], [6974, 12616], "T-MZ-BLOCK152", "L-T", 0, 1100, "New");
   const before = {}; for (const f of doc.elements()) if (doc.typeOf(f) === "Wall") before[doc.idOf(f)] = JSON.stringify(doc.argValue(f, "centreline"));
   ed.apply({ op: "autojoin", ends: ["W-S", "W-SO", "W-O", "W-N", "W-E", "W-H1", "W-H2", "W-H3", "W-H4"].flatMap(id => [{ id, end: "start" }, { id, end: "end" }]) }, { regenerate: false });
   if (globalThis.MZ_DEBUG) for (const f of doc.elements()) if (doc.typeOf(f) === "Wall" && before[doc.idOf(f)] !== JSON.stringify(doc.argValue(f, "centreline"))) console.log("moved", doc.idOf(f), before[doc.idOf(f)], JSON.stringify(doc.argValue(f, "centreline")));
@@ -271,7 +275,7 @@ export function buildMazatlanSample() {
   opAt("OP-U3", "W-U3", 10233, 10271, 10995, 0, 2100, "New"); door("D-U3", "OP-U3", "T-MZ-P700", "P09");
   opAt("OP-U5", "W-U5", 5996, 6047, 6966, 0, 2100, "New"); door("D-U5", "OP-U5", "T-MZ-P900", "P10");
   opAt("OP-U7", "W-U7", 9345, 9345, 13248, 0, 2250, "New"); door("D-U7", "OP-U7", "T-MZ-PC", "PC2", { operation: "Sliding" });
-  opAt("OP-H1", "W-H1", 8089.5, 8262, 9201, 0, 1750, "New"); door("D-H1", "OP-H1", "T-MZ-P900", "P11");
+  opAt("OP-H1", "W-H1", 7024, 8262, 9201, 0, 1750, "New"); door("D-H1", "OP-H1", "T-MZ-P900", "P11");
 
   // ---------------------------------------------------------------- structure: the new frame's columns
   let c = 0;
@@ -307,7 +311,7 @@ export function buildMazatlanSample() {
   floor("FL-PA1", "Losa planta alta - terraza", [[201, 200], [13253, 200], [13253, 10076], [8503, 10076], [8503, 5250], [4422, 5250], [4422, 10076], [201, 10076]], "T-MZ-LOSA", "L-PA");
   floor("FL-PA2", "Losa estudio", [[5802, 10076], [13253, 10076], [13253, 14292], [5802, 14292], [5802, 12688], [9201, 12688], [9201, 11587], [5802, 11587]], "T-MZ-LOSA", "L-PA");
   floor("FL-T", "Losa techo estudio", [[5802, 10076], [13253, 10076], [13253, 14292], [5802, 14292], [5802, 12688], [9350, 12688], [9350, 11439], [5802, 11439]], "T-MZ-LOSA-T", "L-T");
-  floor("FL-CASETON", "Techo casetón", R(8041, 11439, 9350, 12688), "T-MZ-LOSA-T", "L-T", 1805);
+  floor("FL-CASETON", "Techo casetón", R(6974, 11439, 9350, 12688), "T-MZ-LOSA-T", "L-T", 1805);
   // the sidewalks: Melchor Ocampo at -1300; Guillermo Nelson climbing north from the corner
   floor("FL-BQ-S", "Banqueta Melchor Ocampo", R(-2300, -2300, 15500, -220), "T-MZ-BANQUETA", "L-BQ", 0, "Existing");
   floor("FL-BQ-O", "Banqueta Guillermo Nelson", R(-2300, -220, -220, 16500), "T-MZ-BANQUETA", "L-BE", 0, "Existing");

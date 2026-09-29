@@ -1466,18 +1466,21 @@ function flushCut(it, vis) {
   const out = [];
   for (const [a, b] of it.curves) {
     if (Math.abs(a[0] - b[0]) > 0.5) { out.push([a, b]); continue; }
-    let pieces = [[Math.min(a[1], b[1]), Math.max(a[1], b[1])]];
-    for (const o of others) {
-      if (a[0] < o.s0 - 2 || a[0] > o.s1 + 2) continue;
-      for (const q of o.sil || []) {
-        const qs = q.map(p => p[0]), zs = q.map(p => p[1]);
-        if (a[0] < Math.min(...qs) - 2 || a[0] > Math.max(...qs) + 2) continue;
-        const z0 = Math.min(...zs), z1 = Math.max(...zs), next = [];
-        for (const [p0, p1] of pieces) { if (p0 < z0) next.push([p0, Math.min(p1, z0)]); if (p1 > z1) next.push([Math.max(p0, z1), p1]); }
-        pieces = next.filter(([p0, p1]) => p1 - p0 > 1);
-      }
-    }
-    for (const [p0, p1] of pieces) out.push([[a[0], p0], [a[0], p1]]);
+    // the edge goes only where the flush faces stand on both its sides (inside the one surface they read as);
+    // where nothing flush stands on one side it is the surface's own outline (a turning corner) and stays
+    const x = a[0], lo = Math.min(a[1], b[1]), hi = Math.max(a[1], b[1]);
+    const spans = (walls, side) => { const o = []; for (const w of walls) for (const q of w.sil || []) { const qs = q.map(p => p[0]), zs = q.map(p => p[1]);
+      if (x + side * 3 >= Math.min(...qs) - 0.5 && x + side * 3 <= Math.max(...qs) + 0.5 && (side < 0 ? Math.min(...qs) < x - 0.5 : Math.max(...qs) > x + 0.5)) o.push([Math.min(...zs), Math.max(...zs)]); } return o; };
+    const near = others.filter(o => x >= o.s0 - 2 && x <= o.s1 + 2);
+    const L = spans([it, ...near], -1), R = spans([it, ...near], 1), O = [...spans(near, -1), ...spans(near, 1)];
+    const cover = (zs, z) => zs.some(([z0, z1]) => z >= z0 - 0.5 && z <= z1 + 0.5);
+    const cuts = [...new Set([lo, hi, ...[...L, ...R, ...O].flat().filter(z => z > lo && z < hi)])].sort((p, q) => p - q);
+    let pieces = [];
+    for (let k = 0; k < cuts.length - 1; k++) { const m = (cuts[k] + cuts[k + 1]) / 2;
+      if (cover(L, m) && cover(R, m) && cover(O, m)) continue;
+      const last = pieces[pieces.length - 1]; if (last && Math.abs(last[1] - cuts[k]) < 1e-6) last[1] = cuts[k + 1]; else pieces.push([cuts[k], cuts[k + 1]]); }
+    pieces = pieces.filter(([p0, p1]) => p1 - p0 > 1);
+    for (const [p0, p1] of pieces) out.push([[x, p0], [x, p1]]);
   }
   return out;
 }
