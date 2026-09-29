@@ -21,7 +21,7 @@ import { formatValue, parse, evaluate } from "./expr.js";
 import { wallRegions, coarseMaterial, blocks, wallAt, leanInvolved } from "./joins.js";
 import { pointAt, uOf, wallSurfaces, cutAtHeight, plane, LAYER_PRIORITY, wallTop, topBreaks } from "./walls.js";
 import { cropLoop, loopBBox, annotationRect, isAnnotationLayer } from "./crop.js";
-import { resolveGraphics, categoryOf, penWeight, rulesFor, categoryVisible, mix, LINE_TYPES, matches, effectiveStyle } from "./styles.js";
+import { resolveGraphics, categoryOf, penWeight, rulesFor, categoryVisible, mix, LINE_TYPES, matches, effectiveStyle, hiddenByRule } from "./styles.js";
 import { measureRefs, resolveReference, elementRefs, sheetSize, regionAreas, importPlacer, importLayerMap, sketchPath } from "./bim.js";
 import { FONT_WIDTHS, FONT_METRICS } from "./fontdata.js";
 import { dimStyleOf, formatDimension } from "./dimstyles.js";
@@ -39,6 +39,7 @@ import { NORTH_DXF } from "./library.js";
 export const TEXT_FONTS = {
   Sans:  { label: "Sans (DejaVu)", css: null, cap: null, k: 1, pdf: "F1" },
   Arial: { label: "Arial / Helvetica", css: 'Arial, Helvetica, "Liberation Sans", sans-serif', cap: 0.716, k: 0.88, pdf: "F2" },
+  ArialBold: { label: "Arial Bold / Helvetica Bold", css: 'Arial, Helvetica, "Liberation Sans", sans-serif', weight: "bold", cap: 0.716, k: 0.94, pdf: "F5" },
   Serif: { label: "Serif (Times)", css: '"Times New Roman", Times, "Liberation Serif", serif', cap: 0.662, k: 0.82, pdf: "F3" },
   Mono:  { label: "Mono (Courier)", css: '"Courier New", Courier, "Liberation Mono", monospace', cap: 0.571, mono: 0.6, pdf: "F4" },
 };
@@ -206,7 +207,7 @@ export function planScene(doc, v, opts = {}) {
   const cutZ = E + vr.cut, topZ = E + vr.top, botZ = E + vr.bottom, depthZ = E + (vr.depth ?? vr.bottom);
   const band = (z0, z1) => z0 > topZ + TOL ? "above" : z1 < botZ - TOL ? (z1 >= depthZ - TOL ? "beyond" : "below") : (z0 <= cutZ + TOL && z1 >= cutZ - TOL) ? "cut" : z1 < cutZ ? "projection" : "beyond";
   // floors first: a floor meeting a wall disappears under the wall's cut, as it does on paper
-  const els = doc.elements().filter(f => f.get("Integer") !== 0 && !doc.error(f) || doc.typeOf(f) === "Wall")
+  const els = doc.elements().filter(f => (f.get("Integer") !== 0 && !doc.error(f) || doc.typeOf(f) === "Wall") && !hiddenByRule(doc, ctx, f))
     .map((f, i) => [f, i]).sort((a, b) => (doc.typeOf(b[0]) === "Floor") - (doc.typeOf(a[0]) === "Floor") || a[1] - b[1]).map(([f]) => f);
   const vis = f => categoryVisible(ctx, categoryOf(doc, f)) && f.get("Integer") !== 0;
   const onlyHere = f => { const r = F.refId(f, "view"); return !r || r === doc.idOf(v); };
@@ -411,7 +412,7 @@ export function planScene(doc, v, opts = {}) {
     if (t === "FilledRegion" && vis(f)) { const rs = regionAreas(f), pts = rs[0] ? rs[0].outer : F.json(f, "boundary"), path = sketchPath(f) || rs.flatMap(rg => [...polyPath(rg.outer), ...rg.holes.flatMap(hh => polyPath(hh))]), pid = F.text(f, "pattern"); B.fill(path, "#ffffff", "Detail", doc.idOf(f)); B.hatch(path, doc.lib.patterns[pid], pid, "#000000", penWeight(doc, "hairline", S), "Detail", doc.idOf(f)); B.stroke(path, { weight: penWeight(doc, "thin", S), colour: "#000000" }, "Detail", doc.idOf(f)); B.hit(doc.idOf(f), pts); }
     if (t === "CADImport" && vis(f)) drawImport(doc, ctx, B, f);
     if (t === "Text" && categoryVisible(ctx, "Annotation")) drawText(doc, ctx, B, f);
-    if (t === "SymbolInstance" && categoryVisible(ctx, "Annotation")) drawSymbol(doc, B, doc.lib.symbols[F.refId(f, "symbol")], B.P(F.point(f, "position")), F.real(f, "rotation"), "Annotation", doc.idOf(f));
+    if (t === "SymbolInstance" && categoryVisible(ctx, "Annotation")) drawSymbolInstance(doc, B, f);
     if (t === "RepeatingDetail" && vis(f)) drawRepeating(doc, ctx, B, f);
     if (t === "MaterialTag" && categoryVisible(ctx, "Annotation")) drawMaterialTag(doc, ctx, B, f);
     if (t === "Dimension" && categoryVisible(ctx, "Annotation") && measureRefs(doc, F.json(f, "of") || []).kind !== "levels") drawDimension(doc, ctx, B, f);
@@ -627,6 +628,16 @@ export function symbolGeometry(sym) {
   if (!sym || !sym.source) return null;
   const k = JSON.stringify(sym);
   if (SYMBOL_CACHE.has(k)) return SYMBOL_CACHE.get(k);
+  // a symbol drawn as polylines (entourage lifted from a drawing: people, cars, trees), in its own units -
+  // model mm for a model symbol - with its insertion point at (0, 0): the feet of a person, the wheels of a car
+  if (sym.source.polylines) {
+    const P = sym.source.polylines, xs = P.flat().map(q => q[0]), ys = P.flat().map(q => q[1]);
+    const closed = pl => pl.length > 3 && Math.hypot(pl[0][0] - pl[pl.length - 1][0], pl[0][1] - pl[pl.length - 1][1]) < 1e-6;
+    const r = { paths: P.map(pl => ({ path: pl.slice(1).map((q, i) => ({ k: "L", a: pl[i], b: q })), closed: closed(pl) })), fills: [], texts: [], bbox: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)] };
+    const out = { r, scale: 1, bbox: r.bbox, origin: [0, 0], measured: { w: r.bbox[2] - r.bbox[0], h: r.bbox[3] - r.bbox[1] } };
+    SYMBOL_CACHE.set(k, out);
+    return out;
+  }
   const text = sym.source.dxf === "inline:NORTH_DXF" ? NORTH_DXF : sym.source.text || "";
   const r = readDXF(text);
   const bb = r.bbox, w = bb[2] - bb[0], h = bb[3] - bb[1];
@@ -635,14 +646,27 @@ export function symbolGeometry(sym) {
   SYMBOL_CACHE.set(k, out);
   return out;
 }
+/** A symbol at a paper point. A paper symbol keeps its size on the sheet; a model symbol (entourage: a
+ *  person 1.7 m tall) is sized in model mm and scales with the view. Returns its outline on paper. */
 export function drawSymbol(doc, B, sym, atPaper, rotDeg = 0, layer = "Annotation", id = null) {
-  const geo = symbolGeometry(sym); if (!geo) return;
-  const cx = (geo.bbox[0] + geo.bbox[2]) / 2, cy = (geo.bbox[1] + geo.bbox[3]) / 2, k = geo.scale, a = rotDeg * Math.PI / 180;
+  const geo = symbolGeometry(sym); if (!geo) return null;
+  const model = sym.space === "model", o = geo.origin;
+  const cx = o ? o[0] : (geo.bbox[0] + geo.bbox[2]) / 2, cy = o ? o[1] : (geo.bbox[1] + geo.bbox[3]) / 2, k = geo.scale * (model ? 1 / (B.S || 1) : 1), a = rotDeg * Math.PI / 180;
   const T = p => { const x = (p[0] - cx) * k, y = (p[1] - cy) * k; return [atPaper[0] + x * Math.cos(a) - y * Math.sin(a), atPaper[1] + x * Math.sin(a) + y * Math.cos(a)]; };
   const tp = path => path.map(s => s.k === "L" ? { k: "L", a: T(s.a), b: T(s.b) } : s.k === "A" ? { k: "A", c: T(s.c), r: s.r * k, a0: s.a0 + a, a1: s.a1 + a } : { k: "C", a: T(s.a), c1: T(s.c1), c2: T(s.c2), b: T(s.b) });
   for (const p of geo.r.fills) B.prims.push({ t: "fill", path: tp(p.path), colour: "#000000", layer, id });
-  for (const p of geo.r.paths) B.prims.push({ t: "stroke", path: tp(p.path), weight: 0.25, colour: "#000000", layer, id });
+  // a silhouette is white inside, so it stands in front of the facade behind it
+  if (sym.fill) for (const p of geo.r.paths) if (p.closed) B.prims.push({ t: "fill", path: tp(p.path), colour: sym.fill, layer, id });
+  const weight = sym.weight || 0.25, colour = sym.colour || "#000000";
+  for (const p of geo.r.paths) B.prims.push({ t: "stroke", path: tp(p.path), weight, colour, layer, id });
   for (const t of geo.r.texts) B.prims.push({ t: "text", at: T(t.at), text: t.text, height: t.height * k, rot: rotDeg, align: "centre", valign: "baseline", colour: "#000", layer, id });
+  const bb = geo.bbox; return [[bb[0], bb[1]], [bb[2], bb[1]], [bb[2], bb[3]], [bb[0], bb[3]]].map(T);
+}
+/** A placed symbol, in a plan or an elevation or a section: drawn, and picked by its outline. */
+function drawSymbolInstance(doc, B, f) {
+  const sym = doc.lib.symbols[F.refId(f, "symbol")]; if (!sym) return;
+  const box = drawSymbol(doc, B, sym, B.P(F.point(f, "position")), F.real(f, "rotation"), sym.space === "model" ? "Entourage" : "Annotation", doc.idOf(f));
+  if (box) B.hit(doc.idOf(f), box.map(q => [q[0] * B.S, q[1] * B.S]));
 }
 
 // ---------------------------------------------------------------- repeating detail
@@ -825,7 +849,10 @@ function drawMaterialTag(doc, ctx, B, f) {
 /** View-owned annotation for views that are not plans (sections, elevations): material tags. */
 function drawViewAnnotations(doc, ctx, B, v) {
   if (!categoryVisible(ctx, "Annotation")) return;
-  for (const f of doc.elements()) if (doc.typeOf(f) === "MaterialTag" && F.refId(f, "view") === doc.idOf(v)) drawMaterialTag(doc, ctx, B, f);
+  for (const f of doc.elements()) if (F.refId(f, "view") === doc.idOf(v)) {
+    if (doc.typeOf(f) === "MaterialTag") drawMaterialTag(doc, ctx, B, f);
+    if (doc.typeOf(f) === "SymbolInstance") drawSymbolInstance(doc, B, f);
+  }
 }
 
 /** Where a dimension sits: witness feet a, b; the measured direction; the dimension line A–Bp at its offset. */
@@ -1086,9 +1113,12 @@ export function viewLineGeometry(doc, v) {
   const c = F.json(v, "line"), d = normalise(sub(c.end, c.start)), look = mul(perp(d), -1), Lv = dist(c.start, c.end);
   const depthMax = F.real(v, "depth");
   const lv = F.reference(v, "baseLevel"), Z0 = lv ? (doc.data(lv) || {}).value || 0 : 0, topZ = Z0 + F.real(v, "top");
-  const sOf = p => dot(sub(p, c.start), d), depthOf = p => dot(sub(p, c.start), look);
+  // across the drawing, left to right, as the eye sees it: looking to the line's right-hand side, its END is
+  // on the left. So s runs from the line's end back towards its start (o is where s = 0, d the way s grows)
+  const o = c.end, sd = mul(d, -1);
+  const sOf = p => dot(sub(p, o), sd), depthOf = p => dot(sub(p, c.start), look);
   const V = (p, z) => [sOf(p), z - Z0];              // view coords, model mm
-  return { c, d, look, Lv, depthMax, Z0, topZ, sOf, depthOf, V };
+  return { c, o, d: sd, line: d, look, Lv, depthMax, Z0, topZ, sOf, depthOf, V };
 }
 function gatherElevationItems(doc, ctx, G, skip = null) {
   const { V, sOf, depthOf, Z0 } = G;
@@ -1097,7 +1127,7 @@ function gatherElevationItems(doc, ctx, G, skip = null) {
     if (f.get("Integer") === 0 || doc.error(f)) continue;
     if (skip && skip.has(doc.idOf(f))) continue;
     // Visibility/Graphics is data: a category switched off in this view's style is not drawn, here as in plan
-    if (!categoryVisible(ctx, categoryOf(doc, f))) continue;
+    if (!categoryVisible(ctx, categoryOf(doc, f)) || hiddenByRule(doc, ctx, f)) continue;
     const t = doc.typeOf(f);
     if (t === "Wall") { const w = doc.plan(f); if (!w) continue; const it = elevWall(doc, f, w, V, sOf, depthOf, ctx); if (it) items.push(it); }
     if ((t === "Generic" || t === "Duct" || t === "Pipe" || t === "Roof") && doc.plan(f) && doc.plan(f).mesh) {
@@ -1125,7 +1155,7 @@ function gatherElevationItems(doc, ctx, G, skip = null) {
 }
 /** Ground line, level lines with heads, and grids crossing the view line. */
 function drawDatums(doc, ctx, B, v, G) {
-  const S = ctx.scale, { c, d, Lv, Z0, topZ } = G;
+  const S = ctx.scale, { c, o, d, Lv, Z0, topZ } = G;
   const ext = [-1500, Lv + 1500];
   B.stroke([lineSeg([ext[0], 0], [ext[1], 0])], { weight: penWeight(doc, "bold", S), colour: "#000" }, "Ground", null);
   for (const f of doc.elements()) if (doc.typeOf(f) === "Level" && categoryVisible(ctx, "IfcBuildingStorey")) {
@@ -1167,7 +1197,7 @@ function drawDatums(doc, ctx, B, v, G) {
     if (doc.typeOf(f) !== "SectionView" || f === v) continue;
     const sl = F.json(f, "line"); if (!sl || sl.type !== "line") continue;
     const sd = normalise(sub(sl.end, sl.start)), den = d[0] * sd[1] - d[1] * sd[0]; if (Math.abs(den) < 1e-9) continue;
-    const t = ((sl.start[0] - c.start[0]) * sd[1] - (sl.start[1] - c.start[1]) * sd[0]) / den;
+    const t = ((sl.start[0] - o[0]) * sd[1] - (sl.start[1] - o[1]) * sd[0]) / den;
     // it shows where its cut plane passes through what this view sees: its line must reach into this view's depth
     const da = G.depthOf(sl.start), db = G.depthOf(sl.end), dMax = G.depthMax || Infinity;
     if (t < 0 || t > Lv || Math.max(da, db) < 0 || Math.min(da, db) > dMax) continue;
@@ -1183,7 +1213,7 @@ function drawDatums(doc, ctx, B, v, G) {
   for (const f of doc.elements()) if (doc.typeOf(f) === "Grid" && categoryVisible(ctx, "IfcGrid")) {
     const gl = F.json(f, "line"), gd = normalise(sub(gl.end, gl.start));
     const den = d[0] * gd[1] - d[1] * gd[0]; if (Math.abs(den) < 1e-9) continue;
-    const t = ((gl.start[0] - c.start[0]) * gd[1] - (gl.start[1] - c.start[1]) * gd[0]) / den;
+    const t = ((gl.start[0] - o[0]) * gd[1] - (gl.start[1] - o[1]) * gd[0]) / den;
     if (t < 0 || t > Lv) continue;
     const top = F.real(v, "top") + 600;
     B.stroke([lineSeg([t, -300], [t, top])], { weight: penWeight(doc, "hairline", S), colour: "#000", dash: LINE_TYPES.centre }, "IfcGrid", doc.idOf(f));
@@ -1223,13 +1253,13 @@ function drawProjection(doc, ctx, B, vis, G, occluders) {
 //! changes, so a slab running into a wall of the same concrete is one piece of poché.
 /** Where the view line crosses a plan polygon: [s0, s1] intervals along the line. */
 function lineIntervals(poly, G) {
-  const { c, d, Lv } = G, n = perp(d), ts = [];
+  const { o, d, Lv } = G, n = perp(d), ts = [];
   for (let i = 0; i < poly.length; i++) {
     const a = poly[i], b = poly[(i + 1) % poly.length];
-    const da = dot(sub(a, c.start), n), db = dot(sub(b, c.start), n);
+    const da = dot(sub(a, o), n), db = dot(sub(b, o), n);
     if ((da > 0) === (db > 0) || da === db) continue;
     const t = da / (da - db), p = add(a, mul(sub(b, a), t));
-    ts.push(dot(sub(p, c.start), d));
+    ts.push(dot(sub(p, o), d));
   }
   ts.sort((x, y) => x - y);
   const out = [];
@@ -1270,7 +1300,7 @@ export function sectionCut(doc, v) {
   const push = (f, kind, s0, s1, z0, z1, material, priority) => { rects.push({ id: doc.idOf(f), kind, s0, s1, z0: z0 - G.Z0, z1: z1 - G.Z0, material, priority }); cutIds.add(doc.idOf(f)); };
   const detail = ctx.detail === "Coarse" ? "Coarse" : "Fine";
   for (const f of doc.elements()) {
-    if (f.get("Integer") === 0 || doc.error(f) || !categoryVisible(ctx, categoryOf(doc, f))) continue;
+    if (f.get("Integer") === 0 || doc.error(f) || !categoryVisible(ctx, categoryOf(doc, f)) || hiddenByRule(doc, ctx, f)) continue;
     const t = doc.typeOf(f), p = doc.plan(f); if (!p) continue;
     if (t === "Wall" && p.stack) {
       const regs = wallRegions(p, detail, -Infinity, []);
@@ -1279,7 +1309,7 @@ export function sectionCut(doc, v) {
         const L = r.layer === null ? null : p.stack.layers[r.layer];
         for (const [s0, s1] of lineIntervals(samplePath(r.path, 24), G)) {
           // openings the line passes through take their height out of the wall
-          const mid = add(G.c.start, mul(G.d, (s0 + s1) / 2)), u = uOf(p, mid);
+          const mid = add(G.o, mul(G.d, (s0 + s1) / 2)), u = uOf(p, mid);
           let spans = [[p.z0, p.z1]];
           for (const op of p.openings || []) if (u > op.u0 && u < op.u1) spans = spans.flatMap(([a, b]) => [[a, Math.min(b, p.z0 + op.sill)], [Math.max(a, p.z0 + op.sill + op.h), b]]).filter(([a, b]) => b - a > 1e-6);
           for (const [z0, z1] of spans) push(f, "wall", s0, s1, z0, z1, r.material, L ? L.priority : 1);
@@ -1569,6 +1599,10 @@ export function sheetScene(doc, sh, opts = {}) {
   const put = (path, w, colour = ink) => prims.push({ t: "stroke", path, weight: w, colour, layer: "TitleBlock" });
   const txt = (at, text, h, o = {}) => prims.push(Object.assign({ t: "text", at, text: String(text ?? ""), height: h, rot: 0, align: "left", valign: "baseline", colour: ink, layer: "TitleBlock" }, o));
   prims.push({ t: "fill", path: rectPath(0, 0, W, H), colour: "#ffffff", layer: "Paper" });
+  const tb = doc.lib.symbols[F.refId(sh, "titleBlock")] || {};
+  const band = tb.generated === "titleBand";
+  if (band) titleBand(doc, sh, W, H, put, txt);
+  else {
   put(rectPath(border, border, W - border, H - border), 0.35);
   const bh = Math.max(14, Math.min(24, H * 0.04)), y0 = border, y1 = border + bh, k = bh / 22;   // band height, and a text scale that follows it
   put([lineSeg([border, y1], [W - border, y1])], 0.35);
@@ -1592,6 +1626,7 @@ export function sheetScene(doc, sh, opts = {}) {
   txt([W - border - 3 * k, y0 + 4 * k], num, fit(num, 11 * k, numW - 6 * k), { align: "right" });
   // a short dark rule over the number: the one accent
   prims.push({ t: "fill", path: rectPath(xs[0], y1 - 0.9 * k, W - border, y1), colour: ink, layer: "TitleBlock" });
+  }
   // Viewports: a frame holding a view, positioned in paper mm (§11).
   const vps = doc.argValue(sh, "viewports") || [];
   vps.forEach((vp, i) => {
@@ -1613,6 +1648,19 @@ export function sheetScene(doc, sh, opts = {}) {
     if (vp.clipVisible && clip) put(rectPath(...clip), 0.18);
     // viewport title
     const ty = (clip ? clip[1] : bb[1] + off[1]) - 9, tx0 = (clip ? clip[0] : bb[0] + off[0]);
+    if (band) {
+      // as the drawing set has it: a split circle (the view's number over the sheet it is on), the name large
+      // in Arial on a rule, the scale small beneath
+      const A = { font: "Arial" }, name = view.get("Name") || "", nw = textWidth(name, 4.03, "Arial");
+      const cx = tx0 + 5, cy = ty + 1.5;
+      put(circlePath([cx, cy], 4.2), 0.25); put([lineSeg([cx - 4.2, cy], [cx + 4.2, cy])], 0.18);
+      txt([cx, cy + 1.1], String(i + 1), 2.1, Object.assign({ align: "centre" }, A));
+      txt([cx, cy - 3.0], doc.argValue(sh, "number") || "", 1.6, Object.assign({ align: "centre" }, A));
+      txt([cx + 6, cy + 0.6], name, 4.03, A);
+      put([lineSeg([cx + 4.2, cy], [cx + 6 + Math.max(30, nw + 2), cy])], 0.18);
+      if (doc.typeOf(view) !== "Schedule" && doc.typeOf(view) !== "View3D") txt([cx + 6.5, cy - 3.1], "1 : " + (F.int(view, "scale") || 100), 1.5, A);
+      return;
+    }
     put(circlePath([tx0 + 4.5, ty + 1.5], 4.5), 0.35);
     txt([tx0 + 4.5, ty], String(i + 1), 3, { align: "centre" });
     txt([tx0 + 11, ty + 0.5], view.get("Name"), 3.5, {});
@@ -1637,6 +1685,45 @@ export function sheetScene(doc, sh, opts = {}) {
     txt([x + 11, ty + 0.5], im.title || "Diagram", 3.5, {}); put([lineSeg([x + 10, ty - 1.2], [x + 11 + Math.max(40, textWidth(im.title || "Diagram", 3.5) + 2), ty - 1.2])], 0.5);
   });
   return { prims, links, hits: [], size, bbox: [0, 0, W, H], kind: "sheet" };
+}
+/** The title block of the Casa Mazatlan set (and any office that works like it): no border, one heavy rule
+ *  above a band along the foot of the sheet. On the left, the standing notes and the author's copyright; in
+ *  the middle, the project - its name large, then number, address and client under bold labels; then print
+ *  size, drafted, checked and issue date; a north circle; and on the right the drawing's name over its
+ *  number, set very large. The scale sits over the rule at the right. Arial and Arial Bold throughout, at
+ *  the sizes of the original (cap heights in mm, measured from it). Laid out for A3, it holds its left side
+ *  to the left edge and everything else to the right edge on any other size. */
+function titleBand(doc, sh, W, H, put, txt) {
+  const P = Object.assign({ number: "", address: "", client: "", author: "", drafted: "", checked: "", issued: "", notes: "", revisions: "" }, doc.meta.project || {});
+  const R = x => W - (420 - x);             // a position measured on A3 from the left, held to the right edge
+  const A = { font: "Arial" }, AB = { font: "ArialBold" };
+  put([lineSeg([10, 30.9], [W - 10, 30.9])], 0.47);
+  // the standing notes, and who holds the copyright
+  const notes = (P.notes || "NO TOMAR COTAS DEL DIBUJO.\nCONTRATISTA COMPROBAR\nDIMENSIONES EN OBRA.").split("\n");
+  notes.slice(0, 3).forEach((l, i) => txt([9.9, 26.4 - 2.1 * i], l.toUpperCase(), 1.28, A));
+  if (P.author) [P.author, "RETIENE DERECHOS DE AUTOR", "SOBRE ESTE DIBUJO."].forEach((l, i) => txt([9.9, 16.2 - 2.15 * i], l.toUpperCase(), 1.28, A));
+  if (P.revisions) txt([44.1, 26.4], P.revisions.toUpperCase(), 1.28, A);
+  // the project
+  txt([R(259.9), 24.6], (doc.meta.name || "").toUpperCase(), 4.03, A);
+  const label = (x, y, t) => txt([R(x), y], t, 1.52, Object.assign({ align: "right" }, AB));
+  const value = (x, y, t) => txt([R(x), y], t, 1.52, A);
+  label(274.6, 20.75, "PROJECT NO"); value(277.2, 20.55, P.number);
+  label(274.6, 17.65, "DIRECCION"); P.address.split("\n").slice(0, 3).forEach((l, i) => value(277.2, 17.65 - 2.35 * i, l.toUpperCase()));
+  label(274.6, 7.45, "CLIENTE"); value(277.2, 7.25, P.client.toUpperCase());
+  label(329.6, 17.55, "PRINT SIZE"); value(332.2, 17.35, doc.argValue(sh, "size") || "");
+  label(329.6, 14.25, "DRAFTED"); value(332.0, 14.15, P.drafted);
+  label(329.6, 10.75, "CHECKED"); value(332.0, 10.65, P.checked);
+  label(329.6, 7.45, "ORIG. ISSUE"); value(332.1, 7.25, P.issued);
+  // north
+  put(circlePath([R(352.1), 15.05], 7.5), 0.21);
+  txt([R(352.1), 4.85], "NORTE", 1.52, Object.assign({ align: "centre" }, AB));
+  // the drawing: its name, and its number large
+  txt([R(410), 24.4], String(doc.argValue(sh, "sheetName") || "").toUpperCase(), 4.03, Object.assign({ align: "right" }, A));
+  txt([R(389.4), 8.1], doc.argValue(sh, "number") || "", 9.47, Object.assign({ align: "centre" }, A));
+  // the scale over the rule: one scale, or "As indicated" when the views differ
+  const sc = viewportScales(doc, sh), scales = sc && sc !== "—" ? sc.split(", ") : [];
+  const scaleText = scales.length === 1 ? scales[0].replace(":", " : ") : scales.length ? "As indicated" : "";
+  if (scaleText) txt([R(410), 35.0], scaleText, 5.07, Object.assign({ align: "right" }, A));
 }
 function viewportScales(doc, sh) {
   const s = [...new Set((doc.argValue(sh, "viewports") || []).map(vp => doc.element(vp.view.ref)).filter(v => v && doc.typeOf(v) !== "Schedule").map(v => "1:" + (F.int(v, "scale") || 100)))];

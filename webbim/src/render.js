@@ -61,12 +61,14 @@ export function drawScene(g, scene, view, opts = {}) {
       g.restore();
     } else if (p.t === "text") {
       const em = emOf(p.height, p.font) * view.z; if (em < 1.5) return;
-      const wf = p.widthFactor || 1, fcss = (TEXT_FONTS[p.font] || {}).css;
+      const wf = p.widthFactor || 1, fcss = (TEXT_FONTS[p.font] || {}).css, fweight = (TEXT_FONTS[p.font] || {}).weight || "";
       g.save();
       g.translate(X(p.at[0]), Y(p.at[1])); g.rotate(-(p.rot || 0) * Math.PI / 180);
       g.fillStyle = tint(p, p.colour || "#000");
-      g.font = `${em}px ${fcss || `${FONT_FAMILY}, "DejaVu Sans", Verdana, sans-serif`}`;
-      const w = textWidth(p.text, p.height, p.font, wf) * view.z;
+      g.font = `${fweight ? fweight + " " : ""}${em}px ${fcss || `${FONT_FAMILY}, "DejaVu Sans", Verdana, sans-serif`}`;
+      // align on the text as this machine draws it (a missing Arial falls back to a wider face), so a
+      // right- or centre-aligned line keeps its anchor; the PDF aligns on the standard font's own metrics
+      const w = (p.font && p.font !== "Sans" && p.align && p.align !== "left" ? g.measureText(p.text).width * wf : textWidth(p.text, p.height, p.font, wf) * view.z);
       const dx = p.align === "centre" ? -w / 2 : p.align === "right" ? -w : 0;
       if (wf !== 1) g.scale(wf, 1);
       g.fillText(p.text, dx / wf, p.valign === "middle" ? p.height * view.z / 2 : 0);

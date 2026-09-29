@@ -34,6 +34,7 @@ import { cadSketchOutline } from "./cadsketch.js";
 import { programFromBrief, planSpaceGraph, relaxBubbles, gfaOf, activeLegend, legendColour, groupKey } from "./spacegraph.js";
 import { buildRmuhSample, RMUH_BRIEF } from "./sample_rmuh.js";
 import { buildPavilionSample } from "./sample_pavilion.js";
+import { buildMazatlanSample } from "./sample_mazatlan.js";
 import { parseOBJ, storeysFor, plateAt, weldTriangles } from "./massing.js";
 
 export const CASES = [];
@@ -1690,12 +1691,12 @@ testCase("M55", "IFC bodies kept as their own shape: a brep stair, a swept-disk 
 testCase("M56", "Datums are edited where they are seen: a section crossing an elevation's depth is drawn there and picked there; a grid or section moved along the elevation moves in plan; a level moved in a section changes its elevation", () => {
   const doc = buildPavilionSample(), ed = new Editor(doc), v = doc.element("V-E-S");
   const sc = deriveView(doc, v), hitB = sc.hits.some(h => h.id === "V-S-B"), hitA = sc.hits.some(h => h.id === "V-S-A");
-  // South Elevation looks north: its line runs west, so +1 m along the view is 1 m west in plan
+  // South Elevation looks north: west is on its left and east on its right, so +1 m along the view is 1 m east in plan
   const d = viewLineGeometry(doc, v).d, r1 = ed.apply({ op: "transform", ids: ["G-B", "V-S-B"], move: [d[0] * 1000, d[1] * 1000] });
   const gb = doc.argValue(doc.element("G-B"), "line").start[0], sb = doc.argValue(doc.element("V-S-B"), "line").start[0];
   const r2 = ed.apply({ op: "set", id: "LR", key: "elevation", value: 4850 }), roof = doc.plan(doc.element("FL-ROOF"));
-  const ok = hitB && !hitA && r1.ok && Math.abs(gb - 19500) < 1 && Math.abs(sb - 21300) < 1 && r2.ok && Math.abs(roof.z1 - 4850) < 1;
-  return R(ok, "Section B-B (crossing) drawn and pickable in the South Elevation, Section A-A (parallel) not; grid B and section B-B 1 m west; the roof follows its level to +4.850",
+  const ok = hitB && !hitA && r1.ok && Math.abs(gb - 21500) < 1 && Math.abs(sb - 23300) < 1 && r2.ok && Math.abs(roof.z1 - 4850) < 1;
+  return R(ok, "Section B-B (crossing) drawn and pickable in the South Elevation, Section A-A (parallel) not; grid B and section B-B 1 m east (the elevation reads west to east, left to right, as the eye sees it); the roof follows its level to +4.850",
     `B ${hitB}, A ${hitA}; grid B x ${gb}, section B-B x ${sb}; roof top ${roof && roof.z1}`);
 });
 
@@ -2294,4 +2295,26 @@ testCase("M78", "Everything deletes: one element of every type in the model - mo
   if (!pickable) bad.push("a bare opening has no pick area in plan");
   if (!closes) bad.push("deleting a door left its opening");
   return R(!bad.length && first.size >= 30, `${first.size} types, each deleted and undone, every view drawing; a bare opening picked in plan; a door takes its opening`, bad.length ? bad.join("; ") : `${first.size} types: ${[...first.keys()].join(", ")}`);
+});
+
+testCase("M79", "Casa Mazatlan, from its INAH drawing set: every page of the set is a sheet (A001-A904, A3, in the set's title band, Arial); the rooms close as the plan draws them; the existing drawings show only what exists; elevations read as the eye sees them (Guillermo Nelson: grid 1 on the left); the set's people and car stand in its elevation and section at true size", () => {
+  const doc = buildMazatlanSample();
+  const PAGES = ["A001", "A010", "A101", "A102", "A103", "A201", "A202", "A301", "A302", "A303", "A304", "A305", "A306", "A901", "A902", "A903", "A904"];
+  const sheets = doc.elements().filter(f => doc.typeOf(f) === "Sheet"), nums = sheets.map(f => doc.argValue(f, "number")).sort();
+  const pagesOk = JSON.stringify(nums) === JSON.stringify(PAGES) && sheets.every(f => doc.argValue(f, "size") === "A3" && (doc.argValue(f, "titleBlock") || {}).ref === "SY-TB-BAND" && (doc.argValue(f, "viewports") || []).length >= 1);
+  // the band: project name, the sheet's name and number, in Arial
+  const sh = sheetScene(doc, doc.element("SH-A101")), texts = sh.prims.filter(p => p.t === "text" && p.layer === "TitleBlock");
+  const band = ["CASA MAZATLAN", "PLANTA BAJA", "A101", "PROJECT NO", "TORRES HERNANDEZ", "1 : 100", "NORTE"].every(t => texts.some(p => p.text === t)) && texts.every(p => /^Arial/.test(p.font || ""));
+  const errs = doc.elements().filter(f => doc.error(f)).length;
+  const room = n => { const f = doc.elements().find(g => doc.typeOf(g) === "Space" && g.get("Name") === n); return f && (doc.data(f) || {}).value / 1e6; };
+  const rooms = doc.elements().filter(f => doc.typeOf(f) === "Space").every(f => !doc.note(f)) && Math.abs(room("Patio central") - 4.13 * 5.0) < 0.5;
+  const exist = deriveView(doc, doc.element("V-EX")), shown = new Set(exist.prims.map(p => p.id).filter(Boolean));
+  const existOk = shown.has("W-S") && shown.has("W-I1") && !shown.has("W-N4") && !shown.has("K1") && !shown.has("SP-07");
+  const G = viewLineGeometry(doc, doc.element("V-E-GN")), handed = G.sOf([0, 14570]) < G.sOf([0, 0]);
+  const s2 = deriveView(doc, doc.element("V-S2")), car = s2.prims.filter(p => p.id === "EN6"), xs = car.flatMap(p => (p.path || []).flatMap(g => [g.a, g.b].filter(Boolean).map(q => q[0])));
+  const carW = xs.length ? (Math.max(...xs) - Math.min(...xs)) * 50 : 0;
+  const views = doc.elements().filter(f => ["PlanView", "ElevationView", "SectionView"].includes(doc.typeOf(f))).every(v => deriveView(doc, v).prims.length > 50);
+  return R(pagesOk && band && !errs && rooms && existOk && handed && Math.abs(carW - 4720) < 60 && views,
+    "17 A3 sheets A001-A904 in the title band, Arial; no errors; every room enclosed, the courtyard ≈ 20.6 m²; A010 shows existing only; grid 1 left of grid 5 in A201; the car 4.72 m long at 1:50",
+    JSON.stringify({ nums, band, errs, courtyard: room("Patio central"), existOk, handed, carW, views }));
 });

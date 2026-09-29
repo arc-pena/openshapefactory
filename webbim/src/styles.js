@@ -186,6 +186,14 @@ export function categoryVisible(ctx, cat) {
 }
 
 /** The rule list a view applies: its style's rules plus the view's own filters. */
+/** Hidden in this view by a filter rule or an element override (a Visibility/Graphics "not visible"):
+ *  checked once per element before anything of it is drawn, so every kind of element obeys it. */
+export function hiddenByRule(doc, ctx, f) {
+  const style = ctx.style || {};
+  for (const rule of ctx.rules || style.rules || []) if (rule.enabled !== false && rule.then && rule.then.visible === false && matches(doc, f, rule.when)) return true;
+  const ov = ctx.overrides && ctx.overrides[doc.idOf(f)];
+  return !!(ov && ov.visible === false);
+}
 export function rulesFor(doc, style, filterIds = []) {
   const out = (style && style.rules ? style.rules.slice() : []);
   const all = Object.values(doc.lib.viewStyles).flatMap(s => s.rules || []);

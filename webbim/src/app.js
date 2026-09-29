@@ -13,6 +13,7 @@ import { fromPolygon } from "./bimsketch.js";
 import { Editor } from "./ops.js";
 import { buildSample } from "./sample.js";
 import { buildPavilionSample } from "./sample_pavilion.js";
+import { buildMazatlanSample } from "./sample_mazatlan.js";
 import { buildRmuhSample } from "./sample_rmuh.js";
 import { openDocument, newDocument, sheetSize } from "./bim.js";
 import { F, CATALOGUE } from "./ocaf.js";
@@ -587,6 +588,7 @@ function fileMenu(anchor) {
     "-", { label: "Export…", icon: "exportI", run: () => exportDialog() }, { label: "Import IFC…", icon: "importI", run: () => importIfcFile() }, { label: "Import DXF Symbol…", icon: "importI", run: () => importDXF() },
     "-", { label: "Project Information…", icon: "info", run: () => projectInfo() }, { label: "Reset to Sample Project (D1 RMUH)", icon: "house", run: () => { forget("draft-v6"); forget("tabs"); setDocument(buildRmuhSample(), { msg: "D1 RMUH sample loaded: the brief analysed, the client's plot as the site boundary", kind: "ok" }); app.openView("__spacegraph"); } },
     { label: "Studio House Sample", icon: "house", run: () => { forget("draft-v6"); forget("tabs"); setDocument(buildSample(), { msg: "Studio House sample loaded", kind: "ok" }); } },
+    { label: "Casa Mazatlan (INAH drawing set)", icon: "house", run: () => { forget("draft-v6"); forget("tabs"); setDocument(buildMazatlanSample(), { msg: "Casa Mazatlan: the INAH set rebuilt as a model - existing facades, courtyard, studio, roof terrace; 17 A3 sheets A001-A904 in the set's title band", kind: "ok" }); app.openView("SH-A101"); } },
     { label: "Pavilion House Sample (drawing set)", icon: "house", run: () => { forget("draft-v6"); forget("tabs"); setDocument(buildPavilionSample(), { msg: "Pavilion House: a house after the Barcelona Pavilion - podium plan, roof plan, elevations, sections, axonometric and five A1 sheets", kind: "ok" }); app.openView("SH-A100"); } },
   ]);
 }
@@ -983,9 +985,19 @@ function unitsDialog() {
     { label: "OK", primary: true, run: () => { const r = app.apply({ op: "units", value: sel.value }); if (r.ok) app.say(`Lengths now shown in ${LENGTH_UNITS[sel.value].label}`, "ok"); return true; } },
   ]);
 }
+/** Project Information: what every title block reads - the project, its number and address, the client,
+ *  who drew and checked it, when it was first issued, and the notes along the foot of each sheet. */
+const PROJECT_FIELDS = [["number", "Project number"], ["address", "Address (one line per row)", true], ["client", "Client"], ["author", "Author (copyright)"],
+  ["drafted", "Drafted by"], ["checked", "Checked by"], ["issued", "Original issue date"], ["notes", "Notes on every sheet (one line per row)", true], ["revisions", "Revision note"]];
 function projectInfo() {
+  const P = Object.assign({}, app.doc.meta.project || {});
   const inp = h("input", { type: "text", value: app.doc.meta.name, id: "pi-name" });
-  dialog("Project Information", h("div", { style: { display: "grid", gap: "8px" } }, h("label", { for: "pi-name" }, "Project name"), inp), [{ label: "Cancel", run: () => true }, { label: "OK", primary: true, run: () => { app.doc.meta.name = inp.value; saveDraftSoon(); app.refresh({ keepMain: true }); } }]);
+  const fields = PROJECT_FIELDS.map(([k, label, multi]) => { const el = h(multi ? "textarea" : "input", Object.assign({ id: "pi-" + k, rows: multi ? 3 : undefined }, multi ? {} : { type: "text", value: P[k] || "" })); if (multi) el.value = P[k] || ""; return [k, label, el]; });
+  dialog("Project Information", h("div", { style: { display: "grid", gridTemplateColumns: "180px minmax(220px, 1fr)", gap: "8px", alignItems: "start" } },
+    h("label", { for: "pi-name" }, "Project name"), inp, ...fields.flatMap(([k, label, el]) => [h("label", { for: "pi-" + k }, label), el])),
+    [{ label: "Cancel", run: () => true }, { label: "OK", primary: true, run: () => {
+      app.doc.meta.name = inp.value; const out = {}; for (const [k, , el] of fields) if (el.value.trim()) out[k] = el.value; app.doc.meta.project = out;
+      app.doc.bumpView(); saveDraftSoon(); app.refresh({ keepMain: true }); } }]);
 }
 function openFile() {
   const inp = h("input", { type: "file", accept: ".json,application/json", hidden: true }); document.body.append(inp);

@@ -144,6 +144,24 @@ shadows and the 3D light, so they cannot disagree.
   nothing. They can show the element's Mark or its type's Mark instead of the
   material's. The frame is an oblong by default.
 
+## Rebuilding a drawing set as a model
+
+- Read the PDF's vectors, not its picture. Grid bubbles, wall fills and the
+  outlines of cut walls give positions to the millimetre at the set's scale
+  (1:100 → one paper mm = 100 mm). Check the bays against the set's own
+  dimension strings.
+- Every page of the set becomes a sheet with the same number, name, size and
+  scale. Its title block is copied from the set: fonts, sizes (converted to
+  cap height), positions and the fields it reads from Project Information.
+- Elevations and sections read as the eye sees them. Looking north, west is on
+  the left. Test that the handedness is right (grid 1 left of grid 5 on a view
+  looking east).
+- Take the set's 2D entourage (people, cars, trees) as model-space symbols at
+  true size, filtered by stroke colour so the render stipple behind them stays
+  out. Place them in elevations and sections by view coordinates.
+- Existing and new work are phases. A view style's rules hide the other phase,
+  and every kind of element must obey the rule, not only walls.
+
 ## Check it looks right, then measure it
 
 Render the sheet in a real browser and look at the screenshot. Then assert

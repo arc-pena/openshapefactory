@@ -2,6 +2,8 @@
 //! patterns, materials, families, types, text types, symbols and the two view
 //! styles that must ship together. It is data — the same shape the file stores.
 
+import { ENTOURAGE_SYMBOLS } from "./entourage.js";
+
 export const PEN_ISO = {
   name: "ISO 128",
   pens: {
@@ -225,6 +227,8 @@ export const NORTH_DXF = [
 export const SYMBOLS = {
   "SY-NORTH": { name: "North arrow", source: { dxf: "inline:NORTH_DXF" }, sourceBBox: null, nominalSize: { w: 18, h: 18 }, scaleMode: "uniform", anchor: "centre", space: "paper" },
   "SY-TB-A1": { name: "Title block", generated: "titleBlock", space: "paper" },
+  "SY-TB-BAND": { name: "Title band (Arial, notes and north)", generated: "titleBand", space: "paper" },
+  ...ENTOURAGE_SYMBOLS,
 };
 
 // ---------------------------------------------------------------- the two styles (§7.2)

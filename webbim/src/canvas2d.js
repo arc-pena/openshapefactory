@@ -783,7 +783,7 @@ export class View2D {
     const hit = this.hitsAt(sx, sy).find(x => { const f = doc.element(x.id); return f && doc.typeOf(f) === "Wall"; });
     if (!hit) return this.app.say("click on a wall", "note");
     const w = doc.plan(doc.element(hit.id)); if (!w || w.curve.type !== "line") return this.app.say("doors and windows go into straight walls from an elevation", "note");
-    const onView = add(G.c.start, mul(G.d, p[0])), X = intersectLines({ p: onView, d: G.look }, lineThrough(w.curve.start, w.curve.end));
+    const onView = add(G.o, mul(G.d, p[0])), X = intersectLines({ p: onView, d: G.look }, lineThrough(w.curve.start, w.curve.end));
     if (!X) return this.app.say("that wall runs along the view: place its door in plan or 3D", "note");
     const u = Math.max(0, Math.min(w.L, Math.round(uOf(w, X)))), z = p[1] + G.Z0, tool = this.app.tool, o = this.app.toolOpts;
     const t = tool === "window" ? doc.lib.types[o.windowType] : null, h = t ? t.height : (o.height_ || 2100);

@@ -299,6 +299,13 @@ export const ADA_CLEARANCE = {
 };
 export const SWING_SCENARIOS = ["Left hand, swing in", "Right hand, swing in", "Left hand, swing out", "Right hand, swing out"];
 
+/** A filler type may colour its parts: the frame and glazing bars (green steel, a painted timber) and the
+ *  leaf. Parts not named keep the category's colours. */
+function colourParts(parts, t) {
+  const c = { Frame: t.frameColour, Sill: t.sillColour, Panel: t.panelColour, Door: t.panelColour };
+  for (const pt of parts || []) if (c[pt.sub]) pt.colour = c[pt.sub];
+  return parts;
+}
 BUILDERS.Door = {
   precondition: fillerPre("doorType"),
   build: (f, doc) => {
@@ -331,6 +338,14 @@ BUILDERS.Door = {
       const local = (x, y) => { const { d, t: th } = at(openDeg); return add(add(H, mul(d, x)), mul(th, y)); };
       const box3 = (x0, x1, y0, y1, z0, z1, sub_) => ({ foot: [local(x0, y0), local(x1, y0), local(x1, y1), local(x0, y1)], z0: w.z0 + fr.sill + z0, z1: w.z0 + fr.sill + z1, sub: sub_, leaf: true, pivot: H, turn, openDeg, swingDeg });
       parts.push(box3(0, len, 0, lt, 5, fr.h - fw - 3, t.glazed ? "Glass" : "Panel"));
+      // a steel glazed leaf: a stile and rail frame round the glass, and glazing bars dividing it into panes
+      if (t.glazed && t.bars) {
+        const bw = t.bars.width || 40, cols = Math.max(1, t.bars.cols || 1), rows = Math.max(1, t.bars.rows || 1), zt = fr.h - fw - 3, fz = [5, zt];
+        const ly0 = -8, ly1 = lt + 8;
+        parts.push(box3(0, bw, ly0, ly1, fz[0], fz[1], "Frame"), box3(len - bw, len, ly0, ly1, fz[0], fz[1], "Frame"), box3(0, len, ly0, ly1, fz[0], fz[0] + bw * 2.5, "Frame"), box3(0, len, ly0, ly1, zt - bw, zt, "Frame"));
+        for (let i = 1; i < cols; i++) { const x = len * i / cols; parts.push(box3(x - bw / 3, x + bw / 3, ly0, ly1, fz[0], fz[1], "Frame")); }
+        for (let j = 1; j < rows; j++) { const z = fz[0] + bw * 2.5 + (zt - bw - fz[0] - bw * 2.5) * j / rows; parts.push(box3(0, len, ly0, ly1, z - bw / 3, z + bw / 3, "Frame")); }
+      }
       for (const side of [-1, 1]) {                                     // push face and pull face
         const y0 = side < 0 ? -14 : lt, y1 = side < 0 ? 0 : lt + 14;       // rose on the face
         const yb0 = side < 0 ? -62 : lt + 48, yb1 = side < 0 ? -48 : lt + 62; // lever bar, standing off the face
@@ -359,10 +374,23 @@ BUILDERS.Door = {
     }
     const elev = { rects: [{ u0: fr.u0, u1: fr.u1, z0: fr.sill, z1: fr.sill + fr.h, sub: "Frame" }, { u0: fr.u0 + fw, u1: fr.u1 - fw, z0: fr.sill, z1: fr.sill + fr.h - fw, sub: "Panel" }],
       handle: { u: leaves[0].uo - Math.sign(leaves[0].uo - leaves[0].uh) * 80, z: fr.sill + hz }, glazed: !!t.glazed };
+    // the glazing bars, seen in elevation: each leaf's panes
+    if (t.glazed && t.bars) {
+      elev.lines = [];
+      const cols = Math.max(1, t.bars.cols || 1), rows = Math.max(1, t.bars.rows || 1), zb = fr.sill + (t.bars.width || 40) * 2.5, zt = fr.sill + fr.h - fw - (t.bars.width || 40);
+      for (const L of leaves) {
+        const a = Math.min(L.uh, L.uo), b = Math.max(L.uh, L.uo);
+        elev.lines.push({ u0: a, z0: zb, u1: b, z1: zb }, { u0: a, z0: zt, u1: b, z1: zt });
+        if (leaves.length > 1) elev.lines.push({ u0: L.uo, z0: fr.sill, u1: L.uo, z1: fr.sill + fr.h - fw });
+        for (let i = 1; i < cols; i++) { const u = a + (b - a) * i / cols; elev.lines.push({ u0: u, z0: zb, u1: u, z1: zt }); }
+        for (let j = 1; j < rows; j++) { const z = zb + (zt - zb) * j / rows; elev.lines.push({ u0: a, z0: z, u1: b, z1: z }); }
+      }
+    }
     const leafW = Math.abs(leaves[0].uo - leaves[0].uh);
     const scen = SWING_SCENARIOS[(hingeAtU0 ? 0 : 1) + (facing > 0 ? 0 : 2)];
     const top_ = w.z0 + fr.sill + fr.h, bot_ = w.z0 + fr.sill;
     const incline = inclineFiller(f, w, fr, plan, parts, { band: [sMin, sMax], frame: [[fr.u0, fr.u0 + fw, bot_, top_], [fr.u1 - fw, fr.u1, bot_, top_], [fr.u0 + fw, fr.u1 - fw, top_ - fw, top_]] });
+    colourParts(parts, t);
     return { plan, elev, data: { value: t.width, kind: "Length", host: fr.host, frame: fr, parts, swing, incline, props: {
       Width: L(t.width), Height: L(t.height), TypeMark: T(t.mark || t.id), "Leaf width": L(leafW), "Clear width": L(leafW - lt), Swing: T(pair ? "Double" : scen), "ADA clearance": T(scenario) } },
       note: Math.abs(fr.w - t.width) > 1 ? `type is ${t.width}mm wide; its opening is ${fr.w}mm` : null };
@@ -393,6 +421,11 @@ BUILDERS.Window = {
       hostBox(w, fr.u0 + fwid, fr.u1 - fwid, sMid - 6, sMid + 6, fr.sill + fwid, top - fwid, "Glass"),
       hostBox(w, fr.u0 - 40, fr.u1 + 40, w.stack.s[0], w.stack.s[0] + 50 * out, fr.sill - 30, fr.sill, "Sill"),
     ];
+    for (let j = 1; j <= Math.max(0, t.transoms || 0); j++) {
+      const z = fr.sill + fwid + (fr.h - 2 * fwid) * j / (t.transoms + 1), bw = Math.min(fwid, 40);
+      lines.push({ u0: fr.u0 + fwid, z0: z, u1: fr.u1 - fwid, z1: z, sub: "Frame" });
+      parts.push(hostBox(w, fr.u0 + fwid, fr.u1 - fwid, s0, s1, z - bw / 2, z + bw / 2, "Frame", { mullion: true }));
+    }
     for (let i = 1; i <= mull; i++) {
       const u = fr.u0 + (fr.u1 - fr.u0) * i / (mull + 1);
       lines.push({ u0: u, z0: fr.sill + fwid, u1: u, z1: top - fwid, sub: "Frame" });
@@ -400,6 +433,7 @@ BUILDERS.Window = {
     }
     const zb_ = w.z0 + fr.sill, zt_ = w.z0 + top;
     const incline = inclineFiller(f, w, fr, plan, parts, { band: [s0, s1], frame: [[fr.u0, fr.u0 + fwid, zb_, zt_], [fr.u1 - fwid, fr.u1, zb_, zt_], [fr.u0 + fwid, fr.u1 - fwid, zb_, zb_ + fwid], [fr.u0 + fwid, fr.u1 - fwid, zt_ - fwid, zt_]] });
+    colourParts(parts, t);
     return { plan, elev: { rects, lines }, data: { value: t.width, kind: "Length", host: fr.host, frame: fr, parts, incline, props: { Width: L(t.width), Height: L(t.height), TypeMark: T(t.mark || t.id), "Sill height": L(fr.sill) } } };
   },
 };
@@ -1185,8 +1219,11 @@ function boundingSegments(doc, walls, levelId, mode) {
   const segs = [];
   const addPath = path => { const pts = samplePath(path, 48); for (let i = 0; i < pts.length - 1; i++) segs.push([pts[i], pts[i + 1]]); };
   const solids = [];
+  // a wall bounds the rooms of every level its height passes through, not only its base level's: a street
+  // facade standing on the sidewalk encloses the rooms above it, as in Revit
+  const lv = levelId && doc.element(levelId), lz = lv ? (doc.data(lv) || {}).value ?? 0 : 0;
   for (const [id, w] of walls) {
-    const f = doc.element(id); if (F.refId(f, "baseLevel") !== levelId) continue;
+    const f = doc.element(id); if (F.refId(f, "baseLevel") !== levelId && !(w.z0 <= lz + 10 && (w.zHi ?? w.z1) >= lz + 300)) continue;
     if (mode === "wallCentre") { addPath(w.curve.segs()); continue; }
     if (mode === "coreCentre") {
       const s = (w.stack.s[w.stack.cs] + w.stack.s[w.stack.ce]) / 2;
@@ -1278,6 +1315,8 @@ export function openDocument(json) {
   if (doc.lib.categories && Object.keys(doc.lib.categories).length) for (const [c, v] of Object.entries(defaults.lib.categories)) if (!doc.lib.categories[c]) doc.lib.categories[c] = v;
   // dimension types are newer than most files: they arrive quietly
   if (!Object.keys(doc.lib.dimTypes || {}).length) doc.lib.dimTypes = defaults.lib.dimTypes;
+  // so do the entourage symbols (people, a car): added beside the file's own symbols, never over them
+  if (doc.lib.symbols && Object.keys(doc.lib.symbols).length) for (const [k, v] of Object.entries(defaults.lib.symbols)) if (/^SY-(ENT-|TB-BAND)/.test(k) && !doc.lib.symbols[k]) doc.lib.symbols[k] = v;
   for (const k of Object.keys(defaults.lib)) if (!Object.keys(doc.lib[k]).length && Object.keys(defaults.lib[k]).length) { doc.lib[k] = defaults.lib[k]; doc.loadReport.push(`no ${k} in the file: using the defaults`); doc._filledLibs = (doc._filledLibs || []).concat(k); }
   attach(doc);
   return doc;

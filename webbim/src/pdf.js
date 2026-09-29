@@ -22,7 +22,7 @@ export function writePDF(pages, meta = {}) {
   const alloc = () => { objs.push(null); return objs.length; };
   const set = (id, v) => { objs[id - 1] = v; };
   const catalogId = alloc(), pagesId = alloc(), fontId = alloc(), fontDescId = alloc(), fontFileId = alloc(), outlinesId = alloc(), infoId = alloc();
-  const stdFonts = { F2: alloc(), F3: alloc(), F4: alloc() };
+  const stdFonts = { F2: alloc(), F3: alloc(), F4: alloc(), F5: alloc() };
   const pageIds = pages.map(() => alloc());
   const layerNames = [...new Set(pages.flatMap(p => collectLayers(p.prims)))].sort();
   const ocgIds = layerNames.map(() => alloc());
@@ -92,7 +92,7 @@ export function writePDF(pages, meta = {}) {
     const content = out.join("\n");
     const contentId = alloc();
     set(contentId, { dict: "", stream: content });
-    const pageRes = `/Font << /F1 ${fontId} 0 R /F2 ${stdFonts.F2} 0 R /F3 ${stdFonts.F3} 0 R /F4 ${stdFonts.F4} 0 R >>` +
+    const pageRes = `/Font << /F1 ${fontId} 0 R /F2 ${stdFonts.F2} 0 R /F3 ${stdFonts.F3} 0 R /F4 ${stdFonts.F4} 0 R /F5 ${stdFonts.F5} 0 R >>` +
       (localPats.size ? ` /Pattern << ${[...localPats].map(id => `/${id} ${patterns.find(p => p.id === id).obj} 0 R`).join(" ")} >>` : "") +
       (localAlpha.size ? ` /ExtGState << ${[...localAlpha].map(a => `/GA${a} << /ca ${(a / 100).toFixed(2)} >>`).join(" ")} >>` : "") +
       (localImgs.size ? ` /XObject << ${[...localImgs].map(id => `/${id} ${images.find(p => p.id === id).obj} 0 R`).join(" ")} >>` : "") +
@@ -118,6 +118,7 @@ export function writePDF(pages, meta = {}) {
   set(stdFonts.F2, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>");
   set(stdFonts.F3, "<< /Type /Font /Subtype /Type1 /BaseFont /Times-Roman /Encoding /WinAnsiEncoding >>");
   set(stdFonts.F4, "<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding /WinAnsiEncoding >>");
+  set(stdFonts.F5, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>");
   // The font: embedded, subset, one encoding (§12.3).
   const tag = "WBSUBS";
   const widths = []; for (let c = 32; c <= 255; c++) widths.push(FONT_WIDTHS[c] ?? 0);
