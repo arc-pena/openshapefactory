@@ -27723,9 +27723,9 @@ app.contextMenu = (e) => {
 function fileMenu(anchor) {
   const r = anchor.getBoundingClientRect();
   menuAt(r.left, r.bottom, [
-    { label: "New", icon: "sheet", run: () => newEmpty() }, { label: "Open…", icon: "open", run: () => openFile() }, { label: "Save", icon: "save", run: () => saveModel() },
+    { label: "New…", icon: "sheet", run: () => newProjectDialog() }, { label: "Open…", icon: "open", run: () => openFile() }, { label: "Save", icon: "save", run: () => saveModel() },
     "-", { label: "Export…", icon: "exportI", run: () => exportDialog() }, { label: "Import IFC…", icon: "importI", run: () => importIfcFile() }, { label: "Import DXF Symbol…", icon: "importI", run: () => importDXF() }, { label: "Import Contours (DXF)…", icon: "topo", run: () => importContours() },
-    "-", { label: "Project Information…", icon: "info", run: () => projectInfo() }, { label: "Casa Mazatlan (INAH drawing set)", icon: "house", run: () => { forget("draft-v6"); forget("tabs"); setDocument(buildMazatlanSample(), { msg: "Casa Mazatlan: the INAH set rebuilt as a model - existing facades, courtyard, studio, roof terrace; 17 A3 sheets A001-A904 in the set's title band", kind: "ok" }); app.openView("SH-A101"); } },
+    "-", { label: "Project Information…", icon: "info", run: () => projectInfo() }, ...SAMPLES.map(x => ({ label: x.name, icon: "house", run: () => { forget("draft-v6"); forget("tabs"); setDocument(x.build(), { msg: `${x.name}: loaded`, kind: "ok" }); if (x.open) app.openView(x.open); } })),
   ]);
 }
 
@@ -28144,9 +28144,47 @@ function openFile() {
   inp.click();
 }
 async function saveModel() { const r = await saveFile(`${app.doc.meta.name || "model"}.json`, app.doc.serialise(), "application/json"); app.say(r.ok ? "Model saved" : r.error, r.ok ? "ok" : "error"); }
-function newEmpty() {
+// ---------------------------------------------------------------- samples, and new projects from them
+/** The drawing sets the tool carries. Each is also a template: a new project can take its standards. */
+const SAMPLES = [
+  { id: "mazatlan", name: "Casa Mazatlan (INAH drawing set)", build: () => buildMazatlanSample(), open: "SH-A101" },
+];
+app.samples = SAMPLES;
+/** A new project with a sample's standards and none of its building: its materials, wall/floor/door types,
+ *  text and dimension types, fill patterns, view styles, title block and annotation style; its levels (named and
+ *  at their heights, if asked) each with a plan in the sample's plan style; a first sheet in its title block. */
+function newFromTemplate(sampleId, { levels = true, units = null } = {}) {
+  const S = SAMPLES.find(x => x.id === sampleId); if (!S) return newEmpty(units);
   forget("draft-v6"); forget("tabs");
-  const doc = newDocument("Untitled");
+  const src = S.build(), doc = newDocument("Untitled");
+  doc.lib = JSON.parse(JSON.stringify(src.lib));
+  for (const k of ["annotation", "defaultDimType", "displayUnits", "project"]) if (src.meta[k] !== undefined) doc.meta[k] = JSON.parse(JSON.stringify(src.meta[k]));
+  doc.meta.name = "Untitled"; if (units) doc.meta.displayUnits = units;
+  doc.meta.template = S.name;
+  const typeOf = f => src.typeOf(f), all = src.elements();
+  const planStyle = (() => { const c = {}; for (const f of all) if (typeOf(f) === "PlanView") { const r = F.refId(f, "style"); if (r) c[r] = (c[r] || 0) + 1; } return Object.entries(c).sort((a, b) => b[1] - a[1])[0]?.[0] || "VS-CONSTRUCTION"; })();
+  const lvs = levels ? all.filter(f => typeOf(f) === "Level").map(f => ({ name: f.get("Name"), z: (src.data(f) || {}).value || 0 })).sort((a, b) => a.z - b.z) : [{ name: "Level 1", z: 0 }, { name: "Level 2", z: 3000 }];
+  lvs.forEach((l, i) => {
+    doc.addElement({ id: `L${i}`, type: "Level", name: l.name, args: { name: l.name, elevation: l.z } });
+    doc.addElement({ id: `V-P${String(i).padStart(2, "0")}`, type: "PlanView", name: l.name.toUpperCase(), args: { level: { ref: `L${i}` }, scale: 100, style: { ref: planStyle } } });
+  });
+  const sh = all.find(f => typeOf(f) === "Sheet");
+  if (sh) doc.addElement({ id: "SH-A101", type: "Sheet", name: "A101 Plan", args: { number: "A101", sheetName: "Plan", size: src.argValue(sh, "size"), orientation: src.argValue(sh, "orientation"), titleBlock: src.argValue(sh, "titleBlock"), viewports: [] } });
+  doc.regenerate();
+  setDocument(doc, { msg: `New project from ${S.name}: its types, styles, title block and dimension styles${levels ? " and its levels" : ""}`, kind: "ok" });
+}
+app.newFromTemplate = newFromTemplate;
+function newProjectDialog() {
+  const pick = h("select", { "aria-label": "Template" }, h("option", { value: "" }, "Blank (the tool's defaults)"), SAMPLES.map(x => h("option", { value: x.id }, x.name)));
+  const lv = h("input", { type: "checkbox", checked: true }), units = h("select", { "aria-label": "Units" }, h("option", { value: "mm" }, "Metric (mm)"), h("option", { value: "ft-in" }, "Imperial (ft-in)"));
+  dialog("New Project", h("div", { style: { display: "grid", gap: "10px", minWidth: "380px" } },
+    h("label", {}, "Template ", pick), h("div", { class: "muted small" }, "A sample as template brings its standards - sheets, title block, dimension and text styles, view styles, materials and types - not its building."),
+    h("label", { class: "cellrow" }, lv, h("span", {}, "Keep the template's levels")), h("label", {}, "Units ", units)),
+    [{ label: "Cancel", run: () => true }, { label: "Create", primary: true, run: () => { if (pick.value) newFromTemplate(pick.value, { levels: lv.checked, units: units.value }); else newEmpty(units.value); return true; } }]);
+}
+function newEmpty(units = null) {
+  forget("draft-v6"); forget("tabs");
+  const doc = newDocument("Untitled"); if (units) doc.meta.displayUnits = units;
   doc.addElement({ id: "L0", type: "Level", name: "Level 1", args: { name: "Level 1", elevation: 0 } });
   doc.addElement({ id: "L1", type: "Level", name: "Level 2", args: { name: "Level 2", elevation: 3000 } });
   doc.addElement({ id: "V-P00", type: "PlanView", name: "Level 1", args: { level: { ref: "L0" }, scale: 100, style: { ref: "VS-CONSTRUCTION" } } });
