@@ -44,6 +44,7 @@ export function fhaProject(name, project) {
     "P-FH-SEAM": { name: "Standing seam, 406 (16\") o.c.", kind: "model", lines: [{ angle: 90, origin: [0, 0], delta: [0, 406] }] },
     "P-FH-SIDING": { name: "Board siding, 203 (8\")", kind: "model", lines: [{ angle: 0, origin: [0, 0], delta: [0, 203] }] },
     "P-FH-PANEL": { name: "Panel joints 1219 (4') grid", kind: "model", lines: [{ angle: 0, origin: [0, 0], delta: [0, 2438] }, { angle: 90, origin: [0, 0], delta: [0, 1219] }] },
+    "P-FH-SLATE": { name: "Slate courses, 152 (6\")", kind: "model", lines: [{ angle: 0, origin: [0, 0], delta: [0, 152] }] },
     "P-FH-CLAD": { name: "Vertical cladding, 305 (12\")", kind: "model", lines: [{ angle: 90, origin: [0, 0], delta: [0, 305] }] },
     "P-FH-EARTH": { name: "Earth", kind: "drafting", lines: [{ angle: 45, origin: [0, 0], delta: [0, 1.6] }, { angle: 45, origin: [0.8, 0], delta: [0, 1.6], dashes: [0.6, -1.0] }] },
     "P-FH-GRAVEL": { name: "Gravel", kind: "drafting", lines: [{ angle: 30, origin: [0, 0], delta: [0.9, 1.2], dashes: [0.25, -1.1] }, { angle: 120, origin: [0.4, 0.2], delta: [0.9, 1.2], dashes: [0.25, -1.3] }] },
@@ -57,6 +58,7 @@ export function fhaProject(name, project) {
   mat("M-FH-GYP", "Gypsum board", "90", { pattern: null, pen: "thin", lineColour: "#000000", background: "#ffffff" }, { pen: "thin" }, "#f2f0ec");
   mat("M-FH-METAL", "Standing seam metal roof", "70", { pattern: null, pen: "heavy", lineColour: "#000000", background: "#ffffff" }, { pen: "thin", pattern: "P-FH-SEAM", lineColour: "#8c8c8c" }, "#8d949b");
   mat("M-FH-WOOD", "Wood decking / siding", "62", { pattern: "P-TIMBER", pen: "medium", lineColour: "#000000", background: "#ffffff" }, { pen: "thin", pattern: "P-FH-SIDING", lineColour: "#a0a0a0" }, "#b58c5e");
+  mat("M-FH-SLATE", "Slate roof", "SL", { pattern: null, pen: "heavy", lineColour: "#000000", background: "#ffffff" }, { pen: "thin", pattern: "P-FH-SLATE", lineColour: "#9a9a9a" }, "#5d6168");
   mat("M-FH-BRICK", "Brick", "BR", { pattern: "P-BRICK", pen: "heavy", lineColour: "#000000", background: "#ffffff" }, { pen: "thin", pattern: "P-FH-SIDING", lineColour: "#b8b8b8" }, "#9c5c46");
   mat("M-FH-STEEL", "Structural steel, galvanized", "51", { pattern: null, pen: "heavy", lineColour: "#000000", background: "#555555" }, { pen: "thin" }, "#7c8288");
   mat("M-SOIL", "Earth", "20", { pattern: "P-FH-EARTH", pen: "medium", lineColour: "#000000", background: "#ffffff" }, { pen: "thin" }, "#a89779");
@@ -85,6 +87,7 @@ export function fhaProject(name, project) {
   door("T-FH-D30G", "Aluminum clad door 3'-0\"x7'-0\" glazed", "D3", 914, 2134, { glazed: true, leafThickness: 44 });
   door("T-FH-D60G", "Aluminum clad door pair 6'-0\"x7'-0\" glazed", "D4", 1829, 2134, { glazed: true });
   door("T-FH-GARAGE", "Polygal garage door 18'-0\"x9'-6\"", "D5", 5486, 2896, { glazed: false, leafThickness: 60 });
+  L.types["T-FH-PIN"] = { family: "F-COLUMN", name: "Masonry pinnacle 2'-6\" square", mark: "P2", width: 762, depth: 762, material: "M-FH-BRICK" };
   L.types["T-FH-PILE"] = { family: "F-COLUMN", name: "Wood pile 10\" round", mark: "P1", width: 254, depth: 254, round: true, material: "M-FH-WOOD" };
   const win = (id, name, mark, w, h, mullions = 0) => { L.types[id] = { family: "F-CASEMENT", name, mark, width: w, height: h, frame: 50, mullions }; };
   win("T-FH-W24", "Aluminum clad window 2'-0\"x4'-0\"", "W1", 610, 1219);
@@ -94,6 +97,20 @@ export function fhaProject(name, project) {
   win("T-FH-W86", "Aluminum clad window 8'-0\"x6'-0\"", "W5", 2438, 1829, 1);
   win("T-FH-W48", "Aluminum clad window 4'-0\"x8'-0\"", "W6", 1219, 2438);
   win("T-FH-W1210", "Storefront 12'-0\"x10'-0\"", "W7", 3658, 3048, 2);
+  // arched heads (the existing church): round, and pointed as a Gothic lancet; the new building's tall windows and storefronts
+  const arch = (id, name, mark, w, h, head, mullions = 0, o = {}) => { L.types[id] = Object.assign({ family: "F-CASEMENT", name, mark, width: w, height: h, frame: 60, mullions, head }, o); };
+  arch("T-FH-WPT36", "Lancet window 3'-7\"x16'-2\" (existing)", "E1", 1097, 4928, "Pointed", 1);
+  arch("T-FH-WPT30", "Belfry louver 3'-0\"x10'-0\" (existing)", "E2", 914, 3048, "Pointed", 0);
+  arch("T-FH-WRD36", "Round-head window 3'-7\"x6'-4\" (existing)", "E3", 1097, 1930, "Round", 1);
+  arch("T-FH-WRD72", "Round-head window 7'-2\"x11'-8\" (existing)", "E4", 2184, 3556, "Round", 2);
+  arch("T-FH-W3686", "Aluminum window 3'-7\"x8'-7\"", "8", 1097, 2616, "Square", 0, { transoms: 1 });
+  arch("T-FH-W3654", "Aluminum window 3'-7\"x5'-5\"", "4", 1097, 1651, "Square", 0);
+  arch("T-FH-SF1509", "Storefront 15'-6\"x9'-0\"", "17", 4724, 2743, "Square", 3);
+  arch("T-FH-SF1009", "Storefront 10'-0\"x9'-0\"", "18", 3048, 2743, "Square", 2);
+  arch("T-FH-SF3406", "Storefront transom 34'-0\"x6'-0\"", "19", 10363, 1829, "Square", 7);
+  door("T-FH-DRD4", "Round-head door 4'-0\"x9'-0\" (existing)", "D6", 1219, 2743, { glazed: false, leafThickness: 50, head: "Round" });
+  door("T-FH-DRD9", "Round-head entry, pair 9'-0\"x12'-0\"", "D7", 2743, 3658, { glazed: true, head: "Round" });
+  door("T-FH-D809G", "Aluminum storefront doors, pair 8'-0\"x9'-0\"", "D8", 2438, 2743, { glazed: true });
   win("T-FH-W42", "Aluminum clad awning 4'-0\"x2'-0\"", "W8", 1219, 610);
   win("T-FH-W417", "Stair glazing 4'-0\"x16'-0\"", "W9", 1219, 4877);
   win("T-FH-SF1615", "Storefront 16'-0\"x15'-0\"", "W10", 4877, 4572, 3);
@@ -108,6 +125,7 @@ export function fhaProject(name, project) {
   L.viewStyles["VS-FH-3D"] = Object.assign(JSON.parse(JSON.stringify(base)), { name: "FHA - 3D" });
   // the site plan: the plans' style with the planting and the ground shown
   L.viewStyles["VS-FH-SITE"] = Object.assign(JSON.parse(JSON.stringify(L.viewStyles["VS-FH-PLAN"])), { name: "FHA - site plan" });
+  L.viewStyles["VS-FH-SITE"].byCategory = Object.assign({}, L.viewStyles["VS-FH-SITE"].byCategory, { IfcStair: { visible: false }, Furniture: { visible: false } });
   for (const k of ["VS-FH-PLAN", "VS-FH-ELEV", "VS-FH-SEC"]) { const s = L.viewStyles[k]; s.byCategory = Object.assign({}, s.byCategory, { Furniture: { visible: false }, Planting: { visible: false } }); }
 
   // ---------------------------------------------------------------- the helpers the models are built with
@@ -138,7 +156,7 @@ export function fhaProject(name, project) {
       clip: { rect: crop, visible: false, active: !!crop, annotation: [80, 20, 70, 50] }, heads: o.heads || "End", groundLine: false, levelExtent: o.levelExtent || (crop ? [crop[0], crop[2]] : undefined), overrides: { __gridTop: o.gridTop ?? (crop ? crop[3] + 400 : 9000), __gridBottom: o.gridBottom ?? (crop ? crop[1] + 800 : -300) } } }),
     view3d: (id, name, cam, scale = 100) => add({ id, type: "View3D", name, args: { camera: cam, scale, style: { ref: "VS-FH-3D" }, visualStyle: "Shaded", render: { display: "renderedEdges", rasterDPI: 200, silhouetteWeight: 0.35 } } }),
     /** An ARCH D sheet in the firm's title strip; viewports [view, at (paper mm), extra]. */
-    sheet: (number, name, vps, size = "ARCH D") => add({ id: `SH-${number}`, type: "Sheet", name: `${number} ${name}`, args: { number, sheetName: name, size, orientation: "landscape", titleBlock: { ref: "SY-TB-FHA" },
+    sheet: (number, name, vps, size = "ARCH D", o = {}) => add({ id: `SH-${number}`, type: "Sheet", name: `${number} ${name}`, args: { number, sheetName: name, size, orientation: o.orientation || "landscape", titleBlock: { ref: o.titleBlock || "SY-TB-FHA" },
       viewports: vps.map(([view, at, extra], i) => Object.assign({ id: `VP${i + 1}`, view: { ref: view }, at, clipVisible: false }, extra || {})), revision: "" } }),
     /** Where a viewport goes so that the drawing sits where the source set has it: a model point `m` the set draws
      *  at paper point `p` at its scale (1:srcScale), matched at the drawing's middle `c` so a small difference of

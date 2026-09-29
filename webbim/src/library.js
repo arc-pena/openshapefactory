@@ -230,6 +230,7 @@ export const SYMBOLS = {
   "SY-TB-A1": { name: "Title block", generated: "titleBlock", space: "paper" },
   "SY-TB-BAND": { name: "Title band (Arial, notes and north)", generated: "titleBand", space: "paper" },
   "SY-TB-FHA": { name: "Title strip (Frank Harmon Architect: Futura, along the right edge)", generated: "fhaStrip", space: "paper" },
+  "SY-TB-FHAB": { name: "Title band (Frank Harmon Architect: Futura, along the foot of an upright sheet)", generated: "fhaBand", space: "paper" },
   ...ENTOURAGE_SYMBOLS,
 };
 

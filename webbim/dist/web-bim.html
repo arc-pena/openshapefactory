@@ -2139,6 +2139,7 @@ const SYMBOLS = {
   "SY-TB-A1": { name: "Title block", generated: "titleBlock", space: "paper" },
   "SY-TB-BAND": { name: "Title band (Arial, notes and north)", generated: "titleBand", space: "paper" },
   "SY-TB-FHA": { name: "Title strip (Frank Harmon Architect: Futura, along the right edge)", generated: "fhaStrip", space: "paper" },
+  "SY-TB-FHAB": { name: "Title band (Frank Harmon Architect: Futura, along the foot of an upright sheet)", generated: "fhaBand", space: "paper" },
   ...ENTOURAGE_SYMBOLS,
 };
 
@@ -14048,7 +14049,11 @@ function elevWall(doc, f, w, V, sOf, depthOf, ctx) {
     const za = V(foot[0], w.z0 + op.sill)[1], zb2 = V(foot[0], Math.min(w.z0 + op.sill + op.h, w.zHi ?? w.z1))[1];
     const na = sOf(pointAt(w, nearS, op.u0)), nb = sOf(pointAt(w, nearS, op.u1));
     const lo = Math.min(na, nb), hi = Math.max(na, nb);
-    curves.push([[lo, za], [hi, za]], [[hi, za], [hi, zb2]], [[hi, zb2], [lo, zb2]], [[lo, zb2], [lo, za]]);
+    // the filler's type may give the opening an arched head (round, or pointed as a Gothic window): its outline arches
+    const fg = doc.elements().find(g => (doc.typeOf(g) === "Door" || doc.typeOf(g) === "Window") && F.refId(g, "fills") === op.id);
+    const fty = fg && (doc.lib.types[F.refId(fg, doc.typeOf(fg) === "Door" ? "doorType" : "windowType")] || {}), head = fty && fty.head && fty.head !== "Square" ? fty.head : null;
+    if (head) curves.push(...archOutline(lo, hi, za, zb2, head));
+    else curves.push([[lo, za], [hi, za]], [[hi, za], [hi, zb2]], [[hi, zb2], [lo, zb2]], [[lo, zb2], [lo, za]]);
     // a hole to see through, unless a door or window drawn here fills it (its leaf or glass stands in front)
     const filled = ctx && doc.elements().some(g => (doc.typeOf(g) === "Door" || doc.typeOf(g) === "Window") && F.refId(g, "fills") === op.id && categoryVisible(ctx, categoryOf(doc, g)));
     if (!op.recess && !filled) { const sa = Math.max(Math.min(a1, b1), Math.min(a2, b2)), sb = Math.min(Math.max(a1, b1), Math.max(a2, b2)); if (sb - sa > 1) holes.push([sa, sb, za, zb2]); }
@@ -14058,10 +14063,16 @@ function elevWall(doc, f, w, V, sOf, depthOf, ctx) {
     for (const g of doc.elements()) if ((doc.typeOf(g) === "Door" || doc.typeOf(g) === "Window") && (!ctx || categoryVisible(ctx, categoryOf(doc, g))) && doc.data(g) && doc.data(g).frame && doc.data(g).frame.u0 === op.u0 && doc.data(g).host === w.id) {
       const er = doc.elev(g); if (!er) continue;
       const mapU = u => sOf(pointAt(w, nearS, u)), mapZ = z => V(foot[0], w.z0 + z)[1];
-      for (const r of er.rects || []) { const x0 = mapU(r.u0), x1 = mapU(r.u1), y0 = mapZ(r.z0), y1 = mapZ(r.z1); curves.push([[x0, y0], [x1, y0]], [[x1, y0], [x1, y1]], [[x1, y1], [x0, y1]], [[x0, y1], [x0, y0]]); }
+      for (const r of er.rects || []) { const x0 = mapU(r.u0), x1 = mapU(r.u1), y0 = mapZ(r.z0), y1 = mapZ(r.z1);
+        if (head) curves.push(...archOutline(Math.min(x0, x1), Math.max(x0, x1), y0, y1, head)); else curves.push([[x0, y0], [x1, y0]], [[x1, y0], [x1, y1]], [[x1, y1], [x0, y1]], [[x0, y1], [x0, y0]]); }
       // a door or window is picked by its own outline, not its host wall's
       if ((er.rects || []).length) { const r = er.rects[0], x0 = mapU(r.u0), x1 = mapU(r.u1), y0 = mapZ(r.z0), y1 = mapZ(r.z1); fillerHits.push({ id: doc.idOf(g), poly: [[Math.min(x0, x1), y0], [Math.max(x0, x1), y0], [Math.max(x0, x1), y1], [Math.min(x0, x1), y1]] }); }
-      for (const l of er.lines || []) curves.push([[mapU(l.u0), mapZ(l.z0)], [mapU(l.u1), mapZ(l.z1)]]);
+      for (const l of er.lines || []) { const a = [mapU(l.u0), mapZ(l.z0)], b = [mapU(l.u1), mapZ(l.z1)];
+        // under an arch a mullion stops at the arch, a transom above the springing is left out
+        if (head && (er.rects || [])[1]) { const r = er.rects[1], x0 = Math.min(mapU(r.u0), mapU(r.u1)), x1 = Math.max(mapU(r.u0), mapU(r.u1)), top = archTop(x0, x1, mapZ(r.z0), mapZ(r.z1), head);
+          if (Math.abs(a[0] - b[0]) < 1e-6) { const zt = top(a[0]); if (Math.min(a[1], b[1]) >= zt) continue; if (a[1] > zt) a[1] = zt; if (b[1] > zt) b[1] = zt; }
+          else if (Math.max(a[1], b[1]) > top(x0) + 1e-6) continue; }
+        curves.push([a, b]); }
     }
   }
   // Silhouette minus see-through holes, as convex slabs (for the occluder list).
@@ -14081,6 +14092,19 @@ function elevWall(doc, f, w, V, sOf, depthOf, ctx) {
     sil.push([[sa, z], [sb, z], [sb, topLine(sb)], [sa, topLine(sa)]]);
   }
   return { id: w.id, f, fillerHits, depth: Math.max(0, Math.min(...dd)), depthMax: Math.max(...dd), s0, s1, curves, sil: sil.length ? sil : [[[s0, baseZ], [s1, baseZ], [s1, t1], [s0, t0]]], cat: "IfcWall" };
+}
+/** An arched head's outline in a drawing's (s, z): the jambs up to the springing, then the arch - a semicircle, or two
+ *  arcs meeting at a point (an equilateral Gothic arch) - to the head at z1; the sill across the bottom. */
+function archTop(x0, x1, z0, z1, head) {
+  const w = x1 - x0, r = head === "Pointed" ? w : w / 2, rise = head === "Pointed" ? w * Math.sqrt(3) / 2 : w / 2, zs = Math.max(z0, z1 - rise);
+  return x => { const u = Math.max(x0, Math.min(x1, x)) - x0;
+    if (head === "Pointed") { const d = u <= w / 2 ? w - u : u; return zs + Math.sqrt(Math.max(0, r * r - d * d)) * Math.min(1, (z1 - zs) / (rise || 1)); }
+    return zs + Math.sqrt(Math.max(0, r * r - (u - r) * (u - r))) * Math.min(1, (z1 - zs) / (rise || 1)); };
+}
+function archOutline(x0, x1, z0, z1, head) {
+  const w = x1 - x0, rise = head === "Pointed" ? w * Math.sqrt(3) / 2 : w / 2, zs = Math.max(z0, z1 - rise), top = archTop(x0, x1, z0, z1, head), n = 16, out = [[[x0, z0], [x1, z0]], [[x1, z0], [x1, zs]], [[x0, zs], [x0, z0]]];
+  let prev = [x1, zs]; for (let i = n - 1; i >= 0; i--) { const x = x0 + w * i / n, q = [x, top(x)]; out.push([prev, q]); prev = q; }
+  return out;
 }
 function frontDepth(foot, sOf, depthOf, s) {
   let best = Infinity;
@@ -14206,9 +14230,10 @@ function sheetScene(doc, sh, opts = {}) {
   const txt = (at, text, h, o = {}) => prims.push(Object.assign({ t: "text", at, text: String(text ?? ""), height: h, rot: 0, align: "left", valign: "baseline", colour: ink, layer: "TitleBlock" }, o));
   prims.push({ t: "fill", path: rectPath(0, 0, W, H), colour: "#ffffff", layer: "Paper" });
   const tb = doc.lib.symbols[F.refId(sh, "titleBlock")] || {};
-  const band = tb.generated === "titleBand" || tb.generated === "fhaStrip";
+  const band = tb.generated === "titleBand" || tb.generated === "fhaStrip" || tb.generated === "fhaBand";
   if (tb.generated === "titleBand") titleBand(doc, sh, W, H, put, txt);
   else if (tb.generated === "fhaStrip") fhaStrip(doc, sh, W, H, put, txt);
+  else if (tb.generated === "fhaBand") fhaBand(doc, sh, W, H, put, txt);
   else {
   put(rectPath(border, border, W - border, H - border), 0.35);
   const bh = Math.max(14, Math.min(24, H * 0.04)), y0 = border, y1 = border + bh, k = bh / 22;   // band height, and a text scale that follows it
@@ -14370,6 +14395,30 @@ function fhaStrip(doc, sh, W, H, put, txt) {
   t(882.7, 465.4, String(doc.argValue(sh, "sheetName") || "").toUpperCase(), 20, {}, H - 52 - 465.4);
   t(892.5, H - 38.8, doc.argValue(sh, "number") || "", 20);
   if (P.issue) { txt([X(802), 40.6], P.issue.toUpperCase(), cap(30), { font: "Futura" }); if (P.issueDate) txt([X(802), 27.4], P.issueDate, cap(30), { font: "Futura" }); }
+}
+/** Frank Harmon's band along the foot of an upright sheet (the First Presbyterian and AIA sets): the project's two
+ *  lines and its county at the left, Job No / Date / Scale boxes, the firm and its address, Drawn / Checked, the
+ *  sheet's name, and the sheet number in its box at the right - Futura, measured off the set (610 wide). */
+function fhaBand(doc, sh, W, H, put, txt) {
+  const P = Object.assign({ number: "", drawn: "", checked: "", issued: "", place: "", county: "", firm: "FRANK HARMON  ARCHITECT PA", firmAddress: "", phone: "", fax: "" }, doc.meta.project || {});
+  const R = x => W - (610 - x), cap = pt => pt * 25.4 / 72 * 0.7, f = { font: "Futura" };
+  const t = (x, y, text, pt, o = {}, room = 0) => { let h = cap(pt); if (room && text) { const w = textWidth(String(text), h, "Futura"); if (w > room) h *= room / w; } txt([x, y], text, h, Object.assign({}, f, o)); };
+  const boxes = [[195.6, 221.0], [221.0, 246.4], [246.4, 271.8], [R(408.4), R(433.8)], [R(433.8), R(459.2)], [R(567.1), R(592.5)]];
+  for (const [a, b] of boxes) put(rectPath(a, 21.3, b, 37.0), 0.19);
+  put([lineSeg([246.4, 29.2], [R(592.5), 29.2])], 0.19); put([lineSeg([195.6, 29.2], [246.4, 29.2])], 0.19);
+  const name = (doc.meta.name || "").split("\n");
+  t(26.1, 31.4, name[0] || "", 24, {}, 100); t(26.1, 21.1, name[1] || "", 24, {}, 150);
+  const county = String(P.county || "").split("\n"); t(130.1, 31.4, county[0] || "", 24, {}, 60); if (county[1]) t(178.7, 22.0, county[1], 24);
+  t(197.9, 32.0, "Job No.", 10); t(223.3, 32.0, "Date", 10); t(248.7, 32.0, "Scale", 10);
+  const sc = viewportScales(doc, sh), scales = sc && sc !== "—" ? sc.split(", ") : [];
+  const scaleText = doc.argValue(sh, "scaleLabel") || (scales.length === 1 ? scaleName(doc, +scales[0].split(":")[1]) : scales.length ? "AS NOTED" : "");
+  t(197.8, 24.0, P.number, 9); t(223.2, 24.0, P.issued, 9); t(248.6, 24.0, scaleText, 9, {}, 22);
+  t(275.8, 31.4, P.firm, 24, {}, R(405) - 275.8);
+  String(P.firmAddress || "").split("\n").slice(0, 2).forEach((l, i) => t(276.2, 24.6 - 3.5 * i, l, 9));
+  if (P.phone) t(R(404), 24.6, P.phone, 9, { align: "right" }); if (P.fax) t(R(404), 21.1, "facsimile " + P.fax, 9, { align: "right" });
+  t(R(410.7), 32.0, "Drawn", 10); t(R(436.1), 32.0, "Checked", 10); t(R(409.1), 24.0, P.drawn, 9); t(R(436.0), 24.0, P.checked || "-", 9);
+  t(R(460.3), 31.4, String(doc.argValue(sh, "sheetName") || "").toUpperCase(), 24, {}, R(565) - R(460.3));
+  t(R(569.5), 32.0, "Sheet", 10); t(R(573.0), 22.2, doc.argValue(sh, "number") || "", 21, {}, 18);
 }
 function viewportScales(doc, sh) {
   const s = [...new Set((doc.argValue(sh, "viewports") || []).map(vp => doc.element(vp.view.ref)).filter(v => v && doc.typeOf(v) !== "Schedule").map(v => "1:" + (F.int(v, "scale") || 100)))];
@@ -16236,6 +16285,7 @@ function fhaProject(name, project) {
     "P-FH-SEAM": { name: "Standing seam, 406 (16\") o.c.", kind: "model", lines: [{ angle: 90, origin: [0, 0], delta: [0, 406] }] },
     "P-FH-SIDING": { name: "Board siding, 203 (8\")", kind: "model", lines: [{ angle: 0, origin: [0, 0], delta: [0, 203] }] },
     "P-FH-PANEL": { name: "Panel joints 1219 (4') grid", kind: "model", lines: [{ angle: 0, origin: [0, 0], delta: [0, 2438] }, { angle: 90, origin: [0, 0], delta: [0, 1219] }] },
+    "P-FH-SLATE": { name: "Slate courses, 152 (6\")", kind: "model", lines: [{ angle: 0, origin: [0, 0], delta: [0, 152] }] },
     "P-FH-CLAD": { name: "Vertical cladding, 305 (12\")", kind: "model", lines: [{ angle: 90, origin: [0, 0], delta: [0, 305] }] },
     "P-FH-EARTH": { name: "Earth", kind: "drafting", lines: [{ angle: 45, origin: [0, 0], delta: [0, 1.6] }, { angle: 45, origin: [0.8, 0], delta: [0, 1.6], dashes: [0.6, -1.0] }] },
     "P-FH-GRAVEL": { name: "Gravel", kind: "drafting", lines: [{ angle: 30, origin: [0, 0], delta: [0.9, 1.2], dashes: [0.25, -1.1] }, { angle: 120, origin: [0.4, 0.2], delta: [0.9, 1.2], dashes: [0.25, -1.3] }] },
@@ -16249,6 +16299,7 @@ function fhaProject(name, project) {
   mat("M-FH-GYP", "Gypsum board", "90", { pattern: null, pen: "thin", lineColour: "#000000", background: "#ffffff" }, { pen: "thin" }, "#f2f0ec");
   mat("M-FH-METAL", "Standing seam metal roof", "70", { pattern: null, pen: "heavy", lineColour: "#000000", background: "#ffffff" }, { pen: "thin", pattern: "P-FH-SEAM", lineColour: "#8c8c8c" }, "#8d949b");
   mat("M-FH-WOOD", "Wood decking / siding", "62", { pattern: "P-TIMBER", pen: "medium", lineColour: "#000000", background: "#ffffff" }, { pen: "thin", pattern: "P-FH-SIDING", lineColour: "#a0a0a0" }, "#b58c5e");
+  mat("M-FH-SLATE", "Slate roof", "SL", { pattern: null, pen: "heavy", lineColour: "#000000", background: "#ffffff" }, { pen: "thin", pattern: "P-FH-SLATE", lineColour: "#9a9a9a" }, "#5d6168");
   mat("M-FH-BRICK", "Brick", "BR", { pattern: "P-BRICK", pen: "heavy", lineColour: "#000000", background: "#ffffff" }, { pen: "thin", pattern: "P-FH-SIDING", lineColour: "#b8b8b8" }, "#9c5c46");
   mat("M-FH-STEEL", "Structural steel, galvanized", "51", { pattern: null, pen: "heavy", lineColour: "#000000", background: "#555555" }, { pen: "thin" }, "#7c8288");
   mat("M-SOIL", "Earth", "20", { pattern: "P-FH-EARTH", pen: "medium", lineColour: "#000000", background: "#ffffff" }, { pen: "thin" }, "#a89779");
@@ -16277,6 +16328,7 @@ function fhaProject(name, project) {
   door("T-FH-D30G", "Aluminum clad door 3'-0\"x7'-0\" glazed", "D3", 914, 2134, { glazed: true, leafThickness: 44 });
   door("T-FH-D60G", "Aluminum clad door pair 6'-0\"x7'-0\" glazed", "D4", 1829, 2134, { glazed: true });
   door("T-FH-GARAGE", "Polygal garage door 18'-0\"x9'-6\"", "D5", 5486, 2896, { glazed: false, leafThickness: 60 });
+  L.types["T-FH-PIN"] = { family: "F-COLUMN", name: "Masonry pinnacle 2'-6\" square", mark: "P2", width: 762, depth: 762, material: "M-FH-BRICK" };
   L.types["T-FH-PILE"] = { family: "F-COLUMN", name: "Wood pile 10\" round", mark: "P1", width: 254, depth: 254, round: true, material: "M-FH-WOOD" };
   const win = (id, name, mark, w, h, mullions = 0) => { L.types[id] = { family: "F-CASEMENT", name, mark, width: w, height: h, frame: 50, mullions }; };
   win("T-FH-W24", "Aluminum clad window 2'-0\"x4'-0\"", "W1", 610, 1219);
@@ -16286,6 +16338,20 @@ function fhaProject(name, project) {
   win("T-FH-W86", "Aluminum clad window 8'-0\"x6'-0\"", "W5", 2438, 1829, 1);
   win("T-FH-W48", "Aluminum clad window 4'-0\"x8'-0\"", "W6", 1219, 2438);
   win("T-FH-W1210", "Storefront 12'-0\"x10'-0\"", "W7", 3658, 3048, 2);
+  // arched heads (the existing church): round, and pointed as a Gothic lancet; the new building's tall windows and storefronts
+  const arch = (id, name, mark, w, h, head, mullions = 0, o = {}) => { L.types[id] = Object.assign({ family: "F-CASEMENT", name, mark, width: w, height: h, frame: 60, mullions, head }, o); };
+  arch("T-FH-WPT36", "Lancet window 3'-7\"x16'-2\" (existing)", "E1", 1097, 4928, "Pointed", 1);
+  arch("T-FH-WPT30", "Belfry louver 3'-0\"x10'-0\" (existing)", "E2", 914, 3048, "Pointed", 0);
+  arch("T-FH-WRD36", "Round-head window 3'-7\"x6'-4\" (existing)", "E3", 1097, 1930, "Round", 1);
+  arch("T-FH-WRD72", "Round-head window 7'-2\"x11'-8\" (existing)", "E4", 2184, 3556, "Round", 2);
+  arch("T-FH-W3686", "Aluminum window 3'-7\"x8'-7\"", "8", 1097, 2616, "Square", 0, { transoms: 1 });
+  arch("T-FH-W3654", "Aluminum window 3'-7\"x5'-5\"", "4", 1097, 1651, "Square", 0);
+  arch("T-FH-SF1509", "Storefront 15'-6\"x9'-0\"", "17", 4724, 2743, "Square", 3);
+  arch("T-FH-SF1009", "Storefront 10'-0\"x9'-0\"", "18", 3048, 2743, "Square", 2);
+  arch("T-FH-SF3406", "Storefront transom 34'-0\"x6'-0\"", "19", 10363, 1829, "Square", 7);
+  door("T-FH-DRD4", "Round-head door 4'-0\"x9'-0\" (existing)", "D6", 1219, 2743, { glazed: false, leafThickness: 50, head: "Round" });
+  door("T-FH-DRD9", "Round-head entry, pair 9'-0\"x12'-0\"", "D7", 2743, 3658, { glazed: true, head: "Round" });
+  door("T-FH-D809G", "Aluminum storefront doors, pair 8'-0\"x9'-0\"", "D8", 2438, 2743, { glazed: true });
   win("T-FH-W42", "Aluminum clad awning 4'-0\"x2'-0\"", "W8", 1219, 610);
   win("T-FH-W417", "Stair glazing 4'-0\"x16'-0\"", "W9", 1219, 4877);
   win("T-FH-SF1615", "Storefront 16'-0\"x15'-0\"", "W10", 4877, 4572, 3);
@@ -16300,6 +16366,7 @@ function fhaProject(name, project) {
   L.viewStyles["VS-FH-3D"] = Object.assign(JSON.parse(JSON.stringify(base)), { name: "FHA - 3D" });
   // the site plan: the plans' style with the planting and the ground shown
   L.viewStyles["VS-FH-SITE"] = Object.assign(JSON.parse(JSON.stringify(L.viewStyles["VS-FH-PLAN"])), { name: "FHA - site plan" });
+  L.viewStyles["VS-FH-SITE"].byCategory = Object.assign({}, L.viewStyles["VS-FH-SITE"].byCategory, { IfcStair: { visible: false }, Furniture: { visible: false } });
   for (const k of ["VS-FH-PLAN", "VS-FH-ELEV", "VS-FH-SEC"]) { const s = L.viewStyles[k]; s.byCategory = Object.assign({}, s.byCategory, { Furniture: { visible: false }, Planting: { visible: false } }); }
 
   // ---------------------------------------------------------------- the helpers the models are built with
@@ -16330,7 +16397,7 @@ function fhaProject(name, project) {
       clip: { rect: crop, visible: false, active: !!crop, annotation: [80, 20, 70, 50] }, heads: o.heads || "End", groundLine: false, levelExtent: o.levelExtent || (crop ? [crop[0], crop[2]] : undefined), overrides: { __gridTop: o.gridTop ?? (crop ? crop[3] + 400 : 9000), __gridBottom: o.gridBottom ?? (crop ? crop[1] + 800 : -300) } } }),
     view3d: (id, name, cam, scale = 100) => add({ id, type: "View3D", name, args: { camera: cam, scale, style: { ref: "VS-FH-3D" }, visualStyle: "Shaded", render: { display: "renderedEdges", rasterDPI: 200, silhouetteWeight: 0.35 } } }),
     /** An ARCH D sheet in the firm's title strip; viewports [view, at (paper mm), extra]. */
-    sheet: (number, name, vps, size = "ARCH D") => add({ id: `SH-${number}`, type: "Sheet", name: `${number} ${name}`, args: { number, sheetName: name, size, orientation: "landscape", titleBlock: { ref: "SY-TB-FHA" },
+    sheet: (number, name, vps, size = "ARCH D", o = {}) => add({ id: `SH-${number}`, type: "Sheet", name: `${number} ${name}`, args: { number, sheetName: name, size, orientation: o.orientation || "landscape", titleBlock: { ref: o.titleBlock || "SY-TB-FHA" },
       viewports: vps.map(([view, at, extra], i) => Object.assign({ id: `VP${i + 1}`, view: { ref: view }, at, clipVisible: false }, extra || {})), revision: "" } }),
     /** Where a viewport goes so that the drawing sits where the source set has it: a model point `m` the set draws
      *  at paper point `p` at its scale (1:srcScale), matched at the drawing's middle `c` so a small difference of
@@ -16601,6 +16668,149 @@ function buildWalnutSample() {
   const sc = p0 => H.place(p0, [ft(20), 0], [ft(39), ft(6)], SX, 50, 48);
   H.sheet("A402", "Sections", [["V-X3", sc([454.7, 431.8])], ["V-X2", sc([117.9, 154.4])], ["V-X1", sc([454.7, 154.4])]]);
   H.sheet("A901", "Axonometric", [["V-3D", [420, 300]]]);
+  doc.regenerate();
+  return doc;
+}
+
+// ===== sample_fpc.js =====
+//! First Presbyterian Church, Raleigh NC - New Construction and Renovation (Frank Harmon Architect PA, permit set
+//! 04 18 2011): a three-storey brick education building (grids 1-7 by A-E, a basement under it, stair and elevator
+//! towers over the roof deck) set against the existing church - the gabled sanctuary and chancel, the steeple with its
+//! pinnacles and octagonal spire, the narthex's gable of round-arched windows, the Vanguard and Fellowship halls and
+//! Baucom Parlor - under their slate roofs, on a site falling south.
+//! Read off the set's plans (A201-A204) and elevations (A301): x east from grid 1, y north from grid E, in feet
+//! converted to mm. Heights from the addition's ground floor (346'-7"); the existing ground floor is 4'-10" above it.
+
+
+
+function buildFpcSample() {
+  const H = fhaProject("First Presbyterian Church\nNew Construction and Renovation", { number: "0701", issued: "04 18 2011", issue: "", issueDate: "", county: "WAKE COUNTY\nNC",
+    firm: "FRANK HARMON  ARCHITECT PA", firmAddress: "706  MOUNTFORD AVENUE\nRALEIGH NORTH CAROLINA 27603", drawn: "JC", checked: "FH", place: "Raleigh, NC" });
+  const { doc, add, wall, walls, floor, roof, stair, topo } = H; const RECT = H.R;
+  doc.meta.surveyElevation = ft(346 + 7 / 12);
+
+  // ---------------------------------------------------------------- levels and grids (the addition's)
+  H.level("L-B", "ADDITION BASEMENT LEVEL", -ft(4 + 2 / 12)); H.level("L-1", "ADDITION GROUND LEVEL", 0); H.level("L-EX", "EXISTING GROUND LEVEL", ft(4 + 10 / 12));
+  H.level("L-2", "ADDITION SECOND LEVEL", ft(17 + 4 / 12)); H.level("L-3", "ADDITION THIRD LEVEL", ft(29 + 4 / 12));
+  H.level("L-R", "ADDITION TOP OF ROOF DECK", ft(43)); H.level("L-TW", "ADDITION TOP OF TOWER", ft(48 + 2 / 12));
+  const GX = [0, 17.17, 34.33, 48.33, 62.33, 78.58, 92.71], GY = { E: 0, D: 10, C: 29.3, B: 47.33, A: 59 };
+  GX.forEach((x, i) => H.grid(`G-${i + 1}`, String(i + 1), PT(x, 70), PT(x, -10)));
+  for (const [n, y] of Object.entries(GY)) H.grid(`G-${n}`, n, PT(-14, y), PT(108, y));
+
+  // ---------------------------------------------------------------- the education building: brick to a 3' parapet over the roof deck
+  const BR = "T-FH-BRICK", C = [-6.83, -1.83, 96.83, 61.5];
+  walls("W-AD-", FT([[C[0], C[1]], [C[2], C[1]], [C[2], C[3]], [C[0], C[3]]]), BR, "L-B", "L-R", { topOffset: ft(3), closed: true });
+  for (const [id, lv, ty] of [["FL-AB", "L-B", "T-FH-SOG"], ["FL-A1", "L-1", "T-FH-CONCDECK"], ["FL-A2", "L-2", "T-FH-CONCDECK"], ["FL-A3", "L-3", "T-FH-CONCDECK"], ["FL-AR", "L-R", "T-FH-CONCDECK"]])
+    floor(id, "Addition floor", FT(RECT(C[0] + 0.5, C[1] + 0.5, C[2] - 0.5, C[3] - 0.5)), ty, lv);
+  // the stair towers (to the top of tower) and the elevator's shaft
+  const CMU = "T-FH-CONC8";
+  wall("W-ST1a", PT(14.8, 61.2), PT(14.8, 48.5), CMU, "L-B", "L-TW"); wall("W-ST1b", PT(14.8, 48.5), PT(-6.5, 48.5), CMU, "L-B", "L-TW");
+  wall("W-ST2a", PT(73, -1.5), PT(73, 8.5), CMU, "L-B", "L-TW"); wall("W-ST2b", PT(73, 8.5), PT(96.5, 8.5), CMU, "L-B", "L-TW");
+  walls("W-EL", FT([[61, 61.2], [61, 49.4], [70.6, 49.4], [70.6, 61.2]]), CMU, "L-B", "L-R");
+  // the towers' own walls over the roof, and their roofs
+  walls("W-TW1", FT([[-6.83, 48.5], [-6.83, 61.5], [14.8, 61.5]]), BR, "L-R", "L-TW", { topOffset: ft(1) });
+  walls("W-TW2", FT([[73, -1.83], [96.83, -1.83], [96.83, 8.5]]), BR, "L-R", "L-TW", { topOffset: ft(1) });
+  floor("FL-TW1", "Stair tower roof", FT(RECT(-6.5, 48.8, 14.5, 61.2)), "T-FH-CONCDECK", "L-TW"); floor("FL-TW2", "Stair tower roof", FT(RECT(73.3, -1.5, 96.5, 8.2)), "T-FH-CONCDECK", "L-TW");
+  // the stairs: two flights a storey, each tower
+  const U1 = [{ from: PT(-4.5, 51.1), to: PT(8.5, 51.1) }, { from: PT(8.5, 58.6), to: PT(-4.5, 58.6) }], U2 = [{ from: PT(76, 0.6), to: PT(89.5, 0.6) }, { from: PT(89.5, 6.4), to: PT(76, 6.4) }];
+  [["L-B", "L-1"], ["L-1", "L-2"], ["L-2", "L-3"], ["L-3", "L-R"]].forEach(([a, b], i) => { stair(`ST-1${i}`, "Stair 102/202/302", a, b, U1, { width: ft(3.7) }); stair(`ST-2${i}`, "Stair 103/203/303", a, b, U2, { width: ft(3.7) }); });
+  // the connector to the existing buildings: one storey, glazed
+  walls("W-CN", FT([[32.4, 61.5], [32.4, 75.5]]), BR, "L-1", "L-2", { topOffset: -ft(0.33) });
+  floor("FL-CN", "Connector", FT(RECT(32.4, 61.5, 75, 75.5)), "T-FH-CONCDECK", "L-1"); floor("FL-CNR", "Connector roof", FT(RECT(32.4, 61.5, 75, 75.5)), "T-FH-CONCDECK", "L-2", -ft(0.33));
+
+  // windows: east and west faces, the second floor's short and the third floor's tall, the ground floor's storefronts
+  const w = H.window, d = H.door, SX = [14.4, 20.7, 27, 33.3, 39.6];
+  // east wall runs south to north from its start (-1.83); west wall north to south
+  SX.forEach((y, i) => { w(`WN-E3${i}`, "W-AD-2", ft(y + 1.83), "T-FH-W3686", ft(33.9)); w(`WN-E2${i}`, "W-AD-2", ft(y + 1.83), "T-FH-W3654", ft(22.35)); });
+  w("WN-E12", "W-AD-2", ft(4.3), "T-FH-W44", ft(34.5)); w("WN-E1", "W-AD-2", ft(20.8), "T-FH-SF1509", ft(4.17 + 1));
+  d("DR-E1", "W-AD-2", ft(35.1), "T-FH-DRD9");
+  [0, 1, 2].forEach(k => w(`WN-ET${k}`, "W-AD-2", ft(54), "T-FH-W24", ft(4.17) + [ft(2), ft(19.3), ft(31.3)][k]));
+  const WY = [45, 38.8, 32.4, 26.2, 19.9, 14];
+  WY.forEach((y, i) => { w(`WN-W3${i}`, "W-AD-4", ft(61.5 - y), "T-FH-W3686", ft(33.9)); w(`WN-W2${i}`, "W-AD-4", ft(61.5 - y), "T-FH-W3654", ft(22.35)); });
+  w("WN-W12", "W-AD-4", ft(61.5 - 56.8), "T-FH-W44", ft(34.5));
+  w("WN-W1a", "W-AD-4", ft(61.5 - 38.7), "T-FH-SF1509", ft(4.17)); d("DR-W1", "W-AD-4", ft(61.5 - 26.6), "T-FH-D809G"); w("WN-W1b", "W-AD-4", ft(61.5 - 17), "T-FH-SF1009", ft(4.17));
+  w("WN-W1t", "W-AD-4", ft(61.5 - 29.2), "T-FH-SF3406", ft(4.17 + 10));
+  // south: the classrooms' windows over the new roof below
+  [8, 24, 40, 56].forEach((x, i) => { w(`WN-S3${i}`, "W-AD-1", ft(x + 6.83), "T-FH-W3686", ft(0.4) + ft(33.5)); w(`WN-S2${i}`, "W-AD-1", ft(x + 6.83), "T-FH-W3654", ft(0.85) + ft(21.5)); });
+
+  // ---------------------------------------------------------------- the existing church: brick bearing walls on the existing ground floor
+  const EX = "L-EX", ER = "L-2", HR = -ft(0.33);                  // the halls' flat roofs: 17'-0", just under the second level
+  // the sanctuary and chancel: one gable over both, 38 degrees, its ends (west and east) walls up to the roof
+  roof("RF-S", "Sanctuary roof", FT([[-7, 132], [90, 132], [90, 198], [-7, 198]]), "L-1", ft(19.6), [38, null, 38, null], { thickness: 300, material: "M-FH-SLATE" });
+  const rS = { roof: "RF-S" };
+  wall("W-S-S", PT(-6, 133), PT(89, 133), BR, EX, "L-3", rS); wall("W-S-E", PT(89, 133), PT(89, 197), BR, EX, "L-TW", rS);
+  wall("W-S-N", PT(89, 197), PT(-6, 197), BR, EX, "L-3", rS); wall("W-S-W", PT(-6, 197), PT(-6, 133), BR, EX, "L-TW", rS);
+  floor("FL-S", "Sanctuary floor", FT(RECT(-5.5, 133.5, 88.5, 196.5)), "T-FH-WOOD", EX);
+  // the narthex: its own steep gable facing east
+  roof("RF-N", "Narthex roof", FT([[88, 144], [111, 144], [111, 182], [88, 182]]), "L-1", ft(25.7), [51, null, 51, null], { thickness: 250, material: "M-FH-SLATE" });
+  const rN = { roof: "RF-N" };
+  wall("W-N-S", PT(89, 145), PT(110, 145), BR, EX, "L-R", rN); wall("W-N-E", PT(110, 145), PT(110, 181), BR, EX, "L-TW", rN); wall("W-N-N", PT(110, 181), PT(89, 181), BR, EX, "L-R", rN);
+  floor("FL-N", "Narthex floor", FT(RECT(89, 145.5, 109.5, 180.5)), "T-FH-WOOD", EX);
+  // the steeple: a square brick tower, four pinnacles, an octagonal spire
+  walls("W-T-", FT([[93, 184], [109, 184], [109, 200], [93, 200]]), BR, EX, null, { height: ft(39) - ft(4.83), closed: true });
+  floor("FL-T", "Tower floor", FT(RECT(93.5, 184.5, 108.5, 199.5)), "T-FH-WOOD", EX);
+  const oct = Array.from({ length: 8 }, (_, i) => [101 + 8 * Math.cos((i + 0.5) * Math.PI / 4), 192 + 8 * Math.sin((i + 0.5) * Math.PI / 4)]);
+  roof("RF-T", "Spire", FT(oct), "L-1", ft(39), oct.map(() => 81), { thickness: 150, material: "M-FH-SLATE" });
+  [[93.5, 184.5], [108.5, 184.5], [108.5, 199.5], [93.5, 199.5]].forEach(([x, y], i) => {
+    add({ id: `PN-${i + 1}`, type: "Column", name: "Pinnacle", args: { position: PT(x, y), columnType: { ref: "T-FH-PIN" }, baseLevel: { ref: EX }, baseOffset: 0, height: ft(50) - ft(4.83), rotation: 0 } });
+    roof(`RF-P${i + 1}`, "Pinnacle cap", FT(RECT(x - 1.5, y - 1.5, x + 1.5, y + 1.5)), "L-1", ft(50), [80, 80, 80, 80], { thickness: 100, material: "M-FH-SLATE" });
+  });
+  // the halls south of the sanctuary: Vanguard (flat, parapet), Fellowship (hipped), Baucom Parlor (hipped), the kitchen wing (flat)
+  const pp = { topOffset: HR + ft(1.5) }, hr = { topOffset: HR };
+  wall("W-V-W", PT(-6, 133), PT(-6, 62), BR, EX, ER, pp); wall("W-V-S", PT(-6, 62), PT(34, 62), BR, EX, ER, pp); wall("W-V-E", PT(34, 62), PT(34, 133), BR, EX, ER, pp);
+  floor("FL-V", "Vanguard floor", FT(RECT(-5.5, 62.5, 33.5, 132.5)), "T-FH-WOOD", EX); floor("FL-VR", "Vanguard roof", FT(RECT(-5.5, 62.5, 33.5, 132.5)), "T-FH-CONCDECK", ER, HR);
+  roof("RF-F", "Fellowship roof", FT([[33, 93], [79, 93], [79, 134], [33, 134]]), "L-1", ft(17), [36, 36, 36, 36], { thickness: 250, material: "M-FH-SLATE" });
+  wall("W-F-S", PT(34, 94), PT(78, 94), BR, EX, ER, hr); wall("W-F-E", PT(78, 94), PT(78, 133), BR, EX, ER, hr);
+  floor("FL-F", "Fellowship floor", FT(RECT(34.5, 94.5, 77.5, 132.5)), "T-FH-WOOD", EX);
+  roof("RF-B", "Baucom Parlor roof", FT([[77, 93], [106, 93], [106, 134], [77, 134]]), "L-1", ft(17), [40, 40, 40, 40], { thickness: 250, material: "M-FH-SLATE" });
+  wall("W-B-S", PT(78, 94), PT(105, 94), BR, EX, ER, hr); wall("W-B-E", PT(105, 94), PT(105, 133), BR, EX, ER, hr); wall("W-B-N", PT(105, 133), PT(89, 133), BR, EX, ER, hr);
+  floor("FL-B", "Baucom Parlor floor", FT(RECT(78.5, 94.5, 104.5, 132.5)), "T-FH-WOOD", EX);
+  wall("W-K-S", PT(34, 75.5), PT(98, 75.5), BR, EX, ER, pp); wall("W-K-E", PT(98, 75.5), PT(98, 94), BR, EX, ER, pp);
+  floor("FL-K", "Kitchen wing floor", FT(RECT(34.5, 76, 97.5, 93.5)), "T-FH-WOOD", EX); floor("FL-KR", "Kitchen wing roof", FT(RECT(34.5, 76, 97.5, 93.5)), "T-FH-CONCDECK", ER, HR);
+
+  // the church's openings: lancets in the sanctuary's west gable, round heads along the halls, the narthex's three, the steeple's
+  const e = ft(4.83);
+  w("WN-SW1", "W-S-W", ft(24.1), "T-FH-WPT36", ft(14.8)); w("WN-SW2", "W-S-W", ft(37.6), "T-FH-WPT36", ft(14.8));
+  [15, 30, 45, 60, 75].forEach((x, i) => w(`WN-SN${i}`, "W-S-N", ft(89 - x), "T-FH-WPT36", ft(2.5)));
+  [14.1, 24, 34, 44, 53.5].forEach((u, i) => w(`WN-VW${i}`, "W-V-W", ft(u), "T-FH-WRD36", ft(4)));
+  [10.7, 20.6, 30.5].forEach((u, i) => w(`WN-NE${i}`, "W-N-E", ft(u), "T-FH-WRD72", ft(11.9)));
+  d("DR-NE", "W-N-S", ft(10.5), "T-FH-DRD4");
+  [9, 18, 27].forEach((u, i) => w(`WN-BE${i}`, "W-B-E", ft(u), "T-FH-WRD36", ft(3)));
+  ["W-T-1", "W-T-2", "W-T-3", "W-T-4"].forEach((h, i) => w(`WN-T${i}`, h, ft(8), "T-FH-WPT30", ft(20)));
+  d("DR-T", "W-T-2", ft(4), "T-FH-DRD4");
+  // the new stair and ramp up the west side to the Vanguard's door
+  add({ id: "RA-1", type: "Ramp", name: "New ramp", args: { baseLevel: { ref: "L-1" }, baseOffset: ft(1.8), topLevel: { ref: "L-EX" }, topOffset: 0, runs: [{ from: PT(-11, 172), to: PT(-11, 136) }], width: ft(5), railings: "Both", infill: "Balusters", railHeight: 1067, material: "M-FH-CONC" } });
+
+  // ---------------------------------------------------------------- the ground, falling to the south; the street trees
+  const contours = [[4.3, 230], [4, 140], [3, 110], [2, 90], [1, 72], [0, 40], [-1, -12], [-2, -30]].map(([el, y]) => ({ z: ft(el), points: [-40, 0, 40, 80, 120, 150].map(x => [ft(x), ft(y + 0.02 * (x - 50))]) }));
+  topo("TS-1", "Existing grade", contours, FT(RECT(-40, -40, 150, 230)), -ft(12));
+  [[-24, 150, 30], [-24, 100, 26], [-24, 30, 28], [125, 60, 32], [125, 140, 30], [60, -25, 24]].forEach(([x, y, c], i) => add({ id: `PL-${i + 1}`, type: "Planting", name: "Street tree", args: { position: PT(x, y), topo: { ref: "TS-1" }, form: "Deciduous", canopy: ft(c), height: ft(c * 1.6), trunk: ft(c / 30), existing: true } }));
+
+  // ---------------------------------------------------------------- views
+  const PC = [ft(-16), ft(-12), ft(116), ft(212)];
+  H.plan("V-A201", "BASEMENT LEVEL PLAN", "L-B", { top: 2300, cut: 1200, bottom: -300, depth: -600 }, PC, 100);
+  H.plan("V-A202", "GROUND LEVEL PLAN", "L-1", { top: 2300, cut: 1500, bottom: -300, depth: -1800 }, PC, 100);
+  const PU = [ft(-12), ft(-6), ft(102), ft(66)];
+  H.plan("V-A203a", "SECOND LEVEL PLAN", "L-2", { top: 2300, cut: 1200, bottom: -300, depth: -600 }, PU, 100);
+  H.plan("V-A203b", "THIRD LEVEL PLAN", "L-3", { top: 2300, cut: 1200, bottom: -300, depth: -600 }, PU, 100);
+  H.plan("V-A204", "ROOF PLAN", "L-TW", { top: ft(60), cut: ft(50), bottom: -ft(52), depth: -ft(53) }, PC, 100, "VS-FH-SITE");
+  const EZ = [-ft(8), ft(86)];
+  // west looks east (north on the left); east looks west (south on the left)
+  H.elev("V-W", "WEST ELEVATION", PT(-30, -20), PT(-30, 215), ft(160), "L-1", [ft(-2), EZ[0], ft(236), EZ[1]], 100);
+  H.elev("V-E", "EAST ELEVATION", PT(125, 215), PT(125, -20), ft(160), "L-1", [ft(-2), EZ[0], ft(236), EZ[1]], 100);
+  H.sect("V-X1", "SECTION", PT(40, 215), PT(40, -12), ft(8), "L-1", [ft(-2), EZ[0], ft(228), ft(60)], 100);
+  H.view3d("V-3D", "AXONOMETRIC", { azimuth: 235, elevation: 28, target: [ft(50), ft(100), ft(20)] }, 200);
+
+  // ---------------------------------------------------------------- sheets: the set's, upright ARCH D, the band along the foot
+  const up = { orientation: "portrait", titleBlock: "SY-TB-FHAB" }, c = [ft(50), ft(100)], pl = (p0, crop) => H.place(p0, [0, 0], crop === PU ? [ft(45), ft(30)] : c, crop || PC, 100, 96);
+  H.sheet("A201", "Basement Level Plan", [["V-A201", pl([67.3, 119.3])]], "ARCH D", up);
+  H.sheet("A202", "Ground Level Plan", [["V-A202", pl([76.9, 119.3])]], "ARCH D", up);
+  H.sheet("A203", "Second + Third Level New Education Bldg", [["V-A203a", pl([88.6, 119.3], PU)], ["V-A203b", pl([89.6, 560.6], PU)]], "ARCH D", up);
+  H.sheet("A204", "Roof Plan", [["V-A204", pl([75.1, 119.9])]], "ARCH D", up);
+  // the elevations sheet is the set's only landscape one, with the firm's strip along its right edge
+  const el = (p0, m, crop) => H.place(p0, m, [(crop[0] + crop[2]) / 2, ft(30)], crop, 100, 96);
+  H.sheet("A301", "E+W Elevations", [["V-W", el([617.3, 330.2], [ft(156), 0], [ft(-2), EZ[0], ft(236), EZ[1]])], ["V-E", el([200, 30.3], [ft(20), 0], [ft(-2), EZ[0], ft(236), EZ[1]])]], "ARCH D");
+  H.sheet("A901", "Axonometric", [["V-3D", [305, 480]]], "ARCH D", up);
   doc.regenerate();
   return doc;
 }
@@ -27916,6 +28126,7 @@ const roundCam = c => ({ azimuth: Math.round(((c.azimuth % 360) + 360) % 360 * 1
 
 
 
+
 const VIEW_TYPES = ["PlanView", "ElevationView", "SectionView", "View3D", "Schedule", "Sheet", "DraftingView"];
 const PLACE_TOOLS = new Set(["section", "floor", "beam", "wall", "opening", "door", "window", "column", "planting", "grid", "text", "dim", "space", "elev", "sep", "mtag"]);
 
@@ -28905,6 +29116,7 @@ const SAMPLES = [
   { id: "mazatlan", name: "Casa Mazatlan (INAH drawing set)", build: () => buildMazatlanSample(), open: "SH-A101" },
   { id: "schaeffer", name: "Schaeffer Residence (Frank Harmon Architect)", build: () => buildSchaefferSample(), open: "SH-A202" },
   { id: "walnut", name: "Walnut Creek Environmental Education Center (Frank Harmon Architect)", build: () => buildWalnutSample(), open: "SH-A201" },
+  { id: "fpc", name: "First Presbyterian Church, new construction and renovation (Frank Harmon Architect)", build: () => buildFpcSample(), open: "SH-A202" },
 ];
 app.samples = SAMPLES;
 /** A new project with a sample's standards and none of its building: its materials, wall/floor/door types,

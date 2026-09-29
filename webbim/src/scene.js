@@ -1892,7 +1892,11 @@ function elevWall(doc, f, w, V, sOf, depthOf, ctx) {
     const za = V(foot[0], w.z0 + op.sill)[1], zb2 = V(foot[0], Math.min(w.z0 + op.sill + op.h, w.zHi ?? w.z1))[1];
     const na = sOf(pointAt(w, nearS, op.u0)), nb = sOf(pointAt(w, nearS, op.u1));
     const lo = Math.min(na, nb), hi = Math.max(na, nb);
-    curves.push([[lo, za], [hi, za]], [[hi, za], [hi, zb2]], [[hi, zb2], [lo, zb2]], [[lo, zb2], [lo, za]]);
+    // the filler's type may give the opening an arched head (round, or pointed as a Gothic window): its outline arches
+    const fg = doc.elements().find(g => (doc.typeOf(g) === "Door" || doc.typeOf(g) === "Window") && F.refId(g, "fills") === op.id);
+    const fty = fg && (doc.lib.types[F.refId(fg, doc.typeOf(fg) === "Door" ? "doorType" : "windowType")] || {}), head = fty && fty.head && fty.head !== "Square" ? fty.head : null;
+    if (head) curves.push(...archOutline(lo, hi, za, zb2, head));
+    else curves.push([[lo, za], [hi, za]], [[hi, za], [hi, zb2]], [[hi, zb2], [lo, zb2]], [[lo, zb2], [lo, za]]);
     // a hole to see through, unless a door or window drawn here fills it (its leaf or glass stands in front)
     const filled = ctx && doc.elements().some(g => (doc.typeOf(g) === "Door" || doc.typeOf(g) === "Window") && F.refId(g, "fills") === op.id && categoryVisible(ctx, categoryOf(doc, g)));
     if (!op.recess && !filled) { const sa = Math.max(Math.min(a1, b1), Math.min(a2, b2)), sb = Math.min(Math.max(a1, b1), Math.max(a2, b2)); if (sb - sa > 1) holes.push([sa, sb, za, zb2]); }
@@ -1902,10 +1906,16 @@ function elevWall(doc, f, w, V, sOf, depthOf, ctx) {
     for (const g of doc.elements()) if ((doc.typeOf(g) === "Door" || doc.typeOf(g) === "Window") && (!ctx || categoryVisible(ctx, categoryOf(doc, g))) && doc.data(g) && doc.data(g).frame && doc.data(g).frame.u0 === op.u0 && doc.data(g).host === w.id) {
       const er = doc.elev(g); if (!er) continue;
       const mapU = u => sOf(pointAt(w, nearS, u)), mapZ = z => V(foot[0], w.z0 + z)[1];
-      for (const r of er.rects || []) { const x0 = mapU(r.u0), x1 = mapU(r.u1), y0 = mapZ(r.z0), y1 = mapZ(r.z1); curves.push([[x0, y0], [x1, y0]], [[x1, y0], [x1, y1]], [[x1, y1], [x0, y1]], [[x0, y1], [x0, y0]]); }
+      for (const r of er.rects || []) { const x0 = mapU(r.u0), x1 = mapU(r.u1), y0 = mapZ(r.z0), y1 = mapZ(r.z1);
+        if (head) curves.push(...archOutline(Math.min(x0, x1), Math.max(x0, x1), y0, y1, head)); else curves.push([[x0, y0], [x1, y0]], [[x1, y0], [x1, y1]], [[x1, y1], [x0, y1]], [[x0, y1], [x0, y0]]); }
       // a door or window is picked by its own outline, not its host wall's
       if ((er.rects || []).length) { const r = er.rects[0], x0 = mapU(r.u0), x1 = mapU(r.u1), y0 = mapZ(r.z0), y1 = mapZ(r.z1); fillerHits.push({ id: doc.idOf(g), poly: [[Math.min(x0, x1), y0], [Math.max(x0, x1), y0], [Math.max(x0, x1), y1], [Math.min(x0, x1), y1]] }); }
-      for (const l of er.lines || []) curves.push([[mapU(l.u0), mapZ(l.z0)], [mapU(l.u1), mapZ(l.z1)]]);
+      for (const l of er.lines || []) { const a = [mapU(l.u0), mapZ(l.z0)], b = [mapU(l.u1), mapZ(l.z1)];
+        // under an arch a mullion stops at the arch, a transom above the springing is left out
+        if (head && (er.rects || [])[1]) { const r = er.rects[1], x0 = Math.min(mapU(r.u0), mapU(r.u1)), x1 = Math.max(mapU(r.u0), mapU(r.u1)), top = archTop(x0, x1, mapZ(r.z0), mapZ(r.z1), head);
+          if (Math.abs(a[0] - b[0]) < 1e-6) { const zt = top(a[0]); if (Math.min(a[1], b[1]) >= zt) continue; if (a[1] > zt) a[1] = zt; if (b[1] > zt) b[1] = zt; }
+          else if (Math.max(a[1], b[1]) > top(x0) + 1e-6) continue; }
+        curves.push([a, b]); }
     }
   }
   // Silhouette minus see-through holes, as convex slabs (for the occluder list).
@@ -1925,6 +1935,19 @@ function elevWall(doc, f, w, V, sOf, depthOf, ctx) {
     sil.push([[sa, z], [sb, z], [sb, topLine(sb)], [sa, topLine(sa)]]);
   }
   return { id: w.id, f, fillerHits, depth: Math.max(0, Math.min(...dd)), depthMax: Math.max(...dd), s0, s1, curves, sil: sil.length ? sil : [[[s0, baseZ], [s1, baseZ], [s1, t1], [s0, t0]]], cat: "IfcWall" };
+}
+/** An arched head's outline in a drawing's (s, z): the jambs up to the springing, then the arch - a semicircle, or two
+ *  arcs meeting at a point (an equilateral Gothic arch) - to the head at z1; the sill across the bottom. */
+function archTop(x0, x1, z0, z1, head) {
+  const w = x1 - x0, r = head === "Pointed" ? w : w / 2, rise = head === "Pointed" ? w * Math.sqrt(3) / 2 : w / 2, zs = Math.max(z0, z1 - rise);
+  return x => { const u = Math.max(x0, Math.min(x1, x)) - x0;
+    if (head === "Pointed") { const d = u <= w / 2 ? w - u : u; return zs + Math.sqrt(Math.max(0, r * r - d * d)) * Math.min(1, (z1 - zs) / (rise || 1)); }
+    return zs + Math.sqrt(Math.max(0, r * r - (u - r) * (u - r))) * Math.min(1, (z1 - zs) / (rise || 1)); };
+}
+function archOutline(x0, x1, z0, z1, head) {
+  const w = x1 - x0, rise = head === "Pointed" ? w * Math.sqrt(3) / 2 : w / 2, zs = Math.max(z0, z1 - rise), top = archTop(x0, x1, z0, z1, head), n = 16, out = [[[x0, z0], [x1, z0]], [[x1, z0], [x1, zs]], [[x0, zs], [x0, z0]]];
+  let prev = [x1, zs]; for (let i = n - 1; i >= 0; i--) { const x = x0 + w * i / n, q = [x, top(x)]; out.push([prev, q]); prev = q; }
+  return out;
 }
 function frontDepth(foot, sOf, depthOf, s) {
   let best = Infinity;
@@ -2050,9 +2073,10 @@ export function sheetScene(doc, sh, opts = {}) {
   const txt = (at, text, h, o = {}) => prims.push(Object.assign({ t: "text", at, text: String(text ?? ""), height: h, rot: 0, align: "left", valign: "baseline", colour: ink, layer: "TitleBlock" }, o));
   prims.push({ t: "fill", path: rectPath(0, 0, W, H), colour: "#ffffff", layer: "Paper" });
   const tb = doc.lib.symbols[F.refId(sh, "titleBlock")] || {};
-  const band = tb.generated === "titleBand" || tb.generated === "fhaStrip";
+  const band = tb.generated === "titleBand" || tb.generated === "fhaStrip" || tb.generated === "fhaBand";
   if (tb.generated === "titleBand") titleBand(doc, sh, W, H, put, txt);
   else if (tb.generated === "fhaStrip") fhaStrip(doc, sh, W, H, put, txt);
+  else if (tb.generated === "fhaBand") fhaBand(doc, sh, W, H, put, txt);
   else {
   put(rectPath(border, border, W - border, H - border), 0.35);
   const bh = Math.max(14, Math.min(24, H * 0.04)), y0 = border, y1 = border + bh, k = bh / 22;   // band height, and a text scale that follows it
@@ -2214,6 +2238,30 @@ function fhaStrip(doc, sh, W, H, put, txt) {
   t(882.7, 465.4, String(doc.argValue(sh, "sheetName") || "").toUpperCase(), 20, {}, H - 52 - 465.4);
   t(892.5, H - 38.8, doc.argValue(sh, "number") || "", 20);
   if (P.issue) { txt([X(802), 40.6], P.issue.toUpperCase(), cap(30), { font: "Futura" }); if (P.issueDate) txt([X(802), 27.4], P.issueDate, cap(30), { font: "Futura" }); }
+}
+/** Frank Harmon's band along the foot of an upright sheet (the First Presbyterian and AIA sets): the project's two
+ *  lines and its county at the left, Job No / Date / Scale boxes, the firm and its address, Drawn / Checked, the
+ *  sheet's name, and the sheet number in its box at the right - Futura, measured off the set (610 wide). */
+function fhaBand(doc, sh, W, H, put, txt) {
+  const P = Object.assign({ number: "", drawn: "", checked: "", issued: "", place: "", county: "", firm: "FRANK HARMON  ARCHITECT PA", firmAddress: "", phone: "", fax: "" }, doc.meta.project || {});
+  const R = x => W - (610 - x), cap = pt => pt * 25.4 / 72 * 0.7, f = { font: "Futura" };
+  const t = (x, y, text, pt, o = {}, room = 0) => { let h = cap(pt); if (room && text) { const w = textWidth(String(text), h, "Futura"); if (w > room) h *= room / w; } txt([x, y], text, h, Object.assign({}, f, o)); };
+  const boxes = [[195.6, 221.0], [221.0, 246.4], [246.4, 271.8], [R(408.4), R(433.8)], [R(433.8), R(459.2)], [R(567.1), R(592.5)]];
+  for (const [a, b] of boxes) put(rectPath(a, 21.3, b, 37.0), 0.19);
+  put([lineSeg([246.4, 29.2], [R(592.5), 29.2])], 0.19); put([lineSeg([195.6, 29.2], [246.4, 29.2])], 0.19);
+  const name = (doc.meta.name || "").split("\n");
+  t(26.1, 31.4, name[0] || "", 24, {}, 100); t(26.1, 21.1, name[1] || "", 24, {}, 150);
+  const county = String(P.county || "").split("\n"); t(130.1, 31.4, county[0] || "", 24, {}, 60); if (county[1]) t(178.7, 22.0, county[1], 24);
+  t(197.9, 32.0, "Job No.", 10); t(223.3, 32.0, "Date", 10); t(248.7, 32.0, "Scale", 10);
+  const sc = viewportScales(doc, sh), scales = sc && sc !== "—" ? sc.split(", ") : [];
+  const scaleText = doc.argValue(sh, "scaleLabel") || (scales.length === 1 ? scaleName(doc, +scales[0].split(":")[1]) : scales.length ? "AS NOTED" : "");
+  t(197.8, 24.0, P.number, 9); t(223.2, 24.0, P.issued, 9); t(248.6, 24.0, scaleText, 9, {}, 22);
+  t(275.8, 31.4, P.firm, 24, {}, R(405) - 275.8);
+  String(P.firmAddress || "").split("\n").slice(0, 2).forEach((l, i) => t(276.2, 24.6 - 3.5 * i, l, 9));
+  if (P.phone) t(R(404), 24.6, P.phone, 9, { align: "right" }); if (P.fax) t(R(404), 21.1, "facsimile " + P.fax, 9, { align: "right" });
+  t(R(410.7), 32.0, "Drawn", 10); t(R(436.1), 32.0, "Checked", 10); t(R(409.1), 24.0, P.drawn, 9); t(R(436.0), 24.0, P.checked || "-", 9);
+  t(R(460.3), 31.4, String(doc.argValue(sh, "sheetName") || "").toUpperCase(), 24, {}, R(565) - R(460.3));
+  t(R(569.5), 32.0, "Sheet", 10); t(R(573.0), 22.2, doc.argValue(sh, "number") || "", 21, {}, 18);
 }
 function viewportScales(doc, sh) {
   const s = [...new Set((doc.argValue(sh, "viewports") || []).map(vp => doc.element(vp.view.ref)).filter(v => v && doc.typeOf(v) !== "Schedule").map(v => "1:" + (F.int(v, "scale") || 100)))];
