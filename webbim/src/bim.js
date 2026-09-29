@@ -1014,7 +1014,7 @@ BUILDERS.SpotElevation = { build: () => ({ data: {} }) };
 
 declare({ type: "DetailLine", guid: "wb-0702", category: "Detail", kind: "detail", idPrefix: "DL",
   summary: "A line that lives in one view. No 3D; appears nowhere else.",
-  args: [ curve2d("curve", "Curve", ["line", "arc", "spline"], { type: "line", start: [0, 0], end: [1000, 0] }), choice("pen", "Pen", ["hairline", "thin", "medium", "heavy", "bold", "gossamer", "extra"], 1), ref("view", "View", ["view"], { view: true }),
+  args: [ curve2d("curve", "Curve", ["line", "arc", "spline"], { type: "line", start: [0, 0], end: [1000, 0] }), choice("pen", "Pen", ["hairline", "thin", "medium", "heavy", "bold", "gossamer", "extra"], 1), choice("lineStyle", "Line style", ["Solid", "Hidden", "Centre"], 0), ref("view", "View", ["view"], { view: true }),
           text("layer", "Layer", "", { group: "Graphics" }), text("colour", "Colour", "#000000", { group: "Graphics" }) ] });
 BUILDERS.DetailLine = { build: () => ({ data: {} }) };
 

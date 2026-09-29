@@ -390,7 +390,7 @@ export function buildMazatlanSample() {
   // where each view's grid lines stop below the ground, as the set draws them
   const GRID_BOTTOM = { "V-E-GN": -1941, "V-E-MO": -1812, "V-S1": -2407, "V-S2": -1914, "V-S3": -1865, "V-S4": -1865, "V-S5": -1800, "V-S6": -2009 };
   const elev = (id, name, a, b, depth, crop, levelExtent, gridTop) => add({ id, type: "ElevationView", name, args: { line: line(a, b), depth, scale: 50, baseLevel: { ref: "L-BN" }, top: 7000, style: { ref: "VS-MZ-ELEV" }, detailLevel: "Medium",
-    clip: { rect: crop, visible: false, active: true, annotation: [95, 12, 15, 65] }, levelExtent, groundLine: false, overrides: { __gridTop: gridTop, __gridBottom: GRID_BOTTOM[id] } } });
+    clip: { rect: crop, visible: false, active: true, annotation: [95, Math.max(12, 12 + (crop[1] + 1500) / 50), 15, 65] }, levelExtent, groundLine: false, overrides: { __gridTop: gridTop, __gridBottom: GRID_BOTTOM[id] } } });
   // the elevation tags and the section flags where the set's plans draw them (the flag's base on the line)
   elev("V-E-GN", "ELEVACION GUILLERMO NELSON", [-2711, -4000], [-2711, 16024], 2800, [295, -1702, 17938, 4800], [-119, 17190], 5797);
   elev("V-E-MO", "ELEVACION SUR", [15000, -2654], [-1554, -2654], 2800, [900, -1500, 16000, 4800], [-1698, 16004], 6328);
@@ -532,7 +532,7 @@ export function buildMazatlanSample() {
   add({ id: "DM-GN-1", type: "Dimension", args: { of: ["L-BN:plane", "L-PA:plane"], offset: 1330, view: { ref: "V-E-GN" }, locked: false, dimType: { ref: "DT-MZ" } } });
   add({ id: "DM-GN-2", type: "Dimension", args: { of: ["L-PA:plane", "L-T:plane"], offset: 1330, view: { ref: "V-E-GN" }, locked: false, dimType: { ref: "DT-MZ" } } });
   // the shutters' meeting line
-  add({ id: "DL-GN-CV", type: "DetailLine", args: { curve: line([sGN(7621.5), 78], [sGN(7621.5), 1977]), pen: "hairline", view: { ref: "V-E-GN" } } });
+  add({ id: "DL-GN-CV", type: "DetailLine", args: { curve: line([sGN(7621.5), 78], [sGN(7621.5), 1977]), pen: "medium", view: { ref: "V-E-GN" } } });
   const setOv = (v, o) => ed.apply({ op: "set", id: v, key: "overrides", value: Object.assign({}, doc.argValue(doc.element(v), "overrides") || {}, o) }, { regenerate: false });
   setOv("V-E-GN", { "V-S2": { markerZ: [-1917, 6222], stubs: [17.1, 9.9] }, "V-S6": { markerZ: [-1917, 6222], stubs: [17.1, 9.9] } });
   setOv("V-E-MO", { "V-S1": { markerZ: [-2123, 7290], stubs: [9, 4.6] }, "V-S3": { markerZ: [-2123, 7290], stubs: [9, 4.6] }, "V-S4": { markerZ: [-2123, 7290], stubs: [9, 4.6] }, "V-S5": { markerZ: [-2107, 7280], stubs: [9, 4.6] } });
@@ -540,7 +540,11 @@ export function buildMazatlanSample() {
   // only the levels the set shows here
   [["G-A", "G-B"], ["G-B", "G-C"], ["G-C", "G-D"]].forEach(([a, b], i) => add({ id: `DM-MO-${i + 1}`, type: "Dimension", args: { of: [`${a}:line`, `${b}:line`], offset: 5670, view: { ref: "V-E-MO" }, locked: false, dimType: { ref: "DT-MZ" } } }));
   add({ id: "DM-MO-H", type: "Dimension", args: { of: ["L-BQ:plane", "L-LAF:plane"], offset: -136, view: { ref: "V-E-MO" }, locked: false, dimType: { ref: "DT-MZ" }, below: "ALTURA PARED EXISTENTE" } });
+  // under the plinth and the sidewalk nothing of the facade is seen: a masking region down from the ground line
+  add({ id: "FR-MO-SUELO", type: "FilledRegion", name: "Región de enmascaramiento", args: { boundary: [[sMO(-199), -1300], [sMO(-47), -1203], [sMO(-47), -1097], [sMO(13498), -1097], [sMO(13498), -1203], [sMO(13650), -1300], [sMO(13650), -1500], [sMO(-199), -1500]], pattern: "", background: "#ffffff", lineColour: "none", view: { ref: "V-E-MO" } } });
   [[13650, -1300], [13498, -1203], [-47, -1203], [-199, -1300], [-1586, -1300]].map(([x, z]) => [sMO(x), z]).forEach((q, i, a) => { if (i) add({ id: `DL-MO-BQ${i}`, type: "DetailLine", args: { curve: line(a[i - 1], q), pen: "bold", view: { ref: "V-E-MO" } } }); });
+  // the entrance's steps down to the sidewalk, behind the plinth's face: hidden lines, as the set draws them
+  [[[8334, -714], [9794, -714]],[[8334, -714], [8334, -875]],[[9794, -714], [9794, -875]],[[8156, -875], [9974, -875]],[[8156, -875], [8156, -1034]],[[9974, -875], [9974, -1034]],[[7954, -1034], [10175, -1034]],[[7954, -1034], [7954, -1194]],[[10175, -1034], [10175, -1194]],[[8514, -682], [8514, -714]],[[9614, -682], [9614, -714]]].forEach(([a, b], i) => add({ id: `DL-MO-ST${i + 1}`, type: "DetailLine", args: { curve: line(a, b), pen: "medium", lineStyle: a[1] === b[1] ? "Hidden" : "Solid", view: { ref: "V-E-MO" } } }));
   setOv("V-E-MO", Object.fromEntries(["L-LAC", "L-LBC", "L-BN", "L-H2", "L-PB2", "L-BE"].map(k => [k, { visible: false }])));
   // in each section, the others that cross it: flag up top, tail below, where its sheet puts them
   const mk = (tz, hz, ts, hs) => ({ markerZ: [tz, hz], stubs: [ts, hs] });

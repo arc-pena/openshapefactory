@@ -9,12 +9,12 @@
 //!       {t:"link", rect, sheet}   — all carry {layer, id} for OCGs and picking.
 
 import { fmtLength, fmtArea } from "./units.js";
-import { outline, elementSegs } from "./bimsketch.js";
+import { outline, elementSegs, bridgeHoles } from "./bimsketch.js";
 import { buildableArea } from "./spacegraph.js";
 import { plateAt, featureEdges, sliceMesh } from "./massing.js";
 import {
   TOL, add, sub, mul, dot, dist, perp, normalise, lerp, samplePath, pathArea, polyPath, bboxOf, segStart, segEnd, segMinusConvex,
-  ensureCCW, convexHull, TAU, pointInPoly, reversePath, polyArea,
+  ensureCCW, convexHull, TAU, pointInPoly, reversePath, polyArea, triangulate,
 } from "./geom2d.js";
 import { F, propertyOf, evalParam, displayParam } from "./ocaf.js";
 import { formatValue, parse, evaluate } from "./expr.js";
@@ -431,7 +431,7 @@ export function planScene(doc, v, opts = {}) {
   // 4. detail and annotation belonging to this view
   for (const f of els) {
     const t = doc.typeOf(f); if (!onlyHere(f)) continue;
-    if (t === "DetailLine" && vis(f)) { const c = F.json(f, "curve"); const segs = curveSegs(c); B.stroke(segs, { weight: penWeight(doc, F.choice(f, "pen"), S), colour: F.text(f, "colour") || "#000000" }, "Detail", doc.idOf(f)); B.hit(doc.idOf(f), samplePath(segs), "curve"); }
+    if (t === "DetailLine" && vis(f)) { const c = F.json(f, "curve"); const segs = curveSegs(c); B.stroke(segs, { weight: penWeight(doc, F.choice(f, "pen"), S), colour: F.text(f, "colour") || "#000000", dash: detailDash(f) }, "Detail", doc.idOf(f)); B.hit(doc.idOf(f), samplePath(segs), "curve"); }
     if (t === "FilledRegion" && vis(f)) drawFilledRegion(doc, ctx, B, f);
     if (t === "CADImport" && vis(f)) drawImport(doc, ctx, B, f);
     if (t === "Text" && categoryVisible(ctx, "Annotation")) drawText(doc, ctx, B, f);
@@ -556,6 +556,8 @@ function drawSpace(doc, ctx, B, f) {
   if (!plan || plan.status !== "ok") B.text([at[0], at[1] + label.height * 1.6], plan && plan.status === "redundant" ? "⚠ redundant" : "⚠ not enclosed", label.height * 0.8, { align: "centre", colour: "#b3261e", layer: "IfcSpace-Label", id });
   B.hit(id, [add(anchor, [-600, -600]), add(anchor, [600, -600]), add(anchor, [600, 600]), add(anchor, [-600, 600])]);
 }
+/** A detail line's line style: solid, or Revit's hidden (short dashes) or centre line. */
+const detailDash = f => ({ Hidden: LINE_TYPES.hidden, Centre: LINE_TYPES.centre })[F.choice(f, "lineStyle")] || null;
 function ruleMatch(doc, f, rule) { try { return matches(doc, f, rule.when); } catch (e) { return false; } }
 const DEPT = ["#dce9f7", "#f8e3cf", "#dff1e2", "#f3dcec", "#fff2c4", "#e4e0f7", "#d8f0f0"];
 export function departmentColour(v) { let h = 0; for (const c of v) h = (h * 31 + c.charCodeAt(0)) >>> 0; return DEPT[h % DEPT.length]; }
@@ -971,7 +973,7 @@ export function draftingScene(doc, v) {
   for (const f of doc.elements()) {
     if (F.refId(f, "view") !== id || f.get("Integer") === 0 || doc.error(f) || hiddenByRule(doc, ctx, f)) continue;
     const t = doc.typeOf(f);
-    if (t === "DetailLine") { const c = F.json(f, "curve"), segs = curveSegs(c); B.stroke(segs, { weight: penWeight(doc, F.choice(f, "pen"), S), colour: F.text(f, "colour") || "#000000" }, "Detail", doc.idOf(f)); B.hit(doc.idOf(f), samplePath(segs), "curve"); }
+    if (t === "DetailLine") { const c = F.json(f, "curve"), segs = curveSegs(c); B.stroke(segs, { weight: penWeight(doc, F.choice(f, "pen"), S), colour: F.text(f, "colour") || "#000000", dash: detailDash(f) }, "Detail", doc.idOf(f)); B.hit(doc.idOf(f), samplePath(segs), "curve"); }
     if (t === "FilledRegion") drawFilledRegion(doc, ctx, B, f);
     if (t === "CADImport") drawImport(doc, ctx, B, f);
     if (t === "Text") drawText(doc, ctx, B, f);
@@ -1004,7 +1006,7 @@ function drawViewAnnotations(doc, ctx, B, v) {
     if (t === "FilledRegion") drawFilledRegion(doc, ctx, B, f);
     if (t === "Text") drawText(doc, ctx, B, f);
     if (t === "CADImport") drawImport(doc, ctx, B, f);
-    if (t === "DetailLine") { const segs = curveSegs(F.json(f, "curve")); B.stroke(segs, { weight: penWeight(doc, F.choice(f, "pen"), ctx.scale), colour: F.text(f, "colour") || "#000000" }, "Detail", doc.idOf(f)); B.hit(doc.idOf(f), samplePath(segs), "curve"); }
+    if (t === "DetailLine") { const segs = curveSegs(F.json(f, "curve")); B.stroke(segs, { weight: penWeight(doc, F.choice(f, "pen"), ctx.scale), colour: F.text(f, "colour") || "#000000", dash: detailDash(f) }, "Detail", doc.idOf(f)); B.hit(doc.idOf(f), samplePath(segs), "curve"); }
   }
 }
 
@@ -1507,6 +1509,17 @@ function drawProjection(doc, ctx, B, vis, G, occluders) {
       for (const [p, q] of pieces) B.stroke([lineSeg(p, q)], gw, it.cat, it.id);
     }
     for (const s of it.sil) occluders.push(ensureCCW(s));
+    // a profile standing on a work plane (a moulding, a surround, a shutter) hides what is behind its face:
+    // the face, holes and all, as triangles (the occluders are convex)
+    if (it.face && it.face.length && it.cat !== "IfcWall") {
+      const loops = it.face.filter(l => l.length >= 3 && Math.abs(polyArea(l)) > 1);
+      if (loops.length) {
+        const byArea = loops.slice().sort((a, b) => Math.abs(polyArea(b)) - Math.abs(polyArea(a)));
+        const outer = ensureCCW(byArea[0]), holes = byArea.slice(1).map(l => ensureCCW(l).slice().reverse());
+        const cap = holes.length ? bridgeHoles(outer, holes) : outer;
+        for (const [i, j, k] of triangulate(cap)) { const t = [cap[i], cap[j], cap[k]]; if (Math.abs(polyArea(t)) > 1) occluders.push(ensureCCW(t)); }
+      }
+    }
     // hits carry depth, so a click takes what is in front; a door or window sits just before its wall
     const dep = Math.max(0, it.depth) + 1;
     for (const s of it.sil) B.hit(it.id, s, "region", dep);
