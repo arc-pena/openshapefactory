@@ -1458,7 +1458,13 @@ function gatherElevationItems(doc, ctx, G, skip = null) {
         bricks = p.bricks.map(b => { const a = at(b.u0), c = at(b.u1); return [[Math.min(a, c), b.z0 - Z0], [Math.max(a, c), b.z0 - Z0], [Math.max(a, c), b.z1 - Z0], [Math.min(a, c), b.z1 - Z0]]; }).filter(q => q[1][0] - q[0][0] > 1);
       }
       const face = p.face ? p.face.map(l => l.map(q => [sOf(q), q[2] - Z0])) : null;
-      items.push({ id: doc.idOf(f), f, depth: d0, depthMax: d1, s0, s1, curves, sil: [], box, bricks, face, fillerHits: [{ id: doc.idOf(f), poly: box }], cat: categoryOf(doc, f) });
+      // a roof's face toward the eye is its upper surface, projected: its covering's pattern (standing seam, tile) is drawn there
+      let surf = null;
+      if (t === "Roof" || t === "Ramp") { surf = []; const I = p.mesh.index;
+        for (let k = 0; k < I.length; k += 3) { const q = [I[k], I[k + 1], I[k + 2]].map(i => [P[i * 3], P[i * 3 + 1], P[i * 3 + 2]]);
+          const nz = (q[1][0] - q[0][0]) * (q[2][1] - q[0][1]) - (q[1][1] - q[0][1]) * (q[2][0] - q[0][0]); if (nz <= 1e-6) continue;
+          const tri = q.map(v => [sOf(v), v[2] - Z0]); if (Math.abs(polyArea(tri)) > 1) surf.push(tri); } }
+      items.push({ id: doc.idOf(f), f, depth: d0, depthMax: d1, s0, s1, curves, sil: [], box, bricks, face, surf, fillerHits: [{ id: doc.idOf(f), poly: box }], cat: categoryOf(doc, f) });
       continue;
     }
     if (t === "Floor" || t === "Beam" || t === "Generic") {
@@ -1595,7 +1601,7 @@ function surfaceOf(doc, it) {
   const f = it.f, t = doc.typeOf(f);
   let m = null;
   if (t === "Wall") { const w = doc.plan(f); if (w && w.stack && w.stack.layers.length) { const L = w.stack.layers; m = L.length === 1 ? L[0].material : (it.nearMaterial || L[0].material); } }
-  else if (t === "Generic" || t === "Lattice") m = F.text(f, "material");
+  else if (t === "Generic" || t === "Lattice" || t === "Roof") m = F.text(f, "material");
   else if (t === "Floor" && it.cat === "IfcSlab") m = null;
   const mp = m && (doc.lib.materials[m] || {}).projection;
   return mp && (mp.background || mp.pattern) ? { m, bg: mp.background || null, pat: mp.pattern || null, colour: mp.patternColour || mp.lineColour || "#a6a6a6" } : null;
@@ -1612,6 +1618,7 @@ function drawSurfaces(doc, ctx, B, vis) {
     const sf = (lit ? { bg: shade, pat: null } : null) || surfaceOf(doc, it) || (it.cat === "IfcWall" || it.cat === "IfcSlab" || it.cat === "IfcColumn" || it.face ? { bg: it.cat === "IfcWall" ? shade : "#ffffff", pat: null } : null); if (!sf) continue;
     let polys = it.sil && it.sil.length ? it.sil : null;
     if (doc.typeOf(it.f) === "Lattice") polys = it.bricks || null;
+    else if (it.surf) polys = it.surf.length ? it.surf : null;
     else if (!polys && it.face) polys = it.face;
     else if (!polys && it.box) polys = [it.box];
     if (!polys) continue;
@@ -1666,6 +1673,8 @@ function drawProjection(doc, ctx, B, vis, G, occluders) {
       for (const [p, q] of pieces) B.stroke([lineSeg(p, q)], gw, it.cat, it.id);
     }
     for (const s of it.sil) occluders.push(ensureCCW(s));
+    // a roof hides what is behind its upper surface, triangle by triangle
+    if (it.surf && doc.typeOf(it.f) === "Roof") for (const t of it.surf) occluders.push(ensureCCW(t));
     // a profile standing on a work plane (a moulding, a surround, a shutter) hides what is behind its face:
     // the face, holes and all, as triangles (the occluders are convex)
     if (it.face && it.face.length && it.cat !== "IfcWall") {
@@ -2188,20 +2197,21 @@ export function scaleName(doc, n) {
 function fhaStrip(doc, sh, W, H, put, txt) {
   const P = Object.assign({ number: "", drawn: "", checked: "", issued: "", issue: "", issueDate: "", place: "", firm: "FRANK HARMON ARCHITECT", firmAddress: "", phone: "", fax: "" }, doc.meta.project || {});
   const X = x => W - (914 - x), up = { rot: 90, font: "Futura" }, cap = pt => pt * 25.4 / 72 * 0.7;
-  const t = (x, y, text, pt, o = {}) => txt([X(x), y], text, cap(pt), Object.assign({}, up, o));
+  // each field shrinks to its room along the strip, as a long project name is set smaller on the set
+  const t = (x, y, text, pt, o = {}, room = 0) => { let h = cap(pt); if (room && text) { const w = textWidth(text, h, "Futura"); if (w > room) h *= room / w; } txt([X(x), y], text, h, Object.assign({}, up, o)); };
   put([lineSeg([X(884.7), 17.4], [X(884.7), H - 14.9])], 0.19);
   const box = (y0, y1, cuts) => { put(rectPath(X(876.9), y0, X(892.5), y1), 0.19); for (const c of cuts) put([lineSeg([X(876.9), c], [X(892.5), c])], 0.19); };
   box(198.2, 274.4, [223.6, 249.0]); box(410.2, 461.0, [435.6]); box(563.0, H - 14.9, []);
   const name = (doc.meta.name || "").toUpperCase().split("\n");
-  t(881.2, 28.6, name[0] || "", 24); t(891.3, 29.0, (name[1] || P.place || "").toUpperCase(), 24);
-  t(881.3, 278.3, P.firm, 24);
+  t(881.2, 28.6, name[0] || "", 24, {}, 166); t(891.3, 29.0, (name[1] || P.place || "").toUpperCase(), 24, {}, 166);
+  t(881.3, 278.3, P.firm, 24, {}, 128);
   String(P.firmAddress || "").split("\n").slice(0, 2).forEach((l, i) => t(888.4 + 3.9 * i, 278.9, l, 9));
   if (P.phone) t(888.4, 388.5, P.phone, 9); if (P.fax) t(892.3, 375.5, "facsimile " + P.fax, 9);
   t(881.2, 200.7, "Job No.", 10); t(881.2, 226.1, "Date", 10); t(881.2, 251.5, "Scale", 10); t(881.2, 413.5, "Drawn", 10); t(881.2, 438.9, "Checked", 10); t(881.2, H - 37.7, "Sheet", 10);
   const sc = viewportScales(doc, sh), scales = sc && sc !== "—" ? sc.split(", ") : [];
   const scaleText = doc.argValue(sh, "scaleLabel") || (scales.length === 1 ? scaleName(doc, +scales[0].split(":")[1]) : scales.length ? "AS NOTED" : "");
   t(889.1, 200.7, P.number, 9); t(889.7, 225.5, P.issued, 9); t(889.4, 251.2, scaleText.trim(), 10); t(888.9, 417.9, P.drawn, 9); t(888.6, 443.9, P.checked || "-", 9);
-  t(882.7, 465.4, String(doc.argValue(sh, "sheetName") || "").toUpperCase(), 20);
+  t(882.7, 465.4, String(doc.argValue(sh, "sheetName") || "").toUpperCase(), 20, {}, H - 52 - 465.4);
   t(892.5, H - 38.8, doc.argValue(sh, "number") || "", 20);
   if (P.issue) { txt([X(802), 40.6], P.issue.toUpperCase(), cap(30), { font: "Futura" }); if (P.issueDate) txt([X(802), 27.4], P.issueDate, cap(30), { font: "Futura" }); }
 }

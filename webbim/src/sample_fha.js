@@ -85,6 +85,7 @@ export function fhaProject(name, project) {
   door("T-FH-D30G", "Aluminum clad door 3'-0\"x7'-0\" glazed", "D3", 914, 2134, { glazed: true, leafThickness: 44 });
   door("T-FH-D60G", "Aluminum clad door pair 6'-0\"x7'-0\" glazed", "D4", 1829, 2134, { glazed: true });
   door("T-FH-GARAGE", "Polygal garage door 18'-0\"x9'-6\"", "D5", 5486, 2896, { glazed: false, leafThickness: 60 });
+  L.types["T-FH-PILE"] = { family: "F-COLUMN", name: "Wood pile 10\" round", mark: "P1", width: 254, depth: 254, round: true, material: "M-FH-WOOD" };
   const win = (id, name, mark, w, h, mullions = 0) => { L.types[id] = { family: "F-CASEMENT", name, mark, width: w, height: h, frame: 50, mullions }; };
   win("T-FH-W24", "Aluminum clad window 2'-0\"x4'-0\"", "W1", 610, 1219);
   win("T-FH-W44", "Aluminum clad window 4'-0\"x4'-0\"", "W2", 1219, 1219);
