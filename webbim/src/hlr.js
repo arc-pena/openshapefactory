@@ -24,7 +24,17 @@ export function cameraBasis(cam) {
   const D = [Math.cos(el) * Math.cos(az), Math.cos(el) * Math.sin(az), Math.sin(el)];      // toward the camera
   const right = norm3(hlrCross([0, 0, 1], D)), up = hlrCross(D, right);
   const t = cam.target || [0, 0, 0];
-  return { D, right, up, t, project: p => { const q = sub3(p, t); return [hlrDot(q, right), hlrDot(q, up), hlrDot(q, D)]; } };
+  if (cam.distance > 0) {
+    // a perspective from an eye `distance` back from the target: x' = f x / d, y' = f y / d, z' = f² / d − f.
+    // The map is projective (lines stay lines, planes planes, nearer stays larger), so the orthographic
+    // hidden-line test below runs on the mapped points unchanged; at the target's distance a millimetre
+    // is a millimetre, so the view's scale reads there
+    const f = cam.distance, eye = [t[0] + D[0] * f, t[1] + D[1] * f, t[2] + D[2] * f];
+    return { D, right, up, t, eye, persp: true, f,
+      facing: (n, p) => hlrDot(n, sub3(eye, p)),
+      project: p => { const q = sub3(p, eye), d = Math.max(1, -hlrDot(q, D)); return [f * hlrDot(q, right) / d, f * hlrDot(q, up) / d, f * f / d - f]; } };
+  }
+  return { D, right, up, t, facing: n => hlrDot(n, D), project: p => { const q = sub3(p, t); return [hlrDot(q, right), hlrDot(q, up), hlrDot(q, D)]; } };
 }
 
 // ---------------------------------------------------------------- the model as faces and edges
@@ -212,11 +222,12 @@ export function* hlrSteps(model, cam) {
   // Only faces turned toward the camera can hide anything.
   const occ = [];
   for (const s of model.solids) for (const fc of s.faces) {
-    if (hlrDot(fc.n, C.D) <= 1e-9) continue;
+    if (C.facing(fc.n, fc.poly[0]) <= 1e-9) continue;
     const P = fc.poly.map(C.project);
     const pts2 = P.map(p => [p[0], p[1]]);
-    // plane in view space: depth = a x + b y + c
-    const nv = [hlrDot(fc.n, C.right), hlrDot(fc.n, C.up), hlrDot(fc.n, C.D)];
+    // plane in view space: depth = a x + b y + c (in a perspective, the mapped face's own plane)
+    let nv = [hlrDot(fc.n, C.right), hlrDot(fc.n, C.up), hlrDot(fc.n, C.D)];
+    if (C.persp) { nv = [0, 0, 0]; for (let j = 0; j < P.length; j++) { const a = P[j], b = P[(j + 1) % P.length]; nv[0] += (a[1] - b[1]) * (a[2] + b[2]); nv[1] += (a[2] - b[2]) * (a[0] + b[0]); nv[2] += (a[0] - b[0]) * (a[1] + b[1]); } if (Math.abs(nv[2]) < 1e-9) continue; }
     const k = nv[0] * P[0][0] + nv[1] * P[0][1] + nv[2] * P[0][2];
     const bb = [Math.min(...pts2.map(p => p[0])), Math.min(...pts2.map(p => p[1])), Math.max(...pts2.map(p => p[0])), Math.max(...pts2.map(p => p[1]))];
     occ.push({ pts: ccw2(pts2), plane: { a: -nv[0] / nv[2], b: -nv[1] / nv[2], c: k / nv[2] }, bb });
@@ -228,7 +239,7 @@ export function* hlrSteps(model, cam) {
     const A = C.project(e.a), B = C.project(e.b);
     let cat = "sharp";
     if (e.kind === "smooth") {
-      const f1 = hlrDot(e.n1, C.D), f2 = hlrDot(e.n2, C.D);
+      const mid = [(e.a[0] + e.b[0]) / 2, (e.a[1] + e.b[1]) / 2, (e.a[2] + e.b[2]) / 2], f1 = C.facing(e.n1, mid), f2 = C.facing(e.n2, mid);
       cat = (f1 > 0) !== (f2 > 0) ? "outline" : "smooth";
       if (f1 <= 0 && f2 <= 0) cat = "backsmooth";
     }

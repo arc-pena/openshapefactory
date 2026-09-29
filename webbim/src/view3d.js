@@ -60,7 +60,8 @@ export class View3D {
     // added after the key light had its shadows applied to the key light (switched off while the sun is on)
     this.renderer.shadowMap.enabled = true; this.renderer.shadowMap.type = T.PCFShadowMap;
     this.sun = new T.DirectionalLight(0xffffff, 0); this.sun.castShadow = true; this.sun.shadow.mapSize.set(4096, 4096);
-    this.sun.shadow.bias = -0.0002; this.sun.shadow.normalBias = 2; this.scene.add(this.sun); this.scene.add(this.sun.target);
+    // a shadow-map texel is some 5 mm on a house: less bias than this and sunlit faces stripe (acne)
+    this.sun.shadow.bias = -0.0004; this.sun.shadow.normalBias = 12; this.scene.add(this.sun); this.scene.add(this.sun.target);
     this.ambient = new T.AmbientLight(0xffffff, 0.58); this.scene.add(this.ambient);
     this.keyLight = new T.DirectionalLight(0xffffff, 0.72); this.keyLight.position.set(-0.6, -0.8, 1.2); this.scene.add(this.keyLight);
     this.fillLight = new T.DirectionalLight(0xffffff, 0.28); this.fillLight.position.set(0.8, 0.4, 0.5); this.scene.add(this.fillLight);
@@ -115,7 +116,7 @@ export class View3D {
       const colour = style === "Hidden Line" ? "#ffffff" : style === "White" ? SHEET_WHITE : style === "Consistent Colors" ? flat(doc, t, p) : shade(doc, t, p);
       const g = new T.Group(); g.userData.id = id;
       const pos = [];
-      for (const s of m.solids) for (const fc of s.faces) for (let i = 1; i < fc.poly.length - 1; i++) pos.push(...fc.poly[0], ...fc.poly[i], ...fc.poly[i + 1]);
+      for (const fc of wallFaces(m.solids)) for (let i = 1; i < fc.length - 1; i++) pos.push(...fc[0], ...fc[i], ...fc[i + 1]);
       const geo = new T.BufferGeometry(); geo.setAttribute("position", new T.Float32BufferAttribute(pos, 3)); geo.computeVertexNormals();
       const mat = style === "Consistent Colors" || style === "Hidden Line" ? new T.MeshBasicMaterial({ color: new T.Color(colour), side: T.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 })
         : new T.MeshLambertMaterial({ color: new T.Color(colour), side: T.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
@@ -675,7 +676,8 @@ export class View3D {
     // lit = ambient + sun·cosθ; in shadow = ambient: the opacity sets how far the shadow falls below the light
     this.ambient.intensity = on ? Math.max(0.25, 0.95 * (1 - sun.opacity) + 0.15) : 0.58;
     // shaders are compiled with or without the shadow code: switching needs them rebuilt
-    for (const g of this.groups.values()) g.traverse(o => { if (o.isMesh && !o.userData.edges) { if (o.receiveShadow !== on) [].concat(o.material).forEach(m => { m.needsUpdate = true; }); o.castShadow = on; o.receiveShadow = on; } });
+    // closed bodies drawn two-sided cast from their back faces: a lit face then never shadows itself (acne)
+    for (const g of this.groups.values()) g.traverse(o => { if (o.isMesh && !o.userData.edges) { if (o.receiveShadow !== on) [].concat(o.material).forEach(m => { m.needsUpdate = true; }); [].concat(o.material).forEach(m => { if (m.side === T.DoubleSide) m.shadowSide = T.BackSide; }); o.castShadow = on; o.receiveShadow = on; } });
     this.ground.material.needsUpdate = true;
     if (!on) return;
     const box = new T.Box3(); for (const g of this.groups.values()) box.expandByObject(g);
@@ -694,8 +696,17 @@ export class View3D {
     // rendered by this view's own renderer into an off-screen target: a second WebGL context would have to
     // rebuild every buffer and the sun's shadow map, and in practice drew the shading without the shadows
     const T = this.T, B = cameraBasis(cam), R = this.renderer;
-    const c = new T.OrthographicCamera(bbox[0], bbox[2], bbox[3], bbox[1], -1e6, 1e6);
-    const t = new T.Vector3(...cam.target); c.position.copy(t.clone().add(new T.Vector3(...B.D).multiplyScalar(60000))); c.up.set(...B.up); c.lookAt(t);
+    let c;
+    const t = new T.Vector3(...cam.target);
+    if (B.persp) {
+      // the hidden-line's perspective: the eye where it stands, the frustum cut to the drawing's box on the target's plane
+      const near = 50, k = near / B.f;
+      c = new T.PerspectiveCamera(40, 1, near, 1e6); c.position.set(...B.eye); c.up.set(...B.up); c.lookAt(t); c.updateMatrixWorld();
+      c.projectionMatrix.makePerspective(bbox[0] * k, bbox[2] * k, bbox[3] * k, bbox[1] * k, near, 1e6); c.projectionMatrixInverse.copy(c.projectionMatrix).invert();
+    } else {
+      c = new T.OrthographicCamera(bbox[0], bbox[2], bbox[3], bbox[1], -1e6, 1e6);
+      c.position.copy(t.clone().add(new T.Vector3(...B.D).multiplyScalar(60000))); c.up.set(...B.up); c.lookAt(t);
+    }
     const bg = this.scene.background; this.scene.background = new T.Color(0xffffff);
     for (const g of this.groups.values()) g.children.forEach(o => { if (o.userData.edges) o.visible = false; });
     this.applySun();
@@ -713,6 +724,31 @@ export class View3D {
     this.render();
     return url;
   }
+}
+/** A wall's faces for shading, without what lies inside it: where two pieces stand back to back (a full-height
+ *  span beside the lintel over an opening) their upright end faces overlap, and the overlap - inside the wall -
+ *  would fight the facade along the joint and draw a seam. Each such face keeps only its uncovered heights. */
+function wallFaces(solids) {
+  const out = [], ends = [];
+  for (const s of solids) for (const fc of s.faces) {
+    const P = fc.poly, n = fc.n;
+    if (P.length === 4 && Math.abs(n[2]) < 1e-6) {
+      const zs = P.map(q => q[2]), z0 = Math.min(...zs), z1 = Math.max(...zs), low = P.filter(q => q[2] < z0 + 0.5);
+      if (low.length === 2 && P.filter(q => q[2] > z1 - 0.5).length === 2) { ends.push({ fc, n, z0, z1, a: low[0], b: low[1], off: n[0] * P[0][0] + n[1] * P[0][1] }); continue; }
+    }
+    out.push(P);
+  }
+  const same2 = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1]) < 1;
+  for (const e of ends) {
+    // the heights another piece's end face covers from the other side of the same plane, over the same footing
+    const cover = ends.filter(o => o !== e && o.n[0] * e.n[0] + o.n[1] * e.n[1] < -0.999 && Math.abs(o.off + e.off) < 0.5 && ((same2(o.a, e.a) && same2(o.b, e.b)) || (same2(o.a, e.b) && same2(o.b, e.a))))
+      .map(o => [Math.max(e.z0, o.z0), Math.min(e.z1, o.z1)]).filter(([a, b]) => b - a > 0.5).sort((x, y) => x[0] - y[0]);
+    let z = e.z0;
+    const rect = (za, zb) => { if (zb - za > 0.5) out.push([[e.a[0], e.a[1], za], [e.b[0], e.b[1], za], [e.b[0], e.b[1], zb], [e.a[0], e.a[1], zb]]); };
+    for (const [a, b] of cover) { rect(z, a); z = Math.max(z, b); }
+    rect(z, e.z1);
+  }
+  return out;
 }
 function clear3(scene) { for (const o of scene.children.slice()) { scene.remove(o); if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); } }
 const vdot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];

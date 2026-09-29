@@ -415,9 +415,9 @@ export function buildMazatlanSample() {
   sect("V-S5", "Section 5", [10006, 16532], [10006, -4513], 10300, "Start", [3900, -1950, 19300, 6700], [2642, 20290], 9234, only("L-T", "L-PA", "L-PB1", "L-PB2"));
   sect("V-S6", "Section 6", [17128, 6016], [-5040, 6016], 8700, "End", [4400, -1950, 18900, 6700], [2677, 21024], 7902, only("L-T", "L-PA", "L-PB1", "L-PB2"));
   // the set's 3D sheets: shaded, the sun on, the edges drawn, sized as the set sizes them (about 1:80)
-  const axo = (id, name, az, el, scale = 80) => add({ id, type: "View3D", name, args: { camera: { azimuth: az, elevation: el, target: [6700, 7200, 1500] }, scale, style: { ref: "VS-MZ" }, visualStyle: "Shaded",
+  const axo = (id, name, az, el, scale = 80, persp = null) => add({ id, type: "View3D", name, args: { camera: Object.assign({ azimuth: az, elevation: el, target: [6700, 7200, 1500] }, persp || {}), scale, style: { ref: "VS-MZ" }, visualStyle: "Shaded",
     render: { display: "renderedEdges", rasterDPI: 200, silhouetteWeight: 0.35 } } });
-  axo("V-3D-SO", "PERSPECTIVA SUR-OESTE", 225, 18, 60); axo("V-3D-UB", "VISTA DE UBICACION", 225, 25, 250); axo("V-3D-SE", "AXO SUR-ESTE", 315, 30); axo("V-3D-SO2", "AXO SUR-OESTE", 225, 35); axo("V-3D-NE", "AXO NORTE-ESTE", 45, 35);
+  axo("V-3D-SO", "PERSPECTIVA SUR-OESTE", 222, 10, 55, { target: [3000, 3500, 2200], distance: 19000 }); axo("V-3D-UB", "VISTA DE UBICACION", 225, 25, 250); axo("V-3D-SE", "AXO SUR-ESTE", 315, 30); axo("V-3D-SO2", "AXO SUR-OESTE", 225, 35); axo("V-3D-NE", "AXO NORTE-ESTE", 45, 35);
   add({ id: "SC-P", type: "Schedule", name: "Cuadro de puertas", args: { of: "IfcDoor", fields: ["Mark", "TypeMark", "Width", "Height"] } });
   add({ id: "SC-L", type: "Schedule", name: "Cuadro de locales", args: { of: "IfcSpace", fields: ["Number", "Name", "Area"] } });
 
