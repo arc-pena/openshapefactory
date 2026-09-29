@@ -228,6 +228,7 @@ export const SYMBOLS = {
   "SY-NORTH": { name: "North arrow", source: { dxf: "inline:NORTH_DXF" }, sourceBBox: null, nominalSize: { w: 18, h: 18 }, scaleMode: "uniform", anchor: "centre", space: "paper" },
   "SY-TB-A1": { name: "Title block", generated: "titleBlock", space: "paper" },
   "SY-TB-BAND": { name: "Title band (Arial, notes and north)", generated: "titleBand", space: "paper" },
+  "SY-TB-FHA": { name: "Title strip (Frank Harmon Architect: Futura, along the right edge)", generated: "fhaStrip", space: "paper" },
   ...ENTOURAGE_SYMBOLS,
 };
 

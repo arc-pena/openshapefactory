@@ -40,6 +40,9 @@ export const TEXT_FONTS = {
   Sans:  { label: "Sans (DejaVu)", css: null, cap: null, k: 1, pdf: "F1" },
   Arial: { label: "Arial / Helvetica", css: 'Arial, Helvetica, "Liberation Sans", sans-serif', cap: 0.716, k: 0.88, pdf: "F2" },
   ArialBold: { label: "Arial Bold / Helvetica Bold", css: 'Arial, Helvetica, "Liberation Sans", sans-serif', weight: "bold", cap: 0.716, k: 0.94, pdf: "F5" },
+  // Frank Harmon's sets are lettered in Futura: set on screen in Futura where the machine has it (else a
+  // geometric sans), in the PDF as Helvetica; its cap height and widths are close enough to place text by
+  Futura: { label: "Futura (geometric sans)", css: 'Futura, "Futura PT", "Futura Std", "Century Gothic", "Avenir Next", Jost, "Helvetica Neue", Arial, sans-serif', cap: 0.7, k: 0.9, pdf: "F2" },
   Serif: { label: "Serif (Times)", css: '"Times New Roman", Times, "Liberation Serif", serif', cap: 0.662, k: 0.82, pdf: "F3" },
   Mono:  { label: "Mono (Courier)", css: '"Courier New", Courier, "Liberation Mono", monospace', cap: 0.571, mono: 0.6, pdf: "F4" },
 };
@@ -47,7 +50,7 @@ export const TEXT_FONTS = {
 // text placed by its width (right-aligned, centred) lands where it is drawn
 const HELV_WIDTHS = [278,278,355,556,556,889,667,191,333,333,389,584,278,333,278,278,556,556,556,556,556,556,556,556,556,556,278,278,584,584,584,556,1015,667,667,722,722,667,611,778,722,278,500,667,556,833,722,778,667,778,722,667,611,722,667,944,667,667,611,278,278,278,469,556,333,556,556,500,556,556,278,556,556,222,222,500,222,833,556,556,556,556,333,500,278,556,500,722,500,500,500,334,260,334,584,0,556,556,222,556,333,1000,556,556,333,1000,667,333,1000,556,611,556,556,222,222,333,333,350,556,1000,333,1000,500,333,944,556,500,667,278,333,556,556,556,556,260,556,333,737,370,556,584,333,737,333,400,584,333,333,333,556,537,278,333,333,365,556,834,834,834,611,667,667,667,667,667,667,1000,722,667,667,667,667,278,278,278,278,722,722,778,778,778,778,778,584,778,722,722,722,722,667,667,611,556,556,556,556,556,556,889,500,556,556,556,556,278,278,278,278,556,556,556,556,556,556,556,584,611,556,556,556,556,500,556,500];
 const HELV_BOLD_WIDTHS = [278,333,474,556,556,889,722,238,333,333,389,584,278,333,278,278,556,556,556,556,556,556,556,556,556,556,333,333,584,584,584,611,975,722,722,722,722,667,611,778,722,278,556,722,611,833,722,778,667,778,722,667,611,722,667,944,667,667,611,333,278,333,584,556,333,556,611,556,611,556,333,611,611,278,278,556,278,889,611,611,611,611,389,556,333,611,556,778,556,556,500,389,280,389,584,0,556,556,278,556,500,1000,556,556,333,1000,667,333,1000,556,611,556,556,278,278,500,500,350,556,1000,333,1000,556,333,944,556,500,667,278,333,556,556,556,556,280,556,333,737,370,556,584,333,737,333,400,584,333,333,333,611,556,278,333,333,365,556,834,834,834,611,722,722,722,722,722,722,1000,722,667,667,667,667,278,278,278,278,722,722,778,778,778,778,778,584,778,722,722,722,722,667,667,611,556,556,556,556,556,556,889,556,556,556,556,556,278,278,278,278,611,611,611,611,611,611,611,584,611,611,611,611,611,556,611,556];
-TEXT_FONTS.Arial.widths = HELV_WIDTHS; TEXT_FONTS.ArialBold.widths = HELV_BOLD_WIDTHS;
+TEXT_FONTS.Arial.widths = HELV_WIDTHS; TEXT_FONTS.ArialBold.widths = HELV_BOLD_WIDTHS; TEXT_FONTS.Futura.widths = HELV_WIDTHS;
 const fontOf = name => TEXT_FONTS[name] || TEXT_FONTS.Sans;
 export const emOf = (h, font) => { const F0 = fontOf(font); return h / (F0.cap || FONT_METRICS.capHeight / 1000); };
 export function textWidth(str, h, font, widthFactor = 1) {
@@ -1969,8 +1972,9 @@ export function sheetScene(doc, sh, opts = {}) {
   const txt = (at, text, h, o = {}) => prims.push(Object.assign({ t: "text", at, text: String(text ?? ""), height: h, rot: 0, align: "left", valign: "baseline", colour: ink, layer: "TitleBlock" }, o));
   prims.push({ t: "fill", path: rectPath(0, 0, W, H), colour: "#ffffff", layer: "Paper" });
   const tb = doc.lib.symbols[F.refId(sh, "titleBlock")] || {};
-  const band = tb.generated === "titleBand";
-  if (band) titleBand(doc, sh, W, H, put, txt);
+  const band = tb.generated === "titleBand" || tb.generated === "fhaStrip";
+  if (tb.generated === "titleBand") titleBand(doc, sh, W, H, put, txt);
+  else if (tb.generated === "fhaStrip") fhaStrip(doc, sh, W, H, put, txt);
   else {
   put(rectPath(border, border, W - border, H - border), 0.35);
   const bh = Math.max(14, Math.min(24, H * 0.04)), y0 = border, y1 = border + bh, k = bh / 22;   // band height, and a text scale that follows it
@@ -2102,6 +2106,35 @@ function titleBand(doc, sh, W, H, put, txt) {
   const sc = viewportScales(doc, sh), scales = sc && sc !== "—" ? sc.split(", ") : [];
   const scaleText = doc.argValue(sh, "scaleLabel") ? doc.argValue(sh, "scaleLabel") : scales.length === 1 ? scales[0].replace(":", " : ") : scales.length ? "As indicated" : "";
   if (scaleText) txt([R(398.76), 35.05], scaleText, 5.07, Object.assign({ align: "centre" }, A));
+}
+/** A scale as the project writes it: 1:50 in a metric project; in an imperial one the architect's scale nearest it. */
+const ARCH_SCALES = [[12, '1" = 1\'-0"'], [16, '3/4" = 1\'-0"'], [24, '1/2" = 1\'-0"'], [32, '3/8" = 1\'-0"'], [48, '1/4" = 1\'-0"'], [64, '3/16" = 1\'-0"'], [96, '1/8" = 1\'-0"'], [192, '1/16" = 1\'-0"'], [384, '1/32" = 1\'-0"']];
+export function scaleName(doc, n) {
+  if (!isImperial(doc.meta && doc.meta.displayUnits)) return "1:" + n;
+  return ARCH_SCALES.reduce((b, a) => (Math.abs(Math.log(a[0] / n)) < Math.abs(Math.log(b[0] / n)) ? a : b))[1];
+}
+/** Frank Harmon Architect's title strip: along the right edge of the sheet, read upward - the project and its
+ *  place, the firm and its address, job / date / scale, drawn / checked, the drawing's name and the sheet number
+ *  - and the issue (PERMIT SET and its date) set large over the bottom right corner. Held to the right edge. */
+function fhaStrip(doc, sh, W, H, put, txt) {
+  const P = Object.assign({ number: "", drawn: "", checked: "", issued: "", issue: "", issueDate: "", place: "", firm: "FRANK HARMON ARCHITECT", firmAddress: "", phone: "", fax: "" }, doc.meta.project || {});
+  const X = x => W - (914 - x), up = { rot: 90, font: "Futura" }, cap = pt => pt * 25.4 / 72 * 0.7;
+  const t = (x, y, text, pt, o = {}) => txt([X(x), y], text, cap(pt), Object.assign({}, up, o));
+  put([lineSeg([X(884.7), 17.4], [X(884.7), H - 14.9])], 0.19);
+  const box = (y0, y1, cuts) => { put(rectPath(X(876.9), y0, X(892.5), y1), 0.19); for (const c of cuts) put([lineSeg([X(876.9), c], [X(892.5), c])], 0.19); };
+  box(198.2, 274.4, [223.6, 249.0]); box(410.2, 461.0, [435.6]); box(563.0, H - 14.9, []);
+  const name = (doc.meta.name || "").toUpperCase().split("\n");
+  t(881.2, 28.6, name[0] || "", 24); t(891.3, 29.0, (name[1] || P.place || "").toUpperCase(), 24);
+  t(881.3, 278.3, P.firm, 24);
+  String(P.firmAddress || "").split("\n").slice(0, 2).forEach((l, i) => t(888.4 + 3.9 * i, 278.9, l, 9));
+  if (P.phone) t(888.4, 388.5, P.phone, 9); if (P.fax) t(892.3, 375.5, "facsimile " + P.fax, 9);
+  t(881.2, 200.7, "Job No.", 10); t(881.2, 226.1, "Date", 10); t(881.2, 251.5, "Scale", 10); t(881.2, 413.5, "Drawn", 10); t(881.2, 438.9, "Checked", 10); t(881.2, H - 37.7, "Sheet", 10);
+  const sc = viewportScales(doc, sh), scales = sc && sc !== "—" ? sc.split(", ") : [];
+  const scaleText = doc.argValue(sh, "scaleLabel") || (scales.length === 1 ? scaleName(doc, +scales[0].split(":")[1]) : scales.length ? "AS NOTED" : "");
+  t(889.1, 200.7, P.number, 9); t(889.7, 225.5, P.issued, 9); t(889.4, 251.2, scaleText.trim(), 10); t(888.9, 417.9, P.drawn, 9); t(888.6, 443.9, P.checked || "-", 9);
+  t(882.7, 465.4, String(doc.argValue(sh, "sheetName") || "").toUpperCase(), 20);
+  t(892.5, H - 38.8, doc.argValue(sh, "number") || "", 20);
+  if (P.issue) { txt([X(802), 40.6], P.issue.toUpperCase(), cap(30), { font: "Futura" }); if (P.issueDate) txt([X(802), 27.4], P.issueDate, cap(30), { font: "Futura" }); }
 }
 function viewportScales(doc, sh) {
   const s = [...new Set((doc.argValue(sh, "viewports") || []).map(vp => doc.element(vp.view.ref)).filter(v => v && doc.typeOf(v) !== "Schedule").map(v => "1:" + (F.int(v, "scale") || 100)))];

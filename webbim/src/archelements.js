@@ -300,3 +300,34 @@ export function contoursFromDXF(text, unitless = "mm") {
   }
   return { contours: out, flat };
 }
+
+/** A roof's underside as a height anywhere under it, and the lines where it folds (so a wall attached to it can
+ *  put a corner of its top exactly there): the footprint roof's planes each less its thickness along the slope,
+ *  or the single plane. null outside the roof's footprint. */
+export function roofUnderside(doc, rf) {
+  const outer = F.json(rf, "boundary"); if (!Array.isArray(outer) || outer.length < 3) return null;
+  const z0 = levelZ(doc, rf, "level") + F.real(rf, "heightOffset"), th = F.real(rf, "thickness"), es = F.json(rf, "edgeSlopes") || [];
+  const O = ccwOf(outer);
+  if (es.length) {
+    const { regions, at } = roofPlanes(outer, es, z0, F.real(rf, "ridgeHeight"));
+    const under = p => { for (const r of regions) if (pointInPoly(p, r.poly)) return at(r.e, p) - th * Math.sqrt(1 + r.e.t * r.e.t); return null; };
+    return { under, polys: regions.map(r => r.poly), inside: p => pointInPoly(p, O) };
+  }
+  const pv = F.point(rf, "pivot"), a = F.real(rf, "pitch") * Math.PI / 180, dA = F.real(rf, "direction") * Math.PI / 180, d = [Math.cos(dA), Math.sin(dA)], k = Math.tan(a), tv = th / Math.cos(a);
+  return { under: p => (pointInPoly(p, O) ? z0 + k * ((p[0] - pv[0]) * d[0] + (p[1] - pv[1]) * d[1]) - tv : null), polys: [O], inside: p => pointInPoly(p, O) };
+}
+/** A wall's top profile under a roof: [distance along the wall, height above its base] at its ends and wherever
+ *  the roof folds over it; where the wall runs out from under the roof it keeps `fallback`. */
+export function attachedProfile(doc, rf, a, b, z0, fallback) {
+  const R = roofUnderside(doc, rf); if (!R) return null;
+  const d = sub(b, a), L = Math.hypot(d[0], d[1]); if (!L) return null;
+  const ts = new Set([0, 1]);
+  for (const poly of R.polys) for (let i = 0; i < poly.length; i++) {
+    const p = poly[i], q = poly[(i + 1) % poly.length], e = sub(q, p), den = d[0] * e[1] - d[1] * e[0]; if (Math.abs(den) < 1e-9) continue;
+    const w = sub(p, a), t = (w[0] * e[1] - w[1] * e[0]) / den, s = (w[0] * d[1] - w[1] * d[0]) / den;
+    if (t > 1e-6 && t < 1 - 1e-6 && s >= -1e-6 && s <= 1 + 1e-6) ts.add(Math.round(t * 1e6) / 1e6);
+  }
+  const prof = [...ts].sort((x, y) => x - y).map(t => { const p = [a[0] + d[0] * t, a[1] + d[1] * t], z = R.under(p) ?? R.under([p[0] + (t < 0.5 ? 1 : -1) * d[0] * 1e-4, p[1] + (t < 0.5 ? 1 : -1) * d[1] * 1e-4]);
+    return [Math.round(t * L * 10) / 10, z == null ? fallback : Math.max(1, Math.round((z - z0) * 10) / 10)]; });
+  return prof;
+}

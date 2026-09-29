@@ -18,7 +18,7 @@ import { findLoops, claimLoops, filterWallFaces, interiorPoint } from "./spaces.
 import { regionsOf, regionPaths, FINE, elementSegs, bridgeHoles } from "./bimsketch.js";
 import { placeMesh, meshBox, meshMeasure, levelsIn, weldTriangles } from "./massing.js";
 import { DIM_TYPES } from "./dimstyles.js";
-import { footprintRoofBody } from "./archelements.js";
+import { footprintRoofBody, attachedProfile } from "./archelements.js";
 import {
   PEN_ISO, PATTERNS, MATERIALS, PARAM_SPECS, CATEGORIES, FAMILIES, TYPES, TEXT_TYPES, SYMBOLS, VS_PRESENTATION, VS_CONSTRUCTION,
 } from "./library.js";
@@ -119,6 +119,8 @@ declare({ type: "Wall", guid: "wb-0101", category: "IfcWall", kind: "wall", idPr
     json("slope", "Inclination & top slope", { top: 0, lean: 0 }, { group: "Constraints" }),
     // Revit's Edit Profile for the top: [distance along the wall, height above the base] - a gable, steps
     json("topProfile", "Top profile", null, { group: "Constraints" }),
+    // Revit's Attach Top: the wall's top follows the underside of a roof above it (a gable end, a clerestory)
+    ref("attachTop", "Top attached to roof", ["roof"], { group: "Constraints" }),
   ],
   handles: (f, doc) => {
     const c = F.json(f, "centreline"), w = doc.plan(f);
@@ -141,10 +143,16 @@ BUILDERS.Wall = {
     if (!t.layers || !t.layers.length) throw new Error(`${t.name || t.id} has no layers`);
     const z0 = levelElev(doc, f) + F.real(f, "baseOffset");
     const top = F.reference(f, "topLevel");
-    const height = top ? levelElev(doc, f, "topLevel") + (F.real(f, "topOffset") || 0) - z0 : F.real(f, "height");
+    let height = top ? levelElev(doc, f, "topLevel") + (F.real(f, "topOffset") || 0) - z0 : F.real(f, "height");
+    let topProfile = F.json(f, "topProfile");
+    const roofTop = F.reference(f, "attachTop");
+    if (roofTop && F.json(f, "centreline").type === "line") {
+      const c = F.json(f, "centreline"), pr = attachedProfile(doc, roofTop, c.start, c.end, z0, height);
+      if (pr && pr.length >= 2) { topProfile = pr; height = Math.max(...pr.map(q => q[1])); }
+    }
     if (!(height > 0)) throw new Error(top ? `its top (${F.text(top, "name") || doc.idOf(top)} ${(F.real(f, "topOffset") || 0) >= 0 ? "+" : ""}${F.real(f, "topOffset") || 0}) is not above its base: ${Math.round(height)}mm` : `a wall ${height}mm high has nothing to draw`);
     const w = wallRecord({ id: doc.idOf(f), centreline: F.json(f, "centreline"), type: t, mounting: F.choice(f, "mounting"),
-      mountOffset: F.real(f, "mountOffset"), flipped: F.bool(f, "flipped"), z0, height, slope: F.json(f, "slope"), stats: doc.stats, zFloor: levelElev(doc, f) + ((F.json(f, "slope") || {}).pivotZ || 0), topProfile: F.json(f, "topProfile") });
+      mountOffset: F.real(f, "mountOffset"), flipped: F.bool(f, "flipped"), z0, height, slope: F.json(f, "slope"), stats: doc.stats, zFloor: levelElev(doc, f) + ((F.json(f, "slope") || {}).pivotZ || 0), topProfile });
     if (w.L < TOL) throw new Error("the centreline has no length");
     const len = w.L, thick = w.stack.T;
     // the face's area: under its top profile (a gable), or its length times its height
