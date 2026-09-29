@@ -1414,11 +1414,16 @@ function drawDatums(doc, ctx, B, v, G) {
     const den = d[0] * gd[1] - d[1] * gd[0]; if (Math.abs(den) < 1e-9) continue;
     const t = ((gl.start[0] - o[0]) * gd[1] - (gl.start[1] - o[1]) * gd[0]) / den;
     if (t < 0 || t > Lv) continue;
-    const gt = (doc.argValue(v, "overrides") || {}).__gridTop, top = gt != null ? gt : F.real(v, "top") + 600;
-    B.stroke([lineSeg([t, -300], [t, top])], { weight: penWeight(doc, "hairline", S), colour: "#000", dash: LINE_TYPES.centre }, "IfcGrid", doc.idOf(f));
+    const OV = doc.argValue(v, "overrides") || {}, gt = OV.__gridTop, top = gt != null ? gt : F.real(v, "top") + 600, bot = OV.__gridBottom != null ? OV.__gridBottom : -300;
+    // over the drawing (annotation): Revit's solid end under the head and its centre segment dashed, in its own colour
+    const AS = annotationStyle(doc), endL = AS.gridEnd * S, gw = penWeight(doc, "hairline", S);
+    if (endL > 0 && top - bot > 2 * endL) {
+      B.stroke([lineSeg([t, top - endL], [t, top])], { weight: gw, colour: "#000" }, "IfcGrid", doc.idOf(f));
+      B.stroke([lineSeg([t, bot], [t, top - endL])], { weight: gw, colour: AS.gridCentreColour || "#000", dash: LINE_TYPES.centre }, "IfcGrid", doc.idOf(f));
+    } else B.stroke([lineSeg([t, bot], [t, top])], { weight: gw, colour: "#000", dash: LINE_TYPES.centre }, "IfcGrid", doc.idOf(f));
     if ((F.choice(f, "ends") || "Both ends") !== "None") gridHead(doc, B, f, B.P([t, top]), [0, 1], { weight: penWeight(doc, "thin", S), colour: "#000" }, doc.idOf(f));
     // pickable along its line and by its bubble
-    B.hit(doc.idOf(f), [[t, -300], [t, top]], "curve");
+    B.hit(doc.idOf(f), [[t, bot], [t, top]], "curve");
     const hr = (F.real(f, "headSize") || 8) / 2, R_ = hr * S, bc = [t, top + hr * S];
     B.hit(doc.idOf(f), [[bc[0] - R_, bc[1] - R_], [bc[0] + R_, bc[1] - R_], [bc[0] + R_, bc[1] + R_], [bc[0] - R_, bc[1] + R_]]);
   }

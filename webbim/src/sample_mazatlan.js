@@ -141,7 +141,7 @@ export function buildMazatlanSample() {
     "T-MZ-REL-P": { family: "F-FLOOR", name: "Relleno 535 + relleno existente 394", mark: "RL1", layers: [{ function: "Structure", thickness: 535, material: "M-MZ-RELLENO" }, { function: "Substrate", thickness: 394, material: "M-MZ-TIERRA" }], coreStart: 0, coreEnd: 2 },
     "T-MZ-REL": { family: "F-FLOOR", name: "Relleno existente", mark: "RL2", layers: [{ function: "Structure", thickness: 387, material: "M-MZ-TIERRA" }], coreStart: 0, coreEnd: 1 },
     "T-MZ-REL-C": { family: "F-FLOOR", name: "Relleno existente (patio)", mark: "RL3", layers: [{ function: "Structure", thickness: 407, material: "M-MZ-TIERRA" }], coreStart: 0, coreEnd: 1 },
-    "T-MZ-TERRENO": { family: "F-FLOOR", name: "Terreno natural", mark: "TN1", layers: [{ function: "Structure", thickness: 1000, material: "M-MZ-TERRENO" }], coreStart: 0, coreEnd: 1 },
+    "T-MZ-TERRENO": { family: "F-FLOOR", name: "Terreno natural", mark: "TN1", layers: [{ function: "Structure", thickness: 400, material: "M-MZ-TERRENO" }], coreStart: 0, coreEnd: 1 },
     "T-MZ-BANQUETA": { family: "F-FLOOR", name: "Banqueta de concreto 150", mark: "BQ1", layers: [{ function: "Structure", thickness: 150, material: "M-CONC" }], coreStart: 0, coreEnd: 1 },
   });
 
@@ -299,7 +299,7 @@ export function buildMazatlanSample() {
   floor("FL-R-COCINA", "Relleno cocina", [[7546, 10228], [13253, 10228], [13253, 14292], [6001, 14292], [6001, 11439], [7546, 11439]], "T-MZ-REL", "L-PB2", -220);
   for (const [id, b] of [["HAB2", R(201, 5250, 4024, 9919)], ["SALA", R(8503, 3802, 13253, 10076)], ["PASILLO", R(201, 3802, 8503, 4852)], ["SUR", R(201, 200, 13253, 3502)]]) floor(`FL-R-${id}`, "Relleno", b, "T-MZ-REL", "L-PB2", -220);
   floor("FL-R-PATIOC", "Relleno patio central", R(4422, 5250, 8503, 10076), "T-MZ-REL-C", "L-PB2", -200);
-  floor("FL-TERRENO", "Terreno", R(-2300, -2300, 15500, 16500), "T-MZ-TERRENO", "L-BQ", 0, "Existing");
+  floor("FL-TERRENO", "Terreno", R(201, 200, 13253, 14292), "T-MZ-TERRENO", "L-BQ", 0, "Existing");
   // strip footings: the old walls' under the facades and party walls, the new ones' under the bearing walls
   const foot = (id, a, b, w, z0, z1) => { const d = [b[0] - a[0], b[1] - a[1]], L0 = Math.hypot(...d), n = [-d[1] / L0 * w / 2, d[0] / L0 * w / 2];
     add({ id, type: "Generic", name: "Cimiento", args: { boundary: [[a[0] + n[0], a[1] + n[1]], [b[0] + n[0], b[1] + n[1]], [b[0] - n[0], b[1] - n[1]], [a[0] - n[0], a[1] - n[1]]], level: { ref: "L-BN" }, baseOffset: z0, height: z1 - z0, ifcClass: "IfcFooting", material: "M-MZ-CIMIENTO", colour: "" }, params: { Phase: "New" } }); };
@@ -380,8 +380,10 @@ export function buildMazatlanSample() {
   plan("V-T", "PLANTA TECHO", "L-T", vr(2500, 1900, -2500, -2500), [-7700, -4700, 17600, 18800], "VS-MZ-PLAN2");
   // the street elevations: what stands on the facade line, seen square (the far clip keeps the rooms behind out),
   // cropped as the set crops them, level heads on the left, grids bubbled above
+  // where each view's grid lines stop below the ground, as the set draws them
+  const GRID_BOTTOM = { "V-E-GN": -1941, "V-E-MO": -1812, "V-S1": -2407, "V-S2": -1914, "V-S3": -1865, "V-S4": -1865, "V-S5": -1800, "V-S6": -2009 };
   const elev = (id, name, a, b, depth, crop, levelExtent, gridTop) => add({ id, type: "ElevationView", name, args: { line: line(a, b), depth, scale: 50, baseLevel: { ref: "L-BN" }, top: 7000, style: { ref: "VS-MZ-ELEV" }, detailLevel: "Medium",
-    clip: { rect: crop, visible: false, active: true, annotation: [95, 12, 15, 65] }, levelExtent, groundLine: false, overrides: { __gridTop: gridTop } } });
+    clip: { rect: crop, visible: false, active: true, annotation: [95, 12, 15, 65] }, levelExtent, groundLine: false, overrides: { __gridTop: gridTop, __gridBottom: GRID_BOTTOM[id] } } });
   // the elevation tags and the section flags where the set's plans draw them (the flag's base on the line)
   elev("V-E-GN", "ELEVACION GUILLERMO NELSON", [-2711, -4000], [-2711, 16024], 2800, [295, -1702, 17938, 4800], [-119, 17190], 5797);
   elev("V-E-MO", "ELEVACION SUR", [15000, -2654], [-1554, -2654], 2800, [900, -1500, 16000, 4800], [-1698, 16004], 6328);
@@ -389,14 +391,14 @@ export function buildMazatlanSample() {
   // its levels and grid bubbles where its sheet has them
   const sect = (id, name, a, b, depth, heads, crop, levelExtent, gridTop, hide) => add({ id, type: "SectionView", name, args: { line: line(a, b), depth, scale: 50, baseLevel: { ref: "L-BN" }, top: 7000, style: { ref: "VS-MZ-SEC" }, detailLevel: "Medium",
     clip: { rect: crop, visible: false, active: true, annotation: [95, 25, 20, 65] }, heads, levelExtent, groundLine: false,
-    overrides: Object.assign({ __gridTop: gridTop }, Object.fromEntries(hide.map(k => [k, { visible: false }]))) } });
+    overrides: Object.assign({ __gridTop: gridTop, __gridBottom: GRID_BOTTOM[id] }, Object.fromEntries(hide.map(k => [k, { visible: false }]))) } });
   const ALL = ["L-T", "L-LAF", "L-LAC", "L-LBC", "L-PA", "L-BN", "L-PB1", "L-H2", "L-PB2", "L-BE", "L-BQ"], only = (...ks) => ALL.filter(k => !ks.includes(k));
-  sect("V-S1", "Section 1", [1302, -4485], [1302, 16517], 12500, "End", [1500, -1700, 17300, 6700], [373, 18270], 6319, only("L-T", "L-PA", "L-PB1", "L-PB2", "L-BQ"));
-  sect("V-S2", "Section 2", [17213, 11012], [-4957, 11012], 3700, "End", [4300, -1700, 18800, 6700], [3333, 21003], 6342, only("L-T", "L-PA", "L-PB1"));
-  sect("V-S3", "Section 3", [6602, -4485], [6602, 16517], 7000, "End", [1500, -1700, 17300, 6700], [373, 18270], 7194, only("L-T", "L-PA", "L-PB1", "L-PB2"));
-  sect("V-S4", "Section 4", [5404, -4485], [5404, 16517], 8300, "End", [1500, -1700, 17300, 6700], [373, 18270], 7255, only("L-T", "L-PA", "L-PB1", "L-BE"));
-  sect("V-S5", "Section 5", [10006, 16532], [10006, -4513], 10300, "Start", [3900, -1700, 19300, 6700], [2642, 20290], 9234, only("L-T", "L-PA", "L-PB1", "L-PB2"));
-  sect("V-S6", "Section 6", [17128, 6016], [-5040, 6016], 8700, "End", [4400, -1700, 18900, 6700], [2677, 21024], 7902, only("L-T", "L-PA", "L-PB1", "L-PB2"));
+  sect("V-S1", "Section 1", [1302, -4485], [1302, 16517], 12500, "End", [1500, -1950, 17300, 6700], [373, 18270], 6319, only("L-T", "L-PA", "L-PB1", "L-PB2", "L-BQ"));
+  sect("V-S2", "Section 2", [17213, 11012], [-4957, 11012], 3700, "End", [4300, -1950, 18800, 6700], [3333, 21003], 6342, [...only("L-T", "L-PA", "L-PB1"), "FL-TERRENO", "FL-R-PATIO", "FL-R-DESC", "FL-R-COCINA"]);
+  sect("V-S3", "Section 3", [6602, -4485], [6602, 16517], 7000, "End", [1500, -1950, 17300, 6700], [373, 18270], 7194, only("L-T", "L-PA", "L-PB1", "L-PB2"));
+  sect("V-S4", "Section 4", [5404, -4485], [5404, 16517], 8300, "End", [1500, -1950, 17300, 6700], [373, 18270], 7255, only("L-T", "L-PA", "L-PB1", "L-BE"));
+  sect("V-S5", "Section 5", [10006, 16532], [10006, -4513], 10300, "Start", [3900, -1950, 19300, 6700], [2642, 20290], 9234, only("L-T", "L-PA", "L-PB1", "L-PB2"));
+  sect("V-S6", "Section 6", [17128, 6016], [-5040, 6016], 8700, "End", [4400, -1950, 18900, 6700], [2677, 21024], 7902, only("L-T", "L-PA", "L-PB1", "L-PB2"));
   const axo = (id, name, az, el, scale = 100) => add({ id, type: "View3D", name, args: { camera: { azimuth: az, elevation: el, target: [6700, 7200, 1500] }, scale, style: { ref: "VS-MZ" }, visualStyle: "Shaded" } });
   axo("V-3D-SO", "PERSPECTIVA SUR-OESTE", 225, 18); axo("V-3D-UB", "VISTA DE UBICACION", 225, 25, 250); axo("V-3D-SE", "AXO SUR-ESTE", 315, 30); axo("V-3D-SO2", "AXO SUR-OESTE", 225, 35); axo("V-3D-NE", "AXO NORTE-ESTE", 45, 35);
   add({ id: "SC-P", type: "Schedule", name: "Cuadro de puertas", args: { of: "IfcDoor", fields: ["Mark", "TypeMark", "Width", "Height"] } });
@@ -576,7 +578,7 @@ export function buildMazatlanSample() {
   const pdfS = mazatlanPdf();
   // Section 2 cuts the stair core: its stairs, doors and fittings as the set draws them there (the model's
   // stair is the plans' and 3D's)
-  ed.apply({ op: "set", id: "V-S2", key: "vg", value: { byCategory: { IfcStair: { visible: false } } } }, { regenerate: false });
+  for (const v of ["V-S2", "V-S3"]) ed.apply({ op: "set", id: v, key: "vg", value: { byCategory: { IfcStair: { visible: false } } } }, { regenerate: false });
   for (const v of ["V-S5", "V-S6"]) ed.apply({ op: "set", id: v, key: "style", value: { ref: "VS-MZ-SEC-SH" } }, { regenerate: false });
   secNotes("V-S1", pdfS.MZ_S1, 373); secNotes("V-S2", pdfS.MZ_S2, 3333); secNotes("V-S3", pdfS.MZ_S3, 373); secNotes("V-S4", pdfS.MZ_S4, 373);
   figure("EN-S1", "SY-ENT-WOMAN2", "V-S1", [8045, -713]);
@@ -597,9 +599,9 @@ export function buildMazatlanSample() {
   sheet("A201", "Elevacion Guillermo Nelson", [["V-E-GN", elevAt(80.28, 16024 - 14570, 107.06, [295, -1702, 17938, 4800]), { titleAt: [53.68, 50.88], titleLength: 123.7 }]]);
   sheet("A202", "Calle Melchor Ocampo", [["V-E-MO", elevAt(106.05, 1554, 104.15, [900, -1500, 16000, 4800]), { titleAt: [43.01, 43.35], titleLength: 91.1 }]]);
   // a section's viewport: from where its sheet puts a grid (s along the view) and the bench mark
-  const SEC = { 1: [73.55, 16517 - 14570, 93.65, [1500, -1700, 17300, 6700], [20.15, 43.26, 39.75]], 2: [79.08, 4957, 89.59, [4300, -1700, 18800, 6700], [19.98, 43.31, 39.33]],
-    3: [73.55, 16517 - 14570, 93.65, [1500, -1700, 17300, 6700], [19.98, 43.22, 39.71]], 4: [73.55, 16517 - 14570, 93.65, [1500, -1700, 17300, 6700], [20.06, 43.35, 38.28]],
-    5: [375.85, 14570 + 4513, 93.65, [3900, -1700, 19300, 6700], [20.02, 43.35, 44.5]], 6: [80.31, 5040, 89.59, [4400, -1700, 18900, 6700], [20.06, 43.26, 55.51]] };
+  const SEC = { 1: [73.55, 16517 - 14570, 93.65, [1500, -1950, 17300, 6700], [20.15, 43.26, 39.75]], 2: [79.08, 4957, 89.59, [4300, -1950, 18800, 6700], [19.98, 43.31, 39.33]],
+    3: [73.55, 16517 - 14570, 93.65, [1500, -1950, 17300, 6700], [19.98, 43.22, 39.71]], 4: [73.55, 16517 - 14570, 93.65, [1500, -1950, 17300, 6700], [20.06, 43.35, 38.28]],
+    5: [375.85, 14570 + 4513, 93.65, [3900, -1950, 19300, 6700], [20.02, 43.35, 44.5]], 6: [80.31, 5040, 89.59, [4400, -1950, 18900, 6700], [20.06, 43.26, 55.51]] };
   for (let i = 1; i <= 6; i++) { const [px, s0, pz, crop, [tx, ty, tl]] = SEC[i]; sheet(`A30${i}`, `Seccion 0${i}`, [[`V-S${i}`, elevAt(px, s0, pz, crop), { titleAt: [tx, ty], titleLength: tl }]]); }
   // the set's hand markup over four of its sheets, as it was scanned onto them
   const sketch = (n, rect, name = "Croquis a mano") => { const f = doc.element(`SH-${n}`), im = MZ_IMAGES[n]; ed.apply({ op: "set", id: `SH-${n}`, key: "images", value: [{ rect, url: im.url, w: im.w, h: im.h, blend: "multiply", name }] }, { regenerate: false }); };
