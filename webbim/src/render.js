@@ -106,13 +106,16 @@ function hatchLines(g, p, bb, X, Y, z) {
     const ks = corners.map(c => ((c[0] - orig[0]) * n[0] + (c[1] - orig[1]) * n[1]) / across);
     const k0 = Math.floor(Math.min(...ks)), k1 = Math.ceil(Math.max(...ks));
     if (k1 - k0 > 4000) continue;
-    const ts = corners.map(c => (c[0] - orig[0]) * d[0] + (c[1] - orig[1]) * d[1]);
-    const t0 = Math.min(...ts) - Math.abs(along) * (k1 - k0) - 10, t1 = Math.max(...ts) + Math.abs(along) * (k1 - k0) + 10;
+    // each row is shifted along itself by k × along: its own span over the box, not the whole stagger's
+    const ts = corners.map(c => (c[0] - orig[0]) * d[0] + (c[1] - orig[1]) * d[1]), tMin = Math.min(...ts) - 10, tMax = Math.max(...ts) + 10;
+    // a family packed tighter than a few pixels reads as tone, not lines: fade it so it keeps the paper's value
+    g.globalAlpha = Math.min(1, (across * z) / 4);
     const dashes = L.dashes && L.dashes.length ? L.dashes.map(x => x * s) : null;
     const period = dashes ? dashes.reduce((a, b) => a + Math.abs(b), 0) : 0;
     g.beginPath();
     for (let k = k0; k <= k1; k++) {
       const base = [orig[0] + n[0] * across * k + d[0] * along * k, orig[1] + n[1] * across * k + d[1] * along * k];
+      const t0 = tMin - along * k, t1 = tMax - along * k;
       if (!dashes) { const A = [base[0] + d[0] * t0, base[1] + d[1] * t0], B = [base[0] + d[0] * t1, base[1] + d[1] * t1]; g.moveTo(X(A[0]), Y(A[1])); g.lineTo(X(B[0]), Y(B[1])); continue; }
       let t = Math.floor(t0 / period) * period;
       let guard = 0;
