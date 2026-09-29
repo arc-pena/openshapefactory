@@ -16,7 +16,7 @@ const SRC = path.join(ROOT, "src");
 // Dependency order is the concatenation order: a module comes after everything it imports.
 const MODULES = [
   "fontdata.js", "geom2d.js", "expr.js", "units.js", "dimstyles.js", "ocaf.js", "entourage.js", "library.js", "sections.js", "sectionlib.js", "walls.js", "spaces.js", "joins.js", "dxf.js",
-  "cadsketch.js", "bimsketch.js", "massing.js", "archelements.js", "bim.js", "solids.js", "sun.js", "crop.js", "styles.js", "spacegraph.js", "ops.js", "props.js", "schedules.js", "scene.js", "hlr.js", "pdf.js", "render.js", "sample.js", "sample_rmuh.js", "sample_pavilion.js", "inflate.js", "mazatlan_pdf.js", "sample_mazatlan.js", "ifcsections.js", "ifcread.js", "ifcrecover.js", "ifcimport.js", "cadbridge.js", "acceptance.js",
+  "cadsketch.js", "bimsketch.js", "massing.js", "archelements.js", "bim.js", "solids.js", "sun.js", "crop.js", "styles.js", "spacegraph.js", "ops.js", "props.js", "schedules.js", "scene.js", "hlr.js", "pdf.js", "render.js", "sample.js", "sample_rmuh.js", "sample_pavilion.js", "inflate.js", "mazatlan_pdf.js", "sample_mazatlan.js", "sample_fha.js", "sample_schaeffer.js", "ifcsections.js", "ifcread.js", "ifcrecover.js", "ifcimport.js", "cadbridge.js", "acceptance.js",
   "ui_util.js", "sectionui.js", "scheduleui.js", "dimstyleui.js", "panel.js", "graph.js", "sketchui.js", "sgui.js", "canvas2d.js", "viewcube.js", "view3d.js", "app.js",
 ];
 const fail = msg => { console.error("build refused: " + msg); process.exit(1); };
