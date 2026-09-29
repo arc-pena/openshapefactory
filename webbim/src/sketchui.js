@@ -52,7 +52,7 @@ export class SketchSession {
     app.sketchOpts = this.opts;
     this.undoStack = []; this.redoStack = []; this.typed = "";
   }
-  get title() { return this.target.kind === "site" ? (this.target.id ? "Edit Site Boundary" : "Create Site Boundary") : this.target.kind === "repeat" ? (this.target.id ? "Edit Repeating Detail Path" : "Create Repeating Detail Path") : this.target.kind === "crop" ? "Edit Crop" : this.target.id ? "Edit Boundary" : this.target.kind === "region" ? "Create Filled Region Boundary" : "Create Floor Boundary"; }
+  get title() { return this.target.kind === "stair" ? "Create Stair: draw its flights" : this.target.kind === "roof" ? "Create Roof Footprint" : this.target.kind === "topo" ? "Create Toposurface Boundary" : this.target.kind === "site" ? (this.target.id ? "Edit Site Boundary" : "Create Site Boundary") : this.target.kind === "repeat" ? (this.target.id ? "Edit Repeating Detail Path" : "Create Repeating Detail Path") : this.target.kind === "crop" ? "Edit Crop" : this.target.id ? "Edit Boundary" : this.target.kind === "region" ? "Create Filled Region Boundary" : "Create Floor Boundary"; }
   say(msg, kind = "note") { this.app.say(msg, kind); }
   commit(next, msg) { this.undoStack.push(this.d); this.redoStack = []; this.d = next; if (msg) this.say(msg, "ok"); this.refresh(); }
   refresh() { this.view.draw(); this.app.renderOptions && this.app.renderOptions(); }
@@ -341,6 +341,20 @@ export class SketchSession {
 
   // ------------------------------------------------------------ finishing
   finish() {
+    if (this.target.kind === "stair") {
+      // each line drawn is a flight, first riser to last, in the order drawn; landings are made between them
+      const lines = this.d.elements.filter(x => x.type === "line");
+      if (!lines.length) { this.say("Stair: draw its flights as lines, bottom first", "error"); return false; }
+      const doc = this.app.doc, base = F.refId(this.view.view, "level"), z = id => ((doc.data(doc.element(id)) || {}).value) || 0;
+      const above = doc.elements().filter(g => doc.typeOf(g) === "Level" && base && z(doc.idOf(g)) > z(base) + 1).sort((a, b) => z(doc.idOf(a)) - z(doc.idOf(b)))[0];
+      const o = this.app.toolOpts, flights = lines.map(x => ({ from: x.a.map(v => Math.round(v)), to: x.b.map(v => Math.round(v)) }));
+      const res = this.app.apply({ op: "add", element: { type: "Stair", args: { baseLevel: base ? { ref: base } : null, topLevel: above ? { ref: doc.idOf(above) } : null, flights, width: o.stairWidth || 1000 } } });
+      if (!res.ok) { this.say(res.error, "error"); return false; }
+      this.app.endSketch(); this.app.select([res.id]);
+      const d = doc.data(doc.element(res.id)) || { props: {} };
+      this.say(`Stair ${res.id}: ${d.props.Risers ? d.props.Risers.v : "?"} risers of ${d.props["Riser height"] ? Math.round(d.props["Riser height"].v) : "?"} mm to ${above ? above.get("Name") : "3000 mm"}`, "ok");
+      return true;
+    }
     if (this.target.kind === "repeat") {
       // a repeating detail's path is open or closed, any curves: nothing to close
       if (!this.d.elements.length) { this.say(`${this.title}: sketch the path first`, "error"); return false; }
@@ -376,6 +390,22 @@ export class SketchSession {
       this.app.endSketch();
       const res = this.app.apply({ op: "set", id: cv.viewId, key: "clip", value: clip });
       if (res.ok) this.say(onlyRect ? "Crop region set" : `Crop region follows the sketch: ${sketch.elements.length} elements`, "ok");
+      return true;
+    }
+    if (this.target.kind === "roof") {
+      // a footprint roof: every edge sloped at the pitch asked (Properties: Edge slopes, null for a gable)
+      const o = this.app.toolOpts, level = F.refId(this.view.view, "level");
+      const res2 = this.app.apply({ op: "add", element: { type: "Roof", args: { boundary, level: level ? { ref: level } : null, heightOffset: o.roofOffset ?? 3000, thickness: 250, edgeSlopes: boundary.map(() => o.roofSlope ?? 30) } } });
+      if (!res2.ok) { this.say(res2.error, "error"); return false; }
+      this.app.endSketch(); this.app.select([res2.id]); this.say(`Roof ${res2.id}: its ridges, hips and valleys found from the footprint; set an edge's slope to null for a gable`, "ok");
+      return true;
+    }
+    if (this.target.kind === "topo") {
+      // a toposurface on this outline, level at the plan's level: its contours are then typed or imported
+      const level = F.refId(this.view.view, "level"), z = level ? ((doc.data(doc.element(level)) || {}).value || 0) : 0;
+      const res2 = this.app.apply({ op: "add", element: { type: "Toposurface", args: { boundary, points: boundary.map(p => [p[0], p[1], z]), base: z - 3000 } } });
+      if (!res2.ok) { this.say(res2.error, "error"); return false; }
+      this.app.endSketch(); this.app.select([res2.id]); this.say(`Toposurface ${res2.id}: add contours (Properties) or import them from a DXF`, "ok");
       return true;
     }
     if (this.target.kind === "region") {
@@ -537,7 +567,7 @@ export class SketchSession {
         h("label", {}, "Height offset ", h("input", { type: "text", value: fmtLen(this.app.toolOpts.floorOffset ?? 0), style: { width: "72px" }, onchange: e => { const v = this.len(e.target.value); if (v !== null) this.app.toolOpts.floorOffset = v; e.target.value = fmtLen(this.app.toolOpts.floorOffset ?? 0); }, onkeydown: e => e.stopPropagation() })));
     }
     const r = regionsOf(this.d);
-    if (this.target.kind === "repeat") kids.push(h("span", { class: "grow" }), h("span", { class: "muted" }, `${this.d.elements.length} path element${this.d.elements.length === 1 ? "" : "s"} · open or closed`),
+    if (this.target.kind === "stair" || this.target.kind === "repeat") kids.push(h("span", { class: "grow" }), h("span", { class: "muted" }, `${this.d.elements.length} path element${this.d.elements.length === 1 ? "" : "s"} · open or closed`),
       h("button", { class: "btn small", title: "Undo in the sketch (Ctrl+Z)", disabled: !this.undoStack.length, onclick: () => this.undo() }, "↶"),
       h("button", { class: "btn small primary", onclick: () => this.finish() }, "✓ Finish"), h("button", { class: "btn small", onclick: () => this.cancel() }, "✕ Cancel"));
     else kids.push(h("span", { class: "grow" }), h("span", { class: r.error ? "muted warn" : "muted" }, r.error ? (this.d.elements.length ? "open: " + r.error.replace(/^the boundary is /, "") : "draw a closed boundary") : `${r.regions.length} closed area${r.regions.length > 1 ? "s" : ""}${r.regions.some(x => x.holes.length) ? " with holes" : ""}`),

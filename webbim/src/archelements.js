@@ -133,7 +133,7 @@ export function roofPlanes(outer, edges, z0, ridgeHeight) {
     const out = [];
     for (const e of E) {
       // where e reaches, and there lower than every other plane that reaches there too
-      let pieces = [e.W.reduce((poly, w) => (poly.length ? tidy(clipHalf(poly, w)) : poly), O)].filter(ok);
+      let pieces = [e.W.reduce((poly, w) => (poly.length ? tidy(roofClipHalf(poly, w)) : poly), O)].filter(ok);
       for (const g of E) {
         if (g === e) continue;
         const next = [];
@@ -141,8 +141,8 @@ export function roofPlanes(outer, edges, z0, ridgeHeight) {
           // where g does not reach: outside the first of its limits, or inside it and outside the next, ...; where
           // it does, only the part under it
           let rest = P;
-          for (const w of g.W) { const outside = tidy(clipHalf(rest, p => -w(p))); if (ok(outside)) next.push(outside); rest = tidy(clipHalf(rest, w)); if (!ok(rest)) break; }
-          if (ok(rest)) { const lower = tidy(clipHalf(rest, p => at(g, p) - at(e, p))); if (ok(lower)) next.push(lower); }
+          for (const w of g.W) { const outside = tidy(roofClipHalf(rest, p => -w(p))); if (ok(outside)) next.push(outside); rest = tidy(roofClipHalf(rest, w)); if (!ok(rest)) break; }
+          if (ok(rest)) { const lower = tidy(roofClipHalf(rest, p => at(g, p) - at(e, p))); if (ok(lower)) next.push(lower); }
         }
         pieces = next;
       }
@@ -160,7 +160,7 @@ export function roofPlanes(outer, edges, z0, ridgeHeight) {
   const height = p => { let h = Infinity; for (const e of E) if (e.W.every(w => w(p) >= -1e-6)) h = Math.min(h, at(e, p)); return Number.isFinite(h) ? h : z0; };
   return { O, regions, at, height };
 }
-function clipHalf(poly, g) {
+function roofClipHalf(poly, g) {
   const out = [];
   for (let i = 0; i < poly.length; i++) {
     const p = poly[i], q = poly[(i + 1) % poly.length], gp = g(p), gq = g(q);
@@ -263,3 +263,40 @@ BUILDERS.Toposurface = {
       data: { value: area, kind: "Area", props: { "Projected area": AREA(area), Points: NUM(P.length), "Lowest point": LEN(Math.min(...zs)), "Highest point": LEN(Math.max(...zs)) } } };
   },
 };
+
+/** A survey's contour lines from an ASCII DXF: every polyline (LWPOLYLINE at its elevation, POLYLINE and its
+ *  vertices, 3D polylines at their vertices' heights) and LINE, at the height it is drawn at, scaled to mm by the
+ *  drawing's $INSUNITS (unitless is read as `unitless`). Lines drawn at no height are left out and counted. */
+export function contoursFromDXF(text, unitless = "mm") {
+  const L = String(text || "").split(/\r?\n/), pairs = [];
+  for (let i = 0; i + 1 < L.length; i += 2) pairs.push([parseInt(L[i], 10), L[i + 1].trim()]);
+  const UNITS = { 1: 25.4, 2: 304.8, 4: 1, 5: 10, 6: 1000 }, UNITLESS = { mm: 1, m: 1000, ft: 304.8, in: 25.4 };
+  let k = UNITLESS[unitless] || 1;
+  for (let i = 0; i + 1 < pairs.length; i++) if (pairs[i][0] === 9 && pairs[i][1] === "$INSUNITS" && UNITS[parseInt(pairs[i + 1][1], 10)]) k = UNITS[parseInt(pairs[i + 1][1], 10)];
+  const ents = []; let cur = null;
+  for (const [c, v] of pairs) { if (c === 0) { cur = { type: v, g: [] }; ents.push(cur); } else if (cur) cur.g.push([c, v]); }
+  const num = (e, code, def = 0) => { const q = e.g.find(x => x[0] === code); return q ? parseFloat(q[1]) : def; };
+  const out = []; let flat = 0;
+  for (let i = 0; i < ents.length; i++) {
+    const e = ents[i];
+    if (e.type === "LWPOLYLINE") {
+      const pts = []; for (const [c, v] of e.g) { if (c === 10) pts.push([parseFloat(v) * k, 0]); else if (c === 20 && pts.length) pts[pts.length - 1][1] = parseFloat(v) * k; }
+      const z = num(e, 38) * k; if (num(e, 70) & 1) pts.push(pts[0]);
+      if (pts.length >= 2) { if (z === 0) flat++; out.push({ z, points: pts }); }
+    } else if (e.type === "POLYLINE") {
+      const vs = []; let j = i + 1; for (; j < ents.length && ents[j].type === "VERTEX"; j++) vs.push(ents[j]);
+      const pts = vs.map(v => [num(v, 10) * k, num(v, 20) * k, num(v, 30) * k]), z0 = num(e, 30) * k;
+      if (pts.length >= 2) {
+        const zs = pts.map(p => p[2]), same = Math.max(...zs) - Math.min(...zs) < 1;
+        const z = same ? (zs[0] || z0) : null;
+        if (z !== null) { if (!z) flat++; out.push({ z, points: pts.map(p => [p[0], p[1]]) }); }
+        else out.push(...pts.map(p => ({ z: p[2], points: [[p[0], p[1]]] })));      // a 3D breakline: its points at their heights
+      }
+      i = j;
+    } else if (e.type === "LINE") {
+      const a = [num(e, 10) * k, num(e, 20) * k, num(e, 30) * k], b = [num(e, 11) * k, num(e, 21) * k, num(e, 31) * k];
+      if (Math.abs(a[2] - b[2]) < 1) { if (!a[2]) flat++; out.push({ z: a[2], points: [[a[0], a[1]], [b[0], b[1]]] }); }
+    }
+  }
+  return { contours: out, flat };
+}

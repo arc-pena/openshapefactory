@@ -7,11 +7,12 @@
 
 import { h, clear, icon, dialog, saveFile, store, forget, loadDrawingFont, fmtLen } from "./ui_util.js";
 import { SketchSession } from "./sketchui.js";
-import { LENGTH_UNITS, setLengthUnit, fmtLength, parseLength } from "./units.js";
+import { LENGTH_UNITS, setLengthUnit, fmtLength, parseLength, isImperial } from "./units.js";
 import { formatValue } from "./expr.js";
 import { fromPolygon } from "./bimsketch.js";
 import { Editor } from "./ops.js";
 import { buildMazatlanSample } from "./sample_mazatlan.js";
+import { contoursFromDXF } from "./archelements.js";
 import { inflateBase64 } from "./inflate.js";
 import { openDocument, newDocument, sheetSize } from "./bim.js";
 import { F, CATALOGUE } from "./ocaf.js";
@@ -192,6 +193,9 @@ const COMMANDS = {
   opening: tool("opening", "Wall Opening", "opening", "OP", "Click a wall: an opening with nothing in it."),
   column: tool("column", "Column", "column", "CL", "Click to place (plan or 3D)."),
   floor: { label: "Floor", icon: "floor", key: "SB", hint: "Sketch the floor's boundary: lines, arcs, circles, splines, Pick Walls. Closed loops inside are holes. Finish ✓ makes the floor; its layers hang down from the level.", run: () => startFloorSketch(), active: () => !!(app.sketch && app.sketch.target.kind === "floor") },
+  stair: { label: "Stair", icon: "stair", key: "ST", hint: "Draw each flight as a line, bottom first (first riser to last): landings join them. It rises to the next level; its risers are counted and numbered.", run: () => startKindSketch("stair", "a stair") },
+  roof: { label: "Roof", icon: "roof", key: "RO", hint: "Sketch the roof's footprint (with its overhang): every edge slopes; set an edge to null for a gable, or a ridge height. Ridges, hips and valleys are found.", run: () => startKindSketch("roof", "a roof") },
+  topo: { label: "Toposurface", icon: "topo", key: "TS", hint: "Sketch the ground's boundary, then give it contours (Properties) - or File › Import Contours (DXF) for a survey's contour lines at their heights", run: () => startKindSketch("topo", "a toposurface") },
   editboundary: { label: "Edit Boundary", icon: "skline", hint: "Back into the floor's sketch", run: () => { const id = [...app.selection].find(i => app.doc.element(i) && app.doc.typeOf(app.doc.element(i)) === "Floor"); if (id) app.editBoundary(id); else app.say("select a floor", "note"); } },
   beam: tool("beam", "Beam", "beam", "BM", "Two clicks: the beam's axis. Its top sits at the level plus the top offset."),
   grid: tool("grid", "Grid", "grid", "GR", "Two clicks."),
@@ -285,7 +289,9 @@ app.run = id => { const c = COMMANDS[id]; if (!c) return; closeMenus(); c.run();
 const big = id => ({ id, size: "big" }), small = id => ({ id, size: "small" });
 const RIBBON = [
   { tab: "Architecture", panels: [
-    { title: "Build", items: [big("wall"), big("door"), big("window"), big("column"), big("floor")] },
+    { title: "Build", items: [big("wall"), big("door"), big("window"), big("column"), big("floor"), big("roof")] },
+    { title: "Circulation", items: [big("stair")] },
+    { title: "Site", items: [big("topo")] },
     { title: "Opening", items: [big("opening")] },
     { title: "Room & Area", items: [big("space"), small("sep"), small("schedule")] },
     { title: "Program", items: [big("spacegraph"), small("sgimport"), small("sgbrief")] },
@@ -416,6 +422,10 @@ function planViewForSketch(levelId) {
   const pv = app.doc.elements().find(f => app.doc.typeOf(f) === "PlanView" && (!levelId || F.refId(f, "level") === levelId));
   if (!pv) return null;
   app.openView(app.doc.idOf(pv)); return app.views.get(app.doc.idOf(pv));
+}
+function startKindSketch(kind, what) {
+  const v = planViewForSketch(null); if (!v) return app.say(`open a floor plan to sketch ${what} in`, "error");
+  app.startSketch(v, { kind, id: null }, null);
 }
 function startFloorSketch() {
   const v = planViewForSketch(null); if (!v) return app.say("open a floor plan to sketch a floor in", "error");
@@ -583,7 +593,7 @@ function fileMenu(anchor) {
   const r = anchor.getBoundingClientRect();
   menuAt(r.left, r.bottom, [
     { label: "New", icon: "sheet", run: () => newEmpty() }, { label: "Open…", icon: "open", run: () => openFile() }, { label: "Save", icon: "save", run: () => saveModel() },
-    "-", { label: "Export…", icon: "exportI", run: () => exportDialog() }, { label: "Import IFC…", icon: "importI", run: () => importIfcFile() }, { label: "Import DXF Symbol…", icon: "importI", run: () => importDXF() },
+    "-", { label: "Export…", icon: "exportI", run: () => exportDialog() }, { label: "Import IFC…", icon: "importI", run: () => importIfcFile() }, { label: "Import DXF Symbol…", icon: "importI", run: () => importDXF() }, { label: "Import Contours (DXF)…", icon: "topo", run: () => importContours() },
     "-", { label: "Project Information…", icon: "info", run: () => projectInfo() }, { label: "Casa Mazatlan (INAH drawing set)", icon: "house", run: () => { forget("draft-v6"); forget("tabs"); setDocument(buildMazatlanSample(), { msg: "Casa Mazatlan: the INAH set rebuilt as a model - existing facades, courtyard, studio, roof terrace; 17 A3 sheets A001-A904 in the set's title band", kind: "ok" }); app.openView("SH-A101"); } },
   ]);
 }
@@ -1069,6 +1079,20 @@ function importCAD() {
       dialog("This DXF does not say its units", h("div", { style: { display: "grid", gap: "8px" } }, h("div", {}, "$INSUNITS is missing or 0. Which unit was it drawn in?"), sel),
         [{ label: "Cancel", run: () => true }, { label: "Import", primary: true, run: () => { place(readDXF(text, { askUnits: () => sel.value })); return true; } }]);
     } else place(r);
+  });
+  inp.click();
+}
+/** A survey's contour lines (a DXF whose polylines sit at their heights) made into a toposurface on its hull. */
+function importContours() {
+  const inp = h("input", { type: "file", accept: ".dxf", hidden: true }); document.body.append(inp);
+  inp.addEventListener("change", async () => {
+    const file = inp.files[0]; inp.remove(); if (!file) return;
+    const r = contoursFromDXF(await file.text(), app.doc.meta.displayUnits && isImperial(app.doc.meta.displayUnits) ? "ft" : "mm");
+    if (!r.contours.length) return app.say(`${file.name}: no polylines or lines at a height were found`, "error");
+    const zs = r.contours.map(c => c.z), res = app.apply({ op: "add", element: { type: "Toposurface", name: file.name.replace(/\.dxf$/i, ""), args: { contours: r.contours, base: Math.min(...zs) - 3000 } } });
+    if (!res.ok) return app.say(res.error, "error");
+    app.select([res.id]);
+    app.say(`Toposurface ${res.id}: ${r.contours.length} contours from ${Math.round(Math.min(...zs))} to ${Math.round(Math.max(...zs))} mm${r.flat ? ` (${r.flat} at height 0 - check they were drawn at their heights)` : ""}`, "ok");
   });
   inp.click();
 }
