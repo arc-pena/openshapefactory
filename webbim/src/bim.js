@@ -639,6 +639,48 @@ const mepArgs = (defW) => [ json("path", "Path (x, y, height above level)", [[0,
   choice("shape", "Shape", MEP_SHAPES, 0, { group: "Dimensions" }), real("width", "Diameter or width", defW, 5, 5000, 1, "mm", { group: "Dimensions" }),
   real("height", "Height (rectangular)", defW, 5, 5000, 1, "mm", { group: "Dimensions" }), real("thickness", "Wall thickness", 0, 0, 500, 0.5, "mm", { group: "Dimensions" }),
   text("system", "System", "", { group: "Mechanical" }), text("colour", "Colour", "", { group: "Graphics" }) ];
+//! A breeze-block balustrade (celosía): individual bricks laid in courses with open joints, the courses
+//! offset half a brick (running) or stacked, along a line on a level. Each brick is a box in one mesh -
+//! drawn cut in plan, seen in elevation and 3D, sliced in section - and the whole is one element.
+declare({ type: "Lattice", guid: "wb-0605", category: "IfcRailing", kind: "lattice", idPrefix: "CE",
+  summary: "A brick lattice (celosía, breeze-block balustrade): courses of bricks with open joints along a line - running or stacked bond - to a height.",
+  args: [ curve2d("line", "Line", ["line"], { type: "line", start: [0, 0], end: [3000, 0] }), ref("level", "Level", ["level"]),
+          real("baseOffset", "Base offset", 0, -10000, 10000, 1, "mm", { group: "Constraints" }), real("height", "Height", 1000, 100, 10000, 1, "mm", { group: "Dimensions" }),
+          real("brickLength", "Brick length", 240, 50, 1000, 1, "mm", { group: "Bricks" }), real("brickHeight", "Brick height (course)", 60, 20, 500, 1, "mm", { group: "Bricks" }),
+          real("brickDepth", "Brick depth (wall thickness)", 120, 30, 600, 1, "mm", { group: "Bricks" }), real("gap", "Open joint", 120, 0, 1000, 1, "mm", { group: "Bricks" }),
+          real("bed", "Bed joint", 10, 0, 200, 1, "mm", { group: "Bricks" }),
+          choice("bond", "Bond", ["Running (half brick)", "Stack", "Alternate solid course"], 0, { group: "Bricks" }),
+          text("material", "Material", "M-BRICK", { group: "Materials" }), text("colour", "Colour", "", { group: "Graphics" }) ] });
+BUILDERS.Lattice = { build: (f, doc) => {
+  const c = F.json(f, "line"); if (!c || c.type !== "line") throw new Error("a lattice runs along a straight line");
+  const L = dist(c.start, c.end); if (L < 1) throw new Error("the lattice line has no length");
+  const d = normalise(sub(c.end, c.start)), n = perp(d);
+  const z0 = levelElev(doc, f, "level") + F.real(f, "baseOffset"), H = F.real(f, "height");
+  const bl = F.real(f, "brickLength"), bh = F.real(f, "brickHeight"), bt = F.real(f, "brickDepth"), gap = F.real(f, "gap"), bed = F.real(f, "bed");
+  const bond = F.choice(f, "bond") || "Running (half brick)", pitch = bl + gap, course = bh + bed;
+  const pos = [], idx = [], bricks = [];
+  const box = (u0, u1, zb, zt) => {
+    const P = (u, s) => add(c.start, add(mul(d, u), mul(n, s))), b = pos.length / 3;
+    for (const [u, sd] of [[u0, -bt / 2], [u1, -bt / 2], [u1, bt / 2], [u0, bt / 2]]) { const q = P(u, sd); pos.push(q[0], q[1], zb); }
+    for (const [u, sd] of [[u0, -bt / 2], [u1, -bt / 2], [u1, bt / 2], [u0, bt / 2]]) { const q = P(u, sd); pos.push(q[0], q[1], zt); }
+    for (const t of [[0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7], [0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5], [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7]]) idx.push(b + t[0], b + t[1], b + t[2]);
+    bricks.push({ u0, u1, z0: zb, z1: zt });
+  };
+  const nCourses = Math.max(1, Math.floor((H + bed) / course));
+  for (let k = 0; k < nCourses; k++) {
+    const zb = z0 + k * course, zt = zb + bh;
+    const solid = bond === "Alternate solid course" && k % 2 === 0;
+    const off = bond === "Running (half brick)" && k % 2 === 1 ? pitch / 2 : 0;
+    if (solid) { for (let u = 0; u < L - 1e-6; u += bl + bed) box(u, Math.min(L, u + bl), zb, zt); continue; }
+    for (let u = off - pitch; u < L - 1e-6; u += pitch) { const a = Math.max(0, u), b = Math.min(L, u + bl); if (b - a > 20) box(a, b, zb, zt); }
+  }
+  const zt = z0 + nCourses * course - bed;
+  const foot = [add(c.start, mul(n, -bt / 2)), add(c.end, mul(n, -bt / 2)), add(c.end, mul(n, bt / 2)), add(c.start, mul(n, bt / 2))];
+  const material = F.text(f, "material") || "M-BRICK", colour = F.text(f, "colour") || ((doc.lib.materials[material] || {}).shading || {}).colour || "#b5613d";
+  const mesh = { positions: pos, index: idx };
+  return { plan: { path: polyPath(foot), foot, z0, z1: zt, material, mesh, mesh3d: [{ positions: pos, index: idx, colour }], bricks, frame: { start: c.start, d, n, bt }, parts: [] },
+    data: { value: L, kind: "Length", props: { Length: { kind: "Length", v: L }, Height: { kind: "Length", v: zt - z0 }, Bricks: { kind: "Number", v: bricks.length }, Courses: { kind: "Number", v: nCourses } } } };
+} };
 declare({ type: "Duct", guid: "wb-0601", category: "IfcDuctSegment", kind: "duct", idPrefix: "DU", summary: "A duct run: a path through space and a round or rectangular section.", args: mepArgs(300) });
 declare({ type: "Pipe", guid: "wb-0602", category: "IfcPipeSegment", kind: "pipe", idPrefix: "PI", summary: "A pipe run: a path through space and a round section.", args: mepArgs(50) });
 /** One straight run's body: a tube (24 sides) or a box, hollow when it has a wall thickness. */
@@ -793,13 +835,19 @@ function viewLineHandles(f) {
     { key: "width start", at: add(c.start, mul(look, depth)), constraint: { axis: d, origin: c.start }, writes: "line.start" },
     { key: "width end", at: add(c.end, mul(look, depth)), constraint: { axis: d, origin: c.end }, writes: "line.end" } ];
 }
+declare({ type: "DraftingView", guid: "wb-0506", category: "View", kind: "view", idPrefix: "V-D",
+  summary: "A 2D view with no model in it (Revit's drafting view): detail lines, filled regions, text, symbols and imported drawings - a surveyed existing building, a detail, the general notes.",
+  args: [ integer("scale", "Scale 1:", 50, 1, 5000, { group: "Graphics" }), ref("style", "View style", ["viewStyle"], { group: "Graphics" }),
+          json("clip", "Crop region", { rect: null, visible: false, active: false }, { group: "Extents" }), json("vg", "Visibility/Graphics", {}, { group: "Graphics" }) ] });
+BUILDERS.DraftingView = { build: () => ({ data: {} }) };
 declare({ type: "ElevationView", guid: "wb-0502", category: "View", kind: "view", idPrefix: "V-E",
   summary: "A line in plan: the view plane is the line extruded in z, looking along its right-hand normal.",
   args: [ curve2d("line", "View line", ["line"], { type: "line", start: [0, -3000], end: [12000, -3000] }), real("depth", "Depth", 15000, 1, 1e6, 1),
           integer("scale", "Scale 1:", 100, 1, 5000, { group: "Graphics" }), ref("baseLevel", "Base level", ["level"]), real("top", "Top", 6000, 1, 1e5, 1),
           ref("style", "View style", ["viewStyle"], { group: "Graphics" }), choice("detailLevel", "Detail level", ["Coarse", "Medium", "Fine"], 0, { group: "Graphics" }),
           json("clip", "Crop region", { rect: null, visible: false, active: false }, { group: "Extents" }),
-          json("vg", "Visibility/Graphics", {}, { group: "Graphics" }) ],
+          json("vg", "Visibility/Graphics", {}, { group: "Graphics" }) ,
+          json("levelExtent", "Level lines (from, to along the view)", null, { group: "Graphics" }), bool("groundLine", "Ground line", true, { group: "Graphics" })],
   handles: viewLineHandles });
 BUILDERS.ElevationView = { build: () => ({ data: {} }) };
 declare({ type: "SectionView", guid: "wb-0505", category: "View", kind: "view", idPrefix: "V-S",
@@ -808,7 +856,9 @@ declare({ type: "SectionView", guid: "wb-0505", category: "View", kind: "view", 
           integer("scale", "Scale 1:", 50, 1, 5000, { group: "Graphics" }), ref("baseLevel", "Base level", ["level"]), real("top", "Top", 6000, 1, 1e5, 1),
           ref("style", "View style", ["viewStyle"], { group: "Graphics" }), choice("detailLevel", "Detail level", ["Coarse", "Medium", "Fine"], 2, { group: "Graphics" }),
           json("clip", "Crop region", { rect: null, visible: false, active: false }, { group: "Extents" }),
-          json("vg", "Visibility/Graphics", {}, { group: "Graphics" }) ],
+          json("vg", "Visibility/Graphics", {}, { group: "Graphics" }),
+          choice("heads", "Heads at", ["Both ends", "Start", "End"], 0, { group: "Graphics" }) ,
+          json("levelExtent", "Level lines (from, to along the view)", null, { group: "Graphics" }), bool("groundLine", "Ground line", true, { group: "Graphics" })],
   handles: viewLineHandles });
 BUILDERS.SectionView = { build: () => ({ data: {} }) };
 
@@ -867,7 +917,8 @@ declare({ type: "Text", guid: "wb-0701", category: "Annotation", kind: "text", i
   summary: "Text in paper millimetres, placed in model coordinates. A leader's target stays put when the text moves.",
   args: [ text("content", "Content", "Note"), point2d("position", "Position", [0, 0]), real("rotation", "Rotation", 0, -360, 360, 1, "°"),
           ref("textType", "Text type", ["textType"], { view: true }), real("wrapWidth", "Wrap width (paper mm)", 60, 1, 1000, 1, ""),
-          json("leaders", "Leaders", []), ref("view", "View", ["view"], { view: true }) ],
+          json("leaders", "Leaders", []), ref("view", "View", ["view"], { view: true }),
+          choice("align", "Alignment", ["left", "centre", "right"], 0, { group: "Graphics" }) ],
   handles: (f) => {
     const hs = [{ key: "move", at: F.point(f, "position"), constraint: "free2d", writes: "position" }];
     (F.json(f, "leaders") || []).forEach((l, i) => {
@@ -878,6 +929,13 @@ declare({ type: "Text", guid: "wb-0701", category: "Annotation", kind: "text", i
   } });
 BUILDERS.Text = { build: () => ({ data: {} }) };
 
+declare({ type: "SpotElevation", guid: "wb-0708", category: "Annotation", kind: "detail", idPrefix: "NP",
+  summary: "A spot elevation (NPT): the height of the floor at its point, read from the model and written over a crosshair; it follows the floor when the floor moves.",
+  args: [ point2d("position", "Position", [0, 0]), ref("view", "View", ["view"], { view: true }), text("prefix", "Prefix", "NPT ", { group: "Text" }),
+          choice("units", "Units", ["m", "mm"], 0, { group: "Text" }), real("textSize", "Text size (paper mm)", 1.0, 0.3, 20, 0.1, "", { group: "Graphics" }) ],
+  handles: (f) => [{ key: "move", at: F.point(f, "position"), constraint: "free2d", writes: "position" }] });
+BUILDERS.SpotElevation = { build: () => ({ data: {} }) };
+
 declare({ type: "DetailLine", guid: "wb-0702", category: "Detail", kind: "detail", idPrefix: "DL",
   summary: "A line that lives in one view. No 3D; appears nowhere else.",
   args: [ curve2d("curve", "Curve", ["line", "arc", "spline"], { type: "line", start: [0, 0], end: [1000, 0] }), choice("pen", "Pen", ["hairline", "thin", "medium", "heavy", "bold"], 1), ref("view", "View", ["view"], { view: true }),
@@ -887,7 +945,8 @@ BUILDERS.DetailLine = { build: () => ({ data: {} }) };
 declare({ type: "FilledRegion", guid: "wb-0703", category: "Detail", kind: "detail", idPrefix: "FR",
   summary: "A hatched region that lives in one view.",
   args: [ json("boundary", "Boundary", [[0, 0], [1000, 0], [1000, 1000], [0, 1000]]), text("pattern", "Pattern", "P-DIAG"), ref("view", "View", ["view"], { view: true }),
-          json("sketch", "Boundary sketch", null) ] });
+          json("sketch", "Boundary sketch", null),
+          text("background", "Background colour", "", { group: "Graphics" }), text("patternColour", "Pattern colour", "", { group: "Graphics" }), text("lineColour", "Boundary line colour (none: no line)", "", { group: "Graphics" }) ] });
 /** A filled region's areas: its sketch's loops and holes (as a floor's), or the plain boundary. */
 export function regionAreas(f) {
   const sk = F.json(f, "sketch");

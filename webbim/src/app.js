@@ -35,7 +35,7 @@ import { categoryOf, lockedKey, SCHEMES, STYLE_SETTINGS, blankStyle } from "./st
 import { bimToCad, cadEditsToOps, cadDiff, mergeModel } from "./cadbridge.js";
 import { importIfc } from "./ifcimport.js";
 
-const VIEW_TYPES = ["PlanView", "ElevationView", "SectionView", "View3D", "Schedule", "Sheet"];
+const VIEW_TYPES = ["PlanView", "ElevationView", "SectionView", "View3D", "Schedule", "Sheet", "DraftingView"];
 const PLACE_TOOLS = new Set(["section", "floor", "beam", "wall", "opening", "door", "window", "column", "grid", "text", "dim", "space", "elev", "sep", "mtag"]);
 
 const app = {
@@ -130,7 +130,7 @@ app.placeOpening = (tool, wallId, u, sillAt) => {
 };
 const firstOf = type => { const f = app.doc.elements().find(g => app.doc.typeOf(g) === type); return f ? app.doc.idOf(f) : null; };
 const activeType = () => { const v = app.activeView && app.doc.element(app.activeView); return v ? app.doc.typeOf(v) : app.activeView; };
-const canUseTool = k => { const t = activeType(); if (t === "PlanView") return true; if (t === "ElevationView" || t === "SectionView") return ["select", "dim", "mtag", "move", "copy", "door", "window", "opening"].includes(k); if (t === "View3D") return ["wall", "door", "window", "opening", "column", "select"].includes(k); return k === "select"; };
+const canUseTool = k => { const t = activeType(); if (t === "PlanView") return true; if (t === "ElevationView" || t === "SectionView") return ["select", "dim", "mtag", "move", "copy", "door", "window", "opening"].includes(k); if (t === "View3D") return ["wall", "door", "window", "opening", "column", "select"].includes(k); if (t === "DraftingView") return ["select", "text", "move", "copy", "rotate", "mirror"].includes(k); return k === "select"; };
 
 // ---------------------------------------------------------------- documents
 /** There is always a {3D} view: the house button must have somewhere to go. */
@@ -440,7 +440,7 @@ function startRegionSketch() {
 app.stepInto = (id, view) => {
   const doc = app.doc, f = doc.element(id); if (!f) return;
   const t = doc.typeOf(f);
-  if (["ElevationView", "SectionView", "PlanView", "View3D", "Schedule", "Sheet"].includes(t)) return app.openView(id);
+  if (["ElevationView", "SectionView", "PlanView", "View3D", "Schedule", "Sheet", "DraftingView"].includes(t)) return app.openView(id);
   if (t === "Floor") return app.editBoundary(id);
   if (t === "SiteBoundary") {
     const vv = view && view.kind === "PlanView" ? view : app.views.get(app.activeView); if (!vv || vv.kind !== "PlanView") return;
@@ -479,7 +479,7 @@ function renderQAT() {
   const q = clear(document.getElementById("qat"));
   const b = (id, ic) => h("button", { class: "qbtn", title: COMMANDS[id].label + (COMMANDS[id].key ? ` (${COMMANDS[id].key})` : ""), "aria-label": COMMANDS[id].label, disabled: (id === "undo" && !app.editor.undoStack.length) || (id === "redo" && !app.editor.redoStack.length), onclick: () => app.run(id) }, icon(ic || COMMANDS[id].icon, 16));
   const v = app.activeView && app.doc.element(app.activeView);
-  const viewName = v ? `${{ PlanView: "Floor Plan", ElevationView: "Elevation", SectionView: "Section", View3D: "3D View", Schedule: "Schedule", Sheet: "Sheet" }[app.doc.typeOf(v)]}: ${v.get("Name")}` : app.activeView === "__graph" ? "Node Graph" : app.activeView === "__spacegraph" ? "Brief Analysis" : app.activeView === "__tree" ? "Feature Tree" : app.activeView === "__diag" ? "Acceptance Tests" : "";
+  const viewName = v ? `${{ PlanView: "Floor Plan", ElevationView: "Elevation", SectionView: "Section", View3D: "3D View", Schedule: "Schedule", Sheet: "Sheet", DraftingView: "Drafting View" }[app.doc.typeOf(v)]}: ${v.get("Name")}` : app.activeView === "__graph" ? "Node Graph" : app.activeView === "__spacegraph" ? "Brief Analysis" : app.activeView === "__tree" ? "Feature Tree" : app.activeView === "__diag" ? "Acceptance Tests" : "";
   q.append(
     h("button", { class: "qbtn mobile-only", "aria-label": "Palettes", onclick: () => document.body.classList.toggle("show-left") }, icon("menu", 16)),
     h("div", { class: "logo", title: "Web BIM" }, "B"),
@@ -711,6 +711,7 @@ function renderBrowser(body) {
     node("3D Views", byType("View3D").map(f => viewRow(f, "view3d"))),
     node("Elevations (Building Elevation)", byType("ElevationView").map(f => viewRow(f, "elevview"))),
     node("Sections (Building Section)", byType("SectionView").map(f => viewRow(f, "section"))),
+    node("Drafting Views", byType("DraftingView").map(f => viewRow(f, "skrect"))),
   ], { head: true }));
   tree.append(node("Schedules/Quantities (all)", byType("Schedule").map(f => viewRow(f, "schedule")), { head: true }));
   tree.append(node("Sheets (all)", byType("Sheet").sort((a, b) => String(doc.argValue(a, "number")).localeCompare(doc.argValue(b, "number"))).map(f => { const id = doc.idOf(f); return node(`${doc.argValue(f, "number")} - ${doc.argValue(f, "sheetName")}`, null, { key: "view:" + id, ic: "sheet", sel: app.selection.has(id), active: app.activeView === id, onclick: () => app.select([id]), ondbl: () => app.openView(id) }); }), { head: true }));
@@ -790,7 +791,7 @@ function renderMain() {
   const doc = app.doc;
   const tabs = h("div", { class: "dtabs", role: "tablist" }, app.tabs.map(t => {
     const f = doc.element(t), label = t === "__graph" ? "Node Graph" : t === "__spacegraph" ? "Brief Analysis" : t === "__diag" ? "Acceptance Tests" : t === "__tree" ? "Feature Tree" : f ? f.get("Name") : t;
-    const ic = t === "__graph" ? "graph" : t === "__spacegraph" ? "bubbles" : t === "__diag" ? "tests" : t === "__tree" ? "tree" : { PlanView: "plan", View3D: "view3d", ElevationView: "elevview", SectionView: "section", Schedule: "schedule", Sheet: "sheet" }[f && doc.typeOf(f)];
+    const ic = t === "__graph" ? "graph" : t === "__spacegraph" ? "bubbles" : t === "__diag" ? "tests" : t === "__tree" ? "tree" : { PlanView: "plan", View3D: "view3d", ElevationView: "elevview", SectionView: "section", Schedule: "schedule", Sheet: "sheet", DraftingView: "skrect" }[f && doc.typeOf(f)];
     return h("button", { class: "dtab", role: "tab", "aria-selected": String(t === app.activeView), onclick: () => app.openView(t), onauxclick: e => { if (e.button === 1) app.closeTab(t); } }, icon(ic, 14), h("span", {}, label),
       h("span", { class: "x", role: "button", "aria-label": `Close ${label}`, onclick: e => { e.stopPropagation(); app.closeTab(t); } }, "✕"));
   }));
@@ -1053,7 +1054,7 @@ function runIfcImport(file, text, opts) {
 /** Revit's Import CAD: the DXF into the active 2D view as one element, origin to origin, pinned. */
 function importCAD() {
   const v = app.views.get(app.activeView);
-  if (!v || !["PlanView", "ElevationView", "SectionView", "Sheet"].includes(v.kind)) return app.say("open a plan, elevation, section or sheet to import into", "error");
+  if (!v || !["PlanView", "ElevationView", "SectionView", "Sheet", "DraftingView"].includes(v.kind)) return app.say("open a plan, elevation, section, drafting view or sheet to import into", "error");
   const inp = h("input", { type: "file", accept: ".dxf", hidden: true }); document.body.append(inp);
   inp.addEventListener("change", async () => {
     const file = inp.files[0]; inp.remove(); if (!file) return;

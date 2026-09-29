@@ -147,6 +147,8 @@ export function resolveGraphics(doc, ctx, f, role, sub = "Common", material = nu
     if (rule.enabled === false || !matches(doc, f, rule.when)) continue;
     const t = rule.then || {};
     apply(t[role === "cutPattern" ? "cut" : role], `rule ${rule.id}`);
+    // a rule may give the hatch its own pen and colour (a pink hatch inside a black outline)
+    if (role === "cutPattern" && t.cutPattern) apply(t.cutPattern, `rule ${rule.id}`);
     if (role === "fill" && t.fill) apply({ fill: t.fill }, `rule ${rule.id}`);
     if (t.halftone) g.halftone = true;
     if (t.visible === false) g.visible = false;

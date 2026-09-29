@@ -52,13 +52,13 @@ export function textWidth(str, h, font, widthFactor = 1) {
   for (const ch of String(str)) { const code = FONT_METRICS.unicodeToCode[ch.codePointAt(0)] ?? 63; w += FONT_WIDTHS[code] || 600; }
   return w / 1000 * em * F0.k * widthFactor;
 }
-export function wrapText(str, h, width) {
+export function wrapText(str, h, width, font) {
   const out = [];
   for (const para of String(str).split("\n")) {
     let line = "";
     for (const word of para.split(/\s+/)) {
       const t = line ? line + " " + word : word;
-      if (width && textWidth(t, h) > width && line) { out.push(line); line = word; } else line = t;
+      if (width && textWidth(t, h, font) > width && line) { out.push(line); line = word; } else line = t;
     }
     out.push(line);
   }
@@ -142,7 +142,8 @@ export function deriveView(doc, v, opts = {}) {
   doc.stats.derives++;
   const t = doc.typeOf(v);
   const scene = t === "PlanView" ? planScene(doc, v, opts) : t === "ElevationView" ? elevationScene(doc, v, opts) : t === "SectionView" ? sectionScene(doc, v, opts)
-    : t === "Sheet" ? sheetScene(doc, v, opts) : t === "View3D" ? view3dScene(doc, v, opts) : t === "Schedule" ? scheduleScene(doc, v, opts) : emptyScene();
+    : t === "Sheet" ? sheetScene(doc, v, opts) : t === "View3D" ? view3dScene(doc, v, opts) : t === "Schedule" ? scheduleScene(doc, v, opts)
+    : t === "DraftingView" ? draftingScene(doc, v, opts) : emptyScene();
   scene.watermark = doc.modelRevision;
   // the graphic scheme's paper: Blueprint and Night draw on their own ground, on screen, on sheets, in the PDF
   if (["PlanView", "ElevationView", "SectionView", "View3D"].includes(t)) {
@@ -259,6 +260,22 @@ export function planScene(doc, v, opts = {}) {
         B.stroke(path, { weight: g.weight === "none" ? penWeight(doc, "thin", S) : g.weight, colour: g.colour === "#000000" ? "#3b6fb0" : g.colour, dash: LINE_TYPES.centre }, "Mass", doc.idOf(f));
         B.hit(doc.idOf(f), pl.outer);
       }
+    }
+    if (t === "Lattice" && vis(f)) {
+      // cut: the bricks of the course the cut plane passes through, each its own rectangle; below the cut, the outline
+      const p = doc.plan(f); if (!p) continue;
+      const bnd = band(p.z0, p.z1); if (bnd === "above" || bnd === "below") continue;
+      const id = doc.idOf(f), cat = categoryOf(doc, f), fr = p.frame;
+      const P = (u, sd) => add(fr.start, add(mul(fr.d, u), mul(fr.n, sd)));
+      const rect = (u0, u1) => polyPath([P(u0, -fr.bt / 2), P(u1, -fr.bt / 2), P(u1, fr.bt / 2), P(u0, fr.bt / 2)]);
+      if (bnd === "cut") {
+        const g = resolveGraphics(doc, ctx, f, "cut", "Common", p.material);
+        const course = p.bricks.filter(b => b.z0 <= cutZ && b.z1 >= cutZ);
+        const row = course.length ? course : p.bricks.filter(b => Math.abs(b.z0 - p.bricks[0].z0) < 1);
+        for (const b of row) { if (g.fill) B.fill(rect(b.u0, b.u1), g.fill, cat, id); B.stroke(rect(b.u0, b.u1), g, cat, id); }
+      } else B.stroke(p.path, resolveGraphics(doc, ctx, f, "projection"), cat, id);
+      B.hit(id, p.foot);
+      continue;
     }
     if ((t === "Duct" || t === "Pipe") && vis(f)) {
       // MEP runs as MEP drawings show them: each run two lines and a dashed centreline, a riser its section crossed
@@ -409,12 +426,13 @@ export function planScene(doc, v, opts = {}) {
   for (const f of els) {
     const t = doc.typeOf(f); if (!onlyHere(f)) continue;
     if (t === "DetailLine" && vis(f)) { const c = F.json(f, "curve"); const segs = curveSegs(c); B.stroke(segs, { weight: penWeight(doc, F.choice(f, "pen"), S), colour: F.text(f, "colour") || "#000000" }, "Detail", doc.idOf(f)); B.hit(doc.idOf(f), samplePath(segs), "curve"); }
-    if (t === "FilledRegion" && vis(f)) { const rs = regionAreas(f), pts = rs[0] ? rs[0].outer : F.json(f, "boundary"), path = sketchPath(f) || rs.flatMap(rg => [...polyPath(rg.outer), ...rg.holes.flatMap(hh => polyPath(hh))]), pid = F.text(f, "pattern"); B.fill(path, "#ffffff", "Detail", doc.idOf(f)); B.hatch(path, doc.lib.patterns[pid], pid, "#000000", penWeight(doc, "hairline", S), "Detail", doc.idOf(f)); B.stroke(path, { weight: penWeight(doc, "thin", S), colour: "#000000" }, "Detail", doc.idOf(f)); B.hit(doc.idOf(f), pts); }
+    if (t === "FilledRegion" && vis(f)) drawFilledRegion(doc, ctx, B, f);
     if (t === "CADImport" && vis(f)) drawImport(doc, ctx, B, f);
     if (t === "Text" && categoryVisible(ctx, "Annotation")) drawText(doc, ctx, B, f);
     if (t === "SymbolInstance" && categoryVisible(ctx, "Annotation")) drawSymbolInstance(doc, B, f);
     if (t === "RepeatingDetail" && vis(f)) drawRepeating(doc, ctx, B, f);
     if (t === "MaterialTag" && categoryVisible(ctx, "Annotation")) drawMaterialTag(doc, ctx, B, f);
+    if (t === "SpotElevation" && categoryVisible(ctx, "Annotation")) drawSpotElevation(doc, ctx, B, f, cutZ);
     if (t === "Dimension" && categoryVisible(ctx, "Annotation") && measureRefs(doc, F.json(f, "of") || []).kind !== "levels") drawDimension(doc, ctx, B, f);
   }
   // a space graph's site on its base level: the boundary (chain), what the setbacks leave (dashed) and the entry
@@ -528,7 +546,7 @@ function drawSpace(doc, ctx, B, f) {
   const label = cs.label || { height: 2.5, colour: "#000000", content: "{Name}\n{Area}" };
   const lines = label.content.split("\n").map(line => line.replace(/\{(\w+)\}/g, (_, k) => paramText(doc, f, k)));
   const at = B.P(anchor);
-  lines.forEach((ln, i) => B.later.push({ t: "text", at: [at[0], at[1] - i * label.height * 1.6], text: String(ln), height: label.height, rot: 0, align: "centre", valign: "baseline", colour: label.colour || "#000", layer: "IfcSpace-Label", id }));
+  lines.forEach((ln, i) => B.later.push(Object.assign({ t: "text", at: [at[0], at[1] - i * label.height * 1.6], text: label.upper ? String(ln).toUpperCase() : String(ln), height: label.height, rot: 0, align: "centre", valign: "baseline", colour: label.colour || "#000", layer: "IfcSpace-Label", id }, label.font ? { font: label.font } : {})));
   if (!plan || plan.status !== "ok") B.text([at[0], at[1] + label.height * 1.6], plan && plan.status === "redundant" ? "⚠ redundant" : "⚠ not enclosed", label.height * 0.8, { align: "centre", colour: "#b3261e", layer: "IfcSpace-Label", id });
   B.hit(id, [add(anchor, [-600, -600]), add(anchor, [600, -600]), add(anchor, [600, 600]), add(anchor, [-600, 600])]);
 }
@@ -538,8 +556,14 @@ export function departmentColour(v) { let h = 0; for (const c of v) h = (h * 31 
 
 function drawGrid(doc, ctx, B, f) {
   const c = F.json(f, "line"), id = doc.idOf(f), S = ctx.scale;
-  const g = resolveGraphics(doc, ctx, f, "projection");
-  B.stroke([lineSeg(c.start, c.end)], Object.assign({}, g, { dash: LINE_TYPES.centre }), "IfcGrid", id);
+  const g = resolveGraphics(doc, ctx, f, "projection"), AS = annotationStyle(doc);
+  const endL = AS.gridEnd * S, Lg = dist(c.start, c.end);
+  if (endL > 0 && Lg > 2 * endL) {
+    // Revit's grid: solid at each end (where the heads are read), the middle dashed in its own colour
+    const dd = normalise(sub(c.end, c.start)), e0 = add(c.start, mul(dd, endL)), e1 = sub(c.end, mul(dd, endL));
+    B.stroke([lineSeg(c.start, e0), lineSeg(e1, c.end)], Object.assign({}, g, { dash: null }), "IfcGrid", id);
+    B.stroke([lineSeg(e0, e1)], Object.assign({}, g, { dash: LINE_TYPES.centre, colour: AS.gridCentreColour || g.colour }), "IfcGrid", id);
+  } else B.stroke([lineSeg(c.start, c.end)], Object.assign({}, g, { dash: LINE_TYPES.centre }), "IfcGrid", id);
   // Paper-space heads: the head size and text size are paper millimetres, the same on the sheet at every scale.
   const d = normalise(sub(c.end, c.start)), ends = F.choice(f, "ends") || "Both ends";
   for (const [p, sgn, which] of [[c.start, -1, "Start"], [c.end, 1, "End"]]) {
@@ -547,6 +571,16 @@ function drawGrid(doc, ctx, B, f) {
     gridHead(doc, B, f, B.P(p), mul(d, sgn), g, id);
   }
   B.hit(id, [c.start, c.end], "curve");
+}
+/** The project's annotation style: how its datums and markers are drawn - the drafting office's standard.
+ *  "classic" is this app's own; "revit" draws as Revit's defaults do (flag heads on sections and elevations,
+ *  a section's head at one end and a tail at the other, level heads at the left with a hollow triangle and
+ *  the height in mm, grid lines solid at their ends and coloured between). Sizes are paper mm, text sizes
+ *  cap heights; `font` is any text font. */
+export function annotationStyle(doc) {
+  return Object.assign({ kind: "classic", font: null, gridHead: 8, gridText: 2.5, gridEnd: 0, gridCentreColour: null,
+    markerRadius: 4.5, markerText: 2.0, markerSheetText: 1.6, levelText: 2.5, levelValueText: 2.0, levelHeads: "Right", segmentedSections: false },
+    (doc.meta && doc.meta.annotation) || {});
 }
 /** A grid's head at the end of its line (`at`, paper), pushed out along `out`: its shape or loaded symbol, its label. */
 export function gridHead(doc, B, f, at, out, g, id) {
@@ -564,12 +598,14 @@ export function gridHead(doc, B, f, at, out, g, id) {
     if (sym && sym.source) drawSymbol(doc, B, Object.assign({}, sym, { nominalSize: { w: size, h: size } }), cp, 0, "IfcGrid", id);
     else B.stroke(circlePath(cp, r), st, "IfcGrid", id, true);
   }
-  B.text([cp[0], cp[1] - ts * 0.36], F.text(f, "name"), ts, { align: "centre", layer: "IfcGrid", id });
+  B.text([cp[0], cp[1] - ts / 2], F.text(f, "name"), ts, { align: "centre", layer: "IfcGrid", id, font: annotationStyle(doc).font || undefined });
 }
 /** A section line in plan: a chain line with a head at each end, the arrows pointing the way it looks. */
 function drawSectionMarker(doc, ctx, B, f, place) {
   const c = F.json(f, "line"), id = doc.idOf(f), S = ctx.scale;
   const d = normalise(sub(c.end, c.start)), look = mul(perp(d), -1);
+  const AS = annotationStyle(doc);
+  if (AS.kind === "revit") return drawSectionFlag(doc, ctx, B, f, place, c, d, look, AS);
   B.stroke([lineSeg(c.start, c.end)], { weight: penWeight(doc, "medium", S), colour: "#000000", dash: LINE_TYPES.centre }, "Annotation-Marker", id);
   const pl = place.get(id), r = 4.5;
   for (const [end, sgn] of [[c.start, -1], [c.end, 1]]) {
@@ -582,9 +618,52 @@ function drawSectionMarker(doc, ctx, B, f, place) {
   }
   B.hit(id, [c.start, c.end], "curve");
 }
+/** Revit's flag head: a circle with the view's number over its sheet's, and a black flag on the side the
+ *  view looks to. A section shows its head at one end (or both) and a heavy tail at the other; between them
+ *  the line is left out where it crosses the drawing, only a short stub runs from each end. */
+function flagHead(B, at, look, AS, top, bottom, id, withNumberOutside = null) {
+  const R = AS.markerRadius, up = perp(look), K = 1.41 * R, font = AS.font || undefined;
+  B.fill(polyPath([add(at, mul(up, K)), add(at, mul(look, K)), add(at, mul(up, -K))]), "#000000", "Annotation-Marker", id, true);
+  B.fill(circlePath(at, R), "#ffffff", "Annotation-Marker", id, true);
+  B.stroke(circlePath(at, R), { weight: 0.085, colour: "#000" }, "Annotation-Marker", id, true);
+  const h = AS.markerText;
+  if (bottom != null && top != null) {
+    B.text([at[0], at[1] + 0.35], top, h, { align: "centre", layer: "Annotation-Marker", id, font, marker: "top" });
+    B.text([at[0], at[1] - h - 0.55], bottom, h, { align: "centre", layer: "Annotation-Marker", id, font, marker: "bottom" });
+  } else B.text([at[0], at[1] - h / 2], top ?? bottom ?? "", h, { align: "centre", layer: "Annotation-Marker", id, font });
+  if (withNumberOutside != null) B.text(add(at, add(mul(look, K + 1.4), [0, -h / 2])), withNumberOutside, h, { align: "left", layer: "Annotation-Marker", id, font });
+}
+function drawSectionFlag(doc, ctx, B, f, place, c, d, look, AS) {
+  const id = doc.idOf(f), pl = place.get(id), heads = F.choice(f, "heads") || "Both ends";
+  const vpNo = pl ? String(pl.vp) : "—", sheetNo = pl ? pl.number : "";
+  const g = { weight: 0.085, colour: "#000" }, stub = 5.6, R = AS.markerRadius;
+  for (const [end, sgn, which] of [[c.start, -1, "Start"], [c.end, 1, "End"]]) {
+    const P = B.P(end), head = heads === "Both ends" || heads === which;
+    if (head) {
+      // the head beyond the line's end; a stub back from the circle toward the building
+      const at = add(P, mul(d, sgn * R));
+      B.stroke([lineSeg(P, add(P, mul(d, -sgn * stub)))], g, "Annotation-Marker", id, true);
+      flagHead(B, at, look, AS, vpNo, sheetNo, id);
+      if (pl) B.links.push({ t: "link", rect: [at[0] - R, at[1] - R, 2 * R, 2 * R], sheet: pl.sheet, layer: "Annotation-Marker", id });
+    } else {
+      // the tail: a heavy bar from the line's end, toward the side the section looks at
+      B.stroke([lineSeg(P, add(P, mul(look, stub)))], { weight: 1.0, colour: "#000" }, "Annotation-Marker", id, true);
+    }
+  }
+  B.hit(id, [c.start, c.end], "curve");
+}
 function drawElevationMarker(doc, ctx, B, f, place) {
   const c = F.json(f, "line"), id = doc.idOf(f), S = ctx.scale;
   const d = normalise(sub(c.end, c.start)), look = mul(perp(d), -1);
+  const AS = annotationStyle(doc);
+  if (AS.kind === "revit") {
+    // Revit's elevation tag: the sheet in the circle, the flag toward the building, the view's number beyond it
+    const pl = place.get(id), at = B.P(lerp(c.start, c.end, 0.5));
+    flagHead(B, at, look, AS, pl ? pl.number : "—", null, id, pl ? String(pl.vp) : "");
+    if (pl) B.links.push({ t: "link", rect: [at[0] - AS.markerRadius, at[1] - AS.markerRadius, 2 * AS.markerRadius, 2 * AS.markerRadius], sheet: pl.sheet, layer: "Annotation-Marker", id });
+    B.hit(id, [c.start, c.end], "curve");
+    return;
+  }
   const g = { weight: penWeight(doc, "medium", S), colour: "#000000" };
   B.stroke([lineSeg(c.start, c.end)], { weight: penWeight(doc, "hairline", S), colour: "#000000", dash: LINE_TYPES.dashed2 }, "Annotation-Marker", id);
   const m = B.P(lerp(c.start, c.end, 0.5)), r = 5;
@@ -604,10 +683,12 @@ function drawText(doc, ctx, B, f) {
   const id = doc.idOf(f), tt = doc.lib.textTypes[F.refId(f, "textType")] || { height: 2.5, colour: "#000", pen: "thin" };
   let content = F.text(f, "content");
   if (content.startsWith("=")) { try { const v = evaluate(parse(content.slice(1)), { lookup: textLookup(doc, f), into: "Text" }); content = formatValue(v); } catch (e) { content = "⚠ " + e.message; } }
-  const h = tt.height, lines = wrapText(content, h, F.real(f, "wrapWidth"));
-  const at = B.P(F.point(f, "position")), lh = h * 1.6;
-  const width = Math.max(...lines.map(l => textWidth(l, h)));
-  lines.forEach((ln, i) => B.text([at[0], at[1] - i * lh], ln, h, { layer: "Annotation-Text", id, colour: tt.colour, rot: F.real(f, "rotation") }));
+  const h = tt.height, font = tt.font && tt.font !== "Sans" ? tt.font : undefined, wf = tt.widthFactor || 1;
+  const lines = wrapText(content, h, F.real(f, "wrapWidth"), font);
+  const at = B.P(F.point(f, "position")), lh = h * (tt.lineSpacing || 1.6), rot = F.real(f, "rotation") || 0, rr = rot * Math.PI / 180;
+  const width = Math.max(...lines.map(l => textWidth(l, h, font, wf)));
+  // lines step down across the text's own direction, so rotated text stays a paragraph
+  lines.forEach((ln, i) => B.text([at[0] + Math.sin(rr) * i * lh, at[1] - Math.cos(rr) * i * lh], ln, h, { layer: "Annotation-Text", id, colour: tt.colour, rot, font, widthFactor: wf !== 1 ? wf : undefined, align: F.choice(f, "align") || "left" }));
   const midY = at[1] - (lines.length - 1) * lh / 2 + h / 2;
   const g = { weight: penWeight(doc, "hairline", ctx.scale), colour: "#000" };
   for (const L of F.json(f, "leaders") || []) {
@@ -845,6 +926,58 @@ function drawMaterialTag(doc, ctx, B, f) {
   B.text([P[0], P[1] - ts * 0.36], text, ts, { align: "centre", layer: "Annotation-Tag", id, colour: col });
   const S = ctx.scale; B.hit(id, [[box[0] * S, box[1] * S], [box[2] * S, box[1] * S], [box[2] * S, box[3] * S], [box[0] * S, box[3] * S]]);
   if (leader) B.hit(id, [tq, pq], "curve");
+}
+/** A spot elevation: the floor's top at its point - the highest floor there at or under the plan's cut -
+ *  written over a crosshair ("NPT -0.170"). With no floor under it, it says so. */
+export function spotElevationValue(doc, q, below) {
+  let best = null;
+  for (const g of doc.elements()) {
+    if (doc.typeOf(g) !== "Floor" || doc.error(g)) continue;
+    const p = doc.plan(g); if (!p || !(p.z1 <= below + 1)) continue;
+    const regs = p.regions || [{ outer: p.foot, holes: [] }];
+    if (!regs.some(r => pointInPoly(q, r.outer) && !(r.holes || []).some(h => pointInPoly(q, h)))) continue;
+    if (best === null || p.z1 > best) best = p.z1;
+  }
+  return best;
+}
+function drawSpotElevation(doc, ctx, B, f, cutZ) {
+  const id = doc.idOf(f), q = F.point(f, "position"), P = B.P(q), h = F.real(f, "textSize") || 1.0, font = annotationStyle(doc).font || undefined;
+  const z = spotElevationValue(doc, q, cutZ), mm = F.choice(f, "units") === "mm";
+  const val = z == null ? "?" : mm ? String(Math.round(z)) : (z < 0 ? "-" : "") + (Math.abs(z) / 1000).toFixed(3);
+  const r = 1.1, g = { weight: 0.13, colour: z == null ? "#b3261e" : "#000" };
+  B.stroke(circlePath(P, r), g, "Annotation-Spot", id, true);
+  B.stroke([lineSeg(add(P, [-r * 1.45, 0]), add(P, [r * 1.45, 0])), lineSeg(add(P, [0, -r * 1.45]), add(P, [0, r * 1.45]))], g, "Annotation-Spot", id, true);
+  B.text(add(P, [0, r + 1.0]), (F.text(f, "prefix") || "") + val, h, { align: "centre", layer: "Annotation-Spot", id, font, colour: g.colour });
+  const S = ctx.scale; B.hit(id, [[q[0] - 4 * S, q[1] - 2 * S], [q[0] + 4 * S, q[1] - 2 * S], [q[0] + 4 * S, q[1] + 4 * S], [q[0] - 4 * S, q[1] + 4 * S]]);
+}
+/** A drafting view (Revit's): 2D only - no model, just what was drawn or imported in it: detail lines,
+ *  filled regions, text, symbols, repeating details, CAD imports and dimensions between them. A set's
+ *  hand-drawn survey of the existing building lives here, as lines, not as a model. */
+export function draftingScene(doc, v) {
+  const ctx = viewContext(doc, v), S = ctx.scale, B = new SceneBuilder(S), id = doc.idOf(v);
+  for (const f of doc.elements()) {
+    if (F.refId(f, "view") !== id || f.get("Integer") === 0 || doc.error(f) || hiddenByRule(doc, ctx, f)) continue;
+    const t = doc.typeOf(f);
+    if (t === "DetailLine") { const c = F.json(f, "curve"), segs = curveSegs(c); B.stroke(segs, { weight: penWeight(doc, F.choice(f, "pen"), S), colour: F.text(f, "colour") || "#000000" }, "Detail", doc.idOf(f)); B.hit(doc.idOf(f), samplePath(segs), "curve"); }
+    if (t === "FilledRegion") drawFilledRegion(doc, ctx, B, f);
+    if (t === "CADImport") drawImport(doc, ctx, B, f);
+    if (t === "Text") drawText(doc, ctx, B, f);
+    if (t === "SymbolInstance") drawSymbolInstance(doc, B, f);
+    if (t === "RepeatingDetail") drawRepeating(doc, ctx, B, f);
+    if (t === "Dimension" && measureRefs(doc, F.json(f, "of") || []).kind !== "levels") drawDimension(doc, ctx, B, f);
+  }
+  const scene = { prims: B.prims, hits: B.hits, links: [], scale: S, kind: "drafting" };
+  scene.bbox = sceneBBox(B.prims);
+  applyCrop(doc, v, doc.argValue(v, "clip"), scene, S);
+  return scene;
+}
+function drawFilledRegion(doc, ctx, B, f) {
+  const S = ctx.scale, rs = regionAreas(f), pts = rs[0] ? rs[0].outer : F.json(f, "boundary"), path = sketchPath(f) || rs.flatMap(rg => [...polyPath(rg.outer), ...rg.holes.flatMap(hh => polyPath(hh))]), pid = F.text(f, "pattern");
+  const bg = F.text(f, "background"), line = F.text(f, "lineColour"), pc = F.text(f, "patternColour");
+  B.fill(path, bg || "#ffffff", "Detail", doc.idOf(f));
+  if (pid && doc.lib.patterns[pid]) B.hatch(path, doc.lib.patterns[pid], pid, pc || "#000000", penWeight(doc, "hairline", S), "Detail", doc.idOf(f));
+  if (line !== "none") B.stroke(path, { weight: penWeight(doc, "thin", S), colour: line || "#000000" }, "Detail", doc.idOf(f));
+  B.hit(doc.idOf(f), pts);
 }
 /** View-owned annotation for views that are not plans (sections, elevations): material tags. */
 function drawViewAnnotations(doc, ctx, B, v) {
@@ -1130,7 +1263,7 @@ function gatherElevationItems(doc, ctx, G, skip = null) {
     if (!categoryVisible(ctx, categoryOf(doc, f)) || hiddenByRule(doc, ctx, f)) continue;
     const t = doc.typeOf(f);
     if (t === "Wall") { const w = doc.plan(f); if (!w) continue; const it = elevWall(doc, f, w, V, sOf, depthOf, ctx); if (it) items.push(it); }
-    if ((t === "Generic" || t === "Duct" || t === "Pipe" || t === "Roof") && doc.plan(f) && doc.plan(f).mesh) {
+    if ((t === "Generic" || t === "Duct" || t === "Pipe" || t === "Roof" || t === "Lattice") && doc.plan(f) && doc.plan(f).mesh) {
       // a body of its own shape: its feature edges, projected; hidden by what stands in front of it
       const p = doc.plan(f), P = p.mesh.positions, curves = [];
       let d0 = Infinity, d1 = -Infinity, s0 = Infinity, s1 = -Infinity, z0 = Infinity, z1 = -Infinity;
@@ -1155,11 +1288,24 @@ function gatherElevationItems(doc, ctx, G, skip = null) {
 }
 /** Ground line, level lines with heads, and grids crossing the view line. */
 function drawDatums(doc, ctx, B, v, G) {
-  const S = ctx.scale, { c, o, d, Lv, Z0, topZ } = G;
-  const ext = [-1500, Lv + 1500];
-  B.stroke([lineSeg([ext[0], 0], [ext[1], 0])], { weight: penWeight(doc, "bold", S), colour: "#000" }, "Ground", null);
+  const S = ctx.scale, { c, o, d, Lv, Z0, topZ } = G, AS = annotationStyle(doc);
+  const le = doc.argValue(v, "levelExtent"), ext = Array.isArray(le) && le.length === 2 ? le : [-1500, Lv + 1500];
+  if (doc.argValue(v, "groundLine") !== false) B.stroke([lineSeg([ext[0], 0], [ext[1], 0])], { weight: penWeight(doc, "bold", S), colour: "#000" }, "Ground", null);
   for (const f of doc.elements()) if (doc.typeOf(f) === "Level" && categoryVisible(ctx, "IfcBuildingStorey")) {
     const z = (doc.data(f) || {}).value - Z0; if (z + Z0 > topZ) continue;
+    if (AS.levelHeads === "Left") {
+      // Revit's level head at the left: the name, a heavy V with its point on the level, the height in mm; the
+      // line solid under the height, then dashed across the view
+      const id = doc.idOf(f), hp = B.P([ext[0], z]), font = AS.font || undefined, th = AS.levelText, hv = 0.47;
+      B.stroke([lineSeg(add(hp, [-2.29, 3.3]), hp), lineSeg(hp, add(hp, [2.33, 3.3]))], { weight: hv, colour: "#000" }, "IfcBuildingStorey", id, true);
+      B.stroke([lineSeg(add(hp, [-2.96, 0]), add(hp, [3.01, 0])), lineSeg(add(hp, [4.02, 0]), add(hp, [15.2, 0]))], { weight: 0.085, colour: "#000" }, "IfcBuildingStorey", id, true);
+      const x1 = B.P([ext[1], z])[0];
+      if (x1 > hp[0] + 15.2) B.stroke([lineSeg(add(hp, [15.2, 0]), [x1, hp[1]])], { weight: 0.085, colour: "#000", dash: LINE_TYPES.dashed2 }, "IfcBuildingStorey", id, true);
+      B.text(add(hp, [4.02, 1.12]), String(Math.round(z + Z0)), th, { layer: "IfcBuildingStorey", id, font });
+      String(F.text(f, "name")).split("\n").reverse().forEach((ln, i) => B.text(add(hp, [-3.4, 1.12 + i * th * 1.6]), ln, th, { layer: "IfcBuildingStorey", id, font, align: "right" }));
+      B.hit(id, [[ext[0], z - 50], [ext[1], z - 50], [ext[1], z + 50], [ext[0], z + 50]]);
+      continue;
+    }
     B.stroke([lineSeg([ext[0], z], [ext[1], z])], { weight: penWeight(doc, "hairline", S), colour: "#000", dash: LINE_TYPES.centre }, "IfcBuildingStorey", doc.idOf(f));
     const hp = B.P([ext[1], z]);
     B.stroke(polyPath([hp, add(hp, [2, 2]), add(hp, [4, 0]), add(hp, [2, -2])]), { weight: 0.25, colour: "#000" }, "IfcBuildingStorey", doc.idOf(f), true);
@@ -1316,7 +1462,7 @@ export function sectionCut(doc, v) {
         }
       }
     }
-    if ((t === "Generic" || t === "Duct" || t === "Pipe" || t === "Roof") && p.mesh) {
+    if ((t === "Generic" || t === "Duct" || t === "Pipe" || t === "Roof" || t === "Lattice") && p.mesh) {
       // a body of its own shape, cut by the section plane: turned into (along, up, depth) and sliced at depth 0
       const P = p.mesh.positions, Q = new Array(P.length); let lo = Infinity, hi = -Infinity;
       for (let i = 0; i < P.length; i += 3) { const q = [P[i], P[i + 1]], dd = G.depthOf(q); Q[i] = G.sOf(q); Q[i + 1] = P[i + 2] - G.Z0; Q[i + 2] = dd; lo = Math.min(lo, dd); hi = Math.max(hi, dd); }
@@ -1753,15 +1899,30 @@ function drawImport(doc, ctx, B, f) {
   const id = doc.idOf(f), d = F.json(f, "drawing") || {}, ls = importLayerMap(f), P = importPlacer(f), S = ctx.scale, k = F.real(f, "scale") || 1;
   const on = l => !ls[l] || ls[l].on, col = l => (ls[l] && ls[l].colour) || "#000000";
   let bb = null; const grow = q => { bb = bb ? [Math.min(bb[0], q[0]), Math.min(bb[1], q[1]), Math.max(bb[2], q[0]), Math.max(bb[3], q[1])] : [q[0], q[1], q[0], q[1]]; };
-  for (const fl of d.fills || []) { if (!on(fl.layer)) continue; const pts = samplePath(fl.path).map(P); if (pts.length > 2) B.fill(polyPath(pts), col(fl.layer), "Detail", id); }
+  for (const fl of d.fills || []) {
+    if (!on(fl.layer)) continue;
+    const pts = (fl.pts ? fl.pts : samplePath(fl.path)).map(P);
+    if (pts.length > 2) B.fill(polyPath(pts), fl.colour || col(fl.layer), "Detail", id);
+  }
+  // strokes batched by how they are drawn (weight, colour): one primitive per pen, however many lines
+  const rot = (F.real(f, "rotation") || 0) * Math.PI / 180, pens = new Map();
+  const pen = (w, c) => { const key = w + "|" + c; if (!pens.has(key)) pens.set(key, { w, c, segs: [] }); return pens.get(key).segs; };
   for (const el of d.elements || []) {
     if (!on(el.layer)) continue;
-    // exact: a similarity keeps an arc an arc and a Bézier a Bézier
-    const rot = (F.real(f, "rotation") || 0) * Math.PI / 180;
-    const segs = elementSegs(el).map(s => s.k === "L" ? { k: "L", a: P(s.a), b: P(s.b) } : s.k === "A" ? { k: "A", c: P(s.c), r: s.r * k, a0: s.a0 + rot, a1: s.a1 + rot } : { k: "C", a: P(s.a), c1: P(s.c1), c2: P(s.c2), b: P(s.b) });
-    samplePath(segs, 4).forEach(grow);
-    B.stroke(segs, { weight: penWeight(doc, "thin", S), colour: col(el.layer) }, "Detail", id);
+    let segs;
+    if (el.type === "path") {
+      // a compact path lifted from a PDF: polylines as flat [x0, y0, x1, y1, ...], and segments ["L", x0, y0, x1, y1]
+      // and ["C", x0, y0, c1x, c1y, c2x, c2y, x1, y1]
+      segs = (el.s || []).map(q => q[0] === "L" ? { k: "L", a: P([q[1], q[2]]), b: P([q[3], q[4]]) } : { k: "C", a: P([q[1], q[2]]), c1: P([q[3], q[4]]), c2: P([q[5], q[6]]), b: P([q[7], q[8]]) });
+      for (const pl of el.p || []) { let a = P([pl[0], pl[1]]); for (let i = 2; i + 1 < pl.length; i += 2) { const b = P([pl[i], pl[i + 1]]); segs.push({ k: "L", a, b }); a = b; } }
+    } else segs = elementSegs(el).map(s => s.k === "L" ? { k: "L", a: P(s.a), b: P(s.b) } : s.k === "A" ? { k: "A", c: P(s.c), r: s.r * k, a0: s.a0 + rot, a1: s.a1 + rot } : { k: "C", a: P(s.a), c1: P(s.c1), c2: P(s.c2), b: P(s.b) });
+    for (const sg of segs) { grow(sg.a || sg.c); if (sg.b) grow(sg.b); }
+    pen(el.w != null ? el.w : penWeight(doc, "thin", S), el.c || col(el.layer)).push(...segs);
   }
-  for (const t of d.texts || []) { if (!on(t.layer)) continue; const at = P(t.at); grow(at); B.text(B.P(at), t.text, Math.max(0.5, t.height * k / S), { align: t.align === "centre" ? "centre" : t.align === "right" ? "right" : "left", rot: (t.rot || 0) + (F.real(f, "rotation") || 0), colour: col(t.layer), layer: "Detail", id }); }
+  for (const p of pens.values()) B.stroke(p.segs, { weight: p.w, colour: p.c }, "Detail", id);
+  for (const t of d.texts || []) {
+    if (!on(t.layer)) continue; const at = P(t.at); grow(at);
+    B.text(B.P(at), t.text, Math.max(0.3, t.height * k / S), Object.assign({ align: t.align === "centre" ? "centre" : t.align === "right" ? "right" : "left", rot: (t.rot || 0) + (F.real(f, "rotation") || 0), layer: "Detail", id, colour: t.colour || col(t.layer) }, t.font ? { font: t.font } : {}));
+  }
   if (bb) B.hit(id, [[bb[0], bb[1]], [bb[2], bb[1]], [bb[2], bb[3]], [bb[0], bb[3]]]);
 }

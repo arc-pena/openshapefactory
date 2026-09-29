@@ -688,7 +688,7 @@ export class View2D {
       }
       return;
     }
-    if (hit && this.kind === "PlanView") {
+    if (hit && (this.kind === "PlanView" || this.kind === "DraftingView")) {
       // pressing on something not yet selected selects it first, so one press-and-drag moves it
       if (!this.app.selection.has(hit.id) && !e.shiftKey) { this.app.selection.clear(); this.app.selection.add(hit.id); this.pressSelected = true; }
       const hf = this.doc.element(hit.id);
@@ -884,7 +884,7 @@ export class View2D {
     if (this.app.sketch && this.app.sketch.view === this) return this.app.sketch.click(this.toModel(sx, sy), e);
     if ((this.app.tool === "move" || this.app.tool === "copy") && (this.kind === "SectionView" || this.kind === "ElevationView")) return this.elevModifyClick(this.toModel(sx, sy));
     if (["door", "window", "opening"].includes(this.app.tool) && (this.kind === "SectionView" || this.kind === "ElevationView")) return this.elevPlaceFiller(this.toModel(sx, sy), sx, sy);
-    if (this.app.tool !== "select" && (this.kind === "PlanView" || (this.app.tool === "mtag" && (this.kind === "SectionView" || this.kind === "ElevationView")))) return this.toolClick(this.toModel(sx, sy), e);
+    if (this.app.tool !== "select" && (this.kind === "PlanView" || (this.kind === "DraftingView" && this.app.tool === "text") || (this.app.tool === "mtag" && (this.kind === "SectionView" || this.kind === "ElevationView")))) return this.toolClick(this.toModel(sx, sy), e);
     const hit = this.hitAt(sx, sy);
     if (this.kind === "Sheet") { this.app.select(hit ? [this.viewId + ":" + hit.id] : [], e.shiftKey, true); return; }
     if (pressed) { this.app.select([hit.id]); return; }
