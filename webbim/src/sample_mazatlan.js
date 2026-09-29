@@ -23,7 +23,7 @@ import { VS_CONSTRUCTION } from "./library.js";
 import { mazatlanPdf } from "./mazatlan_pdf.js";
 
 const GREEN = "#2f8a6c";          // the steel of the doors and windows
-const RED = "#ff0000", PINK = "#ffabab", FACADE = "#808080", ORANGE = "#c14f00";
+const MZ_RED = "#ff0000", MZ_PINK = "#ffabab", MZ_FACADE = "#808080", MZ_ORANGE = "#c14f00";
 
 export function buildMazatlanSample() {
   const doc = newDocument("Casa Mazatlan");
@@ -31,7 +31,7 @@ export function buildMazatlanSample() {
     drafted: "Author", checked: "Checker", issued: "26/04/2023", notes: "No tomar cotas del dibujo.\nContratista comprobar\ndimensiones en obra.", revisions: "Reviciones para esta entrega señaladas con nube" };
   // the set is drawn in Revit: its annotation as Revit draws it (grid bubbles, level heads on the left,
   // section flags), in Arial
-  doc.meta.annotation = { kind: "revit", font: "Arial", gridHead: 9, gridText: 5.08, gridEnd: 4, gridCentreColour: ORANGE,
+  doc.meta.annotation = { kind: "revit", font: "Arial", gridHead: 9, gridText: 5.08, gridEnd: 4, gridCentreColour: MZ_ORANGE,
     markerRadius: 4, markerText: 2.04, markerSheetText: 2.04, levelText: 2.04, levelValueText: 2.04, levelHeads: "Left" };
   const ed = new Editor(doc);
   const add = (element) => { const r = ed.apply({ op: "add", element }, { regenerate: false }); if (!r.ok) throw new Error(`${element.id || element.type}: ${r.error}`); return r.id; };
@@ -67,11 +67,11 @@ export function buildMazatlanSample() {
     { angle: 131, origin: [0.9, 0.6], delta: [2.03, 1.61], dashes: [0.12, -3.7] }] };
   L.patterns["P-MZ-TILE"] = { name: "Square tile 600", kind: "model", lines: [{ angle: 0, origin: [0, 0], delta: [0, 600] }, { angle: 90, origin: [0, 0], delta: [0, 600] }] };
   Object.assign(L.materials, {
-    "M-MZ-ROSA": { name: "Aplanado de cal, rosa", mark: "AP-01", description: "Lime render, pale pink (the street facades)", cut: { pattern: null, pen: "heavy", lineColour: "#000000", background: FACADE }, projection: { pen: "thin", pattern: "P-MZ-STIPPLE", background: "#fff3ee", patternColour: "#a6a6a6" }, shading: { colour: "#f1d5ca" } },
+    "M-MZ-ROSA": { name: "Aplanado de cal, rosa", mark: "AP-01", description: "Lime render, pale pink (the street facades)", cut: { pattern: null, pen: "heavy", lineColour: "#000000", background: MZ_FACADE }, projection: { pen: "thin", pattern: "P-MZ-STIPPLE", background: "#fff3ee", patternColour: "#a6a6a6" }, shading: { colour: "#f1d5ca" } },
     "M-MZ-TERRA": { name: "Aplanado de cal, terracota", mark: "AP-02", description: "Lime render pigmented terracotta (the courtyard)", cut: { pattern: null, pen: "heavy", lineColour: "#000000", background: "#ffffff" }, projection: { pen: "thin" }, shading: { colour: "#d98468" } },
     "M-MZ-LADRILLO": { name: "Mampostería existente", mark: "MA-01", description: "Existing brick and stone masonry", cut: { pattern: "P-MZ-DIAG", pen: "heavy", lineColour: "#000000", background: "#ffffff" }, projection: { pen: "thin" }, shading: { colour: "#e4a58f" } },
     "M-MZ-BLOCK": { name: "Block de concreto", mark: "MA-02", description: "New concrete block, rendered", cut: { pattern: null, pen: "heavy", lineColour: "#000000", background: "#ffffff" }, projection: { pen: "thin" }, shading: { colour: "#d98468" } },
-    "M-MZ-CONC": { name: "Concreto armado", mark: "CO-01", description: "Reinforced concrete (the new frame)", cut: { pattern: null, pen: "heavy", lineColour: "#000000", background: RED }, projection: { pen: "thin" }, shading: { colour: "#d98468" } },
+    "M-MZ-CONC": { name: "Concreto armado", mark: "CO-01", description: "Reinforced concrete (the new frame)", cut: { pattern: null, pen: "heavy", lineColour: "#000000", background: MZ_RED }, projection: { pen: "thin" }, shading: { colour: "#d98468" } },
     "M-MZ-BARRO": { name: "Piso de barro en espiga", mark: "PI-01", description: "Handmade clay tile, herringbone", cut: { pattern: null, pen: "thin", lineColour: "#000000", background: "#ffffff" }, projection: { pen: "hairline", pattern: "P-HERRING", lineColour: "#d1d1d1" }, shading: { colour: "#b8613f" } },
     "M-MZ-GRAVA": { name: "Grava", mark: "PI-02", description: "Crushed stone, loose", cut: { pattern: null, pen: "thin", lineColour: "#000000", background: "#ffffff" }, projection: { pen: "hairline" }, shading: { colour: "#8f8984" } },
     "M-MZ-DECK": { name: "Duela de madera", mark: "PI-03", description: "Timber deck (the roof terrace)", cut: { pattern: null, pen: "thin", lineColour: "#000000", background: "#ffffff" }, projection: { pen: "hairline" }, shading: { colour: "#b58a5e" } },
@@ -79,7 +79,7 @@ export function buildMazatlanSample() {
     "M-MZ-CELOSIA": { name: "Celosía de ladrillo", mark: "CE-01", description: "Brick screen: flat courses and bricks stood on end", cut: { pattern: null, pen: "thin", lineColour: "#000000", background: "#e5a488" }, projection: { pen: "thin" }, shading: { colour: "#b5613d" } },
     "M-MZ-CORNISA": { name: "Cornisa de cal", mark: "AP-04", description: "Moulded lime cornice", cut: { pattern: null, pen: "heavy", lineColour: "#000000", background: "#ffffff" }, projection: { pen: "thin", background: "#ffffff" }, shading: { colour: "#e8e4de" } },
     "M-MZ-CONTRA": { name: "Contraventana de madera", mark: "MD-01", description: "Timber shutters, painted grey", cut: { pattern: null, pen: "medium", lineColour: "#000000", background: "#c0c0c0" }, projection: { pen: "thin", background: "#c0c0c0" }, shading: { colour: "#9a9a9a" } },
-    "M-MZ-GRIS": { name: "Moldura gris", mark: "AP-03", description: "Lime render, grey (door and window surrounds, plinth, cornice)", cut: { pattern: null, pen: "heavy", lineColour: "#000000", background: FACADE }, projection: { pen: "thin", background: "#e3e3e3" }, shading: { colour: "#dddbd7" } },
+    "M-MZ-GRIS": { name: "Moldura gris", mark: "AP-03", description: "Lime render, grey (door and window surrounds, plinth, cornice)", cut: { pattern: null, pen: "heavy", lineColour: "#000000", background: MZ_FACADE }, projection: { pen: "thin", background: "#e3e3e3" }, shading: { colour: "#dddbd7" } },
   });
   const wt = (name, mark, layers, fn, family = "F-BASICWALL") => ({ family, name, mark, layers, coreStart: layers.length > 1 ? 1 : 0, coreEnd: layers.length > 1 ? layers.length - 1 : 1, params: { Function: fn } });
   const one = (t, m) => [{ function: "Structure", thickness: t, material: m }];
@@ -135,10 +135,10 @@ export function buildMazatlanSample() {
   vs.byCategory.IfcColumn = { cut: { pen: "heavy" } };
   vs.byCategory.IfcFurniture = { visible: false };
   vs.rules = [
-    { id: "MZ-EXIST-INT", when: { param: "TypeMark", in: ["MI1", "MI2", "MI3"] }, then: { cut: { fill: "#ffffff", pattern: "P-MZ-DIAG" }, cutPattern: { colour: PINK } } },
-    { id: "MZ-FACADE", when: { param: "TypeMark", in: ["MF1", "MC1"] }, then: { cut: { fill: FACADE, pattern: "solid" } } },
-    { id: "MZ-NEW", when: { any: [{ param: "Category", is: "IfcColumn" }, { param: "TypeMark", in: ["MN1", "MN2", "MN3", "MN4", "MN5"] }] }, then: { cut: { fill: RED, pattern: "solid" } } },
-    { id: "MZ-MOLD", when: { param: "Name", is: "Moldura" }, then: { cut: { fill: FACADE, pattern: "solid" } } },
+    { id: "MZ-EXIST-INT", when: { param: "TypeMark", in: ["MI1", "MI2", "MI3"] }, then: { cut: { fill: "#ffffff", pattern: "P-MZ-DIAG" }, cutPattern: { colour: MZ_PINK } } },
+    { id: "MZ-MZ_FACADE", when: { param: "TypeMark", in: ["MF1", "MC1"] }, then: { cut: { fill: MZ_FACADE, pattern: "solid" } } },
+    { id: "MZ-NEW", when: { any: [{ param: "Category", is: "IfcColumn" }, { param: "TypeMark", in: ["MN1", "MN2", "MN3", "MN4", "MN5"] }] }, then: { cut: { fill: MZ_RED, pattern: "solid" } } },
+    { id: "MZ-MOLD", when: { param: "Name", is: "Moldura" }, then: { cut: { fill: MZ_FACADE, pattern: "solid" } } },
   ];
   L.viewStyles["VS-MZ-PLAN"] = Object.assign(clone(vs), { name: "Casa Mazatlan - plantas" });
   L.viewStyles["VS-MZ-PLAN"].byCategory.IfcStair = { visible: false };
