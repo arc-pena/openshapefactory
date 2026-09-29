@@ -29258,7 +29258,9 @@ function newFromTemplate(sampleId, { levels = true, units = null } = {}) {
   forget("draft-v6"); forget("tabs");
   const src = S.build(), doc = newDocument("Untitled");
   doc.lib = JSON.parse(JSON.stringify(src.lib));
-  for (const k of ["annotation", "defaultDimType", "displayUnits", "project"]) if (src.meta[k] !== undefined) doc.meta[k] = JSON.parse(JSON.stringify(src.meta[k]));
+  for (const k of ["annotation", "defaultDimType", "displayUnits", "project", "surveyElevation"]) if (src.meta[k] !== undefined) doc.meta[k] = JSON.parse(JSON.stringify(src.meta[k]));
+  // the office's standing (firm, address, who draws and checks) stays; the old job's number, dates and place go
+  if (doc.meta.project) for (const k of ["number", "issued", "issueDate", "place", "county"]) if (k in doc.meta.project) doc.meta.project[k] = "";
   doc.meta.name = "Untitled"; if (units) doc.meta.displayUnits = units;
   doc.meta.template = S.name;
   const typeOf = f => src.typeOf(f), all = src.elements();
