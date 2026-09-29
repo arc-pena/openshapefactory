@@ -52,7 +52,7 @@ export class SketchSession {
     app.sketchOpts = this.opts;
     this.undoStack = []; this.redoStack = []; this.typed = "";
   }
-  get title() { return this.target.kind === "stair" ? "Create Stair: draw its flights" : this.target.kind === "roof" ? "Create Roof Footprint" : this.target.kind === "topo" ? "Create Toposurface Boundary" : this.target.kind === "site" ? (this.target.id ? "Edit Site Boundary" : "Create Site Boundary") : this.target.kind === "repeat" ? (this.target.id ? "Edit Repeating Detail Path" : "Create Repeating Detail Path") : this.target.kind === "crop" ? "Edit Crop" : this.target.id ? "Edit Boundary" : this.target.kind === "region" ? "Create Filled Region Boundary" : "Create Floor Boundary"; }
+  get title() { return this.target.kind === "stair" ? "Create Stair: draw its flights" : this.target.kind === "ramp" ? "Create Ramp: draw its runs" : this.target.kind === "railing" ? "Create Railing Path" : this.target.kind === "roof" ? "Create Roof Footprint" : this.target.kind === "topo" ? "Create Toposurface Boundary" : this.target.kind === "site" ? (this.target.id ? "Edit Site Boundary" : "Create Site Boundary") : this.target.kind === "repeat" ? (this.target.id ? "Edit Repeating Detail Path" : "Create Repeating Detail Path") : this.target.kind === "crop" ? "Edit Crop" : this.target.id ? "Edit Boundary" : this.target.kind === "region" ? "Create Filled Region Boundary" : "Create Floor Boundary"; }
   say(msg, kind = "note") { this.app.say(msg, kind); }
   commit(next, msg) { this.undoStack.push(this.d); this.redoStack = []; this.d = next; if (msg) this.say(msg, "ok"); this.refresh(); }
   refresh() { this.view.draw(); this.app.renderOptions && this.app.renderOptions(); }
@@ -355,6 +355,21 @@ export class SketchSession {
       this.say(`Stair ${res.id}: ${d.props.Risers ? d.props.Risers.v : "?"} risers of ${d.props["Riser height"] ? Math.round(d.props["Riser height"].v) : "?"} mm to ${above ? above.get("Name") : "3000 mm"}`, "ok");
       return true;
     }
+    if (this.target.kind === "ramp" || this.target.kind === "railing") {
+      // a ramp: each line a run, foot to head, rising to the next level at one slope; a railing: the lines as one path
+      const lines = this.d.elements.filter(x => x.type === "line");
+      if (!lines.length) { this.say(`${this.title}: draw it as lines`, "error"); return false; }
+      const doc = this.app.doc, base = F.refId(this.view.view, "level"), o = this.app.toolOpts, r = v => v.map(x => Math.round(x));
+      let el;
+      if (this.target.kind === "ramp") el = { type: "Ramp", args: { baseLevel: base ? { ref: base } : null, topLevel: null, height: o.rampRise ?? 600, runs: lines.map(x => ({ from: r(x.a), to: r(x.b) })), width: o.rampWidth || 1500 } };
+      else { const path = [r(lines[0].a)]; for (const x of lines) path.push(r(x.b)); el = { type: "Railing", args: { level: base ? { ref: base } : null, path, height: 1070 } }; }
+      const res = this.app.apply({ op: "add", element: el });
+      if (!res.ok) { this.say(res.error, "error"); return false; }
+      this.app.endSketch(); this.app.select([res.id]);
+      const d = doc.data(doc.element(res.id)) || { props: {} };
+      this.say(this.target.kind === "ramp" ? `Ramp ${res.id}: slope ${d.props.Slope ? d.props.Slope.v : "?"}` : `Railing ${res.id}: ${Math.round((d.props.Length || { v: 0 }).v)} mm`, "ok");
+      return true;
+    }
     if (this.target.kind === "repeat") {
       // a repeating detail's path is open or closed, any curves: nothing to close
       if (!this.d.elements.length) { this.say(`${this.title}: sketch the path first`, "error"); return false; }
@@ -567,7 +582,7 @@ export class SketchSession {
         h("label", {}, "Height offset ", h("input", { type: "text", value: fmtLen(this.app.toolOpts.floorOffset ?? 0), style: { width: "72px" }, onchange: e => { const v = this.len(e.target.value); if (v !== null) this.app.toolOpts.floorOffset = v; e.target.value = fmtLen(this.app.toolOpts.floorOffset ?? 0); }, onkeydown: e => e.stopPropagation() })));
     }
     const r = regionsOf(this.d);
-    if (this.target.kind === "stair" || this.target.kind === "repeat") kids.push(h("span", { class: "grow" }), h("span", { class: "muted" }, `${this.d.elements.length} path element${this.d.elements.length === 1 ? "" : "s"} · open or closed`),
+    if (["stair", "ramp", "railing", "repeat"].includes(this.target.kind)) kids.push(h("span", { class: "grow" }), h("span", { class: "muted" }, `${this.d.elements.length} path element${this.d.elements.length === 1 ? "" : "s"} · open or closed`),
       h("button", { class: "btn small", title: "Undo in the sketch (Ctrl+Z)", disabled: !this.undoStack.length, onclick: () => this.undo() }, "↶"),
       h("button", { class: "btn small primary", onclick: () => this.finish() }, "✓ Finish"), h("button", { class: "btn small", onclick: () => this.cancel() }, "✕ Cancel"));
     else kids.push(h("span", { class: "grow" }), h("span", { class: r.error ? "muted warn" : "muted" }, r.error ? (this.d.elements.length ? "open: " + r.error.replace(/^the boundary is /, "") : "draw a closed boundary") : `${r.regions.length} closed area${r.regions.length > 1 ? "s" : ""}${r.regions.some(x => x.holes.length) ? " with holes" : ""}`),

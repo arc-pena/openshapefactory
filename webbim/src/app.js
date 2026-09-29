@@ -195,6 +195,8 @@ const COMMANDS = {
   column: tool("column", "Column", "column", "CL", "Click to place (plan or 3D)."),
   planting: tool("planting", "Tree", "planting", "TR", "Click to plant: it stands on the toposurface under it (or the level); form, height and canopy in the options bar."),
   floor: { label: "Floor", icon: "floor", key: "SB", hint: "Sketch the floor's boundary: lines, arcs, circles, splines, Pick Walls. Closed loops inside are holes. Finish ✓ makes the floor; its layers hang down from the level.", run: () => startFloorSketch(), active: () => !!(app.sketch && app.sketch.target.kind === "floor") },
+  ramp: { label: "Ramp", icon: "ramp", key: "RA", hint: "Draw each run as a line, foot to head: it rises at one slope (Properties: its top level or height); landings join the runs, railings each side.", run: () => startKindSketch("ramp", "a ramp") },
+  railing: { label: "Railing", icon: "railing", key: "RL", hint: "Draw its path as lines: posts, rails and an infill along it (Properties: height, spacing, infill).", run: () => startKindSketch("railing", "a railing") },
   stair: { label: "Stair", icon: "stair", key: "ST", hint: "Draw each flight as a line, bottom first (first riser to last): landings join them. It rises to the next level; its risers are counted and numbered.", run: () => startKindSketch("stair", "a stair") },
   roof: { label: "Roof", icon: "roof", key: "RO", hint: "Sketch the roof's footprint (with its overhang): every edge slopes; set an edge to null for a gable, or a ridge height. Ridges, hips and valleys are found.", run: () => startKindSketch("roof", "a roof") },
   topo: { label: "Toposurface", icon: "topo", key: "TS", hint: "Sketch the ground's boundary, then give it contours (Properties) - or File › Import Contours (DXF) for a survey's contour lines at their heights", run: () => startKindSketch("topo", "a toposurface") },
@@ -292,7 +294,7 @@ const big = id => ({ id, size: "big" }), small = id => ({ id, size: "small" });
 const RIBBON = [
   { tab: "Architecture", panels: [
     { title: "Build", items: [big("wall"), big("door"), big("window"), big("column"), big("floor"), big("roof")] },
-    { title: "Circulation", items: [big("stair")] },
+    { title: "Circulation", items: [big("stair"), big("ramp"), big("railing")] },
     { title: "Site", items: [big("topo"), big("planting")] },
     { title: "Opening", items: [big("opening")] },
     { title: "Room & Area", items: [big("space"), small("sep"), small("schedule")] },
@@ -641,7 +643,7 @@ function rowClick(key, single, dbl) {
 }
 const ELEMENT_ICON = { Wall: "wall", Door: "door", Window: "window", Column: "column", Floor: "floor", Beam: "beam", Grid: "grid", Level: "level", Space: "room", Text: "text", Dimension: "dim",
   SectionView: "section", ElevationView: "elevview", PlanView: "plan", RoomSeparator: "sepline", DetailLine: "skline", FilledRegion: "skrect", SymbolInstance: "symbol", CADImport: "importI", Generic: "column", Furniture: "select" };
-const BODY_TYPES = new Set(["Wall", "Column", "Door", "Window", "Floor", "Beam", "Generic", "Duct", "Pipe", "Roof", "Stair", "Toposurface", "Planting"]);
+const BODY_TYPES = new Set(["Wall", "Column", "Door", "Window", "Floor", "Beam", "Generic", "Duct", "Pipe", "Roof", "Stair", "Toposurface", "Planting", "Railing", "Ramp"]);
 /** What a view shows that can be picked in it - the inclusion test is "visible and editable here": the
  *  ids its drawing publishes as hits (plans, elevations, sections), or the bodies it shows (3D).
  *  Cached per model and view revision; with `quick`, an uncached view is worked out in the background

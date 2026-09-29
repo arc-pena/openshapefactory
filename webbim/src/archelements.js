@@ -375,3 +375,95 @@ BUILDERS.Planting = {
       data: { props: { Species: { kind: "Text", v: F.text(f, "species") || form }, Height: LEN(H), "Canopy diameter": LEN(2 * R), "Ground height": LEN(z0) } } };
   },
 };
+
+// ================================================================ railing
+//! Revit's railing: a path, posts at its corners and at a spacing along it, a top rail and a bottom rail, and an
+//! infill between them (a mesh panel, balusters, horizontal rails, glass). The path's points may carry their own
+//! heights (x, y, z), so a railing follows a ramp or a stair; otherwise it stands on its level.
+declare({ type: "Railing", guid: "wb-0413", category: "IfcRailing", kind: "railing", idPrefix: "RL",
+  summary: "A railing along a path: posts, top and bottom rails and an infill; follows the heights its points carry.",
+  args: [ json("path", "Path [[x, y] or [x, y, z], ...]", [[0, 0], [3000, 0]]), ref("level", "Level", ["level"], { group: "Constraints" }),
+          real("baseOffset", "Base offset", 0, -100000, 100000, 1, "mm", { group: "Constraints" }),
+          real("height", "Height", 1070, 300, 3000, 1, "mm", { group: "Dimensions" }), real("postSpacing", "Post spacing", 1220, 200, 10000, 1, "mm", { group: "Dimensions" }),
+          real("postSize", "Post size", 90, 20, 400, 1, "mm", { group: "Dimensions" }),
+          choice("infill", "Infill", ["Mesh", "Balusters", "Rails", "Glass", "None"], 0, { group: "Construction" }),
+          text("material", "Material", "M-TIMBER", { group: "Materials" }) ] });
+/** A railing's pieces along a line of (x, y, z) points: posts, rails and infill as triangles. */
+export function railingTris(pts, o, solid, infill) {
+  const H = o.height || 1070, ps = o.postSize || 90, sp = o.postSpacing || 1220, kind = o.infill || "Mesh";
+  const box = (a, b, z0a, z0b, h, w) => { const d = sub(b, a), L = Math.hypot(d[0], d[1]); if (L < 1) return null; const n = mul(perp(mul(d, 1 / L)), w / 2);
+    const foot = [add(a, n), add(b, n), sub(b, n), sub(a, n)], zAt = p => { const t = dot(sub(p, a), d) / (L * L); return z0a + (z0b - z0a) * Math.max(0, Math.min(1, t)); };
+    return { foot, zLo: p => zAt(p), zHi: p => zAt(p) + h }; };
+  const post = (p, z) => { const q = [[p[0] - ps / 2, p[1] - ps / 2], [p[0] + ps / 2, p[1] - ps / 2], [p[0] + ps / 2, p[1] + ps / 2], [p[0] - ps / 2, p[1] + ps / 2]]; prismTris(q, () => z, () => z + H, solid); };
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const a = pts[i], b = pts[i + 1], A = [a[0], a[1]], B = [b[0], b[1]], L = Math.hypot(B[0] - A[0], B[1] - A[1]); if (L < 1) continue;
+    const n = Math.max(1, Math.round(L / sp));
+    for (let k = i ? 1 : 0; k <= n; k++) { const t = k / n; post(add(A, mul(sub(B, A), t)), a[2] + (b[2] - a[2]) * t); }
+    const top = box(A, B, a[2] + H - 50, b[2] + H - 50, 50, ps * 1.2), bot = box(A, B, a[2] + 100, b[2] + 100, 40, ps * 0.6);
+    for (const r of [top, bot]) if (r) prismTris(r.foot, r.zLo, r.zHi, solid);
+    if (kind === "Mesh" || kind === "Glass") { const r = box(A, B, a[2] + 140, b[2] + 140, H - 190 - 50, kind === "Glass" ? 12 : 6); if (r) prismTris(r.foot, r.zLo, r.zHi, infill); }
+    else if (kind === "Rails") for (let z = 250; z < H - 120; z += 150) { const r = box(A, B, a[2] + z, b[2] + z, 25, 25); if (r) prismTris(r.foot, r.zLo, r.zHi, solid); }
+    else if (kind === "Balusters") { const m = Math.max(1, Math.round(L / 110)); for (let k = 1; k < m; k++) { const t = k / m, c = add(A, mul(sub(B, A), t)), z = a[2] + (b[2] - a[2]) * t; prismTris([[c[0] - 10, c[1] - 10], [c[0] + 10, c[1] - 10], [c[0] + 10, c[1] + 10], [c[0] - 10, c[1] + 10]], () => z + 140, () => z + H - 50, solid); } }
+  }
+}
+BUILDERS.Railing = {
+  precondition: f => ((F.json(f, "path") || []).length >= 2 ? null : "a railing needs a path of two points"),
+  build: (f, doc) => {
+    const z0 = levelZ(doc, f, "level") + F.real(f, "baseOffset"), raw = (F.json(f, "path") || []).filter(p => Array.isArray(p) && p.length >= 2);
+    const pts = raw.map(p => [p[0], p[1], p.length > 2 ? z0 + p[2] : z0]), solid = [], infill = [];
+    railingTris(pts, { height: F.real(f, "height"), postSpacing: F.real(f, "postSpacing"), postSize: F.real(f, "postSize"), infill: F.choice(f, "infill") }, solid, infill);
+    const mat = F.text(f, "material") || "M-TIMBER", colour = ((doc.lib.materials[mat] || {}).shading || {}).colour || "#8a7a66";
+    const all = bodyOf(solid.concat(infill)), sb = bodyOf(solid), L = pts.slice(1).reduce((s, p, i) => s + Math.hypot(p[0] - pts[i][0], p[1] - pts[i][1]), 0);
+    const xy = pts.map(p => [p[0], p[1]]), zs = pts.map(p => p[2]);
+    return { plan: { path: xy.slice(1).map((p, i) => ({ k: "L", a: xy[i], b: p })), foot: [], z0: Math.min(...zs), z1: Math.max(...zs) + F.real(f, "height"), material: mat, parts: [], mesh: all,
+        mesh3d: [{ positions: sb.positions, index: sb.index, colour }, ...(infill.length ? [{ ...bodyOf(infill), colour: F.choice(f, "infill") === "Glass" ? "#bcd7e6" : "#9aa0a6", opacity: 0.45 }] : [])],
+        railing: { pts: xy, postSize: F.real(f, "postSize"), postSpacing: F.real(f, "postSpacing") } },
+      data: { value: L, kind: "Length", props: { Length: LEN(L), Height: LEN(F.real(f, "height")), Infill: { kind: "Text", v: F.choice(f, "infill") } } } };
+  },
+};
+
+// ================================================================ ramp
+//! Revit's ramp: runs along a walking line from its foot to its head, rising at one slope from the base level to the
+//! top (landings flat between runs), a slab of a thickness under its surface, railings each side asked for. The
+//! plan draws its edges and the walking line with its arrow, UP and the slope as 1:n.
+declare({ type: "Ramp", guid: "wb-0414", category: "IfcRamp", kind: "ramp", idPrefix: "RP",
+  summary: "A ramp: sloped runs and flat landings between two heights, railings each side; UP and its slope in plan.",
+  args: [ ref("baseLevel", "Base level", ["level"], { group: "Constraints" }), real("baseOffset", "Base offset", 0, -100000, 100000, 1, "mm", { group: "Constraints" }),
+          ref("topLevel", "Top level", ["level"], { group: "Constraints" }), real("topOffset", "Top offset", 0, -100000, 100000, 1, "mm", { group: "Constraints" }),
+          real("height", "Height (no top level)", 600, 0, 100000, 1, "mm", { group: "Constraints" }),
+          json("runs", "Runs (walking line, foot to head)", [{ from: [0, 0], to: [7200, 0] }]),
+          real("width", "Width", 1500, 300, 20000, 1, "mm", { group: "Dimensions" }), real("thickness", "Thickness", 200, 20, 2000, 1, "mm", { group: "Dimensions" }),
+          choice("railings", "Railings", ["Both", "Left", "Right", "None"], 0, { group: "Construction" }), real("railHeight", "Railing height", 1070, 300, 2000, 1, "mm", { group: "Construction" }),
+          choice("infill", "Railing infill", ["Mesh", "Balusters", "Rails", "Glass", "None"], 0, { group: "Construction" }),
+          text("material", "Material", "M-TIMBER", { group: "Materials" }) ] });
+export function rampLayout(doc, f) {
+  const z0 = levelZ(doc, f, "baseLevel") + F.real(f, "baseOffset");
+  const top = F.reference(f, "topLevel"), z1 = top ? levelZ(doc, f, "topLevel") + F.real(f, "topOffset") : z0 + F.real(f, "height"), W = F.real(f, "width");
+  const runs = (F.json(f, "runs") || []).filter(q => q && q.from && q.to).map(q => { const d = sub(q.to, q.from), L = Math.hypot(d[0], d[1]); return { from: q.from, to: q.to, L, d: L ? mul(d, 1 / L) : [1, 0] }; }).filter(q => q.L > 1);
+  const Ltot = runs.reduce((s, q) => s + q.L, 0) || 1; let z = z0;
+  for (const q of runs) { q.n = perp(q.d); q.z0 = z; z += (z1 - z0) * q.L / Ltot; q.z1 = z; }
+  const edge = (c, q) => [add(c, mul(q.n, W / 2)), add(c, mul(q.n, -W / 2))], landings = [];
+  for (let k = 0; k + 1 < runs.length; k++) { const a = runs[k], b = runs[k + 1], e1 = edge(a.to, a), e2 = edge(b.from, b);
+    landings.push({ poly: hull([...e1, ...e1.map(p => add(p, mul(a.d, W))), ...e2, ...e2.map(p => sub(p, mul(b.d, W)))]), z: a.z1 }); }
+  return { z0, z1, W, runs, landings, slope: Math.abs(z1 - z0) / Ltot };
+}
+BUILDERS.Ramp = {
+  precondition: f => ((F.json(f, "runs") || []).length ? null : "a ramp needs a run"),
+  build: (f, doc) => {
+    const S = rampLayout(doc, f), T = F.real(f, "thickness"), tris = [], rails = [], infill = [];
+    for (const q of S.runs) {
+      const foot = [add(q.from, mul(q.n, S.W / 2)), add(q.to, mul(q.n, S.W / 2)), add(q.to, mul(q.n, -S.W / 2)), add(q.from, mul(q.n, -S.W / 2))];
+      const zAt = p => q.z0 + (q.z1 - q.z0) * Math.max(0, Math.min(1, dot(sub(p, q.from), q.d) / q.L));
+      prismTris(foot, p => zAt(p) - T, zAt, tris);
+      const sides = { Both: [1, -1], Left: [1], Right: [-1], None: [] }[F.choice(f, "railings")] || [];
+      for (const sd of sides) { const off = mul(q.n, sd * (S.W / 2 - 50)); railingTris([[...add(q.from, off), q.z0], [...add(q.to, off), q.z1]], { height: F.real(f, "railHeight"), infill: F.choice(f, "infill") }, rails, infill); }
+    }
+    for (const l of S.landings) prismTris(l.poly, () => l.z - T, () => l.z, tris);
+    const body = bodyOf(tris), mat = F.text(f, "material") || "M-TIMBER", colour = ((doc.lib.materials[mat] || {}).shading || {}).colour || "#b39b7c";
+    const footAll = hull(S.runs.flatMap(q => [add(q.from, mul(q.n, S.W / 2)), add(q.from, mul(q.n, -S.W / 2)), add(q.to, mul(q.n, S.W / 2)), add(q.to, mul(q.n, -S.W / 2))]).concat(S.landings.flatMap(l => l.poly)));
+    const mesh = bodyOf(tris.concat(rails, infill)), L = S.runs.reduce((s, q) => s + q.L, 0);
+    return { plan: { path: polyPath(footAll), foot: footAll, z0: Math.min(S.z0, S.z1) - T, z1: Math.max(S.z0, S.z1), material: mat, parts: [], mesh,
+        mesh3d: [{ positions: body.positions, index: body.index, colour }, ...(rails.length ? [{ ...bodyOf(rails), colour: "#6d6152" }] : []), ...(infill.length ? [{ ...bodyOf(infill), colour: "#9aa0a6", opacity: 0.45 }] : [])], ramp: S },
+      data: { value: L, kind: "Length", props: { Length: LEN(L), Rise: LEN(S.z1 - S.z0), Slope: { kind: "Text", v: S.slope > 1e-6 ? `1:${Math.round(1 / S.slope * 10) / 10}` : "flat" }, Width: LEN(S.W), Runs: NUM(S.runs.length) } } };
+  },
+};

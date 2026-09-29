@@ -310,6 +310,8 @@ export function planScene(doc, v, opts = {}) {
     }
     if (t === "Stair" && vis(f)) { const p = doc.plan(f); if (p && p.stair) drawStairPlan(doc, ctx, B, f, p, { cutZ, topZ, botZ, E }); continue; }
     if (t === "Toposurface" && vis(f)) { const p = doc.plan(f); if (p && p.mesh) drawTopoPlan(doc, ctx, B, f, p); continue; }
+    if (t === "Railing" && vis(f)) { const p = doc.plan(f); if (p && p.railing && p.z0 <= topZ + TOL) drawRailingPlan(doc, ctx, B, f, p); continue; }
+    if (t === "Ramp" && vis(f)) { const p = doc.plan(f); if (p && p.ramp && p.z0 <= topZ + TOL) drawRampPlan(doc, ctx, B, f, p); continue; }
     if (t === "Planting" && vis(f)) { const p = doc.plan(f); if (p && p.planting) drawPlantingPlan(doc, ctx, B, f, p); continue; }
     if ((t === "Generic" || t === "Roof") && vis(f)) {
       const p = doc.plan(f); if (!p) continue;
@@ -643,6 +645,38 @@ function drawTopoPlan(doc, ctx, B, f, p) {
     B.text(B.P(mul(add(s[0], s[1]), 0.5)), fmtLevel(doc, z), 1.8, { align: "centre", valign: "middle", rot: a, layer: "Annotation-Text", id, colour: col });
   }
   B.stroke(p.path, { weight: penWeight(doc, "thin", ctx.scale), colour: col, dash: LINE_TYPES.dashed2 }, "Topography", id); B.hit(id, p.foot);
+}
+/** A railing in plan: its rail as two lines the post's width apart, the posts as small squares. */
+function drawRailingPlan(doc, ctx, B, f, p) {
+  const id = doc.idOf(f), S = ctx.scale, g = resolveGraphics(doc, ctx, f, "projection"), col = g.colour && g.colour !== "#000000" ? g.colour : "#000";
+  const { pts, postSize: ps, postSpacing: sp } = p.railing, segs = [], posts = [];
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const a = pts[i], b = pts[i + 1], d = sub(b, a), L = Math.hypot(d[0], d[1]); if (L < 1) continue; const n = mul(perp(mul(d, 1 / L)), ps * 0.3);
+    segs.push(lineSeg(add(a, n), add(b, n)), lineSeg(sub(a, n), sub(b, n)));
+    const m = Math.max(1, Math.round(L / sp)); for (let k = i ? 1 : 0; k <= m; k++) { const c = add(a, mul(d, k / m)), h = ps / 2; posts.push(polyPath([[c[0] - h, c[1] - h], [c[0] + h, c[1] - h], [c[0] + h, c[1] + h], [c[0] - h, c[1] + h]])); }
+  }
+  B.stroke(segs, { weight: penWeight(doc, "thin", S), colour: col }, "IfcRailing", id);
+  B.stroke(posts.flat(), { weight: penWeight(doc, "hairline", S), colour: col }, "IfcRailing", id);
+  for (let i = 0; i + 1 < pts.length; i++) { const a = pts[i], b = pts[i + 1], d = sub(b, a), L = Math.hypot(d[0], d[1]); if (L < 1) continue; const n = mul(perp(mul(d, 1 / L)), Math.max(ps, 150)); B.hit(id, [add(a, n), add(b, n), sub(b, n), sub(a, n)]); }
+}
+/** A ramp in plan: its edges, the landings, the walking line with its arrow to the head, UP at the foot and the slope. */
+function drawRampPlan(doc, ctx, B, f, p) {
+  const id = doc.idOf(f), S = ctx.scale, R = p.ramp, g = resolveGraphics(doc, ctx, f, "projection"), col = g.colour && g.colour !== "#000000" ? g.colour : "#000", w = penWeight(doc, "thin", S);
+  const up = R.z1 >= R.z0, font = annotationStyle(doc).font || undefined;
+  for (const q of R.runs) {
+    const e = s => [add(q.from, mul(q.n, s * R.W / 2)), add(q.to, mul(q.n, s * R.W / 2))];
+    B.stroke([lineSeg(...e(1)), lineSeg(...e(-1)), lineSeg(e(1)[0], e(-1)[0]), lineSeg(e(1)[1], e(-1)[1])], { weight: w, colour: col }, "IfcRamp", id);
+  }
+  for (const l of R.landings) B.stroke(polyPath(l.poly), { weight: w, colour: col }, "IfcRamp", id);
+  // the walking line through the runs, its arrow at the head; UP (or DN) at the foot and the slope at the middle
+  const wl = R.runs.flatMap((q, i) => [lineSeg(q.from, q.to), ...(i + 1 < R.runs.length ? [lineSeg(q.to, R.runs[i + 1].from)] : [])]);
+  B.stroke(wl, { weight: penWeight(doc, "hairline", S), colour: col }, "IfcRamp", id);
+  const last = R.runs[R.runs.length - 1], tip = last.to, ah = 2.2 * S, bk = sub(tip, mul(last.d, ah));
+  B.fill(polyPath([tip, add(bk, mul(last.n, ah * 0.35)), sub(bk, mul(last.n, ah * 0.35))]), col, "IfcRamp", id);
+  const q0 = R.runs[0], lab = sub(q0.from, mul(q0.d, 2.5 * S)), ang = a => { let r = Math.atan2(a[1], a[0]) * 180 / Math.PI; if (r > 90) r -= 180; if (r < -90) r += 180; return r; };
+  B.text(B.P(lab), up ? "UP" : "DN", 1.8, { align: "centre", valign: "middle", layer: "Annotation-Text", id, font, colour: col });
+  if (R.slope > 1e-6) { const m = add(q0.from, mul(q0.d, q0.L / 2)); B.text(B.P(add(m, mul(q0.n, 1.6 * S))), `1:${Math.round(1 / R.slope)}`, 1.8, { align: "centre", valign: "middle", rot: ang(q0.d), layer: "Annotation-Text", id, font, colour: col }); }
+  B.hit(id, p.foot);
 }
 /** A tree in plan as a landscape drawing has it: the canopy's outline, branches out from the trunk, the trunk
  *  (a conifer's canopy a star of needles, a shrub's a scalloped cloud). Seeded by its id so it never flickers. */
@@ -1408,7 +1442,7 @@ function gatherElevationItems(doc, ctx, G, skip = null) {
     if (!categoryVisible(ctx, categoryOf(doc, f)) || hiddenByRule(doc, ctx, f)) continue;
     const t = doc.typeOf(f);
     if (t === "Wall") { const w = doc.plan(f); if (!w) continue; const it = elevWall(doc, f, w, V, sOf, depthOf, ctx); if (it) items.push(it); }
-    if ((t === "Generic" || t === "Duct" || t === "Pipe" || t === "Roof" || t === "Lattice" || t === "Stair" || t === "Toposurface" || t === "Planting") && doc.plan(f) && doc.plan(f).mesh) {
+    if ((t === "Generic" || t === "Duct" || t === "Pipe" || t === "Roof" || t === "Lattice" || t === "Stair" || t === "Toposurface" || t === "Planting" || t === "Railing" || t === "Ramp") && doc.plan(f) && doc.plan(f).mesh) {
       // a body of its own shape: its feature edges, projected; hidden by what stands in front of it
       const p = doc.plan(f), P = p.mesh.positions, curves = [];
       let d0 = Infinity, d1 = -Infinity, s0 = Infinity, s1 = -Infinity, z0 = Infinity, z1 = -Infinity;
@@ -1721,7 +1755,7 @@ export function sectionCut(doc, v) {
         }
       }
     }
-    if ((t === "Generic" || t === "Duct" || t === "Pipe" || t === "Roof" || t === "Lattice" || t === "Stair" || t === "Toposurface" || t === "Planting") && p.mesh) {
+    if ((t === "Generic" || t === "Duct" || t === "Pipe" || t === "Roof" || t === "Lattice" || t === "Stair" || t === "Toposurface" || t === "Planting" || t === "Railing" || t === "Ramp") && p.mesh) {
       // a body of its own shape, cut by the section plane: turned into (along, up, depth) and sliced at depth 0
       const P = p.mesh.positions, Q = new Array(P.length); let lo = Infinity, hi = -Infinity;
       for (let i = 0; i < P.length; i += 3) { const q = [P[i], P[i + 1]], dd = G.depthOf(q); Q[i] = G.sOf(q); Q[i + 1] = P[i + 2] - G.Z0; Q[i + 2] = dd; lo = Math.min(lo, dd); hi = Math.max(hi, dd); }

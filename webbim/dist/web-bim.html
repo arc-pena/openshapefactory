@@ -7407,6 +7407,98 @@ BUILDERS.Planting = {
   },
 };
 
+// ================================================================ railing
+//! Revit's railing: a path, posts at its corners and at a spacing along it, a top rail and a bottom rail, and an
+//! infill between them (a mesh panel, balusters, horizontal rails, glass). The path's points may carry their own
+//! heights (x, y, z), so a railing follows a ramp or a stair; otherwise it stands on its level.
+declare({ type: "Railing", guid: "wb-0413", category: "IfcRailing", kind: "railing", idPrefix: "RL",
+  summary: "A railing along a path: posts, top and bottom rails and an infill; follows the heights its points carry.",
+  args: [ json("path", "Path [[x, y] or [x, y, z], ...]", [[0, 0], [3000, 0]]), ref("level", "Level", ["level"], { group: "Constraints" }),
+          real("baseOffset", "Base offset", 0, -100000, 100000, 1, "mm", { group: "Constraints" }),
+          real("height", "Height", 1070, 300, 3000, 1, "mm", { group: "Dimensions" }), real("postSpacing", "Post spacing", 1220, 200, 10000, 1, "mm", { group: "Dimensions" }),
+          real("postSize", "Post size", 90, 20, 400, 1, "mm", { group: "Dimensions" }),
+          choice("infill", "Infill", ["Mesh", "Balusters", "Rails", "Glass", "None"], 0, { group: "Construction" }),
+          text("material", "Material", "M-TIMBER", { group: "Materials" }) ] });
+/** A railing's pieces along a line of (x, y, z) points: posts, rails and infill as triangles. */
+function railingTris(pts, o, solid, infill) {
+  const H = o.height || 1070, ps = o.postSize || 90, sp = o.postSpacing || 1220, kind = o.infill || "Mesh";
+  const box = (a, b, z0a, z0b, h, w) => { const d = sub(b, a), L = Math.hypot(d[0], d[1]); if (L < 1) return null; const n = mul(perp(mul(d, 1 / L)), w / 2);
+    const foot = [add(a, n), add(b, n), sub(b, n), sub(a, n)], zAt = p => { const t = dot(sub(p, a), d) / (L * L); return z0a + (z0b - z0a) * Math.max(0, Math.min(1, t)); };
+    return { foot, zLo: p => zAt(p), zHi: p => zAt(p) + h }; };
+  const post = (p, z) => { const q = [[p[0] - ps / 2, p[1] - ps / 2], [p[0] + ps / 2, p[1] - ps / 2], [p[0] + ps / 2, p[1] + ps / 2], [p[0] - ps / 2, p[1] + ps / 2]]; prismTris(q, () => z, () => z + H, solid); };
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const a = pts[i], b = pts[i + 1], A = [a[0], a[1]], B = [b[0], b[1]], L = Math.hypot(B[0] - A[0], B[1] - A[1]); if (L < 1) continue;
+    const n = Math.max(1, Math.round(L / sp));
+    for (let k = i ? 1 : 0; k <= n; k++) { const t = k / n; post(add(A, mul(sub(B, A), t)), a[2] + (b[2] - a[2]) * t); }
+    const top = box(A, B, a[2] + H - 50, b[2] + H - 50, 50, ps * 1.2), bot = box(A, B, a[2] + 100, b[2] + 100, 40, ps * 0.6);
+    for (const r of [top, bot]) if (r) prismTris(r.foot, r.zLo, r.zHi, solid);
+    if (kind === "Mesh" || kind === "Glass") { const r = box(A, B, a[2] + 140, b[2] + 140, H - 190 - 50, kind === "Glass" ? 12 : 6); if (r) prismTris(r.foot, r.zLo, r.zHi, infill); }
+    else if (kind === "Rails") for (let z = 250; z < H - 120; z += 150) { const r = box(A, B, a[2] + z, b[2] + z, 25, 25); if (r) prismTris(r.foot, r.zLo, r.zHi, solid); }
+    else if (kind === "Balusters") { const m = Math.max(1, Math.round(L / 110)); for (let k = 1; k < m; k++) { const t = k / m, c = add(A, mul(sub(B, A), t)), z = a[2] + (b[2] - a[2]) * t; prismTris([[c[0] - 10, c[1] - 10], [c[0] + 10, c[1] - 10], [c[0] + 10, c[1] + 10], [c[0] - 10, c[1] + 10]], () => z + 140, () => z + H - 50, solid); } }
+  }
+}
+BUILDERS.Railing = {
+  precondition: f => ((F.json(f, "path") || []).length >= 2 ? null : "a railing needs a path of two points"),
+  build: (f, doc) => {
+    const z0 = levelZ(doc, f, "level") + F.real(f, "baseOffset"), raw = (F.json(f, "path") || []).filter(p => Array.isArray(p) && p.length >= 2);
+    const pts = raw.map(p => [p[0], p[1], p.length > 2 ? z0 + p[2] : z0]), solid = [], infill = [];
+    railingTris(pts, { height: F.real(f, "height"), postSpacing: F.real(f, "postSpacing"), postSize: F.real(f, "postSize"), infill: F.choice(f, "infill") }, solid, infill);
+    const mat = F.text(f, "material") || "M-TIMBER", colour = ((doc.lib.materials[mat] || {}).shading || {}).colour || "#8a7a66";
+    const all = bodyOf(solid.concat(infill)), sb = bodyOf(solid), L = pts.slice(1).reduce((s, p, i) => s + Math.hypot(p[0] - pts[i][0], p[1] - pts[i][1]), 0);
+    const xy = pts.map(p => [p[0], p[1]]), zs = pts.map(p => p[2]);
+    return { plan: { path: xy.slice(1).map((p, i) => ({ k: "L", a: xy[i], b: p })), foot: [], z0: Math.min(...zs), z1: Math.max(...zs) + F.real(f, "height"), material: mat, parts: [], mesh: all,
+        mesh3d: [{ positions: sb.positions, index: sb.index, colour }, ...(infill.length ? [{ ...bodyOf(infill), colour: F.choice(f, "infill") === "Glass" ? "#bcd7e6" : "#9aa0a6", opacity: 0.45 }] : [])],
+        railing: { pts: xy, postSize: F.real(f, "postSize"), postSpacing: F.real(f, "postSpacing") } },
+      data: { value: L, kind: "Length", props: { Length: LEN(L), Height: LEN(F.real(f, "height")), Infill: { kind: "Text", v: F.choice(f, "infill") } } } };
+  },
+};
+
+// ================================================================ ramp
+//! Revit's ramp: runs along a walking line from its foot to its head, rising at one slope from the base level to the
+//! top (landings flat between runs), a slab of a thickness under its surface, railings each side asked for. The
+//! plan draws its edges and the walking line with its arrow, UP and the slope as 1:n.
+declare({ type: "Ramp", guid: "wb-0414", category: "IfcRamp", kind: "ramp", idPrefix: "RP",
+  summary: "A ramp: sloped runs and flat landings between two heights, railings each side; UP and its slope in plan.",
+  args: [ ref("baseLevel", "Base level", ["level"], { group: "Constraints" }), real("baseOffset", "Base offset", 0, -100000, 100000, 1, "mm", { group: "Constraints" }),
+          ref("topLevel", "Top level", ["level"], { group: "Constraints" }), real("topOffset", "Top offset", 0, -100000, 100000, 1, "mm", { group: "Constraints" }),
+          real("height", "Height (no top level)", 600, 0, 100000, 1, "mm", { group: "Constraints" }),
+          json("runs", "Runs (walking line, foot to head)", [{ from: [0, 0], to: [7200, 0] }]),
+          real("width", "Width", 1500, 300, 20000, 1, "mm", { group: "Dimensions" }), real("thickness", "Thickness", 200, 20, 2000, 1, "mm", { group: "Dimensions" }),
+          choice("railings", "Railings", ["Both", "Left", "Right", "None"], 0, { group: "Construction" }), real("railHeight", "Railing height", 1070, 300, 2000, 1, "mm", { group: "Construction" }),
+          choice("infill", "Railing infill", ["Mesh", "Balusters", "Rails", "Glass", "None"], 0, { group: "Construction" }),
+          text("material", "Material", "M-TIMBER", { group: "Materials" }) ] });
+function rampLayout(doc, f) {
+  const z0 = levelZ(doc, f, "baseLevel") + F.real(f, "baseOffset");
+  const top = F.reference(f, "topLevel"), z1 = top ? levelZ(doc, f, "topLevel") + F.real(f, "topOffset") : z0 + F.real(f, "height"), W = F.real(f, "width");
+  const runs = (F.json(f, "runs") || []).filter(q => q && q.from && q.to).map(q => { const d = sub(q.to, q.from), L = Math.hypot(d[0], d[1]); return { from: q.from, to: q.to, L, d: L ? mul(d, 1 / L) : [1, 0] }; }).filter(q => q.L > 1);
+  const Ltot = runs.reduce((s, q) => s + q.L, 0) || 1; let z = z0;
+  for (const q of runs) { q.n = perp(q.d); q.z0 = z; z += (z1 - z0) * q.L / Ltot; q.z1 = z; }
+  const edge = (c, q) => [add(c, mul(q.n, W / 2)), add(c, mul(q.n, -W / 2))], landings = [];
+  for (let k = 0; k + 1 < runs.length; k++) { const a = runs[k], b = runs[k + 1], e1 = edge(a.to, a), e2 = edge(b.from, b);
+    landings.push({ poly: hull([...e1, ...e1.map(p => add(p, mul(a.d, W))), ...e2, ...e2.map(p => sub(p, mul(b.d, W)))]), z: a.z1 }); }
+  return { z0, z1, W, runs, landings, slope: Math.abs(z1 - z0) / Ltot };
+}
+BUILDERS.Ramp = {
+  precondition: f => ((F.json(f, "runs") || []).length ? null : "a ramp needs a run"),
+  build: (f, doc) => {
+    const S = rampLayout(doc, f), T = F.real(f, "thickness"), tris = [], rails = [], infill = [];
+    for (const q of S.runs) {
+      const foot = [add(q.from, mul(q.n, S.W / 2)), add(q.to, mul(q.n, S.W / 2)), add(q.to, mul(q.n, -S.W / 2)), add(q.from, mul(q.n, -S.W / 2))];
+      const zAt = p => q.z0 + (q.z1 - q.z0) * Math.max(0, Math.min(1, dot(sub(p, q.from), q.d) / q.L));
+      prismTris(foot, p => zAt(p) - T, zAt, tris);
+      const sides = { Both: [1, -1], Left: [1], Right: [-1], None: [] }[F.choice(f, "railings")] || [];
+      for (const sd of sides) { const off = mul(q.n, sd * (S.W / 2 - 50)); railingTris([[...add(q.from, off), q.z0], [...add(q.to, off), q.z1]], { height: F.real(f, "railHeight"), infill: F.choice(f, "infill") }, rails, infill); }
+    }
+    for (const l of S.landings) prismTris(l.poly, () => l.z - T, () => l.z, tris);
+    const body = bodyOf(tris), mat = F.text(f, "material") || "M-TIMBER", colour = ((doc.lib.materials[mat] || {}).shading || {}).colour || "#b39b7c";
+    const footAll = hull(S.runs.flatMap(q => [add(q.from, mul(q.n, S.W / 2)), add(q.from, mul(q.n, -S.W / 2)), add(q.to, mul(q.n, S.W / 2)), add(q.to, mul(q.n, -S.W / 2))]).concat(S.landings.flatMap(l => l.poly)));
+    const mesh = bodyOf(tris.concat(rails, infill)), L = S.runs.reduce((s, q) => s + q.L, 0);
+    return { plan: { path: polyPath(footAll), foot: footAll, z0: Math.min(S.z0, S.z1) - T, z1: Math.max(S.z0, S.z1), material: mat, parts: [], mesh,
+        mesh3d: [{ positions: body.positions, index: body.index, colour }, ...(rails.length ? [{ ...bodyOf(rails), colour: "#6d6152" }] : []), ...(infill.length ? [{ ...bodyOf(infill), colour: "#9aa0a6", opacity: 0.45 }] : [])], ramp: S },
+      data: { value: L, kind: "Length", props: { Length: LEN(L), Rise: LEN(S.z1 - S.z0), Slope: { kind: "Text", v: S.slope > 1e-6 ? `1:${Math.round(1 / S.slope * 10) / 10}` : "flat" }, Width: LEN(S.W), Runs: NUM(S.runs.length) } } };
+  },
+};
+
 // ===== bim.js =====
 //! The application layer (spec §4–§11): every element type is two declarations —
 //! a catalogue entry and a driver — and nothing else. The panel, the tree, the
@@ -12374,6 +12466,8 @@ function planScene(doc, v, opts = {}) {
     }
     if (t === "Stair" && vis(f)) { const p = doc.plan(f); if (p && p.stair) drawStairPlan(doc, ctx, B, f, p, { cutZ, topZ, botZ, E }); continue; }
     if (t === "Toposurface" && vis(f)) { const p = doc.plan(f); if (p && p.mesh) drawTopoPlan(doc, ctx, B, f, p); continue; }
+    if (t === "Railing" && vis(f)) { const p = doc.plan(f); if (p && p.railing && p.z0 <= topZ + TOL) drawRailingPlan(doc, ctx, B, f, p); continue; }
+    if (t === "Ramp" && vis(f)) { const p = doc.plan(f); if (p && p.ramp && p.z0 <= topZ + TOL) drawRampPlan(doc, ctx, B, f, p); continue; }
     if (t === "Planting" && vis(f)) { const p = doc.plan(f); if (p && p.planting) drawPlantingPlan(doc, ctx, B, f, p); continue; }
     if ((t === "Generic" || t === "Roof") && vis(f)) {
       const p = doc.plan(f); if (!p) continue;
@@ -12707,6 +12801,38 @@ function drawTopoPlan(doc, ctx, B, f, p) {
     B.text(B.P(mul(add(s[0], s[1]), 0.5)), fmtLevel(doc, z), 1.8, { align: "centre", valign: "middle", rot: a, layer: "Annotation-Text", id, colour: col });
   }
   B.stroke(p.path, { weight: penWeight(doc, "thin", ctx.scale), colour: col, dash: LINE_TYPES.dashed2 }, "Topography", id); B.hit(id, p.foot);
+}
+/** A railing in plan: its rail as two lines the post's width apart, the posts as small squares. */
+function drawRailingPlan(doc, ctx, B, f, p) {
+  const id = doc.idOf(f), S = ctx.scale, g = resolveGraphics(doc, ctx, f, "projection"), col = g.colour && g.colour !== "#000000" ? g.colour : "#000";
+  const { pts, postSize: ps, postSpacing: sp } = p.railing, segs = [], posts = [];
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const a = pts[i], b = pts[i + 1], d = sub(b, a), L = Math.hypot(d[0], d[1]); if (L < 1) continue; const n = mul(perp(mul(d, 1 / L)), ps * 0.3);
+    segs.push(lineSeg(add(a, n), add(b, n)), lineSeg(sub(a, n), sub(b, n)));
+    const m = Math.max(1, Math.round(L / sp)); for (let k = i ? 1 : 0; k <= m; k++) { const c = add(a, mul(d, k / m)), h = ps / 2; posts.push(polyPath([[c[0] - h, c[1] - h], [c[0] + h, c[1] - h], [c[0] + h, c[1] + h], [c[0] - h, c[1] + h]])); }
+  }
+  B.stroke(segs, { weight: penWeight(doc, "thin", S), colour: col }, "IfcRailing", id);
+  B.stroke(posts.flat(), { weight: penWeight(doc, "hairline", S), colour: col }, "IfcRailing", id);
+  for (let i = 0; i + 1 < pts.length; i++) { const a = pts[i], b = pts[i + 1], d = sub(b, a), L = Math.hypot(d[0], d[1]); if (L < 1) continue; const n = mul(perp(mul(d, 1 / L)), Math.max(ps, 150)); B.hit(id, [add(a, n), add(b, n), sub(b, n), sub(a, n)]); }
+}
+/** A ramp in plan: its edges, the landings, the walking line with its arrow to the head, UP at the foot and the slope. */
+function drawRampPlan(doc, ctx, B, f, p) {
+  const id = doc.idOf(f), S = ctx.scale, R = p.ramp, g = resolveGraphics(doc, ctx, f, "projection"), col = g.colour && g.colour !== "#000000" ? g.colour : "#000", w = penWeight(doc, "thin", S);
+  const up = R.z1 >= R.z0, font = annotationStyle(doc).font || undefined;
+  for (const q of R.runs) {
+    const e = s => [add(q.from, mul(q.n, s * R.W / 2)), add(q.to, mul(q.n, s * R.W / 2))];
+    B.stroke([lineSeg(...e(1)), lineSeg(...e(-1)), lineSeg(e(1)[0], e(-1)[0]), lineSeg(e(1)[1], e(-1)[1])], { weight: w, colour: col }, "IfcRamp", id);
+  }
+  for (const l of R.landings) B.stroke(polyPath(l.poly), { weight: w, colour: col }, "IfcRamp", id);
+  // the walking line through the runs, its arrow at the head; UP (or DN) at the foot and the slope at the middle
+  const wl = R.runs.flatMap((q, i) => [lineSeg(q.from, q.to), ...(i + 1 < R.runs.length ? [lineSeg(q.to, R.runs[i + 1].from)] : [])]);
+  B.stroke(wl, { weight: penWeight(doc, "hairline", S), colour: col }, "IfcRamp", id);
+  const last = R.runs[R.runs.length - 1], tip = last.to, ah = 2.2 * S, bk = sub(tip, mul(last.d, ah));
+  B.fill(polyPath([tip, add(bk, mul(last.n, ah * 0.35)), sub(bk, mul(last.n, ah * 0.35))]), col, "IfcRamp", id);
+  const q0 = R.runs[0], lab = sub(q0.from, mul(q0.d, 2.5 * S)), ang = a => { let r = Math.atan2(a[1], a[0]) * 180 / Math.PI; if (r > 90) r -= 180; if (r < -90) r += 180; return r; };
+  B.text(B.P(lab), up ? "UP" : "DN", 1.8, { align: "centre", valign: "middle", layer: "Annotation-Text", id, font, colour: col });
+  if (R.slope > 1e-6) { const m = add(q0.from, mul(q0.d, q0.L / 2)); B.text(B.P(add(m, mul(q0.n, 1.6 * S))), `1:${Math.round(1 / R.slope)}`, 1.8, { align: "centre", valign: "middle", rot: ang(q0.d), layer: "Annotation-Text", id, font, colour: col }); }
+  B.hit(id, p.foot);
 }
 /** A tree in plan as a landscape drawing has it: the canopy's outline, branches out from the trunk, the trunk
  *  (a conifer's canopy a star of needles, a shrub's a scalloped cloud). Seeded by its id so it never flickers. */
@@ -13472,7 +13598,7 @@ function gatherElevationItems(doc, ctx, G, skip = null) {
     if (!categoryVisible(ctx, categoryOf(doc, f)) || hiddenByRule(doc, ctx, f)) continue;
     const t = doc.typeOf(f);
     if (t === "Wall") { const w = doc.plan(f); if (!w) continue; const it = elevWall(doc, f, w, V, sOf, depthOf, ctx); if (it) items.push(it); }
-    if ((t === "Generic" || t === "Duct" || t === "Pipe" || t === "Roof" || t === "Lattice" || t === "Stair" || t === "Toposurface" || t === "Planting") && doc.plan(f) && doc.plan(f).mesh) {
+    if ((t === "Generic" || t === "Duct" || t === "Pipe" || t === "Roof" || t === "Lattice" || t === "Stair" || t === "Toposurface" || t === "Planting" || t === "Railing" || t === "Ramp") && doc.plan(f) && doc.plan(f).mesh) {
       // a body of its own shape: its feature edges, projected; hidden by what stands in front of it
       const p = doc.plan(f), P = p.mesh.positions, curves = [];
       let d0 = Infinity, d1 = -Infinity, s0 = Infinity, s1 = -Infinity, z0 = Infinity, z1 = -Infinity;
@@ -13785,7 +13911,7 @@ function sectionCut(doc, v) {
         }
       }
     }
-    if ((t === "Generic" || t === "Duct" || t === "Pipe" || t === "Roof" || t === "Lattice" || t === "Stair" || t === "Toposurface" || t === "Planting") && p.mesh) {
+    if ((t === "Generic" || t === "Duct" || t === "Pipe" || t === "Roof" || t === "Lattice" || t === "Stair" || t === "Toposurface" || t === "Planting" || t === "Railing" || t === "Ramp") && p.mesh) {
       // a body of its own shape, cut by the section plane: turned into (along, up, depth) and sliced at depth 0
       const P = p.mesh.positions, Q = new Array(P.length); let lo = Infinity, hi = -Infinity;
       for (let i = 0; i < P.length; i += 3) { const q = [P[i], P[i + 1]], dd = G.depthOf(q); Q[i] = G.sOf(q); Q[i + 1] = P[i + 2] - G.Z0; Q[i + 2] = dd; lo = Math.min(lo, dd); hi = Math.max(hi, dd); }
@@ -14347,7 +14473,7 @@ function buildHLRModel(doc, opts = {}) {
       for (let i = 0; i < ft.length; i++) { const a = ft[i], b = ft[(i + 1) % ft.length];
         edges.push({ a: [a[0], a[1], p.z0], b: [b[0], b[1], p.z0], kind: "sharp" }, { a: [a[0], a[1], p.z1], b: [b[0], b[1], p.z1], kind: "sharp" }, { a: [a[0], a[1], p.z0], b: [a[0], a[1], p.z1], kind: "sharp" }); }
       continue; }
-    if ((t === "Generic" || t === "Duct" || t === "Pipe" || t === "Roof" || t === "Lattice" || t === "Stair" || t === "Toposurface" || t === "Planting") && doc.plan(f) && doc.plan(f).mesh) { const m = doc.plan(f).mesh, P = m.positions; for (const [a, b] of featureEdges(m)) edges.push({ a: [P[a * 3], P[a * 3 + 1], P[a * 3 + 2]], b: [P[b * 3], P[b * 3 + 1], P[b * 3 + 2]], kind: "sharp" }); continue; }
+    if ((t === "Generic" || t === "Duct" || t === "Pipe" || t === "Roof" || t === "Lattice" || t === "Stair" || t === "Toposurface" || t === "Planting" || t === "Railing" || t === "Ramp") && doc.plan(f) && doc.plan(f).mesh) { const m = doc.plan(f).mesh, P = m.positions; for (const [a, b] of featureEdges(m)) edges.push({ a: [P[a * 3], P[a * 3 + 1], P[a * 3 + 2]], b: [P[b * 3], P[b * 3 + 1], P[b * 3 + 2]], kind: "sharp" }); continue; }
     if (t === "Door" || t === "Window" || t === "Floor" || t === "Beam" || t === "Generic") { for (const pt of elementParts(doc, f)) if (pt.foot && pt.foot.length >= 3) {
       prism(pt.foot, pt.z0, pt.z1, solids, edges, "auto", pt.topFoot);
       // a hole's edges are drawn; its opening does not yet let the line-work see through (the occluder is the outline)
@@ -22211,6 +22337,8 @@ const ICONS = {
   floor: P('<path d="M2 12l8-4 8 4-8 4z"/><path d="M2 12v2l8 4 8-4v-2"/>'),
   stair: P('<path d="M3 17h4v-4h4v-4h4v-4h3"/><path d="M3 17v1h15V5"/>'),
   roof: P('<path d="M2 11l8-7 8 7"/><path d="M4 9.5V17h12V9.5"/>'),
+  ramp: P('<path d="M2 16h16L18 8z"/><path d="M6 13l6-3"/>'),
+  railing: P('<path d="M2 6h16M2 15h16M4 6v10M10 6v10M16 6v10"/>'),
   planting: P('<circle cx="10" cy="8" r="6"/><path d="M10 14v4M10 8l-3-3M10 8l3-2M10 10l3 2"/>'),
   topo: P('<path d="M2 15c3-3 5-3 8-1s5 2 8-1"/><path d="M3 11c3-3 5-3 7-1s5 1 7-2"/><path d="M5 7c2-2 4-2 6-1s4 0 5-2"/>'),
   beam: P('<path d="M2 6h16M2 14h16M10 6v8"/><path d="M2 6v2M18 6v2M2 12v2M18 12v2"/>'),
@@ -23858,7 +23986,7 @@ class SketchSession {
     app.sketchOpts = this.opts;
     this.undoStack = []; this.redoStack = []; this.typed = "";
   }
-  get title() { return this.target.kind === "stair" ? "Create Stair: draw its flights" : this.target.kind === "roof" ? "Create Roof Footprint" : this.target.kind === "topo" ? "Create Toposurface Boundary" : this.target.kind === "site" ? (this.target.id ? "Edit Site Boundary" : "Create Site Boundary") : this.target.kind === "repeat" ? (this.target.id ? "Edit Repeating Detail Path" : "Create Repeating Detail Path") : this.target.kind === "crop" ? "Edit Crop" : this.target.id ? "Edit Boundary" : this.target.kind === "region" ? "Create Filled Region Boundary" : "Create Floor Boundary"; }
+  get title() { return this.target.kind === "stair" ? "Create Stair: draw its flights" : this.target.kind === "ramp" ? "Create Ramp: draw its runs" : this.target.kind === "railing" ? "Create Railing Path" : this.target.kind === "roof" ? "Create Roof Footprint" : this.target.kind === "topo" ? "Create Toposurface Boundary" : this.target.kind === "site" ? (this.target.id ? "Edit Site Boundary" : "Create Site Boundary") : this.target.kind === "repeat" ? (this.target.id ? "Edit Repeating Detail Path" : "Create Repeating Detail Path") : this.target.kind === "crop" ? "Edit Crop" : this.target.id ? "Edit Boundary" : this.target.kind === "region" ? "Create Filled Region Boundary" : "Create Floor Boundary"; }
   say(msg, kind = "note") { this.app.say(msg, kind); }
   commit(next, msg) { this.undoStack.push(this.d); this.redoStack = []; this.d = next; if (msg) this.say(msg, "ok"); this.refresh(); }
   refresh() { this.view.draw(); this.app.renderOptions && this.app.renderOptions(); }
@@ -24161,6 +24289,21 @@ class SketchSession {
       this.say(`Stair ${res.id}: ${d.props.Risers ? d.props.Risers.v : "?"} risers of ${d.props["Riser height"] ? Math.round(d.props["Riser height"].v) : "?"} mm to ${above ? above.get("Name") : "3000 mm"}`, "ok");
       return true;
     }
+    if (this.target.kind === "ramp" || this.target.kind === "railing") {
+      // a ramp: each line a run, foot to head, rising to the next level at one slope; a railing: the lines as one path
+      const lines = this.d.elements.filter(x => x.type === "line");
+      if (!lines.length) { this.say(`${this.title}: draw it as lines`, "error"); return false; }
+      const doc = this.app.doc, base = F.refId(this.view.view, "level"), o = this.app.toolOpts, r = v => v.map(x => Math.round(x));
+      let el;
+      if (this.target.kind === "ramp") el = { type: "Ramp", args: { baseLevel: base ? { ref: base } : null, topLevel: null, height: o.rampRise ?? 600, runs: lines.map(x => ({ from: r(x.a), to: r(x.b) })), width: o.rampWidth || 1500 } };
+      else { const path = [r(lines[0].a)]; for (const x of lines) path.push(r(x.b)); el = { type: "Railing", args: { level: base ? { ref: base } : null, path, height: 1070 } }; }
+      const res = this.app.apply({ op: "add", element: el });
+      if (!res.ok) { this.say(res.error, "error"); return false; }
+      this.app.endSketch(); this.app.select([res.id]);
+      const d = doc.data(doc.element(res.id)) || { props: {} };
+      this.say(this.target.kind === "ramp" ? `Ramp ${res.id}: slope ${d.props.Slope ? d.props.Slope.v : "?"}` : `Railing ${res.id}: ${Math.round((d.props.Length || { v: 0 }).v)} mm`, "ok");
+      return true;
+    }
     if (this.target.kind === "repeat") {
       // a repeating detail's path is open or closed, any curves: nothing to close
       if (!this.d.elements.length) { this.say(`${this.title}: sketch the path first`, "error"); return false; }
@@ -24373,7 +24516,7 @@ class SketchSession {
         h("label", {}, "Height offset ", h("input", { type: "text", value: fmtLen(this.app.toolOpts.floorOffset ?? 0), style: { width: "72px" }, onchange: e => { const v = this.len(e.target.value); if (v !== null) this.app.toolOpts.floorOffset = v; e.target.value = fmtLen(this.app.toolOpts.floorOffset ?? 0); }, onkeydown: e => e.stopPropagation() })));
     }
     const r = regionsOf(this.d);
-    if (this.target.kind === "stair" || this.target.kind === "repeat") kids.push(h("span", { class: "grow" }), h("span", { class: "muted" }, `${this.d.elements.length} path element${this.d.elements.length === 1 ? "" : "s"} · open or closed`),
+    if (["stair", "ramp", "railing", "repeat"].includes(this.target.kind)) kids.push(h("span", { class: "grow" }), h("span", { class: "muted" }, `${this.d.elements.length} path element${this.d.elements.length === 1 ? "" : "s"} · open or closed`),
       h("button", { class: "btn small", title: "Undo in the sketch (Ctrl+Z)", disabled: !this.undoStack.length, onclick: () => this.undo() }, "↶"),
       h("button", { class: "btn small primary", onclick: () => this.finish() }, "✓ Finish"), h("button", { class: "btn small", onclick: () => this.cancel() }, "✕ Cancel"));
     else kids.push(h("span", { class: "grow" }), h("span", { class: r.error ? "muted warn" : "muted" }, r.error ? (this.d.elements.length ? "open: " + r.error.replace(/^the boundary is /, "") : "draw a closed boundary") : `${r.regions.length} closed area${r.regions.length > 1 ? "s" : ""}${r.regions.some(x => x.holes.length) ? " with holes" : ""}`),
@@ -27781,6 +27924,8 @@ const COMMANDS = {
   column: tool("column", "Column", "column", "CL", "Click to place (plan or 3D)."),
   planting: tool("planting", "Tree", "planting", "TR", "Click to plant: it stands on the toposurface under it (or the level); form, height and canopy in the options bar."),
   floor: { label: "Floor", icon: "floor", key: "SB", hint: "Sketch the floor's boundary: lines, arcs, circles, splines, Pick Walls. Closed loops inside are holes. Finish ✓ makes the floor; its layers hang down from the level.", run: () => startFloorSketch(), active: () => !!(app.sketch && app.sketch.target.kind === "floor") },
+  ramp: { label: "Ramp", icon: "ramp", key: "RA", hint: "Draw each run as a line, foot to head: it rises at one slope (Properties: its top level or height); landings join the runs, railings each side.", run: () => startKindSketch("ramp", "a ramp") },
+  railing: { label: "Railing", icon: "railing", key: "RL", hint: "Draw its path as lines: posts, rails and an infill along it (Properties: height, spacing, infill).", run: () => startKindSketch("railing", "a railing") },
   stair: { label: "Stair", icon: "stair", key: "ST", hint: "Draw each flight as a line, bottom first (first riser to last): landings join them. It rises to the next level; its risers are counted and numbered.", run: () => startKindSketch("stair", "a stair") },
   roof: { label: "Roof", icon: "roof", key: "RO", hint: "Sketch the roof's footprint (with its overhang): every edge slopes; set an edge to null for a gable, or a ridge height. Ridges, hips and valleys are found.", run: () => startKindSketch("roof", "a roof") },
   topo: { label: "Toposurface", icon: "topo", key: "TS", hint: "Sketch the ground's boundary, then give it contours (Properties) - or File › Import Contours (DXF) for a survey's contour lines at their heights", run: () => startKindSketch("topo", "a toposurface") },
@@ -27878,7 +28023,7 @@ const big = id => ({ id, size: "big" }), small = id => ({ id, size: "small" });
 const RIBBON = [
   { tab: "Architecture", panels: [
     { title: "Build", items: [big("wall"), big("door"), big("window"), big("column"), big("floor"), big("roof")] },
-    { title: "Circulation", items: [big("stair")] },
+    { title: "Circulation", items: [big("stair"), big("ramp"), big("railing")] },
     { title: "Site", items: [big("topo"), big("planting")] },
     { title: "Opening", items: [big("opening")] },
     { title: "Room & Area", items: [big("space"), small("sep"), small("schedule")] },
@@ -28227,7 +28372,7 @@ function rowClick(key, single, dbl) {
 }
 const ELEMENT_ICON = { Wall: "wall", Door: "door", Window: "window", Column: "column", Floor: "floor", Beam: "beam", Grid: "grid", Level: "level", Space: "room", Text: "text", Dimension: "dim",
   SectionView: "section", ElevationView: "elevview", PlanView: "plan", RoomSeparator: "sepline", DetailLine: "skline", FilledRegion: "skrect", SymbolInstance: "symbol", CADImport: "importI", Generic: "column", Furniture: "select" };
-const BODY_TYPES = new Set(["Wall", "Column", "Door", "Window", "Floor", "Beam", "Generic", "Duct", "Pipe", "Roof", "Stair", "Toposurface", "Planting"]);
+const BODY_TYPES = new Set(["Wall", "Column", "Door", "Window", "Floor", "Beam", "Generic", "Duct", "Pipe", "Roof", "Stair", "Toposurface", "Planting", "Railing", "Ramp"]);
 /** What a view shows that can be picked in it - the inclusion test is "visible and editable here": the
  *  ids its drawing publishes as hits (plans, elevations, sections), or the bodies it shows (3D).
  *  Cached per model and view revision; with `quick`, an uncached view is worked out in the background

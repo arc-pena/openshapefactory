@@ -66,6 +66,8 @@ export const ICONS = {
   floor: P('<path d="M2 12l8-4 8 4-8 4z"/><path d="M2 12v2l8 4 8-4v-2"/>'),
   stair: P('<path d="M3 17h4v-4h4v-4h4v-4h3"/><path d="M3 17v1h15V5"/>'),
   roof: P('<path d="M2 11l8-7 8 7"/><path d="M4 9.5V17h12V9.5"/>'),
+  ramp: P('<path d="M2 16h16L18 8z"/><path d="M6 13l6-3"/>'),
+  railing: P('<path d="M2 6h16M2 15h16M4 6v10M10 6v10M16 6v10"/>'),
   planting: P('<circle cx="10" cy="8" r="6"/><path d="M10 14v4M10 8l-3-3M10 8l3-2M10 10l3 2"/>'),
   topo: P('<path d="M2 15c3-3 5-3 8-1s5 2 8-1"/><path d="M3 11c3-3 5-3 7-1s5 1 7-2"/><path d="M5 7c2-2 4-2 6-1s4 0 5-2"/>'),
   beam: P('<path d="M2 6h16M2 14h16M10 6v8"/><path d="M2 6v2M18 6v2M2 12v2M18 12v2"/>'),

@@ -35,6 +35,7 @@ import { programFromBrief, planSpaceGraph, relaxBubbles, gfaOf, activeLegend, le
 import { buildRmuhSample, RMUH_BRIEF } from "./sample_rmuh.js";
 import { buildPavilionSample } from "./sample_pavilion.js";
 import { buildMazatlanSample } from "./sample_mazatlan.js";
+import { buildSchaefferSample } from "./sample_schaeffer.js";
 import { parseOBJ, storeysFor, plateAt, weldTriangles } from "./massing.js";
 
 export const CASES = [];
@@ -2322,3 +2323,25 @@ testCase("M79", "Casa Mazatlan, from its INAH drawing set: every page of the set
     "17 A3 sheets A001-A904 in the title band, Arial; no errors; every room enclosed, the courtyard ≈ 19.7 m²; the plan's strings read the set's values on the model; A010 is a drafting view of the survey; the brick screen; grid 1 left of grid 5 in A201",
     JSON.stringify({ nums, band, errs, courtyard: room("Patio central"), dims: dims.length, onModel, existOk, screen, handed, views }));
 });
+
+testCase("M80", "Architecture components: a stair counts and numbers its risers between its levels; a footprint roof finds its ridge from the eaves' pitch; a toposurface triangulates its contours and a tree stands on it; a ramp rises at its slope between two heights with railings; a railing follows its path; the Schaeffer sample builds with no errors and draws them", () => {
+  const doc = newDocument("arch"), ed = new Editor(doc), add = el => { const r = ed.apply({ op: "add", element: el }); if (!r.ok) throw new Error(r.error); return r.id; };
+  add({ id: "L0", type: "Level", args: { name: "L0", elevation: 0 } }); add({ id: "L1", type: "Level", args: { name: "L1", elevation: 3000 } });
+  add({ id: "ST", type: "Stair", args: { baseLevel: { ref: "L0" }, topLevel: { ref: "L1" }, flights: [{ from: [0, 0], to: [4000, 0] }], width: 1000 } });
+  add({ id: "RF", type: "Roof", args: { boundary: [[0, 0], [8000, 0], [8000, 6000], [0, 6000]], level: { ref: "L1" }, heightOffset: 0, edgeSlopes: [null, 30, null, 30] } });
+  add({ id: "TS", type: "Toposurface", args: { contours: [{ z: 0, points: [[-5000, -5000], [15000, -5000]] }, { z: 1000, points: [[-5000, 5000], [15000, 5000]] }, { z: 2000, points: [[-5000, 15000], [15000, 15000]] }], base: -3000 } });
+  add({ id: "TR", type: "Planting", args: { position: [5000, 5000], topo: { ref: "TS" }, height: 8000, canopy: 5000 } });
+  add({ id: "RA", type: "Ramp", args: { baseLevel: { ref: "L0" }, height: 600, runs: [{ from: [0, 10000], to: [7200, 10000] }], width: 1500 } });
+  add({ id: "RL", type: "Railing", args: { level: { ref: "L0" }, path: [[0, 0], [3000, 0], [3000, 4000]] } });
+  const d = id => doc.data(doc.element(id)) || { props: {} }, P = id => doc.plan(doc.element(id));
+  const stair = d("ST").props.Risers.v === 17 && Math.abs(d("ST").props["Riser height"].v - 3000 / 17) < 0.5;
+  const roof = Math.abs(P("RF").z1 - 3000 - 4000 * Math.tan(Math.PI / 6)) < 300 && (P("RF").ridges || []).length === 1;
+  const tree = Math.abs(P("TR").z0 - 1000) < 5, ramp = d("RA").props.Slope.v === "1:12" && Math.abs(P("RA").z1 - 600) < 1;
+  const rail = Math.abs(d("RL").props.Length.v - 7000) < 1 && P("RL").mesh.positions.length > 0;
+  const plan = planScene(doc, (() => { add({ id: "V", type: "PlanView", args: { level: { ref: "L0" }, scale: 50 } }); return doc.element("V"); })());
+  const drawn = ["IfcStair", "IfcRamp", "IfcRailing", "Planting", "Topography"].every(l => plan.prims.some(p => p.layer === l));
+  const sch = buildSchaefferSample(), errs = sch.elements().filter(f => sch.error(f)).length;
+  const sheet = sheetScene(sch, sch.element("SH-A202")).prims.some(p => p.t === "text" && p.text === "A202");
+  return { pass: stair && roof && tree && ramp && rail && drawn && errs === 0 && sheet, detail: { stair, roof, roofTop: P("RF").z1, tree, treeZ: P("TR").z0, ramp, slope: d("RA").props.Slope.v, rail, drawn, errs, sheet } };
+});
+
