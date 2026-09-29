@@ -1,3 +1,4 @@
+import zlib from "node:zlib";
 // One source, two targets.
 //   index.html            serves src/*.js as native ES modules (open over http)
 //   dist/web-bim.html     ONE file: every module concatenated into one scope,
@@ -115,14 +116,13 @@ console.log(`dist/web-bim.html ${(single.length / 1024).toFixed(0)} KB · index.
 
 // The studio page: the same page with the parametric CAD interface carried inside it,
 // for the Artifact (which may not fetch). The CAD page is built by `python3 cad/build.py
-// --only artifact`; it rides as inert text and becomes the switch's iframe on first use.
-// Only "</script" and "<!--" need escaping for HTML script data; both are restored exactly.
+// --only artifact`; it rides deflated as inert base64 and becomes the switch's iframe on first use.
 const CAD = path.join(ROOT, "cad", "parametric-cad.html");
 if (fs.existsSync(CAD)) {
   const page = fs.readFileSync(CAD, "utf8");
-  if (/<\\\/script|<\\!--/i.test(page)) { console.error("build refused: the CAD page already contains an escape sequence the studio build uses"); process.exit(1); }
-  const inert = page.replace(/<\/script/gi, m => "<\\/" + m.slice(2)).replace(/<!--/g, "<\\!--");
-  const studio = single.replace("<!--CAD-->", `<script type="text/x-webbim-cad" id="cad-page">${inert}</script>`);
+  // carried deflated (raw DEFLATE, base64): a third smaller, and base64 needs no escaping; inflated on first use
+  const z = zlib.deflateRawSync(Buffer.from(page, "utf8"), { level: 9 }).toString("base64");
+  const studio = single.replace("<!--CAD-->", `<script type="text/x-webbim-cad-deflate" id="cad-page-z">${z}</script>`);
   fs.writeFileSync(path.join(ROOT, "dist", "web-bim-studio.html"), studio);
   const mb = (studio.length / 1048576).toFixed(1);
   if (studio.length > 16 * 1048576) { console.error(`build refused: dist/web-bim-studio.html is ${mb} MB, over the 16 MB page limit`); process.exit(1); }

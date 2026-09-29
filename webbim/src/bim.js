@@ -385,8 +385,8 @@ BUILDERS.Door = {
       handle: leaves.length ? { u: leaves[0].uo - Math.sign(leaves[0].uo - leaves[0].uh) * 80, z: fr.sill + hz } : null, glazed: !!t.glazed };
     if (sliding) elev.lines = [{ u0: (ua + ub) / 2, z0: fr.sill, u1: (ua + ub) / 2, z1: fr.sill + fr.h - fw }];
     if (t.openingMark) elev.lines = (elev.lines || []).concat(openingMark(t, ua, ub, fr.sill, fr.sill + fr.h - fw));
-    // the glazing bars, seen in elevation: each leaf's panes
-    if (t.glazed && t.bars) {
+    // the glazing bars, seen in elevation: each leaf's panes (a sliding door's panels keep their meeting stile)
+    if (t.glazed && t.bars && !sliding) {
       elev.lines = [];
       const cols = Math.max(1, t.bars.cols || 1), rows = Math.max(1, t.bars.rows || 1), zb = fr.sill + (t.bars.width || 40) * 2.5, zt = fr.sill + fr.h - fw - (t.bars.width || 40);
       for (const L of leaves) {

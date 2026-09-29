@@ -1447,8 +1447,10 @@ function drawSurfaces(doc, ctx, B, vis) {
   if (!vis.some(it => surfaceOf(doc, it)) && !(ctx.style && ctx.style.surfaceShade)) return out;
   for (const it of vis.slice().reverse()) {
     // a face with no colour of its own is paper white - or the style's shade (a shaded view's walls in shadow)
-    const shade = (ctx.style && ctx.style.surfaceShade) || "#ffffff";
-    const sf = surfaceOf(doc, it) || (it.cat === "IfcWall" || it.cat === "IfcSlab" || it.cat === "IfcColumn" || it.face ? { bg: it.cat === "IfcWall" ? shade : "#ffffff", pat: null } : null); if (!sf) continue;
+    // a rule may give an element its own face colour (a shaded view's sunlit parapets, white)
+    const lit = (ctx.rules || (ctx.style && ctx.style.rules) || []).find(r => r.enabled !== false && r.then && r.then.surface && ruleMatch(doc, it.f, r));
+    const shade = lit ? lit.then.surface : (ctx.style && ctx.style.surfaceShade) || "#ffffff";
+    const sf = (lit ? { bg: shade, pat: null } : null) || surfaceOf(doc, it) || (it.cat === "IfcWall" || it.cat === "IfcSlab" || it.cat === "IfcColumn" || it.face ? { bg: it.cat === "IfcWall" ? shade : "#ffffff", pat: null } : null); if (!sf) continue;
     let polys = it.sil && it.sil.length ? it.sil : null;
     if (doc.typeOf(it.f) === "Lattice") polys = it.bricks || null;
     else if (!polys && it.face) polys = it.face;

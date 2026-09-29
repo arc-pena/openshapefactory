@@ -14,6 +14,7 @@ import { Editor } from "./ops.js";
 import { buildSample } from "./sample.js";
 import { buildPavilionSample } from "./sample_pavilion.js";
 import { buildMazatlanSample } from "./sample_mazatlan.js";
+import { inflateBase64 } from "./inflate.js";
 import { buildRmuhSample } from "./sample_rmuh.js";
 import { openDocument, newDocument, sheetSize } from "./bim.js";
 import { F, CATALOGUE } from "./ocaf.js";
@@ -1268,6 +1269,8 @@ function animateSelectedDoors() {
 //! ordinary ops, and switching back shows whatever either side did.
 const cad = { frame: null, bridge: null, params: null, syncing: false, timer: null, on: false, booting: null };
 function cadSource() {
+  const z = document.getElementById("cad-page-z");
+  if (z) return { srcdoc: inflateBase64(z.textContent.trim()) };
   const el = document.getElementById("cad-page");
   return el ? { srcdoc: el.textContent.replace(/<\\\/(script)/gi, "</$1").replace(/<\\!--/g, "<" + "!--") } : { src: "cad/parametric-cad.html" };
 }

@@ -177,6 +177,10 @@ export function buildMazatlanSample() {
     ...vs.rules.filter(r => r.id === "MZ-FACADE" || r.id === "MZ-MOLD")];
   // the last two sections are the set's shaded views: the walls seen in shadow, grey
   L.viewStyles["VS-MZ-SEC-SH"] = Object.assign(clone(L.viewStyles["VS-MZ-SEC"]), { name: "Casa Mazatlan - secciones sombreadas", surfaceShade: "#7d7d7d" });
+  // the old ground's fill under the floors, cut, reads dark in the shaded pictures
+  L.viewStyles["VS-MZ-SEC-SH"].rules.unshift({ id: "MZ-SEC-TIERRA", when: { param: "TypeMark", in: ["RL1", "RL2", "RL3"] }, then: { cut: { fill: "#595959", pattern: "none" } } });
+  // ... but what stands over the roof is in the sun, white, and so is the courtyard (and what is seen through its glass)
+  L.viewStyles["VS-MZ-SEC-SH"].rules.unshift({ id: "MZ-SEC-SUN", when: { param: "Name", in: ["Muro 1100 terraza", "Muro estudio sur", "Muro norte del patio central", "Cancel estudio (hueco puertas corredizas)", "Cancel patio oriente", "Cancel patio sur", "Pretil estudio poniente", "Pretil estudio sur", "Pretil escalera sur", "Pretil escalera norte", "Casetón sur", "Casetón oriente", "Casetón norte", "Casetón poniente"] }, then: { surface: "#ffffff" } });
   // the upper plans write their room names larger
   L.viewStyles["VS-MZ-PLAN2"] = Object.assign(clone(L.viewStyles["VS-MZ-PLAN"]), { name: "Casa Mazatlan - plantas altas" });
   L.viewStyles["VS-MZ-PLAN2"].byCategory.IfcSpace = { fill: "none", label: { height: 1.66, colour: "#000000", align: "centre", content: "{Label}", font: "Arial" } };
@@ -222,7 +226,7 @@ export function buildMazatlanSample() {
   wall("W-GE", "Cancel patio oriente", [8552, 5250], [8552, 10076], "T-MZ-CANCEL", "L-PB2", -220, H0, "New");
   wall("W-GS", "Cancel patio sur", [6602, 5051], [8577, 5051], "T-MZ-CANCEL", "L-PB2", -220, H0, "New");
   // upper floor: the studio, its bathroom and the stair
-  wall("W-U1", "Muro estudio poniente", [5896.5, 10081], [5896.5, 14297], "T-MZ-CONC200", "L-PA", 0, 5830 - 2330, "New");
+  wall("W-U1", "Muro estudio poniente", [5896.5, 10081], [5896.5, 14297], "T-MZ-CONC200", "L-PA", 0, H1, "New");
   // the terrace's wall over the open patio, 1100 high (the set's "Muro 1100mm")
   wall("W-M1", "Muro 1100 terraza", [201, 10148], [5802, 10148], "T-MZ-BLOCK150", "L-PA", 0, 1099, "New");
   wall("W-U2", "Muro estudio sur", [5996, 10159], [9345, 10159], "T-MZ-CONC150", "L-PA", 0, H1, "New");
@@ -237,6 +241,7 @@ export function buildMazatlanSample() {
   wall("W-H2", "Casetón oriente", [9276, 11515], [9276, 12616], "T-MZ-BLOCK150", "L-T", 0, 1805, "New");
   wall("W-H3", "Casetón norte", [9276, 12616], [7024, 12616], "T-MZ-BLOCK152", "L-T", 0, 1805, "New");
   wall("W-H4", "Casetón poniente", [7024, 12616], [7024, 11515], "T-MZ-BLOCK100", "L-T", 0, 1805, "New");
+  wall("W-PR0", "Pretil estudio poniente", [5896.5, 10081], [5896.5, 14297], "T-MZ-CONC200", "L-T", 0, 1100, "New");
   wall("W-PR1", "Pretil estudio sur", [5996, 10159], [13253, 10159], "T-MZ-CONC150", "L-T", 0, 1100, "New");
   wall("W-PR2", "Pretil escalera sur", [5996, 11515], [6974, 11515], "T-MZ-BLOCK152", "L-T", 0, 1100, "New");
   wall("W-PR3", "Pretil escalera norte", [5996, 12616], [6974, 12616], "T-MZ-BLOCK152", "L-T", 0, 1100, "New");
@@ -268,7 +273,9 @@ export function buildMazatlanSample() {
   opAt("OP-K0", "W-K0", 4371, 6602, 8511, 800, 1500, "New"); win("WN-K0", "OP-K0", "T-MZ-V1900", "V04");
   opAt("OP-K1a", "W-K1", 10076, 10245, 11346, 743, 2288, "New"); door("D-K1a", "OP-K1a", "T-MZ-P1100", "P12");
   opAt("OP-K1b", "W-K1", 10076, 12696, 13700, 200, 2823, "New"); door("D-K1b", "OP-K1b", "T-MZ-P1000", "P13");
-  opAt("OP-GE", "W-GE", 5250, 5250, 10076, 0, 2400, "New"); door("D-GE", "OP-GE", "T-MZ-PC", "PC1", { operation: "Sliding" });
+  // the courtyard's east side: two sliding doors, a steel post between (the plans' two "puertas corredizas")
+  opAt("OP-GE", "W-GE", 5250, 5250, 7635, 0, 2400, "New"); door("D-GE", "OP-GE", "T-MZ-PC", "PC1", { operation: "Sliding" });
+  opAt("OP-GE2", "W-GE", 5250, 7735, 10076, 0, 2400, "New"); door("D-GE2", "OP-GE2", "T-MZ-PC", "PC4", { operation: "Sliding" });
   opAt("OP-GS", "W-GS", 6602, 6602, 8503, 0, 2400, "New"); door("D-GS", "OP-GS", "T-MZ-PC", "PC3", { operation: "Sliding" });
   opAt("OP-U1a", "W-U1", 10081, 10233, 11444, 499, 1539, "New"); win("WN-U1a", "OP-U1a", "T-MZ-V1200", "V05");
   opAt("OP-U1b", "W-U1", 10081, 12693, 13696, 499, 1539, "New"); win("WN-U1b", "OP-U1b", "T-MZ-V1000", "V06");
@@ -343,7 +350,7 @@ export function buildMazatlanSample() {
   EL.GN.shutters.forEach((l, i) => mould(`CV${i + 1}`, "Contraventana", { start: [-160, 0], end: [-160, 1] }, [l], "M-MZ-CONTRA", 40, "IfcShadingDevice"));
   EL.MO.surrounds.forEach((loops, i) => mould(`MS${i + 1}`, "Moldura", { start: [0, -198], end: [1, -198] }, loops, "M-MZ-GRIS"));
   // the terrace's brick screen round the courtyard's void: flat courses and bricks stood on end, as built
-  const screen = (id, name, a, b) => add({ id, type: "Lattice", name, args: { line: line(a, b), level: { ref: "L-PA" }, baseOffset: 0, height: 1100, brickLength: 240, brickHeight: 60, brickDepth: 120, gap: 120, bed: 10, bond: "Soldier screen", material: "M-MZ-CELOSIA", colour: "#b5613d" }, params: { Phase: "New" } });
+  const screen = (id, name, a, b) => add({ id, type: "Lattice", name, args: { line: line(a, b), level: { ref: "L-PA" }, baseOffset: 0, height: 1000, brickLength: 240, brickHeight: 60, brickDepth: 120, gap: 120, bed: 10, bond: "Soldier screen", material: "M-MZ-CELOSIA", colour: "#b5613d" }, params: { Phase: "New" } });
   screen("CE1", "Celosía patio poniente", [4362, 10076], [4362, 5190]);
   screen("CE2", "Celosía patio sur", [4362, 5190], [8563, 5190]);
   screen("CE3", "Celosía patio oriente", [8563, 5190], [8563, 10076]);
@@ -584,6 +591,14 @@ export function buildMazatlanSample() {
   for (const v of ["V-S5", "V-S6"]) ed.apply({ op: "set", id: v, key: "style", value: { ref: "VS-MZ-SEC-SH" } }, { regenerate: false });
   secNotes("V-S1", pdfS.MZ_S1, 373); secNotes("V-S2", pdfS.MZ_S2, 3333); secNotes("V-S3", pdfS.MZ_S3, 373); secNotes("V-S4", pdfS.MZ_S4, 373);
   figure("EN-S1", "SY-ENT-WOMAN2", "V-S1", [8045, -713]);
+  // sections 5 and 6 are pictures in the set (shaded, with shadows): their notes and strings read off them
+  const T13 = (text, at) => ({ text, at, cap: 1.7, font: "Arial", rot: 0 });
+  const H = (at, from, to) => ({ h: true, at, from, to }), V = (at, from, to) => ({ h: false, at, from, to });
+  secNotes("V-S5", { import: { elements: [] }, texts: [T13("HABITACION", [7380, 747]), T13("PASILLO", [8908, 747]), T13("COMEDOR", [15740, 747]), T13("STUDIO DR", [17965, 3502])],
+    dims: [H(6148, 4513, 8213), H(6148, 8213, 9563), H(6148, 9563, 14663), H(6148, 14663, 19083), V(3677, 2330, 4730), V(3677, -170, 2330), V(19190, -713, 2110), V(19615, -693, 2330)] }, 2642);
+  secNotes("V-S6", { import: { elements: [] }, texts: [T13("HABITACION", [7164, 908]), T13("COCINA/SALA", [16220, 908])],
+    dims: [H(7045, 5040, 9515), H(7045, 9515, 14640), H(7045, 14640, 18490), V(10230, 4730, 5830), V(10230, 5830, 6535), V(4095, 2330, 3429), V(4095, -713, 2110)] }, 2677);
+  figure("EN-S5a", "SY-ENT-WALK", "V-S5", [8926, 2330]); figure("EN-S5b", "SY-ENT-WOMAN1", "V-S5", [6290, -713]);
 
   // ---------------------------------------------------------------- the sheets: every page of the set, A3, in its title band
   // a plan's viewport is placed so the model's origin (grid A on grid 5) falls where the set's does

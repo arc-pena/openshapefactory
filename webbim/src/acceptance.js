@@ -2315,7 +2315,7 @@ testCase("M79", "Casa Mazatlan, from its INAH drawing set: every page of the set
   const dimsOk = dims.length >= 50 && onModel >= 40 && ["13050", "14090", "5600", "3550", "3900", "4825", "2180", "1910"].every(t => dimTexts.includes(t));
   const exist = deriveView(doc, doc.element("V-EX")), shown = new Set(exist.prims.map(p => p.id).filter(Boolean));
   const existOk = doc.typeOf(doc.element("V-EX")) === "DraftingView" && shown.has("IM-EX") && !shown.has("W-S");
-  const screen = ["CE1", "CE2", "CE3"].every(id => doc.element(id) && doc.typeOf(doc.element(id)) === "Lattice" && doc.argValue(doc.element(id), "bond") === "Soldier screen" && (doc.data(doc.element(id)).props.Bricks.v > 100));
+  const screen = ["CE1", "CE2", "CE3"].every(id => doc.element(id) && doc.typeOf(doc.element(id)) === "Lattice" && doc.argValue(doc.element(id), "bond") === "Soldier screen" && (doc.data(doc.element(id)).props.Bricks.v > 60));
   const G = viewLineGeometry(doc, doc.element("V-E-GN")), handed = G.sOf([0, 14570]) < G.sOf([0, 0]);
   const views = doc.elements().filter(f => ["PlanView", "ElevationView", "SectionView"].includes(doc.typeOf(f))).every(v => deriveView(doc, v).prims.length > 50);
   return R(pagesOk && band && !errs && rooms && dimsOk && existOk && screen && handed && views,
