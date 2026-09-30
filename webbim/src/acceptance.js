@@ -36,6 +36,8 @@ import { buildRmuhSample, RMUH_BRIEF } from "./sample_rmuh.js";
 import { buildPavilionSample } from "./sample_pavilion.js";
 import { buildMazatlanSample } from "./sample_mazatlan.js";
 import { buildSchaefferSample } from "./sample_schaeffer.js";
+import { buildWalnutSample } from "./sample_walnut.js";
+import { buildFpcSample } from "./sample_fpc.js";
 import { cadLibraryIndex, cadLibraryCategories, cadLibraryGeometry, cadLibrarySymbol } from "./cadlib.js";
 import { parseOBJ, storeysFor, plateAt, weldTriangles } from "./massing.js";
 
@@ -2359,5 +2361,24 @@ testCase("M81", "The CAD goodies library: 978 blocks decode, each named and in a
   const prims = planScene(doc, doc.element("V")).prims.filter(p => p.id === "SY1"), xs = prims.flatMap(p => (p.path || []).flatMap(s => [s.a, s.b].filter(Boolean).map(q => q[0])));
   const drawnW = (Math.max(...xs) - Math.min(...xs)) * 100, sized = Math.abs(drawnW - 2 * tree.w) < 0.1 * tree.w;
   return { pass: idx.length === 978 && named && counts && fits && tall && r.ok && prims.length > 0 && sized, detail: { n: idx.length, cats: cats.length, named, counts, fits, tall, placed: r.ok, prims: prims.length, drawnW, treeW: tree.w } };
+});
+
+testCase("M82", "Walls meet as they are drawn or traced: a corner whose ends stop a little apart (within the walls' thickness) joins where the axes cross; a T whose stem stops at the through wall's face joins without moving it; a straight wall running on into a curved one joins end to end; a wall stacked on another storey joins nothing below it; and the samples' walls all meet", () => {
+  const doc = newDocument("joins"), ed = new Editor(doc), T = Object.keys(doc.lib.types).find(k => doc.lib.types[k].family === "F-BASICWALL");
+  const add = (id, a, b, lv = "L0") => ed.apply({ op: "add", element: { id, type: "Wall", args: { centreline: { type: "line", start: a, end: b }, wallType: { ref: T }, baseLevel: { ref: lv }, height: 3000, mounting: "Centred" } } });
+  ed.apply({ op: "add", element: { id: "L0", type: "Level", args: { name: "L0", elevation: 0 } } }); ed.apply({ op: "add", element: { id: "L1", type: "Level", args: { name: "L1", elevation: 3000 } } });
+  add("A", [0, 0], [5000, 0]); add("B", [5000, 60], [5000, 4000]);         // B stops 60 mm short of A's end: a corner all the same
+  add("C", [2500, 4000], [2500, 60]);                                         // a stem traced to A's face (60 mm off its axis)
+  add("D", [0, 0], [0, 4000], "L1");                                          // on the storey above, over A's start: no join
+  ed.apply({ op: "add", element: { id: "E", type: "Wall", args: { centreline: { type: "arc", centre: [-1000, 4000], radius: 1000, start: 0, end: 90, ccw: true }, wallType: { ref: T }, baseLevel: { ref: "L1" }, height: 3000, mounting: "Centred" } } });
+  doc.regenerate();
+  const bef = JSON.stringify(doc.argValue(doc.element("C"), "centreline"));
+  ed.apply({ op: "autojoin", maxMove: 2, ends: ["A", "B", "C", "D"].flatMap(id => [{ id, end: "start" }, { id, end: "end" }]) }); doc.regenerate();
+  const P = id => doc.plan(doc.element(id));
+  const corner = P("A").ends.end.k === "node" && P("B").ends.start.k === "node", tee = P("C").ends.end.k === "T" && JSON.stringify(doc.argValue(doc.element("C"), "centreline")) === bef;
+  const stacked = P("A").ends.start.k === "free" && P("D").ends.start.k === "free", arc = P("D").ends.end.k === "node";
+  let free = 0; const ok = ["buildWalnutSample", "buildFpcSample"].map(n => ({ n, doc: n === "buildWalnutSample" ? buildWalnutSample() : buildFpcSample() }));
+  for (const { doc: d } of ok) for (const f of d.elements().filter(g => d.typeOf(g) === "Wall")) for (const e of ["start", "end"]) if (d.plan(f).ends[e].k === "free") free++;
+  return { pass: corner && tee && stacked && arc && free === 0, detail: { corner, tee, stacked, arc, free, A: P("A").ends, D: P("D").ends.end.k } };
 });
 

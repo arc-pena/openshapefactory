@@ -69,13 +69,16 @@ export function resolveJoins(walls, rows) {
     if (keys.length < 2) continue;
     const ends = keys.map(k => { const [id, e] = k.split(":"); const w = walls.get(id); return { id, e, w, p: e === "start" ? w.curve.start : w.curve.end, q: drawnEnd(w, e) }; });
     // ends meet where they were drawn; a wall inclined about its centre has its line moved off that point
-    const Q0 = ends[0].q;
-    const far = ends.find(x => dist(x.q, Q0) > JOIN_TOL);
+    // ends drawn a little apart (a wall traced to the other's face, not its centreline) still make the corner - as Revit
+    // joins walls where their location lines cross: within the walls' thickness they meet at the crossing of their axes
+    const Q0 = ends[0].q, reach = Math.max(JOIN_TOL, ...ends.map(x => Math.max(...x.w.stack.s.map(Math.abs)) * 2 + 30));
+    const far = ends.find(x => dist(x.q, Q0) > reach);
     if (far) { ends.forEach(x => say(x.id, `join at ${x.e} not resolved: the ends are ${Math.round(dist(far.q, Q0))}mm apart, drawn as free ends`)); continue; }
+    const apart = ends.some(x => dist(x.q, Q0) > JOIN_TOL);
     const fitted = ends.find(x => !boundaryGeom(x.w, 0));
     if (fitted) { ends.forEach(x => say(x.id, `joins on a ${fitted.w.curve.type} centreline are drawn as free ends`)); continue; }
     const row = kindOf.get(keys[0]), members = ends.map(x => ({ id: x.id, e: x.e }));
-    resolveNode(ends, row, say);
+    resolveNode(ends, row, say, apart ? (axesMeet(ends) || null) : null);
     for (const x of ends) x.w.ends[x.e] = Object.assign(x.out, { node: { members, row } });
     for (const a of ends) for (const b of ends) if (a !== b) a.w.joinedTo.add(b.id);
   }
@@ -89,7 +92,10 @@ export function resolveJoins(walls, rows) {
     // measured on B's line as drawn: B inclined about its centre has its line moved across
     const Bd = B.drawn && B.curve.type === "line" ? Object.assign({}, B, { a: B.drawn.start }) : B;
     const pd = drawnEnd(A, j.a.end), u = uOf(Bd, pd), off = Math.abs(sideOf(Bd, pd));
-    if (off > JOIN_TOL || u < -JOIN_TOL || u > B.L + JOIN_TOL) { say(A.id, `T join onto ${B.id} not resolved: the end is ${Math.round(off)}mm off its centreline`); continue; }
+    // the end may stop anywhere within B's thickness (a wall traced to B's face): the T is found where A's layers
+    // meet B's faces, whatever point A was drawn to
+    const band = Math.max(...B.stack.s.map(Math.abs)) + 30;
+    if (off > Math.max(JOIN_TOL, band) || u < -JOIN_TOL || u > B.L + JOIN_TOL) { say(A.id, `T join onto ${B.id} not resolved: the end is ${Math.round(off)}mm off its centreline`); continue; }
     if (!boundaryGeom(A, 0) || !boundaryGeom(B, 0)) { say(A.id, `T joins on fitted curves are drawn as free ends`); continue; }
     // Which side of B does A arrive from? Probe one wall-thickness back into A.
     const back = j.a.end === "start" ? Math.min(A.L, A.stack.T + 1) : Math.max(0, A.L - A.stack.T - 1);

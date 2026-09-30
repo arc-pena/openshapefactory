@@ -110,6 +110,7 @@ export function buildWalnutSample() {
   const sc = p0 => H.place(p0, [ft(20), 0], [ft(39), ft(6)], SX, 50, 48);
   H.sheet("A402", "Sections", [["V-X3", sc([454.7, 431.8])], ["V-X2", sc([117.9, 154.4])], ["V-X1", sc([454.7, 154.4])]]);
   H.sheet("A901", "Axonometric", [["V-3D", [420, 300]]]);
+  H.joinWalls();
   doc.regenerate();
   return doc;
 }

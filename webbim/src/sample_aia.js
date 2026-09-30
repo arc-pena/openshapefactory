@@ -52,15 +52,15 @@ export function buildAiaSample() {
   wall("W-W", PT(0, 30), PT(0, 0), "T-FH-EXT6C", "L-0", "L-T", r); wall("W-E", PT(116, 0), PT(116, 30), "T-AIA-SHIP", "L-1", "L-T", r);
   // the cores: two stairs and the elevator, the cafe's toilets and mechanical room
   const CMU = "T-FH-CONC8";
-  wall("W-C1a", PT(0.5, 21.5), PT(23.5, 21.5), CMU, "L-0", "L-T", r); wall("W-C1b", PT(23.5, 21.5), PT(23.5, 29.5), CMU, "L-0", "L-T", r);
-  wall("W-C2a", PT(115.5, 21.5), PT(96, 21.5), CMU, "L-1", "L-T", r); wall("W-C2b", PT(96, 21.5), PT(96, 29.5), CMU, "L-1", "L-T", r);
-  wall("W-EL1", PT(36, 29.5), PT(36, 20), CMU, "L-0", "L-3"); wall("W-EL2", PT(36, 20), PT(47, 20), CMU, "L-0", "L-3"); wall("W-EL3", PT(47, 20), PT(47, 29.5), CMU, "L-0", "L-3");
-  wall("W-T1", PT(24, 0.5), PT(24, 12), "T-FH-INT4", "L-0", "L-1"); wall("W-T2", PT(24, 12), PT(66, 12), "T-FH-INT4", "L-0", "L-1");
-  wall("W-T3", PT(41, 0.5), PT(41, 12), "T-FH-INT4", "L-0", "L-1"); wall("W-T4", PT(50, 0.5), PT(50, 12), "T-FH-INT4", "L-0", "L-1");
-  wall("W-C0", PT(66, 0.5), PT(66, 29.5), CMU, "L-0", "L-1");
+  wall("W-C1a", PT(0, 21.5), PT(23.5, 21.5), CMU, "L-0", "L-T", r); wall("W-C1b", PT(23.5, 21.5), PT(23.5, 30), CMU, "L-0", "L-T", r);
+  wall("W-C2a", PT(116, 21.5), PT(96, 21.5), CMU, "L-1", "L-T", r); wall("W-C2b", PT(96, 21.5), PT(96, 30), CMU, "L-1", "L-T", r);
+  wall("W-EL1", PT(36, 30), PT(36, 20), CMU, "L-0", "L-3"); wall("W-EL2", PT(36, 20), PT(47, 20), CMU, "L-0", "L-3"); wall("W-EL3", PT(47, 20), PT(47, 30), CMU, "L-0", "L-3");
+  wall("W-T1", PT(24, 0), PT(24, 12), "T-FH-INT4", "L-0", "L-1"); wall("W-T2", PT(24, 12), PT(66, 12), "T-FH-INT4", "L-0", "L-1");
+  wall("W-T3", PT(41, 0), PT(41, 12), "T-FH-INT4", "L-0", "L-1"); wall("W-T4", PT(50, 0), PT(50, 12), "T-FH-INT4", "L-0", "L-1");
+  wall("W-C0", PT(66, 0), PT(66, 30), CMU, "L-0", "L-1");
   // the AIA floor's offices along the south, the tenant floor open
-  for (const x of [48, 60, 72, 84]) wall(`W-O${x}`, PT(x, 0.5), PT(x, 12), "T-FH-INT4", "L-2", "L-3");
-  wall("W-OC", PT(42, 12), PT(96, 12), "T-FH-INT4", "L-2", "L-3");
+  for (const x of [48, 60, 72, 84]) wall(`W-O${x}`, PT(x, 0), PT(x, 12), "T-FH-INT4", "L-2", "L-3");
+  wall("W-OC", PT(48, 12), PT(84, 12), "T-FH-INT4", "L-2", "L-3");
   // the stairs: two flights a storey in each core
   const S1 = [{ from: PT(5, 23.6), to: PT(15.5, 23.6) }, { from: PT(15.5, 27.6), to: PT(5, 27.6) }], S2 = [{ from: PT(111, 23.6), to: PT(100.5, 23.6) }, { from: PT(100.5, 27.6), to: PT(111, 27.6) }];
   [["L-0", "L-1"], ["L-1", "L-2"], ["L-2", "L-3"]].forEach(([a, b], i) => stair(`ST-1${i}`, "Stair 000", a, b, S1, { width: ft(3.7) }));
@@ -114,6 +114,7 @@ export function buildAiaSample() {
   H.sheet("A302", "Elevations", [["V-E", ev([613.4, 405.7], ft(45), [ft(10), EZ[0], ft(100), EZ[1]])], ["V-S", ev([331.9, 43.7], ft(60), [ft(10), EZ[0], ft(215), EZ[1]])]]);
   H.sheet("A402", "Section", [["V-X", H.place([406.6, 147.5], [ft(15), 0], [ft(37), ft(25)], [ft(-2), EZ[0], ft(76), EZ[1]], 50, 48)]]);
   H.sheet("A901", "Axonometric", [["V-3D", [420, 300]]]);
+  H.joinWalls();
   doc.regenerate();
   return doc;
 }

@@ -585,6 +585,14 @@ const HANDLERS = {
       if (still.length) continue;
       const hit = findJoin(doc, id, end, c);
       if (!hit) continue;
+      // a model traced from a drawing may ask that no end move further than it allows (its dimensions measure the ends)
+      if (o.maxMove != null && (dist(hit.p, c[end]) > o.maxMove || (hit.moveOther || []).some(m => { const g = doc.element(m.id), gc = g && doc.argValue(g, "centreline"); return gc && dist(gc[m.end], hit.p) > o.maxMove; }))) {
+        // a T needs no move: the joined end is drawn to the through wall's face wherever it stops inside it
+        // a corner neither: the walls meet where their axes cross, the ends left where they were drawn
+        for (const row of hit.rows) HANDLERS.relate(doc, { store: "joins", row: Object.assign(row, { kind: "auto", order: 0, allowed: true }) });
+        made.push(hit.what);
+        continue;
+      }
       if (dist(hit.p, c[end]) > 1e-9) { c[end] = hit.p; doc.setArg(f, "centreline", c); }
       for (const m of hit.moveOther || []) { const g = doc.element(m.id), gc = clone(doc.argValue(g, "centreline")); gc[m.end] = hit.p; doc.setArg(g, "centreline", gc); }
       for (const row of hit.rows) HANDLERS.relate(doc, { store: "joins", row: Object.assign(row, { kind: "auto", order: 0, allowed: true }) });
@@ -651,17 +659,25 @@ function lineWall(doc, g) {
   const c = doc.argValue(g, "centreline"); if (!c || c.type !== "line") return null;
   const L = dist(c.start, c.end); if (L < TOL) return null;
   const w = doc.plan(g), sv = w && w.stack && w.stack.s && w.stack.s.length ? w.stack.s : [-100, 100];
-  return { id: doc.idOf(g), c, L, line: lineThrough(c.start, c.end), sMin: Math.min(...sv), sMax: Math.max(...sv), half: Math.max(...sv.map(Math.abs)) };
+  // its heights, when built: a wall stacked over another on the same line (a timber storey on a concrete one) shares
+  // its plan but never a join with it
+  const z0 = w && Number.isFinite(w.z0) ? w.z0 : null, z1 = w && Number.isFinite(w.zHi ?? w.z1) ? (w.zHi ?? w.z1) : null;
+  return { id: doc.idOf(g), c, L, line: lineThrough(c.start, c.end), sMin: Math.min(...sv), sMax: Math.max(...sv), half: Math.max(...sv.map(Math.abs)), z0, z1 };
 }
+/** Do two walls share any height? (Unknown heights - not built yet - count as sharing.) */
+const sharesHeight = (A, B) => A.z0 == null || B.z0 == null || A.z1 == null || B.z1 == null || Math.min(A.z1, B.z1) - Math.max(A.z0, B.z0) > 1;
 /** Does a join row still describe the geometry? */
 function joinHolds(doc, j) {
   const A = doc.element(j.a.of), B = doc.element(j.b.of); if (!A || !B) return false;
   const ca = doc.argValue(A, "centreline"), cb = doc.argValue(B, "centreline"); if (!ca || !cb) return false;
   const pa = ca[j.a.end]; if (!pa) return false;
-  if (j.b.end) return !!cb[j.b.end] && dist(pa, cb[j.b.end]) <= 1;
+  // a corner holds while the ends stay within the walls' thickness of each other (they meet where the axes cross)
+  if (j.b.end) { const la = lineWall(doc, A), lb = lineWall(doc, B); return !!cb[j.b.end] && dist(pa, cb[j.b.end]) <= Math.max(1, (la ? la.half : 0) + (lb ? lb.half : 0) + 30); }
   if (cb.type !== "line") return true;                     // arcs: resolveJoins judges and notes
   const L = lineThrough(cb.start, cb.end), u = dot(sub(pa, L.p), L.d);
-  return Math.abs(signedDistance(L, pa)) <= 1 && u > -1 && u < dist(cb.start, cb.end) + 1;
+  // a T holds while the end stays within the through wall's thickness (it is drawn to the face wherever it stops)
+  const lw = lineWall(doc, B), band = Math.max(1, lw ? lw.half + 30 : 1);
+  return Math.abs(signedDistance(L, pa)) <= band && u > -1 && u < dist(cb.start, cb.end) + 1;
 }
 /** The join an end has arrived at, and the point it should sit on. Corners win over Ts;
  *  a T lands anywhere within the other wall's thickness and snaps onto its location line
@@ -669,7 +685,7 @@ function joinHolds(doc, j) {
 function findJoin(doc, id, end, c) {
   const me = lineWall(doc, doc.element(id)); if (!me) return null;
   const p = c[end], q = end === "start" ? c.end : c.start, dir = normalise(sub(p, q));
-  const walls = doc.elements().filter(g => doc.idOf(g) !== id).map(g => lineWall(doc, g)).filter(Boolean);
+  const walls = doc.elements().filter(g => doc.idOf(g) !== id).map(g => lineWall(doc, g)).filter(B => B && sharesHeight(me, B));
   // 1. a corner: another wall's end within the walls' half-thickness - unless that end is itself
   // T-joined into a wall this end also lands in: two walls meeting a third from either side are
   // two Ts (a crossing), not a corner with each other
@@ -680,6 +696,16 @@ function findJoin(doc, id, end, c) {
     if (tEndInto(B.id, e).some(host => { const H = walls.find(w => w.id === host); return H && inBand(H, p); })) continue;
     const d = dist(p, B.c[e]), tol = Math.max(me.half, B.half) + 1;
     if (d <= tol && (!best || d < best.d)) best = { d, B, e };
+  }
+  // an arc's ends too: a straight wall running on into a curved one (a rounded corner) meets it end to end
+  for (const g of doc.elements()) {
+    if (doc.typeOf(g) !== "Wall" || doc.idOf(g) === id) continue;
+    const ca = doc.argValue(g, "centreline"); if (!ca || ca.type !== "arc") continue;
+    const wg = doc.plan(g); if (wg && Number.isFinite(wg.z0) && me.z0 != null && !(Math.min(me.z1, wg.zHi ?? wg.z1) - Math.max(me.z0, wg.z0) > 1)) continue;
+    for (const e of ["start", "end"]) {
+      const a = (e === "start" ? ca.start : ca.end) * Math.PI / 180, q = [ca.centre[0] + ca.radius * Math.cos(a), ca.centre[1] + ca.radius * Math.sin(a)];
+      const d = dist(p, q); if (d <= me.half + 1 && (!best || d < best.d)) best = { d, B: { id: doc.idOf(g), c: { [e]: q } }, e };
+    }
   }
   if (best) {
     const P = best.B.c[best.e];

@@ -249,6 +249,10 @@ export function buildMazatlanSample() {
   wall("W-PR3", "Pretil escalera norte", [5996, 12616], [6974, 12616], "T-MZ-BLOCK152", "L-T", 0, 1100, "New");
   const before = {}; for (const f of doc.elements()) if (doc.typeOf(f) === "Wall") before[doc.idOf(f)] = JSON.stringify(doc.argValue(f, "centreline"));
   ed.apply({ op: "autojoin", ends: ["W-S", "W-SO", "W-O", "W-N", "W-E", "W-H1", "W-H2", "W-H3", "W-H4"].flatMap(id => [{ id, end: "start" }, { id, end: "end" }]) }, { regenerate: false });
+  // then every other wall, where its end already meets another as traced: joined without moving (the set's dimension
+  // strings measure these ends)
+  doc.regenerate();
+  ed.apply({ op: "autojoin", maxMove: 2, ends: doc.elements().filter(f => doc.typeOf(f) === "Wall").flatMap(f => [{ id: doc.idOf(f), end: "start" }, { id: doc.idOf(f), end: "end" }]) }, { regenerate: false });
   if (globalThis.MZ_DEBUG) for (const f of doc.elements()) if (doc.typeOf(f) === "Wall" && before[doc.idOf(f)] !== JSON.stringify(doc.argValue(f, "centreline"))) console.log("moved", doc.idOf(f), before[doc.idOf(f)], JSON.stringify(doc.argValue(f, "centreline")));
 
   // ---------------------------------------------------------------- openings, doors and windows

@@ -113,7 +113,7 @@ export function fhaProject(name, project) {
   door("T-FH-D809G", "Aluminum storefront doors, pair 8'-0\"x9'-0\"", "D8", 2438, 2743, { glazed: true });
   win("T-FH-W42", "Aluminum clad awning 4'-0\"x2'-0\"", "W8", 1219, 610);
   win("T-FH-W417", "Stair glazing 4'-0\"x16'-0\"", "W9", 1219, 4877);
-  win("T-FH-SF1615", "Storefront 16'-0\"x15'-0\"", "W10", 4877, 4572, 3);
+  win("T-FH-SF1615", "Storefront 15'-0\"x15'-0\"", "W10", 4572, 4572, 3);
   win("T-FH-SF2111", "Storefront 21'-0\"x11'-0\"", "W11", 6401, 3353, 4);
 
   // ---------------------------------------------------------------- view styles
@@ -132,6 +132,9 @@ export function fhaProject(name, project) {
   const R = (x0, y0, x1, y1) => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
   const H = {
     doc, ed, add, set, line, R,
+    /** Every wall's ends joined where they meet another's (a corner) or land in another (a T), as drawing them would:
+     *  built first, so each wall knows its thickness and its heights and a stacked wall joins nothing below it. */
+    joinWalls: () => { doc.regenerate(); const ends = doc.elements().filter(f => doc.typeOf(f) === "Wall").flatMap(f => [{ id: doc.idOf(f), end: "start" }, { id: doc.idOf(f), end: "end" }]); return ed.apply({ op: "autojoin", ends }, { regenerate: false }); },
     level: (id, name, z) => add({ id, type: "Level", name, args: { name, elevation: z } }),
     grid: (id, name, a, b) => add({ id, type: "Grid", name: `Grid ${name}`, args: { name, line: line(a, b), ends: "End", headSize: 8, textSize: 4.2 } }),
     /** A wall from its base level to its top level (or up a height), or up to the roof it is attached to. */

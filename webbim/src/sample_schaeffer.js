@@ -59,7 +59,7 @@ export function buildSchaefferSample() {
   wall("W-I2", PT(18.28, 0.28), PT(18.28, 22.28), I, "L-LIV", "L-TOW");
   walls("W-BTH", FT([[2.28, 42.8], [18.25, 42.8], [18.25, 48.46], [2.28, 48.46]]), I, "L-OFF", "L-LIV");
   wall("W-BTH5", PT(11.8, 42.8), PT(11.8, 48.46), I, "L-OFF", "L-LIV");
-  walls("W-PAN", FT([[26.72, 30.2], [18.75, 30.2], [18.75, 36.3], [22.4, 36.3]]), I, "L-LIV", "L-MB");
+  walls("W-PAN", FT([[28.72, 30.2], [18.75, 30.2], [18.75, 36.3], [22.4, 36.3]]), I, "L-LIV", "L-MB");
   walls("W-MBB", FT([[2.28, 54.2], [11.4, 54.2], [11.4, 48.46]]), I, "L-MB", "L-TOW", { topOffset: -300 });
   wall("W-MBS", PT(2.28, 48.46), PT(26.72, 48.46), I, "L-MB", "L-TOW");
 
@@ -88,7 +88,7 @@ export function buildSchaefferSample() {
   [2.2, 6.4, 10.6, 14.8, 19.0].forEach((x, i) => w("WN-E" + (i + 2), "W-E1", ft(x), "T-FH-W42", ft(3.4)));
   w("WN-E1", "W-E3", ft(1.9), "T-FH-W417", ft(1.0)); w("WN-E7", "W-E3", ft(13.9), "T-FH-W44", ft(4.1));
   // south: the living room's storefront up into the gable; north: the entry door and the studio's windows
-  w("WN-S1", "W-S", ft(8.9), "T-FH-SF1615", ft(0.1)); w("WN-S2", "W-S", ft(22.0), "T-FH-W44", ft(4.5));
+  w("WN-S1", "W-S", ft(8.25), "T-FH-SF1615", ft(0.1)); w("WN-S2", "W-S", ft(22.0), "T-FH-W44", ft(4.5));
   d("DR-N1", "W-N", ft(3.0), "T-FH-D30G"); w("WN-N1", "W-N", ft(14.0), "T-FH-W44", ft(9.5)); w("WN-N2", "W-N", ft(14.0), "T-FH-W44", ft(2.5));
   d("DR-I1", "W-I2", ft(12.0), "T-FH-D30", { flipFacing: true }); d("DR-I2", "W-I1", ft(8.0), "T-FH-D60G");
   d("DR-B1", "W-BTH3", ft(4.0), "T-FH-D28"); d("DR-B2", "W-BTH1", ft(14.0), "T-FH-D28");
@@ -139,6 +139,7 @@ export function buildSchaefferSample() {
   H.sheet("A302", "Elevations", [["V-S", H.place([746, 353], [ft(36), 0], [ft(36) - ft(12.5), ft(12)], EN, 50)], ["V-N", H.place([584, 64], [ft(11), 0], [ft(11) + ft(12.5), ft(12)], EN, 50)]]);
   H.sheet("A401", "Sections", [["V-S1", ev([644, 346.4], 85.42, SE)], ["V-S2", H.place([277, 86.4], [ft(14.58), 0], [ft(14.58) + ft(35), ft(12)], SE, 50)]]);
   H.sheet("A901", "Axonometric", [["V-3D", [420, 320]]]);
+  H.joinWalls();
   doc.regenerate();
   return doc;
 }

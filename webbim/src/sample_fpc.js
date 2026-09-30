@@ -40,7 +40,7 @@ export function buildFpcSample() {
   const U1 = [{ from: PT(-4.5, 51.1), to: PT(8.5, 51.1) }, { from: PT(8.5, 58.6), to: PT(-4.5, 58.6) }], U2 = [{ from: PT(76, 0.6), to: PT(89.5, 0.6) }, { from: PT(89.5, 6.4), to: PT(76, 6.4) }];
   [["L-B", "L-1"], ["L-1", "L-2"], ["L-2", "L-3"], ["L-3", "L-R"]].forEach(([a, b], i) => { stair(`ST-1${i}`, "Stair 102/202/302", a, b, U1, { width: ft(3.7) }); stair(`ST-2${i}`, "Stair 103/203/303", a, b, U2, { width: ft(3.7) }); });
   // the connector to the existing buildings: one storey, glazed
-  walls("W-CN", FT([[32.4, 61.5], [32.4, 75.5]]), BR, "L-1", "L-2", { topOffset: -ft(0.33) });
+  walls("W-CN", FT([[34, 61.5], [34, 75.5]]), BR, "L-1", "L-2", { topOffset: -ft(0.33) });
   floor("FL-CN", "Connector", FT(RECT(32.4, 61.5, 75, 75.5)), "T-FH-CONCDECK", "L-1"); floor("FL-CNR", "Connector roof", FT(RECT(32.4, 61.5, 75, 75.5)), "T-FH-CONCDECK", "L-2", -ft(0.33));
 
   // windows: east and west faces, the second floor's short and the third floor's tall, the ground floor's storefronts
@@ -136,6 +136,7 @@ export function buildFpcSample() {
   const el = (p0, m, crop) => H.place(p0, m, [(crop[0] + crop[2]) / 2, ft(30)], crop, 100, 96);
   H.sheet("A301", "E+W Elevations", [["V-W", el([617.3, 330.2], [ft(156), 0], [ft(-2), EZ[0], ft(236), EZ[1]])], ["V-E", el([200, 30.3], [ft(20), 0], [ft(-2), EZ[0], ft(236), EZ[1]])]], "ARCH D");
   H.sheet("A901", "Axonometric", [["V-3D", [305, 480]]], "ARCH D", up);
+  H.joinWalls();
   doc.regenerate();
   return doc;
 }

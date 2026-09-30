@@ -2940,13 +2940,16 @@ function resolveJoins(walls, rows) {
     if (keys.length < 2) continue;
     const ends = keys.map(k => { const [id, e] = k.split(":"); const w = walls.get(id); return { id, e, w, p: e === "start" ? w.curve.start : w.curve.end, q: drawnEnd(w, e) }; });
     // ends meet where they were drawn; a wall inclined about its centre has its line moved off that point
-    const Q0 = ends[0].q;
-    const far = ends.find(x => dist(x.q, Q0) > JOIN_TOL);
+    // ends drawn a little apart (a wall traced to the other's face, not its centreline) still make the corner - as Revit
+    // joins walls where their location lines cross: within the walls' thickness they meet at the crossing of their axes
+    const Q0 = ends[0].q, reach = Math.max(JOIN_TOL, ...ends.map(x => Math.max(...x.w.stack.s.map(Math.abs)) * 2 + 30));
+    const far = ends.find(x => dist(x.q, Q0) > reach);
     if (far) { ends.forEach(x => say(x.id, `join at ${x.e} not resolved: the ends are ${Math.round(dist(far.q, Q0))}mm apart, drawn as free ends`)); continue; }
+    const apart = ends.some(x => dist(x.q, Q0) > JOIN_TOL);
     const fitted = ends.find(x => !boundaryGeom(x.w, 0));
     if (fitted) { ends.forEach(x => say(x.id, `joins on a ${fitted.w.curve.type} centreline are drawn as free ends`)); continue; }
     const row = kindOf.get(keys[0]), members = ends.map(x => ({ id: x.id, e: x.e }));
-    resolveNode(ends, row, say);
+    resolveNode(ends, row, say, apart ? (axesMeet(ends) || null) : null);
     for (const x of ends) x.w.ends[x.e] = Object.assign(x.out, { node: { members, row } });
     for (const a of ends) for (const b of ends) if (a !== b) a.w.joinedTo.add(b.id);
   }
@@ -2960,7 +2963,10 @@ function resolveJoins(walls, rows) {
     // measured on B's line as drawn: B inclined about its centre has its line moved across
     const Bd = B.drawn && B.curve.type === "line" ? Object.assign({}, B, { a: B.drawn.start }) : B;
     const pd = drawnEnd(A, j.a.end), u = uOf(Bd, pd), off = Math.abs(sideOf(Bd, pd));
-    if (off > JOIN_TOL || u < -JOIN_TOL || u > B.L + JOIN_TOL) { say(A.id, `T join onto ${B.id} not resolved: the end is ${Math.round(off)}mm off its centreline`); continue; }
+    // the end may stop anywhere within B's thickness (a wall traced to B's face): the T is found where A's layers
+    // meet B's faces, whatever point A was drawn to
+    const band = Math.max(...B.stack.s.map(Math.abs)) + 30;
+    if (off > Math.max(JOIN_TOL, band) || u < -JOIN_TOL || u > B.L + JOIN_TOL) { say(A.id, `T join onto ${B.id} not resolved: the end is ${Math.round(off)}mm off its centreline`); continue; }
     if (!boundaryGeom(A, 0) || !boundaryGeom(B, 0)) { say(A.id, `T joins on fitted curves are drawn as free ends`); continue; }
     // Which side of B does A arrive from? Probe one wall-thickness back into A.
     const back = j.a.end === "start" ? Math.min(A.L, A.stack.T + 1) : Math.max(0, A.L - A.stack.T - 1);
@@ -11154,6 +11160,14 @@ const HANDLERS = {
       if (still.length) continue;
       const hit = findJoin(doc, id, end, c);
       if (!hit) continue;
+      // a model traced from a drawing may ask that no end move further than it allows (its dimensions measure the ends)
+      if (o.maxMove != null && (dist(hit.p, c[end]) > o.maxMove || (hit.moveOther || []).some(m => { const g = doc.element(m.id), gc = g && doc.argValue(g, "centreline"); return gc && dist(gc[m.end], hit.p) > o.maxMove; }))) {
+        // a T needs no move: the joined end is drawn to the through wall's face wherever it stops inside it
+        // a corner neither: the walls meet where their axes cross, the ends left where they were drawn
+        for (const row of hit.rows) HANDLERS.relate(doc, { store: "joins", row: Object.assign(row, { kind: "auto", order: 0, allowed: true }) });
+        made.push(hit.what);
+        continue;
+      }
       if (dist(hit.p, c[end]) > 1e-9) { c[end] = hit.p; doc.setArg(f, "centreline", c); }
       for (const m of hit.moveOther || []) { const g = doc.element(m.id), gc = clone(doc.argValue(g, "centreline")); gc[m.end] = hit.p; doc.setArg(g, "centreline", gc); }
       for (const row of hit.rows) HANDLERS.relate(doc, { store: "joins", row: Object.assign(row, { kind: "auto", order: 0, allowed: true }) });
@@ -11220,17 +11234,25 @@ function lineWall(doc, g) {
   const c = doc.argValue(g, "centreline"); if (!c || c.type !== "line") return null;
   const L = dist(c.start, c.end); if (L < TOL) return null;
   const w = doc.plan(g), sv = w && w.stack && w.stack.s && w.stack.s.length ? w.stack.s : [-100, 100];
-  return { id: doc.idOf(g), c, L, line: lineThrough(c.start, c.end), sMin: Math.min(...sv), sMax: Math.max(...sv), half: Math.max(...sv.map(Math.abs)) };
+  // its heights, when built: a wall stacked over another on the same line (a timber storey on a concrete one) shares
+  // its plan but never a join with it
+  const z0 = w && Number.isFinite(w.z0) ? w.z0 : null, z1 = w && Number.isFinite(w.zHi ?? w.z1) ? (w.zHi ?? w.z1) : null;
+  return { id: doc.idOf(g), c, L, line: lineThrough(c.start, c.end), sMin: Math.min(...sv), sMax: Math.max(...sv), half: Math.max(...sv.map(Math.abs)), z0, z1 };
 }
+/** Do two walls share any height? (Unknown heights - not built yet - count as sharing.) */
+const sharesHeight = (A, B) => A.z0 == null || B.z0 == null || A.z1 == null || B.z1 == null || Math.min(A.z1, B.z1) - Math.max(A.z0, B.z0) > 1;
 /** Does a join row still describe the geometry? */
 function joinHolds(doc, j) {
   const A = doc.element(j.a.of), B = doc.element(j.b.of); if (!A || !B) return false;
   const ca = doc.argValue(A, "centreline"), cb = doc.argValue(B, "centreline"); if (!ca || !cb) return false;
   const pa = ca[j.a.end]; if (!pa) return false;
-  if (j.b.end) return !!cb[j.b.end] && dist(pa, cb[j.b.end]) <= 1;
+  // a corner holds while the ends stay within the walls' thickness of each other (they meet where the axes cross)
+  if (j.b.end) { const la = lineWall(doc, A), lb = lineWall(doc, B); return !!cb[j.b.end] && dist(pa, cb[j.b.end]) <= Math.max(1, (la ? la.half : 0) + (lb ? lb.half : 0) + 30); }
   if (cb.type !== "line") return true;                     // arcs: resolveJoins judges and notes
   const L = lineThrough(cb.start, cb.end), u = dot(sub(pa, L.p), L.d);
-  return Math.abs(signedDistance(L, pa)) <= 1 && u > -1 && u < dist(cb.start, cb.end) + 1;
+  // a T holds while the end stays within the through wall's thickness (it is drawn to the face wherever it stops)
+  const lw = lineWall(doc, B), band = Math.max(1, lw ? lw.half + 30 : 1);
+  return Math.abs(signedDistance(L, pa)) <= band && u > -1 && u < dist(cb.start, cb.end) + 1;
 }
 /** The join an end has arrived at, and the point it should sit on. Corners win over Ts;
  *  a T lands anywhere within the other wall's thickness and snaps onto its location line
@@ -11238,7 +11260,7 @@ function joinHolds(doc, j) {
 function findJoin(doc, id, end, c) {
   const me = lineWall(doc, doc.element(id)); if (!me) return null;
   const p = c[end], q = end === "start" ? c.end : c.start, dir = normalise(sub(p, q));
-  const walls = doc.elements().filter(g => doc.idOf(g) !== id).map(g => lineWall(doc, g)).filter(Boolean);
+  const walls = doc.elements().filter(g => doc.idOf(g) !== id).map(g => lineWall(doc, g)).filter(B => B && sharesHeight(me, B));
   // 1. a corner: another wall's end within the walls' half-thickness - unless that end is itself
   // T-joined into a wall this end also lands in: two walls meeting a third from either side are
   // two Ts (a crossing), not a corner with each other
@@ -11249,6 +11271,16 @@ function findJoin(doc, id, end, c) {
     if (tEndInto(B.id, e).some(host => { const H = walls.find(w => w.id === host); return H && inBand(H, p); })) continue;
     const d = dist(p, B.c[e]), tol = Math.max(me.half, B.half) + 1;
     if (d <= tol && (!best || d < best.d)) best = { d, B, e };
+  }
+  // an arc's ends too: a straight wall running on into a curved one (a rounded corner) meets it end to end
+  for (const g of doc.elements()) {
+    if (doc.typeOf(g) !== "Wall" || doc.idOf(g) === id) continue;
+    const ca = doc.argValue(g, "centreline"); if (!ca || ca.type !== "arc") continue;
+    const wg = doc.plan(g); if (wg && Number.isFinite(wg.z0) && me.z0 != null && !(Math.min(me.z1, wg.zHi ?? wg.z1) - Math.max(me.z0, wg.z0) > 1)) continue;
+    for (const e of ["start", "end"]) {
+      const a = (e === "start" ? ca.start : ca.end) * Math.PI / 180, q = [ca.centre[0] + ca.radius * Math.cos(a), ca.centre[1] + ca.radius * Math.sin(a)];
+      const d = dist(p, q); if (d <= me.half + 1 && (!best || d < best.d)) best = { d, B: { id: doc.idOf(g), c: { [e]: q } }, e };
+    }
   }
   if (best) {
     const P = best.B.c[best.e];
@@ -15912,6 +15944,10 @@ function buildMazatlanSample() {
   wall("W-PR3", "Pretil escalera norte", [5996, 12616], [6974, 12616], "T-MZ-BLOCK152", "L-T", 0, 1100, "New");
   const before = {}; for (const f of doc.elements()) if (doc.typeOf(f) === "Wall") before[doc.idOf(f)] = JSON.stringify(doc.argValue(f, "centreline"));
   ed.apply({ op: "autojoin", ends: ["W-S", "W-SO", "W-O", "W-N", "W-E", "W-H1", "W-H2", "W-H3", "W-H4"].flatMap(id => [{ id, end: "start" }, { id, end: "end" }]) }, { regenerate: false });
+  // then every other wall, where its end already meets another as traced: joined without moving (the set's dimension
+  // strings measure these ends)
+  doc.regenerate();
+  ed.apply({ op: "autojoin", maxMove: 2, ends: doc.elements().filter(f => doc.typeOf(f) === "Wall").flatMap(f => [{ id: doc.idOf(f), end: "start" }, { id: doc.idOf(f), end: "end" }]) }, { regenerate: false });
   if (globalThis.MZ_DEBUG) for (const f of doc.elements()) if (doc.typeOf(f) === "Wall" && before[doc.idOf(f)] !== JSON.stringify(doc.argValue(f, "centreline"))) console.log("moved", doc.idOf(f), before[doc.idOf(f)], JSON.stringify(doc.argValue(f, "centreline")));
 
   // ---------------------------------------------------------------- openings, doors and windows
@@ -16430,7 +16466,7 @@ function fhaProject(name, project) {
   door("T-FH-D809G", "Aluminum storefront doors, pair 8'-0\"x9'-0\"", "D8", 2438, 2743, { glazed: true });
   win("T-FH-W42", "Aluminum clad awning 4'-0\"x2'-0\"", "W8", 1219, 610);
   win("T-FH-W417", "Stair glazing 4'-0\"x16'-0\"", "W9", 1219, 4877);
-  win("T-FH-SF1615", "Storefront 16'-0\"x15'-0\"", "W10", 4877, 4572, 3);
+  win("T-FH-SF1615", "Storefront 15'-0\"x15'-0\"", "W10", 4572, 4572, 3);
   win("T-FH-SF2111", "Storefront 21'-0\"x11'-0\"", "W11", 6401, 3353, 4);
 
   // ---------------------------------------------------------------- view styles
@@ -16449,6 +16485,9 @@ function fhaProject(name, project) {
   const R = (x0, y0, x1, y1) => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
   const H = {
     doc, ed, add, set, line, R,
+    /** Every wall's ends joined where they meet another's (a corner) or land in another (a T), as drawing them would:
+     *  built first, so each wall knows its thickness and its heights and a stacked wall joins nothing below it. */
+    joinWalls: () => { doc.regenerate(); const ends = doc.elements().filter(f => doc.typeOf(f) === "Wall").flatMap(f => [{ id: doc.idOf(f), end: "start" }, { id: doc.idOf(f), end: "end" }]); return ed.apply({ op: "autojoin", ends }, { regenerate: false }); },
     level: (id, name, z) => add({ id, type: "Level", name, args: { name, elevation: z } }),
     grid: (id, name, a, b) => add({ id, type: "Grid", name: `Grid ${name}`, args: { name, line: line(a, b), ends: "End", headSize: 8, textSize: 4.2 } }),
     /** A wall from its base level to its top level (or up a height), or up to the roof it is attached to. */
@@ -16547,7 +16586,7 @@ function buildSchaefferSample() {
   wall("W-I2", PT(18.28, 0.28), PT(18.28, 22.28), I, "L-LIV", "L-TOW");
   walls("W-BTH", FT([[2.28, 42.8], [18.25, 42.8], [18.25, 48.46], [2.28, 48.46]]), I, "L-OFF", "L-LIV");
   wall("W-BTH5", PT(11.8, 42.8), PT(11.8, 48.46), I, "L-OFF", "L-LIV");
-  walls("W-PAN", FT([[26.72, 30.2], [18.75, 30.2], [18.75, 36.3], [22.4, 36.3]]), I, "L-LIV", "L-MB");
+  walls("W-PAN", FT([[28.72, 30.2], [18.75, 30.2], [18.75, 36.3], [22.4, 36.3]]), I, "L-LIV", "L-MB");
   walls("W-MBB", FT([[2.28, 54.2], [11.4, 54.2], [11.4, 48.46]]), I, "L-MB", "L-TOW", { topOffset: -300 });
   wall("W-MBS", PT(2.28, 48.46), PT(26.72, 48.46), I, "L-MB", "L-TOW");
 
@@ -16576,7 +16615,7 @@ function buildSchaefferSample() {
   [2.2, 6.4, 10.6, 14.8, 19.0].forEach((x, i) => w("WN-E" + (i + 2), "W-E1", ft(x), "T-FH-W42", ft(3.4)));
   w("WN-E1", "W-E3", ft(1.9), "T-FH-W417", ft(1.0)); w("WN-E7", "W-E3", ft(13.9), "T-FH-W44", ft(4.1));
   // south: the living room's storefront up into the gable; north: the entry door and the studio's windows
-  w("WN-S1", "W-S", ft(8.9), "T-FH-SF1615", ft(0.1)); w("WN-S2", "W-S", ft(22.0), "T-FH-W44", ft(4.5));
+  w("WN-S1", "W-S", ft(8.25), "T-FH-SF1615", ft(0.1)); w("WN-S2", "W-S", ft(22.0), "T-FH-W44", ft(4.5));
   d("DR-N1", "W-N", ft(3.0), "T-FH-D30G"); w("WN-N1", "W-N", ft(14.0), "T-FH-W44", ft(9.5)); w("WN-N2", "W-N", ft(14.0), "T-FH-W44", ft(2.5));
   d("DR-I1", "W-I2", ft(12.0), "T-FH-D30", { flipFacing: true }); d("DR-I2", "W-I1", ft(8.0), "T-FH-D60G");
   d("DR-B1", "W-BTH3", ft(4.0), "T-FH-D28"); d("DR-B2", "W-BTH1", ft(14.0), "T-FH-D28");
@@ -16627,6 +16666,7 @@ function buildSchaefferSample() {
   H.sheet("A302", "Elevations", [["V-S", H.place([746, 353], [ft(36), 0], [ft(36) - ft(12.5), ft(12)], EN, 50)], ["V-N", H.place([584, 64], [ft(11), 0], [ft(11) + ft(12.5), ft(12)], EN, 50)]]);
   H.sheet("A401", "Sections", [["V-S1", ev([644, 346.4], 85.42, SE)], ["V-S2", H.place([277, 86.4], [ft(14.58), 0], [ft(14.58) + ft(35), ft(12)], SE, 50)]]);
   H.sheet("A901", "Axonometric", [["V-3D", [420, 320]]]);
+  H.joinWalls();
   doc.regenerate();
   return doc;
 }
@@ -16744,6 +16784,7 @@ function buildWalnutSample() {
   const sc = p0 => H.place(p0, [ft(20), 0], [ft(39), ft(6)], SX, 50, 48);
   H.sheet("A402", "Sections", [["V-X3", sc([454.7, 431.8])], ["V-X2", sc([117.9, 154.4])], ["V-X1", sc([454.7, 154.4])]]);
   H.sheet("A901", "Axonometric", [["V-3D", [420, 300]]]);
+  H.joinWalls();
   doc.regenerate();
   return doc;
 }
@@ -16791,7 +16832,7 @@ function buildFpcSample() {
   const U1 = [{ from: PT(-4.5, 51.1), to: PT(8.5, 51.1) }, { from: PT(8.5, 58.6), to: PT(-4.5, 58.6) }], U2 = [{ from: PT(76, 0.6), to: PT(89.5, 0.6) }, { from: PT(89.5, 6.4), to: PT(76, 6.4) }];
   [["L-B", "L-1"], ["L-1", "L-2"], ["L-2", "L-3"], ["L-3", "L-R"]].forEach(([a, b], i) => { stair(`ST-1${i}`, "Stair 102/202/302", a, b, U1, { width: ft(3.7) }); stair(`ST-2${i}`, "Stair 103/203/303", a, b, U2, { width: ft(3.7) }); });
   // the connector to the existing buildings: one storey, glazed
-  walls("W-CN", FT([[32.4, 61.5], [32.4, 75.5]]), BR, "L-1", "L-2", { topOffset: -ft(0.33) });
+  walls("W-CN", FT([[34, 61.5], [34, 75.5]]), BR, "L-1", "L-2", { topOffset: -ft(0.33) });
   floor("FL-CN", "Connector", FT(RECT(32.4, 61.5, 75, 75.5)), "T-FH-CONCDECK", "L-1"); floor("FL-CNR", "Connector roof", FT(RECT(32.4, 61.5, 75, 75.5)), "T-FH-CONCDECK", "L-2", -ft(0.33));
 
   // windows: east and west faces, the second floor's short and the third floor's tall, the ground floor's storefronts
@@ -16887,6 +16928,7 @@ function buildFpcSample() {
   const el = (p0, m, crop) => H.place(p0, m, [(crop[0] + crop[2]) / 2, ft(30)], crop, 100, 96);
   H.sheet("A301", "E+W Elevations", [["V-W", el([617.3, 330.2], [ft(156), 0], [ft(-2), EZ[0], ft(236), EZ[1]])], ["V-E", el([200, 30.3], [ft(20), 0], [ft(-2), EZ[0], ft(236), EZ[1]])]], "ARCH D");
   H.sheet("A901", "Axonometric", [["V-3D", [305, 480]]], "ARCH D", up);
+  H.joinWalls();
   doc.regenerate();
   return doc;
 }
@@ -16946,15 +16988,15 @@ function buildAiaSample() {
   wall("W-W", PT(0, 30), PT(0, 0), "T-FH-EXT6C", "L-0", "L-T", r); wall("W-E", PT(116, 0), PT(116, 30), "T-AIA-SHIP", "L-1", "L-T", r);
   // the cores: two stairs and the elevator, the cafe's toilets and mechanical room
   const CMU = "T-FH-CONC8";
-  wall("W-C1a", PT(0.5, 21.5), PT(23.5, 21.5), CMU, "L-0", "L-T", r); wall("W-C1b", PT(23.5, 21.5), PT(23.5, 29.5), CMU, "L-0", "L-T", r);
-  wall("W-C2a", PT(115.5, 21.5), PT(96, 21.5), CMU, "L-1", "L-T", r); wall("W-C2b", PT(96, 21.5), PT(96, 29.5), CMU, "L-1", "L-T", r);
-  wall("W-EL1", PT(36, 29.5), PT(36, 20), CMU, "L-0", "L-3"); wall("W-EL2", PT(36, 20), PT(47, 20), CMU, "L-0", "L-3"); wall("W-EL3", PT(47, 20), PT(47, 29.5), CMU, "L-0", "L-3");
-  wall("W-T1", PT(24, 0.5), PT(24, 12), "T-FH-INT4", "L-0", "L-1"); wall("W-T2", PT(24, 12), PT(66, 12), "T-FH-INT4", "L-0", "L-1");
-  wall("W-T3", PT(41, 0.5), PT(41, 12), "T-FH-INT4", "L-0", "L-1"); wall("W-T4", PT(50, 0.5), PT(50, 12), "T-FH-INT4", "L-0", "L-1");
-  wall("W-C0", PT(66, 0.5), PT(66, 29.5), CMU, "L-0", "L-1");
+  wall("W-C1a", PT(0, 21.5), PT(23.5, 21.5), CMU, "L-0", "L-T", r); wall("W-C1b", PT(23.5, 21.5), PT(23.5, 30), CMU, "L-0", "L-T", r);
+  wall("W-C2a", PT(116, 21.5), PT(96, 21.5), CMU, "L-1", "L-T", r); wall("W-C2b", PT(96, 21.5), PT(96, 30), CMU, "L-1", "L-T", r);
+  wall("W-EL1", PT(36, 30), PT(36, 20), CMU, "L-0", "L-3"); wall("W-EL2", PT(36, 20), PT(47, 20), CMU, "L-0", "L-3"); wall("W-EL3", PT(47, 20), PT(47, 30), CMU, "L-0", "L-3");
+  wall("W-T1", PT(24, 0), PT(24, 12), "T-FH-INT4", "L-0", "L-1"); wall("W-T2", PT(24, 12), PT(66, 12), "T-FH-INT4", "L-0", "L-1");
+  wall("W-T3", PT(41, 0), PT(41, 12), "T-FH-INT4", "L-0", "L-1"); wall("W-T4", PT(50, 0), PT(50, 12), "T-FH-INT4", "L-0", "L-1");
+  wall("W-C0", PT(66, 0), PT(66, 30), CMU, "L-0", "L-1");
   // the AIA floor's offices along the south, the tenant floor open
-  for (const x of [48, 60, 72, 84]) wall(`W-O${x}`, PT(x, 0.5), PT(x, 12), "T-FH-INT4", "L-2", "L-3");
-  wall("W-OC", PT(42, 12), PT(96, 12), "T-FH-INT4", "L-2", "L-3");
+  for (const x of [48, 60, 72, 84]) wall(`W-O${x}`, PT(x, 0), PT(x, 12), "T-FH-INT4", "L-2", "L-3");
+  wall("W-OC", PT(48, 12), PT(84, 12), "T-FH-INT4", "L-2", "L-3");
   // the stairs: two flights a storey in each core
   const S1 = [{ from: PT(5, 23.6), to: PT(15.5, 23.6) }, { from: PT(15.5, 27.6), to: PT(5, 27.6) }], S2 = [{ from: PT(111, 23.6), to: PT(100.5, 23.6) }, { from: PT(100.5, 27.6), to: PT(111, 27.6) }];
   [["L-0", "L-1"], ["L-1", "L-2"], ["L-2", "L-3"]].forEach(([a, b], i) => stair(`ST-1${i}`, "Stair 000", a, b, S1, { width: ft(3.7) }));
@@ -17008,6 +17050,7 @@ function buildAiaSample() {
   H.sheet("A302", "Elevations", [["V-E", ev([613.4, 405.7], ft(45), [ft(10), EZ[0], ft(100), EZ[1]])], ["V-S", ev([331.9, 43.7], ft(60), [ft(10), EZ[0], ft(215), EZ[1]])]]);
   H.sheet("A402", "Section", [["V-X", H.place([406.6, 147.5], [ft(15), 0], [ft(37), ft(25)], [ft(-2), EZ[0], ft(76), EZ[1]], 50, 48)]]);
   H.sheet("A901", "Axonometric", [["V-3D", [420, 300]]]);
+  H.joinWalls();
   doc.regenerate();
   return doc;
 }
@@ -20519,6 +20562,8 @@ function mergeModel(cur, next) {
 
 
 
+
+
 const CASES = [];
 const testCase = (id, name, fn, opts = {}) => CASES.push(Object.assign({ id, name, fn }, opts));
 const approx = (a, b, tol = 1e-6) => Math.abs(a - b) <= tol;
@@ -22839,6 +22884,25 @@ testCase("M81", "The CAD goodies library: 978 blocks decode, each named and in a
   const prims = planScene(doc, doc.element("V")).prims.filter(p => p.id === "SY1"), xs = prims.flatMap(p => (p.path || []).flatMap(s => [s.a, s.b].filter(Boolean).map(q => q[0])));
   const drawnW = (Math.max(...xs) - Math.min(...xs)) * 100, sized = Math.abs(drawnW - 2 * tree.w) < 0.1 * tree.w;
   return { pass: idx.length === 978 && named && counts && fits && tall && r.ok && prims.length > 0 && sized, detail: { n: idx.length, cats: cats.length, named, counts, fits, tall, placed: r.ok, prims: prims.length, drawnW, treeW: tree.w } };
+});
+
+testCase("M82", "Walls meet as they are drawn or traced: a corner whose ends stop a little apart (within the walls' thickness) joins where the axes cross; a T whose stem stops at the through wall's face joins without moving it; a straight wall running on into a curved one joins end to end; a wall stacked on another storey joins nothing below it; and the samples' walls all meet", () => {
+  const doc = newDocument("joins"), ed = new Editor(doc), T = Object.keys(doc.lib.types).find(k => doc.lib.types[k].family === "F-BASICWALL");
+  const add = (id, a, b, lv = "L0") => ed.apply({ op: "add", element: { id, type: "Wall", args: { centreline: { type: "line", start: a, end: b }, wallType: { ref: T }, baseLevel: { ref: lv }, height: 3000, mounting: "Centred" } } });
+  ed.apply({ op: "add", element: { id: "L0", type: "Level", args: { name: "L0", elevation: 0 } } }); ed.apply({ op: "add", element: { id: "L1", type: "Level", args: { name: "L1", elevation: 3000 } } });
+  add("A", [0, 0], [5000, 0]); add("B", [5000, 60], [5000, 4000]);         // B stops 60 mm short of A's end: a corner all the same
+  add("C", [2500, 4000], [2500, 60]);                                         // a stem traced to A's face (60 mm off its axis)
+  add("D", [0, 0], [0, 4000], "L1");                                          // on the storey above, over A's start: no join
+  ed.apply({ op: "add", element: { id: "E", type: "Wall", args: { centreline: { type: "arc", centre: [-1000, 4000], radius: 1000, start: 0, end: 90, ccw: true }, wallType: { ref: T }, baseLevel: { ref: "L1" }, height: 3000, mounting: "Centred" } } });
+  doc.regenerate();
+  const bef = JSON.stringify(doc.argValue(doc.element("C"), "centreline"));
+  ed.apply({ op: "autojoin", maxMove: 2, ends: ["A", "B", "C", "D"].flatMap(id => [{ id, end: "start" }, { id, end: "end" }]) }); doc.regenerate();
+  const P = id => doc.plan(doc.element(id));
+  const corner = P("A").ends.end.k === "node" && P("B").ends.start.k === "node", tee = P("C").ends.end.k === "T" && JSON.stringify(doc.argValue(doc.element("C"), "centreline")) === bef;
+  const stacked = P("A").ends.start.k === "free" && P("D").ends.start.k === "free", arc = P("D").ends.end.k === "node";
+  let free = 0; const ok = ["buildWalnutSample", "buildFpcSample"].map(n => ({ n, doc: n === "buildWalnutSample" ? buildWalnutSample() : buildFpcSample() }));
+  for (const { doc: d } of ok) for (const f of d.elements().filter(g => d.typeOf(g) === "Wall")) for (const e of ["start", "end"]) if (d.plan(f).ends[e].k === "free") free++;
+  return { pass: corner && tee && stacked && arc && free === 0, detail: { corner, tee, stacked, arc, free, A: P("A").ends, D: P("D").ends.end.k } };
 });
 
 
