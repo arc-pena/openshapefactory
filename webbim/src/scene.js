@@ -743,7 +743,11 @@ const DEPT = ["#dce9f7", "#f8e3cf", "#dff1e2", "#f3dcec", "#fff2c4", "#e4e0f7", 
 export function departmentColour(v) { let h = 0; for (const c of v) h = (h * 31 + c.charCodeAt(0)) >>> 0; return DEPT[h % DEPT.length]; }
 
 function drawGrid(doc, ctx, B, f) {
-  const c = F.json(f, "line"), id = doc.idOf(f), S = ctx.scale;
+  const id = doc.idOf(f), S = ctx.scale, OV = ctx.overrides || {};
+  // a view may draw a grid shorter than the model has it (Revit's 2D extents): its own line for this grid, or
+  // every grid cut to a box (model mm) - the heads where the line then ends
+  let c = (OV[id] && OV[id].gridLine) || F.json(f, "line");
+  if (OV.__gridBox) { c = clipSegment(c, OV.__gridBox); if (!c) return; }
   const g = resolveGraphics(doc, ctx, f, "projection"), AS = annotationStyle(doc);
   const endL = AS.gridEnd * S, Lg = dist(c.start, c.end);
   if (endL > 0 && Lg > 2 * endL) {
@@ -759,6 +763,14 @@ function drawGrid(doc, ctx, B, f) {
     gridHead(doc, B, f, B.P(p), mul(d, sgn), g, id);
   }
   B.hit(id, [c.start, c.end], "curve");
+}
+/** A line cut to a box [x0, y0, x1, y1] (Liang-Barsky): null when it misses the box. */
+function clipSegment(c, r) {
+  const [x0, y0] = c.start, dx = c.end[0] - x0, dy = c.end[1] - y0; let t0 = 0, t1 = 1;
+  for (const [p, q] of [[-dx, x0 - r[0]], [dx, r[2] - x0], [-dy, y0 - r[1]], [dy, r[3] - y0]]) {
+    if (p === 0) { if (q < 0) return null; continue; }
+    const t = q / p; if (p < 0) { if (t > t1) return null; if (t > t0) t0 = t; } else { if (t < t0) return null; if (t < t1) t1 = t; } }
+  return Object.assign({}, c, { start: [x0 + dx * t0, y0 + dy * t0], end: [x0 + dx * t1, y0 + dy * t1] });
 }
 /** The project's annotation style: how its datums and markers are drawn - the drafting office's standard.
  *  "classic" is this app's own; "revit" draws as Revit's defaults do (flag heads on sections and elevations,
@@ -1653,6 +1665,21 @@ function drawDatums(doc, ctx, B, v, G) {
       const sd = (doc.meta && doc.meta.surveyElevation) || 0, val = archFtIn(z + Z0 + sd, 8), dx = (right ? -4.28 : 4.415) * kk, al = right ? "right" : "left";
       B.text(add(hp, [dx, 1.24 * kk]), val, th, { layer: "IfcBuildingStorey", id, font, align: al });
       String(F.text(f, "name")).split("\n").forEach((ln, i) => B.text(add(hp, [dx, -2.99 * kk - i * th * 1.6]), ln, th, { layer: "IfcBuildingStorey", id, font, align: al }));
+      B.hit(id, [[ext[0], z - 50], [ext[1], z - 50], [ext[1], z + 50], [ext[0], z + 50]]);
+      continue;
+    }
+    if (AS.levelStyle === "techne") {
+      // the Australian office's datum (Techne): at the head, the RL in mm, a hollow V with its point on the level on a
+      // short heavy bar, the level's name; the line thin and grey across the view. Heads at the right unless the view
+      // says left, and then the order reads the other way (the name outside)
+      const id = doc.idOf(f), right = (vov.__levelHead || AS.levelHeads) !== "Left", hp = B.P([right ? ext[1] : ext[0], z]), op = B.P([right ? ext[0] : ext[1], z]);
+      const font = AS.font || undefined, th = AS.levelText, sg = right ? 1 : -1, wf = AS.widthFactor || 1;
+      const sd = (doc.meta && doc.meta.surveyElevation) || 0, val = String(Math.round(z + Z0 + sd));
+      B.stroke([lineSeg(add(hp, [-2.33, 3.3]), hp), lineSeg(hp, add(hp, [2.33, 3.3]))], { weight: 0.1, colour: "#000" }, "IfcBuildingStorey", id, true);
+      B.stroke([lineSeg(add(hp, [-2.98, 0]), add(hp, [3.01, 0]))], { weight: 0.25, colour: "#000" }, "IfcBuildingStorey", id, true);
+      B.stroke([lineSeg(add(hp, [-4.0 * sg, 0]), op)], { weight: 0.085, colour: AS.levelLineColour || "#8c8c8c", dash: LINE_TYPES.centre }, "IfcBuildingStorey", id, true);
+      B.text(add(hp, [-10.26 * sg, 1.54]), val, th, { layer: "IfcBuildingStorey", id, font, widthFactor: wf, align: right ? "left" : "right" });
+      B.text(add(hp, [4.53 * sg, 1.54]), String(F.text(f, "name")).replace(/\n/g, " "), th, { layer: "IfcBuildingStorey", id, font, widthFactor: wf, align: right ? "left" : "right" });
       B.hit(id, [[ext[0], z - 50], [ext[1], z - 50], [ext[1], z + 50], [ext[0], z + 50]]);
       continue;
     }

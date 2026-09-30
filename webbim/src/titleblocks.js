@@ -85,8 +85,9 @@ export function drawTitleFamily(doc, sh, W, H, tb, io) {
     let s = (it.prefix || "") + s0 + (it.suffix || ""); if (it.upper) s = s.toUpperCase();
     if (!s) return;
     let h = it.h || 2.5;
-    if (it.room && io.tw) { const tw = io.tw(s, h, it.font); if (tw > it.room) h *= it.room / tw; }
-    io.txt(P(at, it), s, h, Object.assign({ rot: it.rot || 0, align: it.align || "left" }, it.font ? { font: it.font } : {}, it.colour ? { colour: it.colour } : {}));
+    const wf = it.widthFactor || 1;
+    if (it.room && io.tw) { const tw = io.tw(s, h, it.font) * wf; if (tw > it.room) h *= it.room / tw; }
+    io.txt(P(at, it), s, h, Object.assign({ rot: it.rot || 0, align: it.align || "left" }, it.font ? { font: it.font } : {}, it.colour ? { colour: it.colour } : {}, wf !== 1 ? { widthFactor: wf } : {}));
   }
 }
 

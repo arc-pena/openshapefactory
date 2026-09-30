@@ -24,9 +24,19 @@ export class Editor {
   emit(r) { for (const fn of this.listeners) fn(r); }
 
   /** Apply one op (or a list) as one step. Returns {ok, error?, conflicts?, ...}. */
-  apply(op, { regenerate = true, coalesce = null } = {}) {
+  apply(op, { regenerate = true, coalesce = null, undoable = true } = {}) {
     const ops = Array.isArray(op) ? op : [op];
     const key = coalesce || (ops.length === 1 ? ops[0].coalesce || null : null);
+    // a builder writing a whole project (thousands of elements) takes no undo steps: a snapshot per edit would
+    // copy the document each time. What fails then is not rolled back - the builder stops on it
+    if (!undoable) {
+      let result = { ok: true };
+      try { for (const o of ops) { const h = HANDLERS[o.op]; if (!h) throw new Error(`"${o.op}" is not an edit this document understands`);
+        const r = h(this.doc, o, this); if (r && r.conflicts) return this.finish({ ok: false, conflicts: r.conflicts, error: r.error }); result = Object.assign(result, r || {}); } }
+      catch (err) { return this.finish({ ok: false, error: err.message, at: err.at }); }
+      if (regenerate) this.doc.regenerate();
+      return this.finish(result);
+    }
     const snap = snapshot(this.doc);
     let result = { ok: true };
     try {

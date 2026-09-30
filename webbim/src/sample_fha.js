@@ -28,8 +28,8 @@ export function fhaProject(name, project) {
   doc.meta.annotation = { kind: "revit", font: "Futura", gridHead: 6.35, gridText: 2.47, gridEnd: 4, gridCentreColour: "#000000",
     markerRadius: 4.76, markerText: 3.95, markerSheetText: 2.0, calloutSheet: false, levelText: 2.0, levelValueText: 2.0, levelHeads: "Left", levelStyle: "fha", sectionStyle: "fha", annoRef: 96 };
   const ed = new Editor(doc), L = doc.lib;
-  const add = element => { const r = ed.apply({ op: "add", element }, { regenerate: false }); if (!r.ok) throw new Error(`${element.id || element.type}: ${r.error}`); return r.id; };
-  const set = (id, key, value) => ed.apply({ op: "set", id, key, value }, { regenerate: false });
+  const add = element => { const r = ed.apply({ op: "add", element }, { regenerate: false, undoable: !H.bulk }); if (!r.ok) throw new Error(`${element.id || element.type}: ${r.error}`); return r.id; };
+  const set = (id, key, value) => ed.apply({ op: "set", id, key, value }, { regenerate: false, undoable: !H.bulk });
   const line = (a, b) => ({ type: "line", start: a, end: b });
 
   // ---------------------------------------------------------------- pens, lettering, dimensions
@@ -271,13 +271,13 @@ function annotatePage(H, page, o) {
   let notesView = null;
   const sheetNotes = () => { if (notesView) return notesView; const id = `V-N-${S0.number}`;
     add({ id, type: "DraftingView", name: `${S0.number} SHEET NOTES`, args: { scale: 1, clip: { rect: [0, 0, P.size[0], P.size[1]], visible: false, active: true } } });
-    const vpsNow = doc.argValue(sh, "viewports") || []; H.ed.apply({ op: "set", id: doc.idOf(sh), key: "viewports", value: vpsNow.concat([{ id: `VP${vpsNow.length + 1}`, view: { ref: id }, at: [P.size[0] / 2, P.size[1] / 2], clipVisible: false, noTitle: true }]) }, { regenerate: false });
+    const vpsNow = doc.argValue(sh, "viewports") || []; H.ed.apply({ op: "set", id: doc.idOf(sh), key: "viewports", value: vpsNow.concat([{ id: `VP${vpsNow.length + 1}`, view: { ref: id }, at: [P.size[0] / 2, P.size[1] / 2], clipVisible: false, noTitle: true }]) }, { regenerate: false, undoable: !H.bulk });
     notesView = { id, S: 1, map: q => q }; return notesView; };
   const claim = q => vps.filter(v => q[0] >= v.rect[0] && q[0] <= v.rect[2] && q[1] >= v.rect[1] && q[1] <= v.rect[3]).sort((a, b) => a.area - b.area)[0] || null;
   const isTitle = n => titles.has(n.t.toUpperCase()) || /^\d+(\/\d+)?" = 1'-0"$|^1" = 1'-0"$|^N\.?T\.?S\.?$/i.test(n.t) && !n.leader;
   const gridNames = new Set(doc.elements().filter(f => doc.typeOf(f) === "Grid").map(f => String(doc.argValue(f, "name") || "")));
   const viewTitleNear = n => (doc.argValue(sh, "viewports") || []).some(vp => vp.titleAt && Math.hypot(vp.titleAt[0] - (n.bb[0] + n.bb[2]) / 2, vp.titleAt[1] - (n.bb[1] + n.bb[3]) / 2) < 6);
-  const skip = n => (o.skip && o.skip(n)) || isTitle(n) || (n.end === "none" && n.leader && n.leader.length === 2 && Math.abs(n.leader[0][1] - n.leader[1][1]) < 0.05 && (titles.has(n.t.toUpperCase()) || /" = /.test(n.t)))
+  const skip = n => o.keepAll ? !!(o.skip && o.skip(n)) : (o.skip && o.skip(n)) || isTitle(n) || (n.end === "none" && n.leader && n.leader.length === 2 && Math.abs(n.leader[0][1] - n.leader[1][1]) < 0.05 && (titles.has(n.t.toUpperCase()) || /" = /.test(n.t)))
     // a grid's head (a letter or two on its line): the model's grid draws it
     || (n.t.length <= 2 && n.leader && n.leader.length === 2 && Math.abs(n.leader[0][0] - n.leader[1][0]) < 0.05 && Math.abs(n.leader[0][1] - n.leader[1][1]) > 8)
     || (!n.leader && gridNames.has(n.t.trim()))
@@ -289,7 +289,7 @@ function annotatePage(H, page, o) {
   { const vpl = (doc.argValue(sh, "viewports") || []).map(x => Object.assign({}, x)); let moved = false;
     for (const n of P.notes) { if (!n.leader || n.end !== "none") continue; const x = vpl.find(vp => String(doc.element(vp.view.ref).get("Name") || "").toUpperCase() === n.t.toUpperCase()); if (!x || x.titleAt) continue;
       x.titleAt = [+(n.at[0] - FHA_VIEW_TITLE.nameDx).toFixed(2), +(n.at[1] - FHA_VIEW_TITLE.nameDy).toFixed(2)]; x.titleLength = +(Math.max(n.leader[0][0], n.leader[1][0]) - x.titleAt[0]).toFixed(2); moved = true; }
-    if (moved) H.ed.apply({ op: "set", id: doc.idOf(sh), key: "viewports", value: vpl }, { regenerate: false }); }
+    if (moved) H.ed.apply({ op: "set", id: doc.idOf(sh), key: "viewports", value: vpl }, { regenerate: false, undoable: !H.bulk }); }
   let k = 0; const placed = { notes: 0, dims: 0, bubbles: 0, sheet: 0 };
   // room tags (a name and a three-figure number): rooms of the plan's level, tagged as the office tags them
   const isTag = n => { const ls = n.t.split("\n"); return (ls.length === 2 || ls.length === 3) && ls.some(l => /^\d{3}$/.test(l.trim())) && n.h > 2 && n.h < 2.5; };
@@ -337,8 +337,8 @@ function annotatePage(H, page, o) {
     if (plan) { const tol = 1.5 * vp.S, pick = c => { let best = null; for (const r of planRefs(doc, vert)) { const d = Math.abs(r.c - c) - (r.grid ? tol : 0); if (Math.abs(r.c - c) < tol && (!best || d < best.d)) best = { d, key: r.key }; } return best && best.key; }; ra = pick(lo); rb = pick(hi); }
     const keyA = ra || witness(lo), keyB = (rb && rb !== ra) ? rb : witness(hi);
     const id = `DM-${S0.number}-${++k}`;
-    add({ id, type: "Dimension", args: { of: [keyA, keyB], offset: plan ? 0 : at, view: { ref: vp.id }, locked: false, dimType: { ref: "DT-FH" } } });
-    if (plan) { const g = dimOffsetFor(doc, id, vert, at); if (g != null) H.ed.apply({ op: "set", id, key: "offset", value: g }, { regenerate: false }); }
+    add({ id, type: "Dimension", args: { of: [keyA, keyB], offset: plan ? 0 : at, view: { ref: vp.id }, locked: false, dimType: { ref: o.dimType || doc.meta.defaultDimType || "DT-FH" } } });
+    if (plan) { const g = dimOffsetFor(doc, id, vert, at); if (g != null) H.ed.apply({ op: "set", id, key: "offset", value: g }, { regenerate: false, undoable: !H.bulk }); }
     placed.dims++;
   }
   return placed;

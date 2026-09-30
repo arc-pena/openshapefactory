@@ -183,6 +183,50 @@ A given office numbers sheets its own way (the Frank Harmon sets put plans on
 A2xx and elevations on A3xx). Read the office profile first. Its numbering
 wins, but it must still be one consistent system.
 
+### Australian practice (learned from the Wetlap set, Techne, Melbourne)
+
+The standards stack changes; the drawing system does not.
+
+- **Codes and standards.** The NCC (BCA Volume One for Class 2 apartments),
+  the state Building Regulations (Victoria: 2018), and Australian Standards:
+  AS 1428.1 access, AS 1657/1170 structure, AS 3600 concrete, AS 4100 steel,
+  AS 3700 masonry, AS 1288 glazing, AS 2688 thermal. Specs follow NATSPEC
+  worksections, not CSI; keynotes cite the worksection.
+- **Units and datum.** Millimetres, no unit marks. Heights are RLs on the
+  Australian Height Datum, written as bare mm (25600, not +25.600): the
+  model's zero is a floor, and the survey datum carries the RL (here ground
+  floor = RL 25600).
+- **Level heads.** At the right end of the line: the RL, a hollow V with its
+  point on the level on a short heavy bar, then the level's name; the line
+  thin, grey, dashed across the view. A building with split floors names
+  its levels per wing ("LEVEL 2 NORTH", "LEVEL 2 LOFTS"); each elevation
+  shows only its wing's levels.
+- **Sheets.** A1 landscape (841 x 594). The number is the office's four
+  digits with an A prefix and a revision dash: A0000 project information and
+  drawing list, A0001 general notes, A0010 site, A0020 grid setout, A0050
+  demolition, A0099-A0154 GA plans (per building and level), A0200 concrete
+  setout, A0300 wall setout, A0600 reflected ceilings, A0800 elevations,
+  A0900 sections, A1100 elemental details, A1200 windows, A1300 doors, A1400
+  wall types, A1600-A1700 details, A1800 schedules. Scales are 1:100 plans and
+  elevations, 1:200 the grid setout, 1:20/1:5 details.
+- **Status in the title strip, large.** "DESIGN DEVELOPMENT" and "FOR PRICING
+  ONLY - NOT FOR CONSTRUCTION" (the tender issue), with the issue date as
+  dd/mm/yyyy, the drafter and checker as initials, a north point, and "DO NOT
+  SCALE FROM DRAWING. BUILDER TO CHECK DIMENSIONS ON SITE." with the moral
+  rights notice.
+- **Tags.** Finishes are codes in a diamond (XMT-01, XBR-04, EX-BR for
+  existing brick, XGL glazing, BAL-01 balustrade) keyed to a finishes
+  schedule. Windows and doors are circles split by a rule: the opening's
+  number over its type (A.G.23 / WT01: apartment building, ground, number
+  23; window type 01; DT doors, LT louvres). Rooms carry the apartment
+  number, its type and its reference plan (APT G.06 / TYPE F1 / REF.A2512).
+- **Existing and new.** Existing structure (brick, columns) is solid black
+  poche; new concrete is outlined black; new partitions are outlined grey.
+  Demolition is its own series, dashed.
+- **Lettering.** Swiss 721 Condensed on the drawings (Arial at 0.81 width),
+  the office face (GT Walsheim) in the title strip; notes 1.8 mm, room names
+  2.5 mm, sheet titles 7.5 mm.
+
 ## Order of work: model first, then views, then annotation
 
 1. **Project set-up.** Load the office profile (see below). Set units, the
@@ -352,6 +396,23 @@ Schaeffer, Walnut Creek, First Presbyterian); see `webbim/tools/fha/`.
 8. **A PDF's words can double the model's.** Level heads, grid letters, view
    numbers and scale lines lifted from a PDF duplicate what the model already
    draws. Skip them in the lift, and prove it with the overlap check.
+
+9. **Read the pens before the shapes** (Wetlap). A Revit export draws each
+   category with its own weight and grey. On the Techne plans, 0.48 pt black
+   is a cut concrete or masonry face, 0.48 pt grey a cut partition face,
+   0.60 pt black a column, 0.24 pt the rest. Two parallel cut faces 50-400 mm
+   apart are a wall (`projects/wetlap/tools/wlift.py`).
+10. **The PDF may clip what it draws.** Poche is often one black rectangle
+    cut back to the piers by a clipping path the vectors do not carry. Read
+    what is really black off the page's raster before making walls of it.
+11. **Shaded views are raster.** Revit exports elevations with shadows or
+    materials as image tiles. Composite the tiles into one image in sheet
+    space and lay it on the sheet (multiply); the words, tags, levels and
+    grids stay live annotation over it.
+12. **Pages can be cut off.** A plotted-to-PDF sheet may lose part of its
+    width. Detect it (the page covers less than the sheet), tell the
+    architect which sheets, and ask for an uncropped export; the model can
+    still carry the rest.
 
 ## The prompt panel and the project's conversation
 
