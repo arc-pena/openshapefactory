@@ -100,6 +100,50 @@ Claude produces:
 Where the brief is silent, Claude chooses the industry default, lists it as an
 assumption, and does not stop to ask unless the decision changes the design.
 
+## Reading a sketch (never naively)
+
+A sketch is a design statement at some level of abstraction, not a drawing
+to trace. Before modelling anything, say what kind of sketch it is and what
+it can and cannot tell you:
+
+| Kind | Carries | Does not carry |
+|---|---|---|
+| Parti or diagram | Organisation, hierarchy, movement, orientation | Dimensions, wall positions |
+| Plan sketch | Rooms, adjacencies, openings, a structural rhythm (often a grid or module), the entry | Exact sizes (scale is loose), wall types |
+| Section sketch | Levels, heights relative to each other, how light and air move, the roof, the ground | Assemblies, exact heights |
+| Detail sketch | An assembly's order and its critical joint: what laps what, which way water goes, where air, vapour and thermal lines run | Products, gauges, final sizes |
+| Redline on a print | A specific change to a specific drawing | Anything beyond the marked area |
+| Precedent image or photo | Character, material, proportion | Anything to copy literally |
+
+To read one:
+
+1. **Identify what each line means.** A line may be a wall, the edge of a
+   zone, an axis or grid, a level, a sight line, or a hatch showing a
+   material. Line weight, line type and annotations on the sketch tell you
+   which.
+2. **Regularise to the implied system.** Snap to the structural grid and the
+   module the sketch implies (e.g. 12' bays, a 4' panel, 16" o.c.), not to
+   the pixels.
+3. **Carry intent, not accidents.** A wobbly wall is straight; an almost-
+   aligned pair is aligned; an 11'-7" room is 12'-0" if the grid says so.
+4. **Infer the assemblies** from the detailing intent and the building type.
+   Name each assumption.
+5. **Read it back before building.** Produce an *interpretation sheet* for the
+   architect to confirm or redline, before any set is produced. It shows:
+   - the sketch, faded;
+   - over it, the reading: grids, levels, walls by type, openings, and
+     numbered assumption flags.
+
+   Only the answers that change the design are asked; the rest are listed as
+   assumptions.
+6. **Once confirmed, the interpretation is fixed.** It is recorded in the
+   prompt log. Later sketches are read against it: what changed, what was
+   kept.
+
+If a sketch cannot be read with confidence (scale unknown, lines ambiguous,
+contradictions between plan and section), say exactly what is unclear and
+what would settle it. Never guess silently.
+
 ## The standards stack
 
 - **CSI MasterFormat** governs the spec sections and their numbers. Keynotes
