@@ -6,6 +6,7 @@
 
 import { h, clear, store } from "./ui_util.js";
 import { promptLog, addPrompt, setPromptStatus, removePrompt, promptTree, promptBrief } from "./prompts.js";
+import { runPromptAgent } from "./promptagent.js";
 
 const PP_MAX = 1600;   // an image's longest side as kept in the file: legible markup, a few hundred kB at most
 
@@ -27,7 +28,10 @@ export function promptImage(src, name) {
 }
 
 export function installPromptPanel(app) {
-  const st = { open: !!store("prompts-open"), width: store("prompts-width") || 380, draft: "", images: [], replyTo: null, filter: "all", folded: new Set() };
+  const st = { open: !!store("prompts-open"), width: store("prompts-width") || 380, draft: "", images: [], replyTo: null, filter: "all", folded: new Set(),
+    agent: null, agentChecked: false, running: null, undoMarks: new Map() };
+  // Claude acting on the prompts: the viewer's own Claude, where the app runs as the published artifact on claude.ai
+  try { const c = window.claude; if (c && c.use) c.use("sample").then(fn => { st.agent = fn || null; st.agentChecked = true; render(); }, () => { st.agentChecked = true; render(); }); else st.agentChecked = true; } catch (e) { st.agentChecked = true; }
   const panel = h("aside", { class: "promptpanel", role: "complementary", "aria-label": "Prompts to Claude" });
   const tab = h("button", { class: "prompttab", title: "Prompts to Claude (feedback on this project)", onclick: () => toggle(true) });
   const css = h("style", {}, `
@@ -83,9 +87,45 @@ export function installPromptPanel(app) {
   }
   function send() {
     const text = st.draft.trim(); if (!text && !st.images.length) { app.say("write something or attach an image first", "note"); return; }
+    if (st.running) { app.say("Claude is still working on the last prompt - stop it or wait", "note"); return; }
     try { const e = addPrompt(app.doc, { text, images: st.images.slice(), context: context(), parent: st.replyTo, author: "architect" });
-      st.draft = ""; st.images = []; st.replyTo = null; save(); render(); app.say(`${e.id} saved in the project file`, "ok"); }
+      st.draft = ""; st.images = []; st.replyTo = null; save(); render();
+      if (st.agent) act(e); else app.say(`${e.id} saved in the project file`, "ok"); }
     catch (err) { app.say(err.message, "error"); }
+  }
+  /** Claude works on a prompt: reads the model, edits it through the page's tools, and replies in the thread. */
+  const TOOL_SAYS = { find_elements: "looking through the model", get_element: "reading", describe_element_type: "checking what the element takes", apply_edits: "changing the model", open_view: "opening a view" };
+  async function act(entry) {
+    if (!st.agent || st.running) return;
+    const ctl = new AbortController();
+    st.running = { id: entry.id, text: "", steps: [], ctl }; render();
+    try {
+      const reply = await runPromptAgent(app, st.agent, entry, { signal: ctl.signal,
+        onText: ({ text }) => { if (st.running) { st.running.text = text; paintRun(); } },
+        onTool: (name, input) => { if (!st.running) return; st.running.steps.push(`${TOOL_SAYS[name] || name}${input && (input.id || input.type) ? ` ${input.id || input.type}` : ""}`); paintRun(); } });
+      if (reply.edits) st.undoMarks.set(reply.id, app.editor.undoStack.length);
+      app.say(reply.edits ? `Claude changed the model (${reply.edits.steps} step${reply.edits.steps > 1 ? "s" : ""}) - see ${reply.id}` : `Claude replied in ${reply.id}`, "ok");
+    } catch (e) {
+      const code = e.code || "";
+      if (code === "not_granted" || code === "sampling_disabled" || code === "not_declared" || code === "capability_disabled" || code === "tools_unavailable") { st.agent = null; app.say("Claude is not available to act on prompts here; they are saved in the file", "note"); }
+      else app.say(code === "rate_limited" ? "Claude is busy or your usage limit is reached - try again later" : `Claude could not finish: ${e.message}`, "error");
+    } finally { st.running = null; save(); render(); }
+  }
+  function undoReply(r) {
+    const mark = st.undoMarks.get(r.id);
+    if (mark !== app.editor.undoStack.length) { app.say("the model has changed since - undo step by step with Ctrl+Z instead", "note"); return; }
+    for (let k = 0; k < r.edits.steps; k++) app.editor.undo();
+    r.edits.undone = true; r.status = "done"; st.undoMarks.delete(r.id);
+    const p = promptLog(app.doc).entries.find(x => x.id === r.parent); if (p) p.status = "open";
+    app.refresh(); save(); render(); app.say(`${r.id}: Claude's changes undone`, "ok");
+  }
+  let runEl = null;
+  function paintRun() {
+    if (!runEl || !st.running) return;
+    clear(runEl).append(h("div", { class: "pp-head" }, h("b", {}, "Claude"), h("span", { class: "pp-st" }, "working"),
+      h("button", { class: "linkish", onclick: () => st.running && st.running.ctl.abort() }, "Stop")),
+      st.running.steps.length ? h("div", { class: "pp-ctx" }, st.running.steps.slice(-4).join(" · ")) : null,
+      h("div", { class: "pp-text" }, st.running.text || "Thinking… (the first time, claude.ai asks you to allow the app to use Claude)"));
   }
   function viewImage(im) {
     const back = h("div", { style: { position: "fixed", inset: 0, background: "rgba(0,0,0,.7)", zIndex: 90, display: "grid", placeItems: "center", cursor: "zoom-out" }, onclick: () => back.remove() },
@@ -124,7 +164,8 @@ export function installPromptPanel(app) {
       st.images.length ? h("div", { class: "pp-thumbs" }, st.images.map((im, i) => thumb(im, () => { st.images.splice(i, 1); render(); }))) : null,
       h("div", { class: "pp-ctx" }, "About: ", [ctx.sheet && `sheet ${ctx.sheet}`, ctx.view && (ctx.viewName || ctx.view), ctx.selection && `${ctx.selection.length} selected`].filter(Boolean).join(" · ") || "the project"),
       h("div", { class: "pp-row" }, h("button", { class: "btn small", title: "Attach an image of the view on screen", onclick: capture }, "Capture view"),
-        h("span", { style: { flex: 1 } }), h("button", { class: "btn primary small", onclick: send }, st.replyTo ? "Reply" : "Save prompt")));
+        h("span", { style: { flex: 1 } }), h("button", { class: "btn primary small", disabled: !!st.running, onclick: send }, st.agent ? (st.replyTo ? "Reply to Claude" : "Send to Claude") : (st.replyTo ? "Reply" : "Save prompt"))),
+      st.agentChecked && !st.agent ? h("div", { class: "pp-ctx" }, "Claude acts on prompts when this app is open as the published artifact on claude.ai. Here they are saved in the project file, and \"Copy for Claude\" hands them to a conversation.") : null);
     // the history, as a tree
     const filters = h("div", { class: "pp-row", style: { padding: "0 8px" } }, ["all", "open", "answered", "done"].map(f => h("button", { class: "linkish", style: { fontWeight: st.filter === f ? 700 : 400 }, onclick: () => { st.filter = f; render(); } }, f)));
     const list = h("div", { class: "pp-list" });
@@ -139,8 +180,12 @@ export function installPromptPanel(app) {
           c.selection ? ` · ${c.selection.length} selected` : "") : null,
         e.text ? h("div", { class: "pp-text" }, e.text) : null,
         e.images ? h("div", { class: "pp-thumbs" }, e.images.map(im => thumb(im))) : null,
+        e.edits ? h("div", { class: "pp-ctx" }, e.edits.undone ? "These changes were undone." : `${e.edits.steps} change${e.edits.steps > 1 ? "s" : ""} to the model`,
+          !e.edits.undone && st.undoMarks.has(e.id) ? [" · ", h("button", { class: "linkish", onclick: () => undoReply(e) }, "Undo these changes")] : null) : null,
+        st.running && st.running.id === e.id ? (runEl = h("div", { class: "pp-node claude open" }), paintRun(), runEl) : null,
         h("div", { class: "pp-row" },
           h("button", { class: "linkish", onclick: () => { st.replyTo = e.id; render(); ta.focus(); } }, "Reply"),
+          st.agent && e.author === "architect" && !st.running ? h("button", { class: "linkish", title: "Have Claude act on this prompt now", onclick: () => act(e) }, e.status === "open" ? "Ask Claude" : "Ask again") : null,
           e.status !== "done" ? h("button", { class: "linkish", onclick: () => { setPromptStatus(app.doc, e.id, "done"); save(); render(); } }, "Mark done")
             : h("button", { class: "linkish", onclick: () => { setPromptStatus(app.doc, e.id, "open"); save(); render(); } }, "Reopen"),
           h("button", { class: "linkish", onclick: () => { if (confirm(`Delete ${e.id}${n.replies.length ? " and its replies" : ""}?`)) { removePrompt(app.doc, e.id); save(); render(); } } }, "Delete")),

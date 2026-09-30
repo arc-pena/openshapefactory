@@ -372,6 +372,23 @@ file**, in `meta.prompts`:
 Entries form a tree through `parent`. A root is a topic; replies and
 follow-ups nest under it.
 
+**In the published app, Claude acts on a prompt as soon as it is sent**, through the claude.ai `sample`
+capability, on the architect's own Claude account (claude.ai asks once for permission). The code is in
+`src/promptagent.js`:
+
+- **Input**: the standing rules (`PA_RULES`), a summary of the model (levels, grids, types, views, what is
+  selected and open), the thread so far, the prompt, and its images.
+- **Page tools**:
+  - `find_elements` and `get_element` to read the model;
+  - `describe_element_type` to see what an element type takes;
+  - `apply_edits` for ops through `app.apply`: add, set, delete, transform, rename, type and autojoin. Each
+    call is one undo step;
+  - `open_view` to show a view.
+- **The reply** is written into the thread with the list of edits. **Undo these changes** reverts them if
+  nothing has been edited since.
+
+When the page cannot reach Claude (a local file, or permission declined), prompts are only saved.
+
 When a project file is handed to Claude:
 
 1. Read `meta.prompts`.
