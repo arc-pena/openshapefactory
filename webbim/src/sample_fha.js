@@ -130,6 +130,11 @@ export function fhaProject(name, project) {
   L.viewStyles["VS-FH-ELEV"] = Object.assign(JSON.parse(JSON.stringify(base)), { name: "FHA - elevations", rules: [] });
   // sections: what the cut meets outlined in its material (concrete grey, the rest white), as the sets draw them
   L.viewStyles["VS-FH-SEC"] = Object.assign(JSON.parse(JSON.stringify(base)), { name: "FHA - sections", rules: [] });
+  // details: the section's style at 1:12, no level lines (the details write their heights as spot elevations)
+  L.viewStyles["VS-FH-DET"] = Object.assign(JSON.parse(JSON.stringify(base)), { name: "FHA - details", rules: [
+    // at 1:12 the cut is drawn in outline, white: what fills it is the detail's (its insulation, its hatching)
+    { id: "R-DET-CUT", name: "Cut in outline", when: null, then: { cut: { fill: "#ffffff", pattern: "none" } } }] });
+  L.viewStyles["VS-FH-DET"].byCategory = Object.assign({}, L.viewStyles["VS-FH-DET"].byCategory, { IfcBuildingStorey: { visible: false }, Furniture: { visible: false }, Planting: { visible: false }, Topography: { visible: false } });
   L.viewStyles["VS-FH-3D"] = Object.assign(JSON.parse(JSON.stringify(base)), { name: "FHA - 3D" });
   // the site plan: the plans' style with the planting and the ground shown
   L.viewStyles["VS-FH-SITE"] = Object.assign(JSON.parse(JSON.stringify(L.viewStyles["VS-FH-PLAN"])), { name: "FHA - site plan" });
@@ -187,7 +192,7 @@ export function fhaProject(name, project) {
     // ------------------------------------------------------------ the set's own sheets, lifted from its PDF
     pdf: null,
     /** Use a set's PDF data: its title block families go into the library (each with the firm's view title). */
-    useSet: (set) => { H.pdf = fhaPdf(set); for (const [id, fam] of Object.entries(H.pdf.titleBlocks)) L.symbols[id] = Object.assign(JSON.parse(JSON.stringify(fam)), { viewTitle: FHA_VIEW_TITLE }); return H.pdf; },
+    useSet: (set) => { H.pdf = fhaPdf(set); H.pdf.setName = set.toUpperCase(); for (const [id, fam] of Object.entries(H.pdf.titleBlocks)) L.symbols[id] = Object.assign(JSON.parse(JSON.stringify(fam)), { viewTitle: FHA_VIEW_TITLE }); return H.pdf; },
     /** A sheet as the PDF page has it: its number, its name (its lines), its title block and its size. */
     pdfSheet: (page, vps, o = {}) => { const S0 = H.pdf.sheets[page], P = H.pdf.pages[page], land = P.size[0] > P.size[1];
       return H.sheet(S0.number, S0.name, vps, o.size || "ARCH D", Object.assign({ orientation: land ? "landscape" : "portrait", titleBlock: S0.tb }, o)); },
@@ -207,6 +212,37 @@ export function fhaProject(name, project) {
       if (gridHead != null) ov.__gridTop = H.paperToView(page, viewId, [0, gridHead])[1] - R * S;
       if (gridFoot != null) ov.__gridBottom = H.paperToView(page, viewId, [0, gridFoot])[1];
       set(viewId, "overrides", ov); },
+    /** A detail: a section at 1:12 (Revit's callout, its boundary drawn on the parent section) whose crop is the region
+     *  of a PDF page the detail occupies, placed so that the view point `anchor` [s, z] (along the cut, height) lands
+     *  on the paper point `paper`. Returns the viewport for H.pdfSheet. */
+    detail: (id, name, a, b, rect, paper, anchor, o = {}) => { const S = o.scale || 12, V = q => [Math.round(anchor[0] + (q[0] - paper[0]) * S), Math.round(anchor[1] + (q[1] - paper[1]) * S)];
+      const c0 = V([rect[0], rect[1]]), c1 = V([rect[2], rect[3]]), crop = [c0[0], c0[1], c1[0], c1[1]];
+      add({ id, type: "SectionView", name, args: Object.assign({ line: line(a, b), depth: o.depth || 1800, scale: S, baseLevel: { ref: o.base || "L-0" }, top: o.top || 20000, style: { ref: "VS-FH-DET" }, detailLevel: "Fine",
+        clip: { rect: crop, visible: false, active: true, annotation: [20, 20, 20, 20] }, heads: "End", groundLine: false, levelExtent: [crop[0], crop[2]],
+        overrides: Object.assign({ __annoK: 1, __gridTop: o.gridTop ?? crop[3] + (o.gridHead ? 400 : 0), __gridBottom: o.gridBottom ?? crop[1], __gridHeads: !!o.gridHead }, o.overrides || {}) },
+        o.callout ? { callout: o.callout } : {}) });
+      return [id, [(rect[0] + rect[2]) / 2, (rect[1] + rect[3]) / 2], Object.assign({ number: o.number }, o.vp || {})]; },
+    /** A detail sheet's drafting, lifted from its PDF (tools/fha/dlift.py) into its views: the batts as insulation
+     *  (the repeating detail, at the cavity's width), the rest as the view's detail components - what the model's cut
+     *  does not draw (flashings, sills, blocking, plates, gutters, hatching). */
+    lift: (page) => { const P = H.pdf.pages[page]; if (!P.lift || globalThis.__NO_LIFT) return 0; let n = 0;
+      const dec = v => { const o = v.slice(0, 2); for (let i = 2; i < v.length; i++) o.push(o[i - 2] + v[i]); return o.map(x => x / 100); };
+      for (const [vid, r] of Object.entries(P.lift)) { if (!doc.element(vid)) continue; const S = doc.argValue(doc.element(vid), "scale"), o0 = H.paperToView(page, vid, [0, 0]);
+        r.b.forEach((z, i) => { const A = H.paperToView(page, vid, [z[0], z[1]]), B2 = H.paperToView(page, vid, [z[2], z[3]]);
+          add({ id: `RD-${vid.slice(2)}-${i + 1}`, type: "RepeatingDetail", name: "Batt insulation", args: { path: { elements: [{ id: "e1", type: "line", a: A, b: B2 }], constraints: [], dims: [] }, component: "Batt insulation", width: Math.round(z[4] * S), view: { ref: vid } } }); n++; });
+        const elements = [];
+        for (const [w, ps] of Object.entries(r.l)) elements.push({ type: "path", layer: "DETAIL", w: +w, p: ps.map(dec) });
+        for (const [w, cs] of Object.entries(r.c)) elements.push({ type: "path", layer: "DETAIL", w: +w, s: cs.map(c => ["C", ...dec(c)]) });
+        const fills = r.f.map(f => { const v = dec(f.slice(0, -1)), pts = []; for (let i = 0; i < v.length; i += 2) pts.push([v[i], v[i + 1]]); return { layer: "DETAIL", pts, colour: f[f.length - 1] }; });
+        // the hatches: the set's own tiles (stones, aggregate, stipple) as drafting patterns, each region a filled region
+        (r.h || []).forEach((h, i) => { const pid = `P-${H.pdf.setName || "PDF"}-${h[0]}`, T = (H.pdf.tiles || {})[h[0]]; if (!T) return;
+          if (!L.patterns[pid]) L.patterns[pid] = { name: `${H.pdf.sheets[page].number} hatch ${h[0]}`, kind: "drafting", lines: [], tile: T };
+          const po = H.paperToView(page, vid, h[1]).map(Math.round);
+          h.slice(2).forEach((lp, j) => { const v = dec(lp), pts = []; for (let k = 0; k < v.length; k += 2) pts.push(H.paperToView(page, vid, [v[k], v[k + 1]]).map(Math.round));
+            add({ id: `FR-${vid.slice(2)}-${i + 1}${j ? "-" + j : ""}`, type: "FilledRegion", name: L.patterns[pid].name, args: { boundary: pts, pattern: pid, view: { ref: vid }, background: "none", lineColour: "none", patternOrigin: po } }); n++; }); });
+        add({ id: `CAD-${vid.slice(2)}`, type: "CADImport", name: "Detail components", args: { file: `${H.pdf.sheets[page].number} (drafted)`, drawing: { elements, constraints: [], texts: [], fills, layers: [{ name: "DETAIL", on: true, colour: "#000000" }] },
+          view: { ref: vid }, offsetX: o0[0], offsetY: o0[1], scale: S, rotation: 0, pinned: true } }); n++; }
+      return n; },
     /** Where a viewport goes so that a model point lands on a paper point: the crop's centre, from that pair. */
     at: (paper, model, crop, scale) => [paper[0] + ((crop[0] + crop[2]) / 2 - model[0]) / scale, paper[1] + ((crop[1] + crop[3]) / 2 - model[1]) / scale],
   };
@@ -277,7 +313,11 @@ function annotatePage(H, page, o) {
   // dimensions: to the model's references where the string lands on them, else to witness lines at its ends
   for (const dm of P.dims) {
     if (!dm.line || (o.skipDim && o.skipDim(dm))) continue;
-    const [a, b] = dm.line, mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], vp = claim(mid); if (!vp) continue;
+    let [a, b] = dm.line; const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], vp = claim(mid); if (!vp) continue;
+    // the drafted line runs on past its arrows: in a section or a detail the string's own value (at the view's
+    // scale) sets its length, centred where the line is
+    { const L = ftInOf(dm.t), len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      if (L != null && doc.typeOf(vp.v) !== "PlanView" && len > 0 && Math.abs(len - L / vp.S) > 0.4) { const k = L / vp.S / len / 2, dx = (b[0] - a[0]) * k, dy = (b[1] - a[1]) * k; a = [mid[0] - dx, mid[1] - dy]; b = [mid[0] + dx, mid[1] + dy]; } }
     const A = vp.map(a), B2 = vp.map(b), vert = Math.abs(a[0] - b[0]) < Math.abs(a[1] - b[1]), plan = doc.typeOf(vp.v) === "PlanView";
     const lo = vert ? Math.min(A[1], B2[1]) : Math.min(A[0], B2[0]), hi = vert ? Math.max(A[1], B2[1]) : Math.max(A[0], B2[0]), at = vert ? A[0] : A[1];
     const witness = c => { const lid = `DL-${S0.number}-W${++k}`, e = 1 * vp.S;
@@ -293,6 +333,13 @@ function annotatePage(H, page, o) {
     placed.dims++;
   }
   return placed;
+}
+/** A dimension string's value in mm: 1'-4", 5 3/8", 16'-0", 3/4". */
+function ftInOf(t) {
+  const m = String(t).replace(/[’′]/g, "'").replace(/[”″]/g, '"').match(/^(?:(\d+)'\s?-?\s?)?(?:(\d+)(?:\s(\d+)\/(\d+))?|(\d+)\/(\d+))?"?$/);
+  if (!m || (!m[1] && !m[2] && !m[5])) return null;
+  const inch = (+m[2] || 0) + (m[3] ? +m[3] / +m[4] : 0) + (m[5] ? +m[5] / +m[6] : 0);
+  return ((+m[1] || 0) * 12 + inch) * 25.4;
 }
 /** The model's lines a plan dimension can bind to: wall faces and grid lines square to what it measures. */
 function planRefs(doc, vert) {

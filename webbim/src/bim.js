@@ -1061,7 +1061,8 @@ declare({ type: "FilledRegion", guid: "wb-0703", category: "Detail", kind: "deta
   summary: "A hatched region that lives in one view.",
   args: [ json("boundary", "Boundary", [[0, 0], [1000, 0], [1000, 1000], [0, 1000]]), text("pattern", "Pattern", "P-DIAG"), ref("view", "View", ["view"], { view: true }),
           json("sketch", "Boundary sketch", null),
-          text("background", "Background colour", "", { group: "Graphics" }), text("patternColour", "Pattern colour", "", { group: "Graphics" }), text("lineColour", "Boundary line colour (none: no line)", "", { group: "Graphics" }) ] });
+          text("background", "Background colour", "", { group: "Graphics" }), text("patternColour", "Pattern colour", "", { group: "Graphics" }), text("lineColour", "Boundary line colour (none: no line)", "", { group: "Graphics" }),
+          json("patternOrigin", "Pattern origin", null, { group: "Graphics" }) ] });
 /** A filled region's areas: its sketch's loops and holes (as a floor's), or the plain boundary. */
 export function regionAreas(f) {
   const sk = F.json(f, "sketch");

@@ -191,6 +191,13 @@ export function pathOps(path) {
  *  horizontal; rows repeat after k rows when the stagger comes back round. */
 export function hatchFamilies(p) {
   const pat = p.pattern, s = p.scale, out = [];
+  if (pat.tile) {
+    // a tile pattern: its drawing as it is, one PDF tiling pattern
+    const T = pat.tile, sg = T.segs || [], k = PT_PER_MM, o = p.origin || [0, 0], lines = [`${col(p.colour, "RG")} ${n4(p.weight / s)} w 1 J`];
+    for (let i = 0; i + 3 < sg.length; i += 4) lines.push(`${n4(sg[i])} ${n4(sg[i + 1])} m ${n4(sg[i + 2])} ${n4(sg[i + 3])} l S`);
+    out.push({ key: [pat.id, "tile", s, p.colour, p.weight, o], cellW: T.w, cellH: T.h, matrix: [k * s, 0, 0, k * s, k * o[0], k * o[1]], stream: lines.join("\n") });
+    return out;
+  }
   for (const L of pat.lines || []) {
     const across = L.delta[1], along = L.delta[0];
     const dashes = L.dashes && L.dashes.length ? L.dashes : null;

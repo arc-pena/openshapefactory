@@ -437,7 +437,8 @@ export function planScene(doc, v, opts = {}) {
     }
     if (t === "Grid" && vis(f)) drawGrid(doc, ctx, B, f);
     if (t === "ElevationView" && categoryVisible(ctx, "Annotation")) drawElevationMarker(doc, ctx, B, f, place);
-    if (t === "SectionView" && categoryVisible(ctx, "Annotation")) drawSectionMarker(doc, ctx, B, f, place);
+    // a callout's detail is marked by its boundary on its parent, not by a cut line
+    if (t === "SectionView" && categoryVisible(ctx, "Annotation") && !doc.argValue(f, "callout")) drawSectionMarker(doc, ctx, B, f, place);
     if (t === "RoomSeparator" && F.refId(f, "level") === (lv && doc.idOf(lv))) { const c = F.json(f, "line"); B.stroke([lineSeg(c.start, c.end)], { weight: penWeight(doc, "hairline", S), colour: "#6b7684", dash: LINE_TYPES.dashed2 }, "IfcSpace-Separator", doc.idOf(f)); B.hit(doc.idOf(f), [c.start, c.end], "curve"); }
   }
   // 4. detail and annotation belonging to this view
@@ -1211,7 +1212,9 @@ function drawFilledRegion(doc, ctx, B, f) {
   const S = ctx.scale, rs = regionAreas(f), pts = rs[0] ? rs[0].outer : F.json(f, "boundary"), path = sketchPath(f) || rs.flatMap(rg => [...polyPath(rg.outer), ...rg.holes.flatMap(hh => polyPath(hh))]), pid = F.text(f, "pattern");
   const bg = F.text(f, "background"), line = F.text(f, "lineColour"), pc = F.text(f, "patternColour");
   if (bg !== "none") B.fill(path, bg || "#ffffff", "Detail", doc.idOf(f));
-  if (pid && doc.lib.patterns[pid]) B.hatch(path, doc.lib.patterns[pid], pid, pc || "#000000", penWeight(doc, "hairline", S), "Detail", doc.idOf(f));
+  if (pid && doc.lib.patterns[pid]) { B.hatch(path, doc.lib.patterns[pid], pid, pc || "#000000", penWeight(doc, "hairline", S), "Detail", doc.idOf(f));
+    // the hatch set out from a point of the model (where the drafter's tiles fall), not the view's origin
+    const po = F.json(f, "patternOrigin"), last = B.prims[B.prims.length - 1]; if (Array.isArray(po) && last && last.t === "hatch") last.origin = B.P(po); }
   if (line !== "none") B.stroke(path, { weight: penWeight(doc, "thin", S), colour: line || "#000000" }, "Detail", doc.idOf(f));
   B.hit(doc.idOf(f), pts);
 }
@@ -1223,7 +1226,8 @@ function drawViewAnnotations(doc, ctx, B, v) {
   for (const g of doc.elements()) {
     if (g === v || doc.typeOf(g) !== "SectionView") continue;
     const co = doc.argValue(g, "callout"); if (!co || !co.parent || co.parent !== doc.idOf(v)) continue;
-    const clip = doc.argValue(g, "clip"), r = clip && clip.rect; if (!r) continue;
+    // the boundary: the detail's crop, or the region the callout was drawn round (a detail cut short or broken in two)
+    const clip = doc.argValue(g, "clip"), r = co.rect || (clip && clip.rect); if (!r) continue;
     const id = doc.idOf(g), a = B.P([r[0], r[1]]), b = B.P([r[2], r[3]]), rr = Math.min(co.radius ?? 4, (b[0] - a[0]) / 3, (b[1] - a[1]) / 3);
     const path = [], arc = (c, a0) => { for (let k = 0; k <= 6; k++) { const t = a0 + k / 6 * Math.PI / 2; path.push([c[0] + rr * Math.cos(t), c[1] + rr * Math.sin(t)]); } };
     arc([b[0] - rr, a[1] + rr], -Math.PI / 2); arc([b[0] - rr, b[1] - rr], 0); arc([a[0] + rr, b[1] - rr], Math.PI / 2); arc([a[0] + rr, a[1] + rr], Math.PI);
@@ -1234,7 +1238,7 @@ function drawViewAnnotations(doc, ctx, B, v) {
     const nx = Math.max(a[0], Math.min(b[0], bc[0])), ny = Math.max(a[1], Math.min(b[1], bc[1])), d0 = normalise(sub([nx, ny], bc));
     if (Number.isFinite(d0[0])) B.stroke([lineSeg(add(bc, mul(d0, R)), [nx, ny])], Object.assign({}, gl, { dash: LINE_TYPES.dotted || gl.dash }), "Annotation-Marker", id, true);
     B.stroke(circlePath(bc, R), { weight: 0.085, colour: "#000" }, "Annotation-Marker", id, true);
-    const num = pl ? String(pl.vp) : "—";
+    const num = co.label != null ? String(co.label) : pl ? String(pl.vp) : "—";
     if (pl && AS.calloutSheet !== false) { B.stroke([lineSeg([bc[0] - R, bc[1]], [bc[0] + R, bc[1]])], { weight: 0.085, colour: "#000" }, "Annotation-Marker", id, true); B.text([bc[0], bc[1] + 0.9], num, AS.markerText || 2.2, { align: "centre", layer: "Annotation-Marker", id, font: AS.font }); B.text([bc[0], bc[1] - 0.9 - (AS.markerSheetText || 2)], pl.number, AS.markerSheetText || 2, { align: "centre", layer: "Annotation-Marker", id, font: AS.font }); }
     else B.text([bc[0], bc[1] - (AS.markerText || 2.2) / 2], num, AS.markerText || 2.2, { align: "centre", layer: "Annotation-Marker", id, font: AS.font });
     if (pl) B.links.push({ t: "link", rect: [bc[0] - R, bc[1] - R, 2 * R, 2 * R], sheet: pl.sheet, layer: "Annotation-Marker", id });
@@ -1696,7 +1700,7 @@ function drawDatums(doc, ctx, B, v, G) {
   }
   // other sections that cross this view: a line where their cut plane passes, with their name - picked and dragged here as in plan
   if (categoryVisible(ctx, "Annotation")) for (const f of doc.elements()) {
-    if (doc.typeOf(f) !== "SectionView" || f === v) continue;
+    if (doc.typeOf(f) !== "SectionView" || f === v || doc.argValue(f, "callout")) continue;
     const sl = F.json(f, "line"); if (!sl || sl.type !== "line") continue;
     const sd = normalise(sub(sl.end, sl.start)), den = d[0] * sd[1] - d[1] * sd[0]; if (Math.abs(den) < 1e-9) continue;
     const t = ((sl.start[0] - o[0]) * sd[1] - (sl.start[1] - o[1]) * sd[0]) / den;
@@ -1740,7 +1744,7 @@ function drawDatums(doc, ctx, B, v, G) {
       B.stroke([lineSeg([t, top - endL], [t, top])], { weight: gw, colour: "#000" }, "IfcGrid", doc.idOf(f));
       B.stroke([lineSeg([t, bot], [t, top - endL])], { weight: gw, colour: AS.gridCentreColour || "#000", dash: LINE_TYPES.centre }, "IfcGrid", doc.idOf(f));
     } else B.stroke([lineSeg([t, bot], [t, top])], { weight: gw, colour: "#000", dash: LINE_TYPES.centre }, "IfcGrid", doc.idOf(f));
-    if ((F.choice(f, "ends") || "Both ends") !== "None") gridHead(doc, B, f, B.P([t, top]), [0, 1], { weight: penWeight(doc, "thin", S), colour: "#000" }, doc.idOf(f));
+    if ((F.choice(f, "ends") || "Both ends") !== "None" && OV.__gridHeads !== false) gridHead(doc, B, f, B.P([t, top]), [0, 1], { weight: penWeight(doc, "thin", S), colour: "#000" }, doc.idOf(f));
     // pickable along its line and by its bubble
     B.hit(doc.idOf(f), [[t, bot], [t, top]], "curve");
     const hr = (F.real(f, "headSize") || 8) / 2, R_ = hr * S, bc = [t, top + hr * S];

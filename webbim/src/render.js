@@ -97,6 +97,17 @@ const BBOX = new WeakMap();
 function blend(c) { return c; }
 function hatchLines(g, p, bb, X, Y, z) {
   const s = p.scale, o = p.origin || [0, 0];
+  // a tile: any drawing (stones, aggregate, stipple) repeated on a grid, as a PDF's tiling pattern or a Revit model pattern draws it
+  const T = p.pattern.tile;
+  if (T) {
+    const w = T.w * s, h = T.h * s, sg = T.segs || []; if (w * z < 2 || h * z < 2) return;
+    const i0 = Math.floor((bb[0] - o[0]) / w), i1 = Math.ceil((bb[2] - o[0]) / w), j0 = Math.floor((bb[1] - o[1]) / h), j1 = Math.ceil((bb[3] - o[1]) / h);
+    if ((i1 - i0) * (j1 - j0) > 40000) return;
+    g.beginPath();
+    for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) { const ox = o[0] + i * w, oy = o[1] + j * h;
+      for (let k = 0; k + 3 < sg.length; k += 4) { g.moveTo(X(ox + sg[k] * s), Y(oy + sg[k + 1] * s)); g.lineTo(X(ox + sg[k + 2] * s + (sg[k] === sg[k + 2] && sg[k + 1] === sg[k + 3] ? 0.05 * s : 0)), Y(oy + sg[k + 3] * s)); } }
+    g.lineCap = "round"; g.stroke(); return;
+  }
   for (const L of p.pattern.lines || []) {
     const a = L.angle * Math.PI / 180, d = [Math.cos(a), Math.sin(a)], n = [-d[1], d[0]];
     const across = L.delta[1] * s, along = L.delta[0] * s;
