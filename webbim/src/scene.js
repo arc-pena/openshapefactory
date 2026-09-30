@@ -21,6 +21,7 @@ import { formatValue, parse, evaluate } from "./expr.js";
 import { wallRegions, coarseMaterial, blocks, wallAt, leanInvolved } from "./joins.js";
 import { pointAt, uOf, wallSurfaces, cutAtHeight, plane, LAYER_PRIORITY, wallTop, topBreaks } from "./walls.js";
 import { curtainPanels, curtainMullions, curtainGrid } from "./curtain.js";
+import { isTitleFamily, drawTitleFamily } from "./titleblocks.js";
 import { cropLoop, loopBBox, annotationRect, isAnnotationLayer } from "./crop.js";
 import { resolveGraphics, categoryOf, penWeight, rulesFor, categoryVisible, mix, LINE_TYPES, matches, effectiveStyle, hiddenByRule } from "./styles.js";
 import { measureRefs, resolveReference, elementRefs, sheetSize, regionAreas, importPlacer, importLayerMap, sketchPath } from "./bim.js";
@@ -2094,8 +2095,16 @@ export function sheetScene(doc, sh, opts = {}) {
   const txt = (at, text, h, o = {}) => prims.push(Object.assign({ t: "text", at, text: String(text ?? ""), height: h, rot: 0, align: "left", valign: "baseline", colour: ink, layer: "TitleBlock" }, o));
   prims.push({ t: "fill", path: rectPath(0, 0, W, H), colour: "#ffffff", layer: "Paper" });
   const tb = doc.lib.symbols[F.refId(sh, "titleBlock")] || {};
-  const band = tb.generated === "titleBand" || tb.generated === "fhaStrip" || tb.generated === "fhaBand";
-  if (tb.generated === "titleBand") titleBand(doc, sh, W, H, put, txt);
+  const band = isTitleFamily(tb) ? tb.viewTitles === "band" : tb.generated === "titleBand" || tb.generated === "fhaStrip" || tb.generated === "fhaBand";
+  if (isTitleFamily(tb)) {
+    // a title block family: its lines, text, smart fields and symbols, each shown as the sheet's check boxes say
+    const scales = [...new Set((doc.argValue(sh, "viewports") || []).map(vp => doc.element(vp.view.ref)).filter(v => v && doc.typeOf(v) !== "Schedule" && doc.typeOf(v) !== "View3D").map(v => F.int(v, "scale") || 100))].map(n => ({ n, name: scaleName(doc, n) }));
+    drawTitleFamily(doc, sh, W, H, tb, { put: (path, w, c) => put(path, w, c), txt, scales, tw: textWidth,
+      fill: (path, colour) => prims.push({ t: "fill", path, colour, layer: "TitleBlock" }),
+      segs: (pts, closed) => polyPath(pts, closed), circ: (c, r) => circlePath(c, r),
+      sym: (id, at, rot, k) => { const sy = doc.lib.symbols[id]; if (!sy || isTitleFamily(sy)) return; const B2 = new SceneBuilder(1); drawSymbol(doc, B2, k !== 1 && sy.nominalSize ? Object.assign({}, sy, { nominalSize: { w: sy.nominalSize.w * k, h: sy.nominalSize.h * k } }) : sy, at, rot, "TitleBlock"); prims.push(...B2.prims); } });
+  }
+  else if (tb.generated === "titleBand") titleBand(doc, sh, W, H, put, txt);
   else if (tb.generated === "fhaStrip") fhaStrip(doc, sh, W, H, put, txt);
   else if (tb.generated === "fhaBand") fhaBand(doc, sh, W, H, put, txt);
   else {

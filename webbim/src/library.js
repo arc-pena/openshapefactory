@@ -3,6 +3,7 @@
 //! styles that must ship together. It is data — the same shape the file stores.
 
 import { ENTOURAGE_SYMBOLS } from "./entourage.js";
+import { titleBlockFamilies } from "./titleblocks.js";
 
 export const PEN_ISO = {
   name: "ISO 128",
@@ -235,11 +236,9 @@ export const NORTH_DXF = [
 
 export const SYMBOLS = {
   "SY-NORTH": { name: "North arrow", source: { dxf: "inline:NORTH_DXF" }, sourceBBox: null, nominalSize: { w: 18, h: 18 }, scaleMode: "uniform", anchor: "centre", space: "paper" },
-  "SY-TB-A1": { name: "Title block", generated: "titleBlock", space: "paper" },
-  "SY-TB-BAND": { name: "Title band (Arial, notes and north)", generated: "titleBand", space: "paper" },
-  "SY-TB-FHA": { name: "Title strip (Frank Harmon Architect: Futura, along the right edge)", generated: "fhaStrip", space: "paper" },
-  "SY-TB-FHAB": { name: "Title band (Frank Harmon Architect: Futura, along the foot of an upright sheet)", generated: "fhaBand", space: "paper" },
   ...ENTOURAGE_SYMBOLS,
+  // title blocks: families of lines, text, smart-field labels and symbols (titleblocks.js), editable in the title block editor
+  ...titleBlockFamilies(),
 };
 
 // ---------------------------------------------------------------- the two styles (§7.2)

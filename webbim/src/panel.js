@@ -5,6 +5,8 @@
 
 import { parseLength, parseNumber, bareFactor, fmtArea, fmtVolume } from "./units.js";
 import { h, clear, icon, dialog, fmtLen } from "./ui_util.js";
+import { isTitleFamily, tbFieldValue } from "./titleblocks.js";
+import { titleBlockEditor } from "./tbeditor.js";
 import { sectionPicker } from "./sectionui.js";
 import { dimStyleManager } from "./dimstyleui.js";
 import { DEFAULT_DIM_TYPE } from "./dimstyles.js";
@@ -92,6 +94,7 @@ export function renderPanel(app, root) {
   root.append(pp);
   if (ids.length === 1 && doc.typeOf(doc.element(ids[0])) === "CADImport") root.append(importLayers(app, doc.element(ids[0])));
   if (ids.length === 1 && doc.typeOf(doc.element(ids[0])) === "SiteBoundary") root.append(siteEdges(app, doc.element(ids[0])));
+  if (ids.length === 1 && doc.typeOf(doc.element(ids[0])) === "Sheet") root.append(titleBlockPanel(app, doc.element(ids[0])));
 }
 function countUsers(doc, typeId) { return doc.elements().filter(f => TYPE_KEYS.some(k => F.refId(f, k) === typeId)).length; }
 
@@ -120,6 +123,8 @@ function rowEditor(app, ids, f, r) {
       h("div", { class: "under" }, n || nf || vg.scheme ? `${n} categor${n === 1 ? "y" : "ies"} · ${nf} filter${nf === 1 ? "" : "s"}${vg.scheme ? " · own scheme" : ""}` : "no overrides: as the style"));
     return h("div", { class: "prow" }, h("label", {}, "Visibility/Graphics"), val);
   }
+  // a sheet's title block fields and show/hide: in the Title Block panel below, not as JSON
+  if (doc.typeOf(f) === "Sheet" && (r.key === "tbFields" || r.key === "tbVisibility")) return h("div", { hidden: true });
   // a setting the view's style includes: shown, locked, changed in the style
   const lk = isView && lockedKey(doc, f, r.key);
   if (lk) {
@@ -887,4 +892,33 @@ function siteEdges(app, f) {
   return h("section", { class: "pgrid-group" }, h("div", { class: "pgrid-head" }, "Site edges - setback and zoning plane"),
     h("div", { class: "muted", style: { fontSize: "11.5px", padding: "4px 8px" } }, "Each edge is a vertical plane limiting the site. Setback: the buildable line. Zoning: a plane rising from the edge at a height, at an angle over the site (90° = vertical)."),
     h("table", { class: "layers", style: { width: "100%", fontSize: "12px" } }, h("thead", {}, h("tr", {}, ["#", "Edge", "Length", "Setback", "Zone h", "Angle°"].map(x => h("th", {}, x)))), h("tbody", {}, rows)));
+}
+
+/** A sheet's title block: its family (Edit Title Block opens the family editor), a box for each of the family's own
+ *  fields and each built-in field it writes (blank takes the project's value), and a check box per show/hide parameter. */
+function titleBlockPanel(app, sh) {
+  const doc = app.doc, id = doc.idOf(sh), tbId = F.refId(sh, "titleBlock"), tb = doc.lib.symbols[tbId];
+  const box = h("div", { class: "pp", style: { padding: "10px 14px", display: "grid", gap: "6px" } }, h("h3", { style: { margin: 0 } }, "Title block"));
+  const fam = isTitleFamily(tb);
+  box.append(h("div", { style: { display: "flex", gap: "6px", flexWrap: "wrap" } },
+    h("button", { class: "btn small", disabled: !fam, onclick: () => titleBlockEditor(app, tbId) }, "Edit Title Block…"),
+    h("button", { class: "btn small", disabled: !fam, onclick: () => { let n = 2; while (doc.lib.symbols[`${tbId}-${n}`]) n++; const nid = `${tbId}-${n}`, copy = JSON.parse(JSON.stringify(tb)); copy.name = `${tb.name} ${n}`;
+      app.apply({ op: "type", lib: "symbols", id: nid, value: copy }); app.apply({ op: "set", id, key: "titleBlock", value: { ref: nid } }); titleBlockEditor(app, nid); } }, "Duplicate & edit…")));
+  if (!fam) { box.append(h("div", { class: "muted" }, "This title block is drawn by code; pick a title block family to edit its fields.")); return box; }
+  const vals = doc.argValue(sh, "tbFields") || {}, vis = doc.argValue(sh, "tbVisibility") || {};
+  const used = [...new Set(tb.items.filter(it => it.k === "label").map(it => it.field))];
+  const setField = (name, v) => { const next = Object.assign({}, doc.argValue(sh, "tbFields") || {}); if (v === "") delete next[name]; else next[name] = v; app.apply({ op: "set", id, key: "tbFields", value: next }); };
+  const g = h("div", { style: { display: "grid", gridTemplateColumns: "110px 1fr", gap: "4px 8px", alignItems: "center" } });
+  for (const name of used) {
+    if (["Sheet Number", "Sheet Name", "Scale", "Print Size", "Orientation", "Revision", "Today"].includes(name) && !(name in vals)) { g.append(h("span", { class: "muted" }, name), h("span", {}, tbFieldValue(doc, sh, name, tb) || "—")); continue; }
+    const inh = name in vals ? "" : tbFieldValue(doc, sh, name, tb);
+    g.append(h("label", {}, name), h("input", { type: "text", value: vals[name] ?? "", placeholder: vals[name] != null ? "" : inh, "aria-label": name, onchange: e => setField(name, e.target.value) }));
+  }
+  box.append(g);
+  if ((tb.visibility || []).length) {
+    box.append(h("div", { class: "muted" }, "Show / hide"));
+    for (const v of tb.visibility) box.append(h("label", {}, h("input", { type: "checkbox", checked: vis[v.name] != null ? !!vis[v.name] : v.default !== false,
+      onchange: e => app.apply({ op: "set", id, key: "tbVisibility", value: Object.assign({}, doc.argValue(sh, "tbVisibility") || {}, { [v.name]: e.target.checked }) }) }), " ", v.name));
+  }
+  return box;
 }

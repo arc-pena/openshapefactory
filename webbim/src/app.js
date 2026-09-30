@@ -30,6 +30,8 @@ import { sectionPicker } from "./sectionui.js";
 import { dimStyleManager } from "./dimstyleui.js";
 import { sunOf } from "./sun.js";
 import { renderPanel, typeEditor, vvDialog, viewStyleEditor, materialsEditor } from "./panel.js";
+import { titleBlockEditor } from "./tbeditor.js";
+import { isTitleFamily } from "./titleblocks.js";
 import { renderSchedule, newScheduleDialog, scheduleProperties } from "./scheduleui.js";
 import { renderSpaceGraph, importProgram, briefDialog, sheetDiagramUrl } from "./sgui.js";
 import { renderGraph } from "./graph.js";
@@ -246,6 +248,11 @@ const COMMANDS = {
   level: { label: "Level", icon: "level", key: "LL", run: () => newLevel() },
   schedule: { label: "Schedule", icon: "schedule", run: () => newSchedule() },
   sheet: { label: "Sheet", icon: "sheet", run: () => newSheet() },
+  // the open (or selected) sheet's title block family, in its own editor window
+  edittitleblock: { label: "Title Block", icon: "sheet", run: () => { const d = app.doc, id = [...app.selection].find(i => d.element(i) && d.typeOf(d.element(i)) === "Sheet") || (d.element(app.activeView) && d.typeOf(d.element(app.activeView)) === "Sheet" ? app.activeView : null)
+    || (d.elements().find(f => d.typeOf(f) === "Sheet") ? d.idOf(d.elements().find(f => d.typeOf(f) === "Sheet")) : null);
+    const tb = id ? F.refId(d.element(id), "titleBlock") : Object.keys(d.lib.symbols).find(k => isTitleFamily(d.lib.symbols[k]));
+    if (!tb) return app.say("no title block to edit", "note"); titleBlockEditor(app, tb); } },
   vv: { label: "Visibility/ Graphics", icon: "vv", key: "VV", run: () => { const v = app.doc.element(app.activeView); if (v && ["PlanView", "ElevationView", "SectionView", "View3D"].includes(app.doc.typeOf(v))) vvDialog(app, app.activeView); else app.say("open a plan, elevation or 3D view first", "note"); } },
   thin: { label: "Thin Lines", icon: "thin", key: "TL", active: () => app.thinLines, run: () => { app.thinLines = !app.thinLines; app.refresh({ keepMain: true }); } },
   zoomfit: { label: "Zoom to Fit", icon: "fit", key: "ZF", run: () => { const v = app.views.get(app.activeView); if (v && v.fit) v.fit(); } },
@@ -323,7 +330,7 @@ const RIBBON = [
   ] },
   { tab: "View", panels: [
     { title: "Graphics", items: [big("vv"), big("viewstyles"), small("thin"), small("zoomfit")] },
-    { title: "Create", items: [big("planview"), big("default3d"), big("sectionbox"), big("section"), small("elev"), small("schedule"), big("sheet")] },
+    { title: "Create", items: [big("planview"), big("default3d"), big("sectionbox"), big("section"), small("elev"), small("schedule"), big("sheet"), small("edittitleblock")] },
     { title: "Windows", items: [small("graph"), small("tree"), small("closehidden")] },
     { title: "Interface", items: [big("cadmode")] },
   ] },

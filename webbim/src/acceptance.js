@@ -2405,4 +2405,20 @@ testCase("M83", "A curtain wall: its type's grid divides the face into panels wi
   const el = elevationScene(doc, doc.element("VE")).prims.length > 60, pl = planScene(doc, doc.element("VP")).prims.filter(p => p.id === "W").length;
   return { pass: under && clipped && holeFree && trimmed && apex && glass === panels.length && mullions > 10 && el && pl >= 6, detail: { panels: panels.length, under, clipped, holeFree, trimmed, apex, glass, mullions, el, pl } };
 });
+testCase("M84", "Title blocks are families: lines, text, labels and symbols drawn on the sheet; a label writes the sheet's and the project's values, a field the family names takes the sheet's own value, and a show/hide parameter's check box on the sheet hides the items tied to it; items held right follow the sheet's right edge", () => {
+  const doc = newDocument("tb"), ed = new Editor(doc);
+  const fam = { family: "titleblock", name: "Test", space: "paper", design: [420, 297], scaleStyle: "list", fields: [{ name: "Consultant", default: "none" }], visibility: [{ name: "North", default: true }],
+    items: [{ k: "rect", a: [10, 10], b: [410, 40] }, { k: "label", field: "Sheet Name", at: [300, 20], h: 3, hold: "right" }, { k: "label", field: "Consultant", at: [20, 20], h: 3 },
+      { k: "text", text: "NORTH", at: [200, 20], h: 2, vis: "North" }, { k: "label", field: "Project Number", at: [20, 30], h: 2 }] };
+  ed.apply({ op: "type", lib: "symbols", id: "SY-TEST", value: fam });
+  doc.meta.project = { number: "0801" };
+  ed.apply({ op: "add", element: { id: "SH", type: "Sheet", args: { number: "A1", sheetName: "Plans", size: "A1", orientation: "landscape", titleBlock: { ref: "SY-TEST" }, viewports: [] } } });
+  const texts = () => sheetScene(doc, doc.element("SH")).prims.filter(p => p.t === "text" && p.layer === "TitleBlock");
+  const t0 = texts(), name = t0.find(p => p.text === "Plans"), W = 841;
+  const held = name && Math.abs(name.at[0] - (W - 120)) < 0.01, proj = t0.some(p => p.text === "0801"), dflt = t0.some(p => p.text === "none"), north = t0.some(p => p.text === "NORTH");
+  ed.apply({ op: "set", id: "SH", key: "tbFields", value: { Consultant: "Buro Happold" } }); ed.apply({ op: "set", id: "SH", key: "tbVisibility", value: { North: false } });
+  const t1 = texts(), own = t1.some(p => p.text === "Buro Happold"), hidden = !t1.some(p => p.text === "NORTH");
+  const lib = ["SY-TB-A1", "SY-TB-BAND", "SY-TB-FHA", "SY-TB-FHAB"].every(k => Array.isArray(doc.lib.symbols[k].items));
+  return { pass: held && proj && dflt && north && own && hidden && lib, detail: { held, proj, dflt, north, own, hidden, lib } };
+});
 

@@ -1012,7 +1012,9 @@ declare({ type: "Sheet", guid: "wb-0601", category: "Sheet", kind: "sheet", idPr
           // "multiply" laying a sketch's paper white away so only its strokes darken what is under them
           json("images", "Images", [], { view: true }),
           // the title block's scale, when the set writes it by hand ("As indicated" over a page of notes); blank reads it from the views
-          text("scaleLabel", "Scale Label", "", { group: "Identity Data" }) ] });
+          text("scaleLabel", "Scale Label", "", { group: "Identity Data" }),
+          // its title block family's own fields (their values on this sheet) and its show/hide parameters
+          json("tbFields", "Title block fields", {}, { group: "Title Block" }), json("tbVisibility", "Title block show/hide", {}, { group: "Title Block" }) ] });
 BUILDERS.Sheet = { build: (f) => ({ data: { size: sheetSize(f) } }) };
 export function sheetSize(f) {
   const s = F.choice(f, "size");
