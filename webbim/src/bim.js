@@ -961,6 +961,8 @@ declare({ type: "SectionView", guid: "wb-0505", category: "View", kind: "view", 
           json("clip", "Crop region", { rect: null, visible: false, active: false }, { group: "Extents" }),
           json("vg", "Visibility/Graphics", {}, { group: "Graphics" }),
           choice("heads", "Heads at", ["Both ends", "Start", "End"], 0, { group: "Graphics" }) ,
+          // Revit's callout: a detail of another section, on its cut, its crop drawn there as a boundary with a bubble
+          json("callout", "Callout of", null, { group: "Graphics" }),
           json("levelExtent", "Level lines (from, to along the view)", null, { group: "Graphics" }), bool("groundLine", "Ground line", true, { group: "Graphics" }),
           json("overrides", "Element overrides", {}, { group: "Graphics" })],
   handles: viewLineHandles });
@@ -1043,7 +1045,9 @@ BUILDERS.Text = { build: () => ({ data: {} }) };
 declare({ type: "SpotElevation", guid: "wb-0708", category: "Annotation", kind: "detail", idPrefix: "NP",
   summary: "A spot elevation (NPT): the height of the floor at its point, read from the model and written over a crosshair; it follows the floor when the floor moves.",
   args: [ point2d("position", "Position", [0, 0]), ref("view", "View", ["view"], { view: true }), text("prefix", "Prefix", "NPT ", { group: "Text" }),
-          choice("units", "Units", ["m", "mm"], 0, { group: "Text" }), real("textSize", "Text size (paper mm)", 1.0, 0.3, 20, 0.1, "", { group: "Graphics" }) ],
+          choice("units", "Units", ["m", "mm", "ft-in"], 0, { group: "Text" }), real("textSize", "Text size (paper mm)", 1.0, 0.3, 20, 0.1, "", { group: "Graphics" }),
+          // Revit's spot elevation symbol over its value, or the value written on a rule running to a target (a section's)
+          choice("style", "Style", ["Symbol, value over", "Value on a rule"], 0, { group: "Graphics" }), choice("side", "Value side", ["Left", "Right"], 0, { group: "Graphics" }) ],
   handles: (f) => [{ key: "move", at: F.point(f, "position"), constraint: "free2d", writes: "position" }] });
 BUILDERS.SpotElevation = { build: () => ({ data: {} }) };
 
@@ -1184,7 +1188,7 @@ BUILDERS.SpaceGraph = { build: () => ({ data: {} }) };
 
 /** Revit's Repeating Detail Component (and its Insulation tool): one component repeated along a path
  *  sketched with the sketch tools - lines, arcs, splines. Width is across the path, in model mm. */
-export const REPEAT_COMPONENTS = ["Batt insulation", "Rigid insulation", "Brick coursing", "Blocking", "Symbol"];
+export const REPEAT_COMPONENTS = ["Batt insulation", "Rigid insulation", "Brick coursing", "Blocking", "Symbol", "Metal deck"];
 declare({ type: "RepeatingDetail", guid: "wb-0708", category: "Detail", kind: "detail", idPrefix: "RD",
   summary: "A component repeated along a path: insulation, coursing, blocking or any loaded symbol, spaced along lines, arcs and splines.",
   args: [ json("path", "Path", { elements: [], constraints: [], dims: [] }),

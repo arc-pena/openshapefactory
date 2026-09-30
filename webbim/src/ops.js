@@ -588,7 +588,9 @@ const HANDLERS = {
       // a model traced from a drawing may ask that no end move further than it allows (its dimensions measure the ends)
       if (o.maxMove != null && (dist(hit.p, c[end]) > o.maxMove || (hit.moveOther || []).some(m => { const g = doc.element(m.id), gc = g && doc.argValue(g, "centreline"); return gc && dist(gc[m.end], hit.p) > o.maxMove; }))) {
         // a T needs no move: the joined end is drawn to the through wall's face wherever it stops inside it
-        // a corner neither: the walls meet where their axes cross, the ends left where they were drawn
+        // a corner neither: the walls meet where their axes cross, the ends left where they were drawn - but only
+        // where they nearly meet (a wall that stops well short of another does not reach for it)
+        if (dist(hit.p, c[end]) > (o.maxReach ?? 600)) continue;
         for (const row of hit.rows) HANDLERS.relate(doc, { store: "joins", row: Object.assign(row, { kind: "auto", order: 0, allowed: true }) });
         made.push(hit.what);
         continue;

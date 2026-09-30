@@ -46,7 +46,7 @@ export function tbFieldValue(doc, sh, name, tb, scales) {
 function scaleText(doc, sh, tb, scales) {
   const lab = doc.argValue(sh, "scaleLabel"); if (lab) return lab;
   const list = scales || [];
-  if (tb.scaleStyle === "imperial") return list.length === 1 ? list[0].name : list.length ? "AS NOTED" : "";
+  if (tb.scaleStyle === "imperial" || tb.scaleStyle === "imperialCompact") { const nm = list.length === 1 ? list[0].name : ""; return nm ? (tb.scaleStyle === "imperialCompact" ? nm.replace(/ = /g, "=") : nm) : list.length ? (tb.asNoted || "AS NOTED") : ""; }
   if (tb.scaleStyle === "band") return list.length === 1 ? `1 : ${list[0].n}` : list.length ? "As indicated" : "";
   return list.map(s => "1:" + s.n).join(", ") || "—";
 }

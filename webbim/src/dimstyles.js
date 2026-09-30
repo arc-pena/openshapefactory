@@ -45,6 +45,7 @@ export const DIM_DEFAULTS = {
   roundOff: 0, scaleFactor: 1,                      // DIMRND, DIMLFAC
   prefix: "", suffix: "",                           // DIMPOST
   suppressLeading: false, suppressTrailing: false,  // DIMZIN
+  archFtIn: false,                                  // feet-inches as drawn: 1'-4", and inches alone under a foot (DIMZIN 3)
   showUnit: false,                                  // write "mm", "m"… after the number
   // Alternate units
   altUnits: false, altUnit: "in", altPrecision: 2, altPlacement: "After",   // DIMALT, DIMALTU, DIMALTD, DIMAPOST
@@ -86,9 +87,15 @@ function number(v, precision, st) {
   const int = grp ? m[2].replace(/\B(?=(\d{3})+(?!\d))/g, grp) : m[2];
   return m[1] + int + (m[3] ? dec + m[3].slice(1) : "");
 }
+/** Feet and inches as an architect writes them on a drawing: 1'-4", 16'-0", and under a foot the inches alone, 5 3/8". */
+export function archFtIn(mm, den = 16) {
+  const neg = mm < 0 ? "-" : ""; let inch = Math.round(Math.abs(mm) / 25.4 * den) / den, ft = Math.floor(inch / 12 + 1e-9), r = inch - ft * 12;
+  const frac = x => { const w = Math.floor(x + 1e-9); let n = Math.round((x - w) * den), d = den; if (!n) return String(w); while (n % 2 === 0) { n /= 2; d /= 2; } return w ? `${w} ${n}/${d}` : `${n}/${d}`; };
+  return ft ? `${neg}${ft}'-${frac(r)}"` : `${neg}${frac(r)}"`;
+}
 function inUnit(doc, mm, unit, precision, st, withUnit) {
   const u = unit === "Project" ? ((doc.meta && doc.meta.displayUnits) || "mm") : unit;
-  if (u === "ft-in") return fmtLength(mm, { unit: "ft-in" });
+  if (u === "ft-in") return st && st.archFtIn ? archFtIn(mm) : fmtLength(mm, { unit: "ft-in" });
   const f = PER_MM[u] || 1;
   return number(mm / f, precision, st) + (withUnit ? (u === "in" ? '"' : " " + u) : "");
 }

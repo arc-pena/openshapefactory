@@ -1264,6 +1264,7 @@ const DIM_DEFAULTS = {
   roundOff: 0, scaleFactor: 1,                      // DIMRND, DIMLFAC
   prefix: "", suffix: "",                           // DIMPOST
   suppressLeading: false, suppressTrailing: false,  // DIMZIN
+  archFtIn: false,                                  // feet-inches as drawn: 1'-4", and inches alone under a foot (DIMZIN 3)
   showUnit: false,                                  // write "mm", "m"… after the number
   // Alternate units
   altUnits: false, altUnit: "in", altPrecision: 2, altPlacement: "After",   // DIMALT, DIMALTU, DIMALTD, DIMAPOST
@@ -1305,9 +1306,15 @@ function number(v, precision, st) {
   const int = grp ? m[2].replace(/\B(?=(\d{3})+(?!\d))/g, grp) : m[2];
   return m[1] + int + (m[3] ? dec + m[3].slice(1) : "");
 }
+/** Feet and inches as an architect writes them on a drawing: 1'-4", 16'-0", and under a foot the inches alone, 5 3/8". */
+function archFtIn(mm, den = 16) {
+  const neg = mm < 0 ? "-" : ""; let inch = Math.round(Math.abs(mm) / 25.4 * den) / den, ft = Math.floor(inch / 12 + 1e-9), r = inch - ft * 12;
+  const frac = x => { const w = Math.floor(x + 1e-9); let n = Math.round((x - w) * den), d = den; if (!n) return String(w); while (n % 2 === 0) { n /= 2; d /= 2; } return w ? `${w} ${n}/${d}` : `${n}/${d}`; };
+  return ft ? `${neg}${ft}'-${frac(r)}"` : `${neg}${frac(r)}"`;
+}
 function inUnit(doc, mm, unit, precision, st, withUnit) {
   const u = unit === "Project" ? ((doc.meta && doc.meta.displayUnits) || "mm") : unit;
-  if (u === "ft-in") return fmtLength(mm, { unit: "ft-in" });
+  if (u === "ft-in") return st && st.archFtIn ? archFtIn(mm) : fmtLength(mm, { unit: "ft-in" });
   const f = PER_MM[u] || 1;
   return number(mm / f, precision, st) + (withUnit ? (u === "in" ? '"' : " " + u) : "");
 }
@@ -1955,7 +1962,7 @@ function tbFieldValue(doc, sh, name, tb, scales) {
 function scaleText(doc, sh, tb, scales) {
   const lab = doc.argValue(sh, "scaleLabel"); if (lab) return lab;
   const list = scales || [];
-  if (tb.scaleStyle === "imperial") return list.length === 1 ? list[0].name : list.length ? "AS NOTED" : "";
+  if (tb.scaleStyle === "imperial" || tb.scaleStyle === "imperialCompact") { const nm = list.length === 1 ? list[0].name : ""; return nm ? (tb.scaleStyle === "imperialCompact" ? nm.replace(/ = /g, "=") : nm) : list.length ? (tb.asNoted || "AS NOTED") : ""; }
   if (tb.scaleStyle === "band") return list.length === 1 ? `1 : ${list[0].n}` : list.length ? "As indicated" : "";
   return list.map(s => "1:" + s.n).join(", ") || "—";
 }
@@ -2809,7 +2816,8 @@ function wallPieces(w, spans, opts = {}) {
 function curtainOf(type, inst) {
   const c = type && type.curtain; if (!c) return null;
   const o = inst || {};
-  return Object.assign({}, c, { vertical: Object.assign({}, c.vertical, o.vertical), horizontal: Object.assign({}, c.horizontal, o.horizontal) });
+  // panels swapped one by one (Revit's panel type per cell): { "i,j": material | "none" }, i along the wall, j up it
+  return Object.assign({}, c, { vertical: Object.assign({}, c.vertical, o.vertical), horizontal: Object.assign({}, c.horizontal, o.horizontal), panels: Object.assign({}, c.panels, o.panels) });
 }
 /** Grid positions strictly inside (0, L) for one direction. */
 function cwPositions(spec, L) {
@@ -2877,7 +2885,7 @@ function curtainPanels(w) {
   }
   // openings take their panels out (a door or a storefront set in the grid)
   const ops = w.openings || [];
-  if (!ops.length) return out;
+  if (!ops.length) return withMaterial(w, out);
   const res = [];
   for (const p of out) {
     let pieces = [p.poly];
@@ -2890,7 +2898,13 @@ function curtainPanels(w) {
       return r; });
     for (const poly of pieces) res.push({ i: p.i, j: p.j, poly });
   }
-  return res;
+  return withMaterial(w, res);
+}
+/** Each panel's material: its own (swapped), else the system's; a panel swapped to "none" is left open. */
+function withMaterial(w, list) {
+  const c = w.curtain, dflt = (c.panel && c.panel.material) || "M-GLASS", sw = c.panels || {};
+  // a cell's entry is a material, or { m: material, swing: "L" | "R" | "T" | "B" | "D" } for an operable sash or a door
+  return list.map(p => { const v = sw[`${p.i},${p.j}`] || sw[`*,${p.j}`] || sw[`${p.i},*`] || dflt; return Object.assign(p, typeof v === "object" ? { material: v.m || dflt, swing: v.swing || null } : { material: v }); }).filter(p => p.material !== "none");
 }
 /** The mullions as centre lines in (u, z above the base): the border (its top along the rake), every vertical
  *  up to the top, every horizontal across the stretches the top leaves it. */
@@ -2913,7 +2927,7 @@ function curtainPieces(w, doc) {
   const g = curtainGrid(w), c = w.curtain, n = w.stack.s.length - 1, sc = (w.stack.s[0] + w.stack.s[n]) / 2;
   const pc = (c.panel && c.panel.thickness) || 25, pm = (c.panel && c.panel.material) || "M-GLASS", mm = (c.mullion && c.mullion.material) || "M-ALUM";
   const colourOf = m => (((doc && doc.lib.materials[m]) || {}).shading || {}).colour;
-  const glass = /GLASS|GLAZ/i.test(pm);
+  const isGlass = m => /GLASS|GLAZ/i.test(m);
   const box = (u0, u1, s0, s1) => [pointAt(w, s0, u0), pointAt(w, s0, u1), pointAt(w, s1, u1), pointAt(w, s1, u0)];
   const out = [];
   for (const p of curtainPanels(w)) {
@@ -2921,7 +2935,8 @@ function curtainPieces(w, doc) {
     const zt = Math.max(...p.poly.map(q => q[1])), flat = p.poly.length === 4 && p.poly.every(q => Math.abs(q[1] - zb) < 1e-6 || Math.abs(q[1] - zt) < 1e-6);
     // a clipped panel's top: the polygon's upper chain, as a height at a plan point
     const top = flat ? null : (() => { const up = p.poly.filter(q => q[1] > zb + 1e-6).sort((a, b) => a[0] - b[0]); return pt => { const u = Math.max(u0, Math.min(u1, cwUAlong(w, pt))); for (let k = 1; k < up.length; k++) if (u <= up[k][0] + 1e-9) { const a = up[k - 1], b = up[k]; return w.z0 + (b[0] - a[0] < 1e-9 ? b[1] : a[1] + (b[1] - a[1]) * (u - a[0]) / (b[0] - a[0])); } return w.z0 + (up.length ? up[up.length - 1][1] : zt); }; })();
-    out.push({ foot: box(u0, u1, sc - pc / 2, sc + pc / 2), z0: w.z0 + zb, z1: w.z0 + zt, topAt: top, sub: glass ? "Glass" : "Panel", colour: glass ? undefined : colourOf(pm), zRef: w.z0 });
+    const g = isGlass(p.material);
+    out.push({ foot: box(u0, u1, sc - pc / 2, sc + pc / 2), z0: w.z0 + zb, z1: w.z0 + zt, topAt: top, sub: g ? "Glass" : "Panel", colour: g ? undefined : colourOf(p.material), zRef: w.z0 });
   }
   const m2 = g.mw / 2, d2 = g.md / 2;
   for (const mu of curtainMullions(w)) {
@@ -8808,6 +8823,8 @@ declare({ type: "SectionView", guid: "wb-0505", category: "View", kind: "view", 
           json("clip", "Crop region", { rect: null, visible: false, active: false }, { group: "Extents" }),
           json("vg", "Visibility/Graphics", {}, { group: "Graphics" }),
           choice("heads", "Heads at", ["Both ends", "Start", "End"], 0, { group: "Graphics" }) ,
+          // Revit's callout: a detail of another section, on its cut, its crop drawn there as a boundary with a bubble
+          json("callout", "Callout of", null, { group: "Graphics" }),
           json("levelExtent", "Level lines (from, to along the view)", null, { group: "Graphics" }), bool("groundLine", "Ground line", true, { group: "Graphics" }),
           json("overrides", "Element overrides", {}, { group: "Graphics" })],
   handles: viewLineHandles });
@@ -8890,7 +8907,9 @@ BUILDERS.Text = { build: () => ({ data: {} }) };
 declare({ type: "SpotElevation", guid: "wb-0708", category: "Annotation", kind: "detail", idPrefix: "NP",
   summary: "A spot elevation (NPT): the height of the floor at its point, read from the model and written over a crosshair; it follows the floor when the floor moves.",
   args: [ point2d("position", "Position", [0, 0]), ref("view", "View", ["view"], { view: true }), text("prefix", "Prefix", "NPT ", { group: "Text" }),
-          choice("units", "Units", ["m", "mm"], 0, { group: "Text" }), real("textSize", "Text size (paper mm)", 1.0, 0.3, 20, 0.1, "", { group: "Graphics" }) ],
+          choice("units", "Units", ["m", "mm", "ft-in"], 0, { group: "Text" }), real("textSize", "Text size (paper mm)", 1.0, 0.3, 20, 0.1, "", { group: "Graphics" }),
+          // Revit's spot elevation symbol over its value, or the value written on a rule running to a target (a section's)
+          choice("style", "Style", ["Symbol, value over", "Value on a rule"], 0, { group: "Graphics" }), choice("side", "Value side", ["Left", "Right"], 0, { group: "Graphics" }) ],
   handles: (f) => [{ key: "move", at: F.point(f, "position"), constraint: "free2d", writes: "position" }] });
 BUILDERS.SpotElevation = { build: () => ({ data: {} }) };
 
@@ -9031,7 +9050,7 @@ BUILDERS.SpaceGraph = { build: () => ({ data: {} }) };
 
 /** Revit's Repeating Detail Component (and its Insulation tool): one component repeated along a path
  *  sketched with the sketch tools - lines, arcs, splines. Width is across the path, in model mm. */
-const REPEAT_COMPONENTS = ["Batt insulation", "Rigid insulation", "Brick coursing", "Blocking", "Symbol"];
+const REPEAT_COMPONENTS = ["Batt insulation", "Rigid insulation", "Brick coursing", "Blocking", "Symbol", "Metal deck"];
 declare({ type: "RepeatingDetail", guid: "wb-0708", category: "Detail", kind: "detail", idPrefix: "RD",
   summary: "A component repeated along a path: insulation, coursing, blocking or any loaded symbol, spaced along lines, arcs and splines.",
   args: [ json("path", "Path", { elements: [], constraints: [], dims: [] }),
@@ -11507,7 +11526,9 @@ const HANDLERS = {
       // a model traced from a drawing may ask that no end move further than it allows (its dimensions measure the ends)
       if (o.maxMove != null && (dist(hit.p, c[end]) > o.maxMove || (hit.moveOther || []).some(m => { const g = doc.element(m.id), gc = g && doc.argValue(g, "centreline"); return gc && dist(gc[m.end], hit.p) > o.maxMove; }))) {
         // a T needs no move: the joined end is drawn to the through wall's face wherever it stops inside it
-        // a corner neither: the walls meet where their axes cross, the ends left where they were drawn
+        // a corner neither: the walls meet where their axes cross, the ends left where they were drawn - but only
+        // where they nearly meet (a wall that stops well short of another does not reach for it)
+        if (dist(hit.p, c[end]) > (o.maxReach ?? 600)) continue;
         for (const row of hit.rows) HANDLERS.relate(doc, { store: "joins", row: Object.assign(row, { kind: "auto", order: 0, allowed: true }) });
         made.push(hit.what);
         continue;
@@ -12681,7 +12702,7 @@ function viewContext(doc, v) {
 function placements(doc) {
   const out = new Map();
   for (const sh of doc.elements()) if (doc.typeOf(sh) === "Sheet") (doc.argValue(sh, "viewports") || []).forEach((vp, i) =>
-    out.set(vp.view.ref, { sheet: doc.idOf(sh), number: doc.argValue(sh, "number"), vp: i + 1 }));
+    out.set(vp.view.ref, { sheet: doc.idOf(sh), number: doc.argValue(sh, "number"), vp: vp.number ?? i + 1 }));
   return out;
 }
 
@@ -13112,10 +13133,22 @@ function drawSpace(doc, ctx, B, f) {
     B.hit(id, plan.loop.pts);
   }
   const label = cs.label || { height: 2.5, colour: "#000000", content: "{Name}\n{Area}" };
-  const lines = label.content.split("\n").map(line => line.replace(/\{(\w+)\}/g, (_, k) => paramText(doc, f, k)));
-  const at = B.P(anchor);
-  lines.forEach((ln, i) => B.later.push(Object.assign({ t: "text", at: [at[0], at[1] - i * label.height * 1.6], text: label.upper ? String(ln).toUpperCase() : String(ln), height: label.height, rot: 0, align: "centre", valign: "baseline", colour: label.colour || "#000", layer: "IfcSpace-Label", id }, label.font ? { font: label.font } : {})));
-  if (!plan || plan.status !== "ok") B.text([at[0], at[1] + label.height * 1.6], plan && plan.status === "redundant" ? "⚠ redundant" : "⚠ not enclosed", label.height * 0.8, { align: "centre", colour: "#b3261e", layer: "IfcSpace-Label", id });
+  // a room's own tag format (a tenant space's number over its name) over the category's
+  const fmt = paramText(doc, f, "LabelFormat") || label.content, ls = label.lineSpacing || 1.6;
+  const lines = fmt.split("\\n").join("\n").split("\n").map(line => line.replace(/\{(\w+)\}/g, (_, k) => paramText(doc, f, k)));
+  const at = B.P(anchor), nFramed = label.frame ? Math.min(2, lines.length) : 0;
+  lines.forEach((ln, i) => B.later.push(Object.assign({ t: "text", at: [at[0], at[1] - i * label.height * ls], text: label.upper ? String(ln).toUpperCase() : String(ln), height: i >= nFramed && label.extraHeight ? label.extraHeight : label.height, rot: 0, align: "centre", valign: "baseline", colour: label.colour || "#000", layer: "IfcSpace-Label", id }, label.font ? { font: label.font } : {})));
+  if (label.frame === "oblong" && nFramed) {
+    // the tag's oblong round its first two lines, a rule between them (the office's room tag)
+    const w = Math.max(...lines.slice(0, nFramed).map(l => textWidth(String(l), label.height, label.font))), r = label.frameR || 4.23, hw = Math.max(w / 2 + (label.framePad || 1.2), r);
+    const cy = at[1] - (nFramed - 1) * label.height * ls / 2 + label.height / 2, pts = [];
+    for (let k = 0; k <= 12; k++) { const t = -Math.PI / 2 + Math.PI * k / 12; pts.push([at[0] + hw - r + r * Math.cos(t), cy + r * Math.sin(t)]); }
+    for (let k = 0; k <= 12; k++) { const t = Math.PI / 2 + Math.PI * k / 12; pts.push([at[0] - hw + r + r * Math.cos(t), cy + r * Math.sin(t)]); }
+    const g0 = { weight: 0.19, colour: "#000" };
+    B.later.push({ t: "stroke", path: polyPath(pts, true), weight: g0.weight, colour: g0.colour, layer: "IfcSpace-Label", id });
+    if (nFramed === 2) B.later.push({ t: "stroke", path: [lineSeg([at[0] - hw, cy], [at[0] + hw, cy])], weight: g0.weight, colour: g0.colour, layer: "IfcSpace-Label", id });
+  }
+  if ((!plan || plan.status !== "ok") && !label.quiet) B.text([at[0], at[1] + label.height * 1.6], plan && plan.status === "redundant" ? "⚠ redundant" : "⚠ not enclosed", label.height * 0.8, { align: "centre", colour: "#b3261e", layer: "IfcSpace-Label", id });
   B.hit(id, [add(anchor, [-600, -600]), add(anchor, [600, -600]), add(anchor, [600, 600]), add(anchor, [-600, 600])]);
 }
 /** A detail line's line style: solid, or Revit's hidden (short dashes) or centre line. */
@@ -13291,8 +13324,10 @@ function annotationStyle(doc) {
     (doc.meta && doc.meta.annotation) || {});
 }
 /** A grid's head at the end of its line (`at`, paper), pushed out along `out`: its shape or loaded symbol, its label. */
+/** An office that scales its datums with the drawing (annotation drawn for 1:annoRef and scaled with the view): the factor. */
+const annoK = (doc, S, B = null) => { if (B && B.annoK != null) return B.annoK; const r = annotationStyle(doc).annoRef; return r && S ? r / S : 1; };
 function gridHead(doc, B, f, at, out, g, id) {
-  const size = F.real(f, "headSize") || 8, r = size / 2, ts = F.real(f, "textSize") || 2.5, shape = F.choice(f, "head") || "Circle";
+  const k = annoK(doc, B.S, B), size = (F.real(f, "headSize") || 8) * k, r = size / 2, ts = (F.real(f, "textSize") || 2.5) * k, shape = F.choice(f, "head") || "Circle";
   const cp = add(at, mul(out, r)), st = { weight: g.weight, colour: g.colour };
   const poly = (n, rot) => polyPath(Array.from({ length: n }, (_, i) => { const a = rot + i * 2 * Math.PI / n; return [cp[0] + r * Math.cos(a), cp[1] + r * Math.sin(a)]; }));
   if (shape === "Circle") B.stroke(circlePath(cp, r), st, "IfcGrid", id, true);
@@ -13315,6 +13350,17 @@ function drawSectionMarker(doc, ctx, B, f, place) {
   const ov = ctx.overrides && ctx.overrides[id], c = (ov && ov.markerLine) || F.json(f, "line");
   const d = normalise(sub(c.end, c.start)), look = mul(perp(d), -1);
   const AS = annotationStyle(doc);
+  if (AS.sectionStyle === "fha") {
+    // Frank Harmon's section mark: a thin line, and at each end a solid flag on the side the section looks to
+    const L = 7.94, D = 1.98, off = 0.67, g0 = { weight: 0.19, colour: "#000" };
+    B.stroke([lineSeg(c.start, c.end)], { weight: penWeight(doc, "thin", S), colour: "#000" }, "Annotation-Marker", id);
+    for (const [end, sgn] of [[c.start, 1], [c.end, -1]]) {
+      const p0 = add(B.P(end), mul(look, off)), p1 = add(p0, mul(d, sgn * L)), tip = add(add(p0, mul(d, sgn * L / 2)), mul(look, D));
+      B.fill(polyPath([p0, p1, tip]), "#000000", "Annotation-Marker", id, true); B.stroke(polyPath([p0, p1, tip]), g0, "Annotation-Marker", id, true);
+    }
+    B.hit(id, [c.start, c.end], "curve");
+    return;
+  }
   if (AS.kind === "revit") return drawSectionFlag(doc, ctx, B, f, place, c, d, look, AS);
   B.stroke([lineSeg(c.start, c.end)], { weight: penWeight(doc, "medium", S), colour: "#000000", dash: LINE_TYPES.centre }, "Annotation-Marker", id);
   const pl = place.get(id), r = 4.5;
@@ -13413,10 +13459,17 @@ function drawText(doc, ctx, B, f) {
   const midY = at[1] - (lines.length - 1) * lh / 2 + h / 2;
   const g = { weight: penWeight(doc, "hairline", ctx.scale), colour: "#000" };
   for (const L of F.json(f, "leaders") || []) {
-    const anchor = L.side === "right" ? [at[0] + width + 1, midY] : [at[0] - 1, midY];
-    const pts = [anchor]; if (L.elbow) pts.push(B.P(L.elbow)); pts.push(B.P(L.target));
+    // from the text's side (or where it says it starts), through its elbows, to what it points at
+    const anchor = L.from ? B.P(L.from) : L.side === "right" ? [at[0] + width + 1, midY] : [at[0] - 1, midY];
+    const pts = [anchor]; if (L.elbow) pts.push(B.P(L.elbow)); for (const q of L.points || []) pts.push(B.P(q)); pts.push(B.P(L.target));
     B.stroke(polyPath(pts, false), g, "Annotation-Leader", id, true);
-    B.fill(circlePath(pts[pts.length - 1], 0.6), "#000000", "Annotation-Leader", id, true);
+    const tip = pts[pts.length - 1], prev = pts[pts.length - 2], end = L.end || "dot";
+    if (end === "arrow" || end === "open") {
+      // an arrowhead 2 long along the last leg, 0.7 across (filled, or open as two strokes)
+      const d = normalise(sub(tip, prev)), n = perp(d), len = L.arrow || 2.0, hw = len * 0.18, b0 = sub(tip, mul(d, len));
+      if (end === "arrow") B.fill(polyPath([tip, add(b0, mul(n, hw)), sub(b0, mul(n, hw))]), "#000000", "Annotation-Leader", id, true);
+      else B.stroke([lineSeg(add(b0, mul(n, hw)), tip), lineSeg(tip, sub(b0, mul(n, hw)))], g, "Annotation-Leader", id, true);
+    } else if (end === "dot") B.fill(circlePath(tip, 0.6), "#000000", "Annotation-Leader", id, true);
   }
   const m = F.point(f, "position");
   B.hit(id, [add(m, [0, -lines.length * lh * ctx.scale + h * ctx.scale]), add(m, [width * ctx.scale, -lines.length * lh * ctx.scale + h * ctx.scale]), add(m, [width * ctx.scale, h * ctx.scale]), add(m, [0, h * ctx.scale])]);
@@ -13555,6 +13608,11 @@ function drawRepeating(doc, ctx, B, f) {
       B.stroke(poly(edge(-h)), gs, "Detail", id); B.stroke(poly(edge(h)), gs, "Detail", id);
       const { step, n } = stations(L, sp || (comp === "Rigid insulation" ? w : 225), layout);
       for (let k = 0; k <= n; k++) { const a = Math.min(L, k * step); B.stroke([lineSeg(W(a, -h), W(a, h))], gs, "Detail", id); if (comp === "Rigid insulation" && k < n) B.stroke([lineSeg(W(a, -h), W(Math.min(L, a + step), h))], gs, "Detail", id); }
+    } else if (comp === "Metal deck") {
+      // a composite deck's flutes: a trapezoid wave `width` deep at `spacing` (6" pitch by default), its top on the path's left
+      const pitch = sp || 152.4, n = Math.max(1, Math.round(L / pitch)), P = L / n, pts = [];
+      for (let k = 0; k < n; k++) { const a = k * P; pts.push(W(a, h), W(a + 0.32 * P, h), W(a + 0.44 * P, -h), W(a + 0.88 * P, -h), W(a + P, h)); }
+      B.stroke(poly(pts), Object.assign({}, gs, { weight: Math.max(gs.weight, penWeight(doc, "medium", ctx.scale)) }), "Detail", id);
     } else if (comp === "Blocking") {
       const { step, n } = stations(L, sp || w * 1.5, layout);
       for (let k = 0; k < n; k++) { const a = k * step + step * 0.08, b = (k + 1) * step - step * 0.08; B.stroke(poly([W(a, -h), W(b, -h), W(b, h), W(a, h), W(a, -h)]), gs, "Detail", id); B.stroke([lineSeg(W(a, -h), W(b, h))], gs, "Detail", id); B.stroke([lineSeg(W(a, h), W(b, -h))], gs, "Detail", id); }
@@ -13668,10 +13726,22 @@ function spotElevationValue(doc, q, below) {
   }
   return best;
 }
-function drawSpotElevation(doc, ctx, B, f, cutZ) {
+function drawSpotElevation(doc, ctx, B, f, cutZ, zAt = null) {
   const id = doc.idOf(f), q = F.point(f, "position"), P = B.P(q), h = F.real(f, "textSize") || 1.0, font = annotationStyle(doc).font || undefined;
-  const z = spotElevationValue(doc, q, cutZ), mm = F.choice(f, "units") === "mm";
-  const val = z == null ? "?" : mm ? String(Math.round(z)) : (z < 0 ? "-" : "") + (Math.abs(z) / 1000).toFixed(3);
+  // in plan: the top of the floor under it; in a section or an elevation: the height it stands at
+  const z = zAt != null ? zAt : spotElevationValue(doc, q, cutZ), u = F.choice(f, "units"), mm = u === "mm";
+  const sd = (doc.meta && doc.meta.surveyElevation) || 0;
+  const val = z == null ? "?" : u === "ft-in" ? archFtIn(z + sd) : mm ? String(Math.round(z)) : (z < 0 ? "-" : "") + (Math.abs(z) / 1000).toFixed(3);
+  if (F.choice(f, "style") === "Value on a rule") {
+    // the value on a rule that runs to a crosshair target at the point (as the details write ELEV = 359'-0")
+    const g = { weight: 0.085, colour: "#000" }, r = 1.25, left = F.choice(f, "side") !== "Right", text = (F.text(f, "prefix") || "") + val, w = textWidth(text, h, font);
+    const x0 = left ? P[0] - r - 1.2 - w : P[0] + r + 1.2, x1 = left ? P[0] - r : P[0] + r + 1.2 + w;
+    B.stroke(circlePath(P, r), g, "Annotation-Spot", id, true);
+    B.stroke([lineSeg(add(P, [-1.9, 0]), add(P, [1.9, 0])), lineSeg(add(P, [0, -1.9]), add(P, [0, 1.9])), lineSeg([left ? x0 : P[0] + r, P[1]], [left ? x1 : x1, P[1]])], g, "Annotation-Spot", id, true);
+    B.text([x0, P[1] + 0.8], text, h, { layer: "Annotation-Spot", id, font });
+    const S = ctx.scale; B.hit(id, [[q[0] - (w + 4) * S, q[1] - 2 * S], [q[0] + (w + 4) * S, q[1] - 2 * S], [q[0] + (w + 4) * S, q[1] + 3 * S], [q[0] - (w + 4) * S, q[1] + 3 * S]]);
+    return;
+  }
   // Revit's spot elevation symbol: a crosshair circle 2.5 across, the value over it
   const r = 1.25, g = { weight: 0.085, colour: z == null ? "#b3261e" : "#000" };
   B.stroke(circlePath(P, r), g, "Annotation-Spot", id, true);
@@ -13711,6 +13781,28 @@ function drawFilledRegion(doc, ctx, B, f) {
 /** View-owned annotation for views that are not plans (sections, elevations): material tags. */
 function drawViewAnnotations(doc, ctx, B, v) {
   if (!categoryVisible(ctx, "Annotation")) return;
+  // callouts of this view: each detail's crop as a rounded dashed boundary, a bubble with its number (and sheet)
+  const place = placements(doc), AS = annotationStyle(doc), S = ctx.scale;
+  for (const g of doc.elements()) {
+    if (g === v || doc.typeOf(g) !== "SectionView") continue;
+    const co = doc.argValue(g, "callout"); if (!co || !co.parent || co.parent !== doc.idOf(v)) continue;
+    const clip = doc.argValue(g, "clip"), r = clip && clip.rect; if (!r) continue;
+    const id = doc.idOf(g), a = B.P([r[0], r[1]]), b = B.P([r[2], r[3]]), rr = Math.min(co.radius ?? 4, (b[0] - a[0]) / 3, (b[1] - a[1]) / 3);
+    const path = [], arc = (c, a0) => { for (let k = 0; k <= 6; k++) { const t = a0 + k / 6 * Math.PI / 2; path.push([c[0] + rr * Math.cos(t), c[1] + rr * Math.sin(t)]); } };
+    arc([b[0] - rr, a[1] + rr], -Math.PI / 2); arc([b[0] - rr, b[1] - rr], 0); arc([a[0] + rr, b[1] - rr], Math.PI / 2); arc([a[0] + rr, a[1] + rr], Math.PI);
+    const gl = { weight: 0.085, colour: "#000", dash: LINE_TYPES.dashed1 };
+    B.stroke(polyPath(path, true), gl, "Annotation-Marker", id, true);
+    const pl = place.get(id), R = AS.markerRadius || 4.5, bc = co.bubble ? B.P(co.bubble) : [b[0] + R * 3, (a[1] + b[1]) / 2];
+    // the leader: from the bubble to the nearest point of the boundary
+    const nx = Math.max(a[0], Math.min(b[0], bc[0])), ny = Math.max(a[1], Math.min(b[1], bc[1])), d0 = normalise(sub([nx, ny], bc));
+    if (Number.isFinite(d0[0])) B.stroke([lineSeg(add(bc, mul(d0, R)), [nx, ny])], Object.assign({}, gl, { dash: LINE_TYPES.dotted || gl.dash }), "Annotation-Marker", id, true);
+    B.stroke(circlePath(bc, R), { weight: 0.085, colour: "#000" }, "Annotation-Marker", id, true);
+    const num = pl ? String(pl.vp) : "—";
+    if (pl && AS.calloutSheet !== false) { B.stroke([lineSeg([bc[0] - R, bc[1]], [bc[0] + R, bc[1]])], { weight: 0.085, colour: "#000" }, "Annotation-Marker", id, true); B.text([bc[0], bc[1] + 0.9], num, AS.markerText || 2.2, { align: "centre", layer: "Annotation-Marker", id, font: AS.font }); B.text([bc[0], bc[1] - 0.9 - (AS.markerSheetText || 2)], pl.number, AS.markerSheetText || 2, { align: "centre", layer: "Annotation-Marker", id, font: AS.font }); }
+    else B.text([bc[0], bc[1] - (AS.markerText || 2.2) / 2], num, AS.markerText || 2.2, { align: "centre", layer: "Annotation-Marker", id, font: AS.font });
+    if (pl) B.links.push({ t: "link", rect: [bc[0] - R, bc[1] - R, 2 * R, 2 * R], sheet: pl.sheet, layer: "Annotation-Marker", id });
+    B.hit(id, [[r[0], r[1]], [r[2], r[1]], [r[2], r[3]], [r[0], r[3]]], "curve");
+  }
   for (const f of doc.elements()) if (F.refId(f, "view") === doc.idOf(v) && !doc.error(f) && f.get("Integer") !== 0) {
     const t = doc.typeOf(f);
     if (t === "MaterialTag") drawMaterialTag(doc, ctx, B, f);
@@ -13720,6 +13812,9 @@ function drawViewAnnotations(doc, ctx, B, v) {
     if (t === "FilledRegion") drawFilledRegion(doc, ctx, B, f);
     if (t === "Text") drawText(doc, ctx, B, f);
     if (t === "CADImport") drawImport(doc, ctx, B, f);
+    // a detail's components (batt, rigid insulation, a deck's flutes) and its spot elevations, in the view's own coordinates
+    if (t === "RepeatingDetail") drawRepeating(doc, ctx, B, f);
+    if (t === "SpotElevation") { const G = (doc.typeOf(v) === "SectionView" || doc.typeOf(v) === "ElevationView") ? viewLineGeometry(doc, v) : null; drawSpotElevation(doc, ctx, B, f, Infinity, G ? F.point(f, "position")[1] + G.Z0 : null); }
     if (t === "DetailLine") { const segs = curveSegs(F.json(f, "curve")); B.stroke(segs, { weight: penWeight(doc, F.choice(f, "pen"), ctx.scale), colour: F.text(f, "colour") || "#000000", dash: detailDash(f) }, "Detail", doc.idOf(f)); B.hit(doc.idOf(f), samplePath(segs), "curve"); }
   }
 }
@@ -13919,6 +14014,23 @@ function drawConstraintGlyphs(doc, ctx, B) {
  *  Two horizontal planes give a height ("levels"); two upright ones square to the view give a width
  *  ("across") - measured from the planes themselves, so a thicker slab or wall carries its dimension. */
 function viewMeasure(doc, v, keys) {
+  // a detail line drawn in this view is in its own (along, height) coordinates: upright, it is a plane across the
+  // view at its x; level, a horizontal plane at its y (a detail's witness line for what the model does not hold)
+  const Rv = keys.map(k => { const [eid] = String(k).split(":"), g = doc.element(eid);
+    if (!g || doc.typeOf(g) !== "DetailLine" || F.refId(g, "view") !== doc.idOf(v)) return null;
+    const c = F.json(g, "curve"); if (!c || c.type !== "line") return null;
+    const dx = Math.abs(c.end[0] - c.start[0]), dy = Math.abs(c.end[1] - c.start[1]);
+    const Z0 = viewLineGeometry(doc, v).Z0;
+    return dy >= dx ? { kind: "vline", s: c.start[0], z0: Math.min(c.start[1], c.end[1]), z1: Math.max(c.start[1], c.end[1]) } : { kind: "plane", z: c.start[1] + Z0 }; });
+  if (Rv.some(Boolean)) {
+    const R = keys.map((k, i) => Rv[i] || resolveReference(doc, k));
+    if (R.some(r => !r)) return { lost: keys.filter((k, i) => !R[i]) };
+    const [a, b] = R;
+    if (a.kind === "plane" && b.kind === "plane") return { value: Math.abs(b.z - a.z), signed: b.z - a.z, a, b, kind: "levels" };
+    const G = viewLineGeometry(doc, v), sv = r => r.kind === "vline" ? r.s : sAcross(G, r), sa = sv(a), sb = sv(b);
+    if (sa != null && sb != null) return { value: Math.abs(sb - sa), signed: sb - sa, a, b, sa, sb, kind: "across" };
+    return { value: null, why: "these do not measure across this view" };
+  }
   const R = keys.map(k => resolveReference(doc, k)), lost = keys.filter((k, i) => !R[i]);
   if (lost.length) return { lost };
   const [a, b] = R;
@@ -13966,7 +14078,7 @@ function viewReferences(doc, v) {
  *  union of silhouettes in front of it; depth banding grades the weight. */
 function elevationScene(doc, v, opts = {}) {
   const ctx = viewContext(doc, v);
-  const S = ctx.scale, B = new SceneBuilder(S);
+  const S = ctx.scale, B = new SceneBuilder(S); B.annoK = (doc.argValue(v, "overrides") || {}).__annoK ?? null;
   const G = viewLineGeometry(doc, v);
   const items = gatherElevationItems(doc, ctx, G);
   const inView = it => it.depthMax >= -TOL && it.depth <= G.depthMax && it.s1 >= 0 && it.s0 <= G.Lv;
@@ -13993,7 +14105,7 @@ function viewLineGeometry(doc, v) {
 }
 function gatherElevationItems(doc, ctx, G, skip = null) {
   const { V, sOf, depthOf, Z0 } = G;
-  const items = [];
+  const items = [], grounds = [];
   for (const f of doc.elements()) {
     if (f.get("Integer") === 0 || doc.error(f)) continue;
     if (skip && skip.has(doc.idOf(f))) continue;
@@ -14007,6 +14119,14 @@ function gatherElevationItems(doc, ctx, G, skip = null) {
       let d0 = Infinity, d1 = -Infinity, s0 = Infinity, s1 = -Infinity, z0 = Infinity, z1 = -Infinity;
       for (let i = 0; i < P.length; i += 3) { const q = [P[i], P[i + 1]], dd = depthOf(q), ss = sOf(q); d0 = Math.min(d0, dd); d1 = Math.max(d1, dd); s0 = Math.min(s0, ss); s1 = Math.max(s1, ss); z0 = Math.min(z0, P[i + 2]); z1 = Math.max(z1, P[i + 2]); }
       // a body drawn in a work plane (a moulding) shows its own profile; any other body its feature edges
+      // the ground: its profile - the highest grade seen at each point across the view - not its triangles; what is under it hidden
+      if (t === "Toposurface") {
+        const I = p.mesh.index, tris = [];
+        for (let k = 0; k < I.length; k += 3) { const q = [I[k], I[k + 1], I[k + 2]].map(i => [sOf([P[i * 3], P[i * 3 + 1]]), P[i * 3 + 2] - Z0, depthOf([P[i * 3], P[i * 3 + 1]])]); if (Math.max(...q.map(v => v[2])) < 0) continue; tris.push(q); }
+        // kept aside: once the building is gathered, the ground in front of it and the ground beyond it are drawn apart
+        grounds.push({ f, tris, s0, s1, d0, d1, z0 });
+        continue;
+      }
       if (p.face) for (const l of p.face) for (let i = 0; i < l.length; i++) { const A = l[i], Bq = l[(i + 1) % l.length]; curves.push([[sOf(A), A[2] - Z0], [sOf(Bq), Bq[2] - Z0]]); }
       else for (const [a, b] of meshEdges(doc, p.meshShape, p.mesh)) { const A = [P[a * 3], P[a * 3 + 1]], Bq = [P[b * 3], P[b * 3 + 1]]; curves.push([[sOf(A), P[a * 3 + 2] - Z0], [sOf(Bq), P[b * 3 + 2] - Z0]]); }
       // its face toward the eye, for the surface fill: its box (a moulding, a frame), or brick by brick (a screen)
@@ -14031,12 +14151,32 @@ function gatherElevationItems(doc, ctx, G, skip = null) {
       for (const part of p.parts) {
         const ss = part.foot.map(sOf), dd = part.foot.map(depthOf), s0 = Math.min(...ss), s1 = Math.max(...ss);
         const sil = [[s0, part.z0 - Z0], [s1, part.z0 - Z0], [s1, part.z1 - Z0], [s0, part.z1 - Z0]];
-        items.push({ id: doc.idOf(f), f, depth: Math.min(...dd), depthMax: Math.max(...dd), s0, s1, curves: polyPath(sil).map(x => [x.a, x.b]), sil: [sil], cat: t === "Floor" ? "IfcSlab" : t === "Generic" ? "IfcBuildingElementProxy" : "IfcBeam" });
+        const curves = polyPath(sil).map(x => [x.a, x.b]);
+        // a cellular beam (castellated): the round openings in its web, where the beam runs across the view
+        const bt = t === "Beam" && part.sub === "Web" && F.type(f, "beamType");
+        if (bt && bt.cells && p.axis) { const a0 = sOf(p.axis.start), a1 = sOf(p.axis.end), Lb = dist(p.axis.start, p.axis.end);
+          if (Math.abs(a1 - a0) > 0.7 * Lb) { const r = bt.cells.d / 2, sp = bt.cells.spacing, zc = (part.z0 + part.z1) / 2 - Z0, lo = Math.min(a0, a1), hi = Math.max(a0, a1), n = Math.floor((hi - lo - 2 * r) / sp);
+            const st = lo + (hi - lo - n * sp) / 2;
+            for (let k = 0; k <= n; k++) { const cx = st + k * sp; for (let i = 0; i < 24; i++) { const t0 = i / 24 * 2 * Math.PI, t1 = (i + 1) / 24 * 2 * Math.PI; curves.push([[cx + r * Math.cos(t0), zc + r * Math.sin(t0)], [cx + r * Math.cos(t1), zc + r * Math.sin(t1)]]); } } } }
+        items.push({ id: doc.idOf(f), f, depth: Math.min(...dd), depthMax: Math.max(...dd), s0, s1, curves, sil: [sil], cat: t === "Floor" ? "IfcSlab" : t === "Generic" ? "IfcBuildingElementProxy" : "IfcBeam" });
       }
     }
     if (t === "Column") { const p = doc.plan(f); if (!p) continue; const pts = p.foot.length ? p.foot : samplePath(p.path); const ss = pts.map(sOf), dd = pts.map(depthOf);
       const s0 = Math.min(...ss), s1 = Math.max(...ss); const sil = [[s0, p.z0 - Z0], [s1, p.z0 - Z0], [s1, p.z1 - Z0], [s0, p.z1 - Z0]];
       items.push({ id: doc.idOf(f), f, depth: Math.min(...dd), depthMax: Math.max(...dd), s0, s1, curves: polyPath(sil).map(x => [x.a, x.b]), sil: [sil], cat: "IfcColumn" }); }
+  }
+  // the ground's profiles: in front of the building (drawn over it) and all of it, set as far as the building's back (hidden by it)
+  const front = items.filter(it => it.cat === "IfcWall" || it.cat === "IfcSlab" || it.cat === "IfcColumn").reduce((m, it) => Math.min(m, it.depth), Infinity);
+  for (const g of grounds) {
+    const prof = (maxD) => { const n = Math.max(2, Math.min(600, Math.ceil((g.s1 - g.s0) / 300))), out = [];
+      for (let i = 0; i <= n; i++) { const x = g.s0 + (g.s1 - g.s0) * i / n; let zt = -Infinity;
+        for (const q of g.tris) { if (Math.min(q[0][2], q[1][2], q[2][2]) > maxD) continue;
+          for (let e = 0; e < 3; e++) { const A = q[e], Bq = q[(e + 1) % 3]; if ((A[0] - x) * (Bq[0] - x) > 0 || A[0] === Bq[0]) continue; const z = A[1] + (Bq[1] - A[1]) * (x - A[0]) / (Bq[0] - A[0]); if (z > zt) zt = z; } }
+        if (Number.isFinite(zt)) out.push([x, zt]); }
+      return out; };
+    const mk = (pr, depth) => { const curves = [], sil = [], lo = g.z0 - Z0 - 1; for (let i = 1; i < pr.length; i++) { curves.push([pr[i - 1], pr[i]]); sil.push([[pr[i - 1][0], lo], [pr[i][0], lo], pr[i], pr[i - 1]]); }
+      items.push({ id: doc.idOf(g.f), f: g.f, depth, depthMax: g.d1, s0: g.s0, s1: g.s1, curves, sil, box: [[g.s0, lo], [g.s1, lo], [g.s1, lo + 1], [g.s0, lo + 1]], fillerHits: [], cat: categoryOf(doc, g.f), ground: true }); };
+    if (Number.isFinite(front)) { mk(prof(front), Math.max(0, g.d0)); mk(prof(Infinity), Math.max(front + 1, g.d0)); } else mk(prof(Infinity), Math.max(0, g.d0));
   }
   return items;
 }
@@ -14050,6 +14190,19 @@ function drawDatums(doc, ctx, B, v, G) {
     // a level hidden in this view (Revit's Hide in View) draws no line and no head here
     if ((vov[doc.idOf(f)] || {}).visible === false) continue;
     const z = (doc.data(f) || {}).value - Z0; if (z + Z0 > topZ) continue;
+    if (AS.levelStyle === "fha") {
+      // Frank Harmon's datum: a circle at the line's end, the line through it; the height (on the survey's datum, in feet
+      // and inches) over the line, the level's name under it - on the side the view puts its heads
+      const id = doc.idOf(f), right = (vov.__levelHead || AS.levelHeads) === "Right", hp = B.P([right ? ext[1] : ext[0], z]), op = B.P([right ? ext[0] : ext[1], z]);
+      const kk = annoK(doc, S, B), R = 3.175 * kk, font = AS.font || undefined, th = 1.976 * kk, g0 = { weight: 0.19 * (AS.levelPen || 1), colour: "#000" };
+      B.stroke(circlePath(hp, R), g0, "IfcBuildingStorey", id, true);
+      B.stroke([lineSeg(add(hp, [right ? R : -R, 0]), op)], g0, "IfcBuildingStorey", id, true);
+      const sd = (doc.meta && doc.meta.surveyElevation) || 0, val = archFtIn(z + Z0 + sd, 8), dx = (right ? -4.28 : 4.415) * kk, al = right ? "right" : "left";
+      B.text(add(hp, [dx, 1.24 * kk]), val, th, { layer: "IfcBuildingStorey", id, font, align: al });
+      String(F.text(f, "name")).split("\n").forEach((ln, i) => B.text(add(hp, [dx, -2.99 * kk - i * th * 1.6]), ln, th, { layer: "IfcBuildingStorey", id, font, align: al }));
+      B.hit(id, [[ext[0], z - 50], [ext[1], z - 50], [ext[1], z + 50], [ext[0], z + 50]]);
+      continue;
+    }
     if (AS.levelHeads === "Left") {
       // Revit's level head at the left: the name, a heavy V with its point on the level, the height in mm; the
       // line solid under the height, then dashed across the view
@@ -14079,7 +14232,12 @@ function drawDatums(doc, ctx, B, v, G) {
   // horizontal one at their offset height. Each extension line runs from the plane's own extent in this view
   if (categoryVisible(ctx, "Annotation")) {
     let spans = null;
-    const span = key => { if (!spans) { spans = new Map(); for (const r of viewReferences(doc, v)) spans.set(r.key, r); } return spans.get(key); };
+    const span = key => { if (!spans) { spans = new Map(); for (const r of viewReferences(doc, v)) spans.set(r.key, r);
+        // detail lines of this view: their own extent is where their extension line starts
+        for (const g of doc.elements()) if (doc.typeOf(g) === "DetailLine" && F.refId(g, "view") === doc.idOf(v)) { const c = F.json(g, "curve"); if (!c || c.type !== "line") continue;
+          const k = doc.idOf(g) + ":line", vert = Math.abs(c.end[1] - c.start[1]) >= Math.abs(c.end[0] - c.start[0]);
+          spans.set(k, vert ? { z0: Math.min(c.start[1], c.end[1]), z1: Math.max(c.start[1], c.end[1]) } : { s0: Math.min(c.start[0], c.end[0]), s1: Math.max(c.start[0], c.end[0]) }); } }
+      return spans.get(key); };
     const clamp = (x, lo, hi) => Math.max(Math.min(lo, hi), Math.min(Math.max(lo, hi), x));
     for (const f of doc.elements()) {
       if (doc.typeOf(f) !== "Dimension" || F.refId(f, "view") !== doc.idOf(v)) continue;
@@ -14168,7 +14326,7 @@ function surfaceOf(doc, it) {
 function drawSurfaces(doc, ctx, B, vis) {
   const out = [], S = ctx.scale;
   // only worth it where some surface is coloured: then every nearer face covers it (a white wall too)
-  if (!vis.some(it => surfaceOf(doc, it)) && !(ctx.style && ctx.style.surfaceShade)) return out;
+  if (!vis.some(it => surfaceOf(doc, it) || it.panelSurf) && !(ctx.style && ctx.style.surfaceShade)) return out;
   for (const it of vis.slice().reverse()) {
     // a face with no colour of its own is paper white - or the style's shade (a shaded view's walls in shadow)
     // a rule may give an element its own face colour (a shaded view's sunlit parapets, white)
@@ -14181,6 +14339,14 @@ function drawSurfaces(doc, ctx, B, vis) {
     else if (!polys && it.face) polys = it.face;
     else if (!polys && it.box) polys = [it.box];
     if (!polys) continue;
+    // a curtain wall: its frame white, then each panel in its own material (siding's courses, a cladding's joints)
+    if (it.panelSurf) {
+      out.push({ t: "fill", path: polys.flatMap(q => polyPath(q.map(p => B.P(p)))), colour: shade, layer: it.cat + "-Surface", id: it.id });
+      for (const ps of it.panelSurf) { const mp = (doc.lib.materials[ps.material] || {}).projection || {}, pp = polyPath(ps.poly.map(p => B.P(p)));
+        if (mp.background) out.push({ t: "fill", path: pp, colour: mp.background, layer: it.cat + "-Surface", id: it.id });
+        const pt = mp.pattern && doc.lib.patterns[mp.pattern]; if (pt) out.push({ t: "hatch", path: pp, pattern: Object.assign({ id: mp.pattern }, pt), scale: pt.kind === "model" ? 1 / S : 1, colour: mp.patternColour || mp.lineColour || "#a6a6a6", weight: penWeight(doc, "hairline", S), layer: it.cat + "-Surface", id: it.id }); }
+      continue;
+    }
     const path = polys.flatMap(q => polyPath(q.map(p => B.P(p))));
     if (sf.bg) out.push({ t: "fill", path, colour: sf.bg, layer: it.cat + "-Surface", id: it.id });
     const pat = sf.pat && doc.lib.patterns[sf.pat];
@@ -14225,11 +14391,17 @@ function drawProjection(doc, ctx, B, vis, G, occluders) {
     const bandIdx = Math.min(2, Math.floor(Math.max(0, it.depth) / (G.depthMax / 3 + 1e-9)));
     const pen = ["medium", "thin", "hairline"][bandIdx];
     const g = resolveGraphics(doc, ctx, it.f, "projection");
-    const gw = { weight: g.weight === "none" ? "none" : penWeight(doc, pen, S), colour: g.colour, dash: g.dash };
+    const gw = { weight: g.weight === "none" ? "none" : penWeight(doc, it.ground ? "bold" : pen, S), colour: g.colour, dash: g.dash };
     for (const [a, b] of it.curves) {
       let pieces = [[a, b]];
       for (const occ of occluders) { const next = []; for (const [p, q] of pieces) next.push(...segMinusConvex(p, q, occ, 1e-3)); pieces = next; if (!pieces.length) break; }
       for (const [p, q] of pieces) B.stroke([lineSeg(p, q)], gw, it.cat, it.id);
+    }
+    // operable sashes' swings, dashed and thin
+    for (const [a, b] of it.dashCurves || []) {
+      let pieces = [[a, b]];
+      for (const occ of occluders) { const next = []; for (const [p, q] of pieces) next.push(...segMinusConvex(p, q, occ, 1e-3)); pieces = next; if (!pieces.length) break; }
+      for (const [p, q] of pieces) B.stroke([lineSeg(p, q)], { weight: penWeight(doc, "hairline", S), colour: gw.colour, dash: LINE_TYPES.dashed2 }, it.cat, it.id);
     }
     for (const s of it.sil) occluders.push(ensureCCW(s));
     // a roof hides what is behind its upper surface, triangle by triangle
@@ -14309,6 +14481,19 @@ function sectionCut(doc, v) {
   for (const f of doc.elements()) {
     if (f.get("Integer") === 0 || doc.error(f) || !categoryVisible(ctx, categoryOf(doc, f)) || hiddenByRule(doc, ctx, f)) continue;
     const t = doc.typeOf(f), p = doc.plan(f); if (!p) continue;
+    if (t === "Wall" && p.stack && p.curtain && p.curve.type === "line") {
+      // a curtain wall cut: its panel (glass, a panel) where the cut crosses a cell, a mullion where it crosses a grid line
+      const G2 = lineIntervals(samplePath(wallRegions(p, "Coarse", -Infinity, [])[0].path, 24), G); if (!G2.length) continue;
+      const [s0, s1] = G2[0], mid = add(G.o, mul(G.d, (s0 + s1) / 2)), u = uOf(p, mid), cg = curtainGrid(p), n = p.stack.s.length - 1, sc = (p.stack.s[0] + p.stack.s[n]) / 2;
+      const across = [G.sOf(pointAt(p, sc - cg.md / 2, u)), G.sOf(pointAt(p, sc + cg.md / 2, u))].sort((a, b) => a - b), pc = ((p.curtain.panel || {}).thickness || 25) / 2;
+      const acrossP = [G.sOf(pointAt(p, sc - pc, u)), G.sOf(pointAt(p, sc + pc, u))].sort((a, b) => a - b);
+      const onV = curtainMullions(p).some(m => m.kind === "v" && Math.abs(m.a[0] - u) < cg.mw / 2);
+      if (onV) { for (const m of curtainMullions(p)) if (m.kind === "v" && Math.abs(m.a[0] - u) < cg.mw / 2) push(f, "column", across[0], across[1], p.z0 + m.a[1], p.z0 + m.b[1], (p.curtain.mullion || {}).material || "M-ALUM", 1); continue; }
+      for (const pn of curtainPanels(p)) { const xs = pn.poly.map(q => q[0]); if (u < Math.min(...xs) || u > Math.max(...xs)) continue; const zs = pn.poly.map(q => q[1]);
+        push(f, "wall", acrossP[0], acrossP[1], p.z0 + Math.min(...zs), p.z0 + Math.max(...zs), pn.material, 3); }
+      for (const m of curtainMullions(p)) if ((m.kind === "h") && u >= m.a[0] && u <= m.b[0]) push(f, "column", across[0], across[1], p.z0 + Math.max(0, m.a[1] - cg.mw / 2), p.z0 + m.a[1] + cg.mw / 2, (p.curtain.mullion || {}).material || "M-ALUM", 1);
+      continue;
+    }
     if (t === "Wall" && p.stack) {
       const regs = wallRegions(p, detail, -Infinity, []);
       for (const r of regs) {
@@ -14353,7 +14538,7 @@ function sectionCut(doc, v) {
 }
 function sectionScene(doc, v, opts = {}) {
   const { rects, cutIds, G, ctx, polys } = sectionCut(doc, v);
-  const S = ctx.scale, B = new SceneBuilder(S);
+  const S = ctx.scale, B = new SceneBuilder(S); B.annoK = (doc.argValue(v, "overrides") || {}).__annoK ?? null;
   drawDatums(doc, ctx, B, v, G);
   // beyond the cut: as an elevation, hidden behind the cut itself
   const items = gatherElevationItems(doc, ctx, G, cutIds).filter(it => it.depthMax >= -TOL && it.depth >= -TOL && it.depth <= G.depthMax && it.s1 >= 0 && it.s0 <= G.Lv)
@@ -14382,8 +14567,12 @@ function sectionScene(doc, v, opts = {}) {
   for (const pg of polys) {
     const el = doc.element(pg.id), g = el ? resolveGraphics(doc, ctx, el, "cut") : null; if (g && !g.visible) continue;
     const mc = (doc.lib.materials[pg.material] || {}).cut || {}, path = pg.loops.flatMap(l => polyPath(l.map(q => B.P(q))));
-    B.fill(path, g && g.pattern === "solid" ? g.fill || "#000" : (g && g.fill) || mc.background || "#e9eaec", pg.cat, pg.id, true);
-    B.stroke(pg.loops.flatMap(l => polyPath(l)), { weight: penWeight(doc, "heavy", S), colour: "#000" }, "Section-Cut", pg.id);
+    if (pg.cat !== "Topography") B.fill(path, g && g.pattern === "solid" ? g.fill || "#000" : (g && g.fill) || mc.background || "#e9eaec", pg.cat, pg.id, true);
+    // the earth cut: only its grade is drawn (not the bottom and the sides of the model's block of ground)
+    if (pg.cat === "Topography") { for (const l of pg.loops) { const zl = Math.min(...l.map(q => q[1])), sl = Math.min(...l.map(q => q[0])), sh = Math.max(...l.map(q => q[0]));
+        for (let i = 0; i < l.length; i++) { const a = l[i], b = l[(i + 1) % l.length]; if ((Math.abs(a[1] - zl) < 2 && Math.abs(b[1] - zl) < 2) || (Math.abs(a[0] - b[0]) < 1 && (Math.abs(a[0] - sl) < 2 || Math.abs(a[0] - sh) < 2))) continue;
+          B.stroke([lineSeg(a, b)], { weight: penWeight(doc, "bold", S), colour: "#000" }, "Section-Cut", pg.id); } } }
+    else B.stroke(pg.loops.flatMap(l => polyPath(l)), { weight: penWeight(doc, "heavy", S), colour: "#000" }, "Section-Cut", pg.id);
     for (const l of pg.loops) B.hit(pg.id, l);
   }
   for (const e of cutOutline(rects)) B.stroke([lineSeg(e.a, e.b)], { weight: penWeight(doc, e.outer ? "heavy" : "thin", S), colour: "#000" }, "Section-Cut", e.id);
@@ -14478,9 +14667,15 @@ function elevWall(doc, f, w, V, sOf, depthOf, ctx) {
     }
   }
   // a curtain wall: its panels, each outlined inside its mullions (the grid cut by the wall's own outline)
+  const panelSurf = [], dashCurves = [];
   if (w.curtain && w.curve.type === "line") {
     const mapU = u => sOf(pointAt(w, nearS, u)), mapZ = z => V(foot[0], w.z0 + z)[1];
-    for (const p of curtainPanels(w)) { const q = p.poly.map(([u, z]) => [mapU(u), mapZ(z)]); for (let k = 0; k < q.length; k++) curves.push([q[k], q[(k + 1) % q.length]]); }
+    for (const p of curtainPanels(w)) { const q = p.poly.map(([u, z]) => [mapU(u), mapZ(z)]); for (let k = 0; k < q.length; k++) curves.push([q[k], q[(k + 1) % q.length]]); panelSurf.push({ poly: q, material: p.material });
+      // an operable sash: the dashed swing, its point on the hinge side; a door: the dashed diamond of its leaves
+      if (p.swing && q.length === 4) { const xs = q.map(c => c[0]), ys = q.map(c => c[1]), x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys), xm = (x0 + x1) / 2, ym = (y0 + y1) / 2;
+        const sw = { L: [[[x1, y0], [x0, ym]], [[x0, ym], [x1, y1]]], R: [[[x0, y0], [x1, ym]], [[x1, ym], [x0, y1]]], T: [[[x0, y0], [xm, y1]], [[xm, y1], [x1, y0]]], B: [[[x0, y1], [xm, y0]], [[xm, y0], [x1, y1]]],
+          D: [[[x0, ym], [xm, y1]], [[xm, y1], [x1, ym]], [[x1, ym], [xm, y0]], [[xm, y0], [x0, ym]]] }[p.swing] || [];
+        dashCurves.push(...sw); } }
   }
   // Silhouette minus see-through holes, as convex slabs (for the occluder list).
   const sil = [];
@@ -14498,7 +14693,7 @@ function elevWall(doc, f, w, V, sOf, depthOf, ctx) {
     for (const [ha, hb] of zs) { if (ha > z) sil.push([[sa, z], [sb, z], [sb, ha], [sa, ha]]); z = Math.max(z, hb); }
     sil.push([[sa, z], [sb, z], [sb, topLine(sb)], [sa, topLine(sa)]]);
   }
-  return { id: w.id, f, fillerHits, depth: Math.max(0, Math.min(...dd)), depthMax: Math.max(...dd), s0, s1, curves, sil: sil.length ? sil : [[[s0, baseZ], [s1, baseZ], [s1, t1], [s0, t0]]], cat: "IfcWall" };
+  return { id: w.id, f, fillerHits, depth: Math.max(0, Math.min(...dd)), depthMax: Math.max(...dd), s0, s1, curves, sil: sil.length ? sil : [[[s0, baseZ], [s1, baseZ], [s1, t1], [s0, t0]]], cat: "IfcWall", panelSurf: panelSurf.length ? panelSurf : null, dashCurves };
 }
 /** An arched head's outline in a drawing's (s, z): the jambs up to the springing, then the arch - a semicircle, or two
  *  arcs meeting at a point (an equilateral Gothic arch) - to the head at z1; the sill across the bottom. */
@@ -14701,10 +14896,23 @@ function sheetScene(doc, sh, opts = {}) {
       // in Arial on a rule, the scale small beneath
       // (Revit's view title: the circle 9 across, the number 3.5 over the sheet 2.0, the name 5.0 on a rule
       // whose length the viewport sets, the scale 2.0 under it; placed where the viewport says)
+      // the family's own view title, when it gives one (the circle, the name on its rule, the scale under it)
+      const VT = isTitleFamily(tb) && tb.viewTitle;
+      if (VT) {
+        const F2 = { font: VT.font || "Arial" }, name = view.get("Name") || "", nw = textWidth(name, VT.nameH, F2.font);
+        const [cx, cy] = vp.titleAt || [tx0 + VT.R, ty + 1.5];
+        put(circlePath([cx, cy], VT.R), VT.w || 0.19);
+        txt([cx, cy + (VT.numDy ?? -VT.numH / 2)], String(vp.number ?? i + 1), VT.numH, Object.assign({ align: "centre" }, F2));
+        if (VT.sheet) { put([lineSeg([cx - VT.R, cy], [cx + VT.R, cy])], VT.w || 0.19); txt([cx, cy - VT.R * 0.7], doc.argValue(sh, "number") || "", VT.numH * 0.6, Object.assign({ align: "centre" }, F2)); }
+        txt([cx + VT.nameDx, cy + VT.nameDy], name, VT.nameH, F2);
+        put([lineSeg([cx + VT.R, cy], [cx + (vp.titleLength || VT.nameDx + nw + 2), cy])], VT.w || 0.19);
+        if (doc.typeOf(view) !== "Schedule" && doc.typeOf(view) !== "View3D") txt([cx + VT.scaleDx, cy + VT.scaleDy], scaleName(doc, F.int(view, "scale") || 100, VT.scaleCompact), VT.scaleH, F2);
+        return;
+      }
       const A = { font: "Arial" }, name = view.get("Name") || "", nw = textWidth(name, 5.07, "Arial");
       const [cx, cy] = vp.titleAt || [tx0 + 5, ty + 1.5], R0 = 4.49;
       put(circlePath([cx, cy], R0), 0.085);
-      txt([cx, cy + 0.17], String(i + 1), 3.55, Object.assign({ align: "centre" }, A));
+      txt([cx, cy + 0.17], String(vp.number ?? i + 1), 3.55, Object.assign({ align: "centre" }, A));
       txt([cx, cy - 2.68], doc.argValue(sh, "number") || "", 2.04, Object.assign({ align: "centre" }, A));
       txt([cx + 5.04, cy + 0.76], name, 5.07, A);
       put([lineSeg([cx + 4.57, cy], [cx + (vp.titleLength || 5.04 + nw + 1), cy])], 0.085);
@@ -14712,7 +14920,7 @@ function sheetScene(doc, sh, opts = {}) {
       return;
     }
     put(circlePath([tx0 + 4.5, ty + 1.5], 4.5), 0.35);
-    txt([tx0 + 4.5, ty], String(i + 1), 3, { align: "centre" });
+    txt([tx0 + 4.5, ty], String(vp.number ?? i + 1), 3, { align: "centre" });
     txt([tx0 + 11, ty + 0.5], view.get("Name"), 3.5, {});
     txt([tx0 + 11, ty - 4], doc.typeOf(view) === "Schedule" ? "" : "1:" + (F.int(view, "scale") || 100), 2.2, { colour: "#333" });
     put([lineSeg([tx0 + 10, ty - 1.2], [tx0 + 11 + Math.max(40, textWidth(view.get("Name"), 3.5) + 2), ty - 1.2])], 0.5);
@@ -14783,9 +14991,11 @@ function titleBand(doc, sh, W, H, put, txt) {
 }
 /** A scale as the project writes it: 1:50 in a metric project; in an imperial one the architect's scale nearest it. */
 const ARCH_SCALES = [[12, '1" = 1\'-0"'], [16, '3/4" = 1\'-0"'], [24, '1/2" = 1\'-0"'], [32, '3/8" = 1\'-0"'], [48, '1/4" = 1\'-0"'], [64, '3/16" = 1\'-0"'], [96, '1/8" = 1\'-0"'], [192, '1/16" = 1\'-0"'], [384, '1/32" = 1\'-0"']];
-function scaleName(doc, n) {
-  if (!isImperial(doc.meta && doc.meta.displayUnits)) return "1:" + n;
-  return ARCH_SCALES.reduce((b, a) => (Math.abs(Math.log(a[0] / n)) < Math.abs(Math.log(b[0] / n)) ? a : b))[1];
+function scaleName(doc, n, compact = false) {
+  // an imperial set's architect's scale (nearest), whether its model is metric or not, when the project says so
+  if (!isImperial(doc.meta && doc.meta.displayUnits) && !(doc.meta && doc.meta.scaleNames === "imperial")) return "1:" + n;
+  const s = ARCH_SCALES.reduce((b, a) => (Math.abs(Math.log(a[0] / n)) < Math.abs(Math.log(b[0] / n)) ? a : b))[1];
+  return compact ? s.replace(/ = /g, "=") : s;
 }
 /** Frank Harmon Architect's title strip: along the right edge of the sheet, read upward - the project and its
  *  place, the firm and its address, job / date / scale, drawn / checked, the drawing's name and the sheet number
@@ -16717,6 +16927,21 @@ function buildMazatlanSample() {
   return doc;
 }
 
+// ===== fha_pdf.js =====
+//! The Frank Harmon sets' annotation, lifted from their PDFs (see tools/fha): each set's title block families, each
+//! sheet's own title block values, and every page's notes (with their leaders), dimension strings and bubbles, in
+//! paper mm from the sheet's lower left. Carried deflated; read once, on first use.
+
+
+
+const FHA_AIA_Z = "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";
+const FHA_CACHE = {};
+/** One set's data: { titleBlocks: {id: family}, sheets: {page: {number, name, scale, tb}}, pages: {page: {size, notes, dims, bubbles}} }. */
+function fhaPdf(set) {
+  if (!FHA_CACHE[set]) FHA_CACHE[set] = JSON.parse(inflateBase64({ aia: FHA_AIA_Z }[set]));
+  return FHA_CACHE[set];
+}
+
 // ===== sample_fha.js =====
 //! Frank Harmon Architect's drawing standards, shared by the four sample projects rebuilt from the firm's sets
 //! (Schaeffer Residence, Walnut Creek Environmental Education Center, First Presbyterian Church, AIA NC Center):
@@ -16729,9 +16954,15 @@ function buildMazatlanSample() {
 
 
 
+
+
+
 const ft = v => Math.round(v * 304.8);                  // a dimension read in feet, in mm
 const FT = pts => pts.map(p => [ft(p[0]), ft(p[1])]);
 const PT = (x, y) => [ft(x), ft(y)];
+
+/** The firm's view title: the number in a circle, the name on a rule from it, the scale under the name (measured off the sets). */
+const FHA_VIEW_TITLE = { font: "Futura", R: 4.76, numH: 3.95, numDy: -1.79, nameH: 3.46, nameDx: 8.1, nameDy: 0.7, scaleH: 2.47, scaleDx: 7.35, scaleDy: -3.43, w: 0.19 };
 
 /** A new FHA project: the firm's standards in its library, and the helpers to build it with. */
 function fhaProject(name, project) {
@@ -16739,8 +16970,8 @@ function fhaProject(name, project) {
   doc.meta.displayUnits = "mm";
   doc.meta.project = Object.assign({ firm: "FRANK HARMON ARCHITECT", firmAddress: "14 E PEACE STREET\nRALEIGH NORTH CAROLINA 27604", phone: "919 829 9464", fax: "919 829 2202",
     drawn: "JB", checked: "FH", issue: "PERMIT SET" }, project);
-  doc.meta.annotation = { kind: "revit", font: "Futura", gridHead: 8, gridText: 4.2, gridEnd: 4, gridCentreColour: "#000000",
-    markerRadius: 4.5, markerText: 2.2, markerSheetText: 2.0, levelText: 2.0, levelValueText: 2.0, levelHeads: "Right" };
+  doc.meta.annotation = { kind: "revit", font: "Futura", gridHead: 6.35, gridText: 2.47, gridEnd: 4, gridCentreColour: "#000000",
+    markerRadius: 4.76, markerText: 3.95, markerSheetText: 2.0, calloutSheet: false, levelText: 2.0, levelValueText: 2.0, levelHeads: "Left", levelStyle: "fha", sectionStyle: "fha", annoRef: 96 };
   const ed = new Editor(doc), L = doc.lib;
   const add = element => { const r = ed.apply({ op: "add", element }, { regenerate: false }); if (!r.ok) throw new Error(`${element.id || element.type}: ${r.error}`); return r.id; };
   const set = (id, key, value) => ed.apply({ op: "set", id, key, value }, { regenerate: false });
@@ -16755,9 +16986,11 @@ function fhaProject(name, project) {
     "TT-FH-25": { name: "Futura 2.5 (room names)", height: 2.5, font: "Futura", widthFactor: 1, colour: "#000000", pen: "thin", lineSpacing: 1.6 },
     "TT-FH-35": { name: "Futura 3.5 (view titles)", height: 3.5, font: "Futura", widthFactor: 1, colour: "#000000", pen: "thin", lineSpacing: 1.6 },
   });
-  L.dimTypes["DT-FH"] = { name: "FHA - architectural tick, Futura 2.0", arrow1: "Oblique", arrow2: "Oblique", arrowSize: 2.0, tickWeight: 0.35, lineWeight: 0.13, extWeight: 0.13,
-    dimExtend: 1.5, extFixed: 2.5, extBeyond: 1.5, font: "Futura", textHeight: 2.0, textGap: 1.0, unit: "Project", precision: 0, roundOff: 5, textSide: "Readable", fit: "Keep inside" };
+  L.dimTypes["DT-FH"] = { name: "FHA - closed arrows, Futura 2.2", arrow1: "Closed filled", arrow2: "Closed filled", arrowSize: 2.87, tickWeight: 0.35, lineWeight: 0.13, extWeight: 0.13,
+    dimExtend: 1.5, extFixed: 2.5, extBeyond: 1.5, font: "Futura", textHeight: 2.22, textGap: 0.7, unit: "ft-in", archFtIn: true, precision: 0, roundOff: 0, textSide: "Readable", fit: "Keep inside" };
   doc.meta.defaultDimType = "DT-FH";
+  // the sets are imperial: their dimensions, scales and spot elevations read in feet and inches over a metric model
+  doc.meta.scaleNames = "imperial";
 
   // ---------------------------------------------------------------- patterns and materials
   Object.assign(L.patterns, {
@@ -16770,7 +17003,7 @@ function fhaProject(name, project) {
     "P-FH-GRAVEL": { name: "Gravel", kind: "drafting", lines: [{ angle: 30, origin: [0, 0], delta: [0.9, 1.2], dashes: [0.25, -1.1] }, { angle: 120, origin: [0.4, 0.2], delta: [0.9, 1.2], dashes: [0.25, -1.3] }] },
   });
   const mat = (id, name, mark, cut, proj, shade) => { L.materials[id] = { name, mark, description: name, cut, projection: proj, shading: { colour: shade } }; };
-  mat("M-FH-CONC", "Architectural concrete", "21", { pattern: "P-CONC", pen: "heavy", lineColour: "#000000", background: "#ffffff" }, { pen: "thin" }, "#c9c7c2");
+  mat("M-FH-CONC", "Architectural concrete", "21", { pattern: null, pen: "heavy", lineColour: "#000000", background: "#cbcbcb" }, { pen: "thin" }, "#c9c7c2");
   mat("M-FH-STUD", "Wood stud and batt", "66", { pattern: "P-INSUL", pen: "heavy", lineColour: "#000000", background: "#ffffff" }, { pen: "thin" }, "#e8e1d4");
   mat("M-FH-PLY", "Plywood siding", "60", { pattern: null, pen: "medium", lineColour: "#000000", background: "#ffffff" }, { pen: "thin", pattern: "P-FH-PANEL", lineColour: "#9a9a9a" }, "#c9a47a");
   mat("M-FH-CEMENT", "Fiber cement panel", "72", { pattern: null, pen: "medium", lineColour: "#000000", background: "#ffffff" }, { pen: "thin", pattern: "P-FH-PANEL", lineColour: "#9a9a9a" }, "#b8b7b1");
@@ -16840,13 +17073,19 @@ function fhaProject(name, project) {
   const base = JSON.parse(JSON.stringify(L.viewStyles["VS-CONSTRUCTION"] || {}));
   L.viewStyles["VS-FH-PLAN"] = Object.assign(JSON.parse(JSON.stringify(base)), { name: "FHA - plans", rules: [] });
   L.viewStyles["VS-FH-ELEV"] = Object.assign(JSON.parse(JSON.stringify(base)), { name: "FHA - elevations", rules: [] });
-  L.viewStyles["VS-FH-SEC"] = Object.assign(JSON.parse(JSON.stringify(base)), { name: "FHA - sections (cut poché black)", rules: [
-    { id: "FH-SEC-POCHE", when: { param: "Category", in: ["IfcWall", "IfcStair", "IfcColumn", "IfcBeam"] }, then: { cut: { fill: "#000000", pattern: "none" } } }] });
+  // sections: what the cut meets outlined in its material (concrete grey, the rest white), as the sets draw them
+  L.viewStyles["VS-FH-SEC"] = Object.assign(JSON.parse(JSON.stringify(base)), { name: "FHA - sections", rules: [] });
   L.viewStyles["VS-FH-3D"] = Object.assign(JSON.parse(JSON.stringify(base)), { name: "FHA - 3D" });
   // the site plan: the plans' style with the planting and the ground shown
   L.viewStyles["VS-FH-SITE"] = Object.assign(JSON.parse(JSON.stringify(L.viewStyles["VS-FH-PLAN"])), { name: "FHA - site plan" });
   L.viewStyles["VS-FH-SITE"].byCategory = Object.assign({}, L.viewStyles["VS-FH-SITE"].byCategory, { IfcStair: { visible: false }, Furniture: { visible: false } });
   for (const k of ["VS-FH-PLAN", "VS-FH-ELEV", "VS-FH-SEC"]) { const s = L.viewStyles[k]; s.byCategory = Object.assign({}, s.byCategory, { Furniture: { visible: false }, Planting: { visible: false } }); }
+  // rooms: no fill; the tag the office uses - name over number in an oblong, a rule between them
+  L.viewStyles["VS-FH-PLAN"].byCategory.IfcSpace = Object.assign({}, L.viewStyles["VS-FH-PLAN"].byCategory.IfcSpace, { fill: "none",
+    label: { height: 2.222, font: "Futura", content: "{Name}\n{Number}", upper: true, quiet: true, lineSpacing: 1.786, frame: "oblong", frameR: 4.23, framePad: 2.1, extraHeight: 1.6 } });
+  // plans show no contours (the grading plan's site style does)
+  L.viewStyles["VS-FH-PLAN"].byCategory.Topography = { visible: false };
+  L.viewStyles["VS-FH-PLAN"].byCategory.IfcBeam = { visible: false };
 
   // ---------------------------------------------------------------- the helpers the models are built with
   const R = (x0, y0, x1, y1) => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
@@ -16854,14 +17093,19 @@ function fhaProject(name, project) {
     doc, ed, add, set, line, R,
     /** Every wall's ends joined where they meet another's (a corner) or land in another (a T), as drawing them would:
      *  built first, so each wall knows its thickness and its heights and a stacked wall joins nothing below it. */
-    joinWalls: () => { doc.regenerate(); const ends = doc.elements().filter(f => doc.typeOf(f) === "Wall").flatMap(f => [{ id: doc.idOf(f), end: "start" }, { id: doc.idOf(f), end: "end" }]); return ed.apply({ op: "autojoin", ends }, { regenerate: false }); },
+    joinWalls: () => { doc.regenerate(); const ends = doc.elements().filter(f => doc.typeOf(f) === "Wall" && !(doc.resolveType(F_ref(doc, f, "wallType")) || {}).curtain).flatMap(f => [{ id: doc.idOf(f), end: "start" }, { id: doc.idOf(f), end: "end" }]); return ed.apply({ op: "autojoin", ends, maxMove: H.joinTolerance ?? 1e9 }, { regenerate: false }); },
+    levelZ: id => doc.argValue(doc.element(id), "elevation") || 0,
     level: (id, name, z) => add({ id, type: "Level", name, args: { name, elevation: z } }),
-    grid: (id, name, a, b) => add({ id, type: "Grid", name: `Grid ${name}`, args: { name, line: line(a, b), ends: "End", headSize: 8, textSize: 4.2 } }),
+    grid: (id, name, a, b) => add({ id, type: "Grid", name: `Grid ${name}`, args: { name, line: line(a, b), ends: "End", headSize: 6.35, textSize: 2.47 } }),
     /** A wall from its base level to its top level (or up a height), or up to the roof it is attached to. */
     wall: (id, a, b, type, base, top, o = {}) => add({ id, type: "Wall", name: o.name || id, args: Object.assign({ centreline: line(a, b), mounting: "Centred", wallType: { ref: type }, baseLevel: { ref: base }, baseOffset: o.baseOffset || 0,
       topLevel: top ? { ref: top } : null, topOffset: o.topOffset || 0, height: o.height || 3000, flipped: false }, o.roof ? { attachTop: { ref: o.roof } } : {}) }),
     /** A chain of walls through points (closed if asked): ids id1, id2, ... */
     walls: (id, pts, type, base, top, o = {}) => { const n = o.closed ? pts.length : pts.length - 1; for (let i = 0; i < n; i++) H.wall(`${id}${i + 1}`, pts[i], pts[(i + 1) % pts.length], type, base, top, o); },
+    /** A floor with holes (a stair's well, a void over the room below): its boundary sketched as loops. */
+    floorHoles: (id, name, outer, holes, type, lev, off = 0) => { const w = emptySketch(); let n = 0;
+      for (const loop of [outer, ...holes]) loop.forEach((p, i) => w.elements.push({ id: "e" + (++n), type: "line", a: [p[0], p[1]], b: [loop[(i + 1) % loop.length][0], loop[(i + 1) % loop.length][1]] }));
+      return add({ id, type: "Floor", name, args: { boundary: outer, floorType: { ref: type }, level: { ref: lev }, heightOffset: off, sketch: weld(w) } }); },
     floor: (id, name, boundary, type, lev, off = 0) => add({ id, type: "Floor", name, args: { boundary, floorType: { ref: type }, level: { ref: lev }, heightOffset: off } }),
     roof: (id, name, boundary, lev, off, slopes, o = {}) => add({ id, type: "Roof", name, args: Object.assign({ boundary, level: { ref: lev }, heightOffset: off, thickness: o.thickness || 250, material: o.material || "M-FH-METAL", edgeSlopes: slopes, ridgeHeight: o.ridge || 0 }, o.args || {}) }),
     stair: (id, name, base, top, flights, o = {}) => add({ id, type: "Stair", name, args: Object.assign({ baseLevel: { ref: base }, topLevel: top ? { ref: top } : null, flights, width: o.width || 914, material: o.material || "M-FH-WOOD", railings: o.railings || "Both" }, o.args || {}) }),
@@ -16885,10 +17129,129 @@ function fhaProject(name, project) {
      *  at paper point `p` at its scale (1:srcScale), matched at the drawing's middle `c` so a small difference of
      *  scale spreads evenly to both ends. */
     place: (p, m, c, crop, scale, srcScale = 48) => { const pc = [p[0] + (c[0] - m[0]) / srcScale, p[1] + (c[1] - m[1]) / srcScale]; return [pc[0] + ((crop[0] + crop[2]) / 2 - c[0]) / scale, pc[1] + ((crop[1] + crop[3]) / 2 - c[1]) / scale]; },
+    // ------------------------------------------------------------ the set's own sheets, lifted from its PDF
+    pdf: null,
+    /** Use a set's PDF data: its title block families go into the library (each with the firm's view title). */
+    useSet: (set) => { H.pdf = fhaPdf(set); for (const [id, fam] of Object.entries(H.pdf.titleBlocks)) L.symbols[id] = Object.assign(JSON.parse(JSON.stringify(fam)), { viewTitle: FHA_VIEW_TITLE }); return H.pdf; },
+    /** A sheet as the PDF page has it: its number, its name (its lines), its title block and its size. */
+    pdfSheet: (page, vps, o = {}) => { const S0 = H.pdf.sheets[page], P = H.pdf.pages[page], land = P.size[0] > P.size[1];
+      return H.sheet(S0.number, S0.name, vps, o.size || "ARCH D", Object.assign({ orientation: land ? "landscape" : "portrait", titleBlock: S0.tb }, o)); },
+    /** Every note, dimension and bubble of a PDF page, in the view of the viewport it belongs to (its leader's tip or
+     *  its middle falls in that viewport's crop, the smallest first), in that view's coordinates; what lies on no
+     *  viewport goes into the sheet's own notes (a drafting view laid over the whole sheet). `skip(note)` leaves out
+     *  what the model already writes (grid heads, level heads, view titles). Returns what it placed. */
+    annotate: (page, o = {}) => annotatePage(H, page, o),
+    /** A paper point of a PDF page, in the coordinates of a view placed on that page's sheet. */
+    paperToView: (page, viewId, q) => { const sh = doc.element(`SH-${H.pdf.sheets[page].number}`), vp = (doc.argValue(sh, "viewports") || []).find(x => x.view.ref === viewId), v = doc.element(viewId);
+      const r = doc.argValue(v, "clip").rect, S = doc.argValue(v, "scale"); return [(q[0] - vp.at[0]) * S + (r[0] + r[2]) / 2, (q[1] - vp.at[1]) * S + (r[1] + r[3]) / 2]; },
+    /** An elevation's or a section's datums as the PDF draws them: its level lines between two paper x (the head at the
+     *  first), and its grid lines' heads with their centres at a paper y (and their feet at another). */
+    pdfDatums: (page, viewId, { levels, head = "Left", gridHead, gridFoot, R = 3.17 } = {}) => {
+      const v = doc.element(viewId), ov = Object.assign({}, doc.argValue(v, "overrides") || {}), S = doc.argValue(v, "scale");
+      if (levels) { const a = H.paperToView(page, viewId, [levels[0], 0])[0], b = H.paperToView(page, viewId, [levels[1], 0])[0]; set(viewId, "levelExtent", [Math.min(a, b), Math.max(a, b)]); ov.__levelHead = a < b ? (head === "Left" ? "Left" : "Right") : (head === "Left" ? "Right" : "Left"); }
+      if (gridHead != null) ov.__gridTop = H.paperToView(page, viewId, [0, gridHead])[1] - R * S;
+      if (gridFoot != null) ov.__gridBottom = H.paperToView(page, viewId, [0, gridFoot])[1];
+      set(viewId, "overrides", ov); },
     /** Where a viewport goes so that a model point lands on a paper point: the crop's centre, from that pair. */
     at: (paper, model, crop, scale) => [paper[0] + ((crop[0] + crop[2]) / 2 - model[0]) / scale, paper[1] + ((crop[1] + crop[3]) / 2 - model[1]) / scale],
   };
   return H;
+}
+
+// ---------------------------------------------------------------- a PDF page's annotation, into the views on its sheet
+const F_ref = (doc, f, k) => (doc.argValue(f, k) || {}).ref;
+/** A text type for words of a cap height, font and line spacing, made the first time it is needed. */
+function textTypeFor(L, h, font, ls) {
+  const id = `TT-P-${font}-${Math.round(h * 100)}-${ls ? Math.round(ls / h * 100) : 160}`;
+  if (!L.textTypes[id]) L.textTypes[id] = { name: `${font} ${h.toFixed(2)}${ls ? ` · ${(ls / h).toFixed(2)}` : ""}`, height: h, font, widthFactor: 1, colour: "#000000", pen: "thin", lineSpacing: ls ? ls / h : 1.6 };
+  return id;
+}
+function annotatePage(H, page, o) {
+  const { doc, add, L } = Object.assign({ L: H.doc.lib }, H), P = H.pdf.pages[page], S0 = H.pdf.sheets[page];
+  const sh = doc.element(`SH-${S0.number}`); if (!sh) throw new Error(`annotate: no sheet ${S0.number}`);
+  // each viewport's crop on the paper, and the map from paper to its view's coordinates
+  const vps = (doc.argValue(sh, "viewports") || []).map(vp => { const v = doc.element(vp.view.ref), clip = doc.argValue(v, "clip") || {}, r = clip.rect, S = doc.argValue(v, "scale") || 100;
+    if (!r) return null; const cc = [(r[0] + r[2]) / 2, (r[1] + r[3]) / 2], hw = (r[2] - r[0]) / 2 / S, hh = (r[3] - r[1]) / 2 / S, m = (o.margins || {})[vp.view.ref] ?? (o.margin ?? 2);
+    return { id: vp.view.ref, v, S, rect: [vp.at[0] - hw - m, vp.at[1] - hh - m, vp.at[0] + hw + m, vp.at[1] + hh + m], map: q => [(q[0] - vp.at[0]) * S + cc[0], (q[1] - vp.at[1]) * S + cc[1]], area: hw * hh }; }).filter(Boolean);
+  const titles = new Set((doc.argValue(sh, "viewports") || []).map(vp => String(doc.element(vp.view.ref).get("Name") || "").toUpperCase()));
+  const levelWords = new Set(doc.elements().filter(f => doc.typeOf(f) === "Level").flatMap(f => [String(doc.argValue(f, "name") || "").toUpperCase()]));
+  const own = o.own || null;   // the sheet's own notes: a drafting view over the whole sheet, made when first needed
+  let notesView = null;
+  const sheetNotes = () => { if (notesView) return notesView; const id = `V-N-${S0.number}`;
+    add({ id, type: "DraftingView", name: `${S0.number} SHEET NOTES`, args: { scale: 1, clip: { rect: [0, 0, P.size[0], P.size[1]], visible: false, active: true } } });
+    const vpsNow = doc.argValue(sh, "viewports") || []; H.ed.apply({ op: "set", id: doc.idOf(sh), key: "viewports", value: vpsNow.concat([{ id: `VP${vpsNow.length + 1}`, view: { ref: id }, at: [P.size[0] / 2, P.size[1] / 2], clipVisible: false, noTitle: true }]) }, { regenerate: false });
+    notesView = { id, S: 1, map: q => q }; return notesView; };
+  const claim = q => vps.filter(v => q[0] >= v.rect[0] && q[0] <= v.rect[2] && q[1] >= v.rect[1] && q[1] <= v.rect[3]).sort((a, b) => a.area - b.area)[0] || null;
+  const isTitle = n => titles.has(n.t.toUpperCase()) || /^\d+(\/\d+)?" = 1'-0"$|^1" = 1'-0"$|^N\.?T\.?S\.?$/i.test(n.t) && !n.leader;
+  const skip = n => (o.skip && o.skip(n)) || isTitle(n) || (n.end === "none" && n.leader && n.leader.length === 2 && Math.abs(n.leader[0][1] - n.leader[1][1]) < 0.05 && (titles.has(n.t.toUpperCase()) || /" = /.test(n.t)))
+    || levelWords.has(n.t.toUpperCase()) || /^\d{3}'-\d+( \d\/\d)?"$/.test(n.t);
+  // the view titles where the drawing has them: the circle left of the name, the rule as long as drawn
+  { const vpl = (doc.argValue(sh, "viewports") || []).map(x => Object.assign({}, x)); let moved = false;
+    for (const n of P.notes) { if (!n.leader || n.end !== "none") continue; const x = vpl.find(vp => String(doc.element(vp.view.ref).get("Name") || "").toUpperCase() === n.t.toUpperCase()); if (!x || x.titleAt) continue;
+      x.titleAt = [+(n.at[0] - FHA_VIEW_TITLE.nameDx).toFixed(2), +(n.at[1] - FHA_VIEW_TITLE.nameDy).toFixed(2)]; x.titleLength = +(Math.max(n.leader[0][0], n.leader[1][0]) - x.titleAt[0]).toFixed(2); moved = true; }
+    if (moved) H.ed.apply({ op: "set", id: doc.idOf(sh), key: "viewports", value: vpl }, { regenerate: false }); }
+  let k = 0; const placed = { notes: 0, dims: 0, bubbles: 0, sheet: 0 };
+  // room tags (a name and a three-figure number): rooms of the plan's level, tagged as the office tags them
+  const isTag = n => { const ls = n.t.split("\n"); return (ls.length === 2 || ls.length === 3) && ls.some(l => /^\d{3}$/.test(l.trim())) && n.h > 2 && n.h < 2.5; };
+  for (const n of P.notes) {
+    if (!o.rooms || !isTag(n)) continue;
+    const c = [(n.bb[0] + n.bb[2]) / 2, n.at[1]], vp = claim(c); if (!vp || doc.typeOf(vp.v) !== "PlanView") continue;
+    const ls = n.t.split("\n").map(x => x.trim()), numFirst = /^\d{3}$/.test(ls[0]), num = numFirst ? ls[0] : ls[1], name = numFirst ? ls[1] : ls[0];
+    const lev = F_ref(doc, vp.v, "level"), sid = `SP-${num}`; if (doc.element(sid)) continue;
+    add({ id: sid, type: "Space", name, args: { level: { ref: lev }, upperLimit: { mode: "offset", offset: 3000 }, anchor: vp.map(c), boundaryAt: "finishFace" },
+      params: Object.assign({ Number: num }, numFirst ? { LabelFormat: ls.length === 3 ? "{Number}\\n{Name}\\n{AreaNote}" : "{Number}\\n{Name}", AreaNote: ls[2] || "" } : {}) });
+    n.__room = true; placed.rooms = (placed.rooms || 0) + 1;
+  }
+  for (const n of P.notes) {
+    if (n.__room || skip(n)) continue;
+    const bbc = [(n.bb[0] + n.bb[2]) / 2, (n.bb[1] + n.bb[3]) / 2], q = n.leader ? n.leader[n.leader.length - 1] : bbc;
+    let vp = claim(q) || claim(bbc); if (!vp) { if (o.noSheetNotes) continue; vp = sheetNotes(); placed.sheet++; }
+    const tt = textTypeFor(L, n.h, n.font, n.ls), leaders = n.leader ? [{ side: n.side, from: vp.map(n.leader[0]), points: n.leader.slice(1, -1).map(vp.map), target: vp.map(n.leader[n.leader.length - 1]), end: n.end }] : [];
+    add({ id: `TX-${S0.number}-${++k}`, type: "Text", args: Object.assign({ content: n.t, position: vp.map(n.at), rotation: n.rot || 0, textType: { ref: tt }, wrapWidth: 1000, leaders, view: { ref: vp.id } }, n.align ? { align: n.align } : {}) });
+    placed.notes++;
+  }
+  // bubbles that are not grid heads: a keynote or a tag, its circle and its words
+  for (const b of P.bubbles) {
+    // grid heads and view numbers are the model's own; keynotes (3.1, 6.2...) and tags are placed here
+    if (o.skipBubble ? o.skipBubble(b) : !/\./.test(b.t)) continue;
+    const c = [b.circle[0], b.circle[1]], vp = claim(c) || sheetNotes(), cc = vp.map(c), r = b.circle[2] * vp.S;
+    add({ id: `DL-${S0.number}-B${++k}`, type: "DetailLine", args: { curve: { type: "arc", centre: cc, radius: r, start: 0, end: 360, ccw: true }, pen: "thin", view: { ref: vp.id } } });
+    add({ id: `TX-${S0.number}-${++k}`, type: "Text", args: { content: b.t, position: vp.map(b.at), rotation: 0, textType: { ref: textTypeFor(L, b.h, b.font, b.ls) }, wrapWidth: 1000, leaders: [], view: { ref: vp.id }, align: b.align || "left" } });
+    placed.bubbles++;
+  }
+  // dimensions: to the model's references where the string lands on them, else to witness lines at its ends
+  for (const dm of P.dims) {
+    if (!dm.line || (o.skipDim && o.skipDim(dm))) continue;
+    const [a, b] = dm.line, mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], vp = claim(mid); if (!vp) continue;
+    const A = vp.map(a), B2 = vp.map(b), vert = Math.abs(a[0] - b[0]) < Math.abs(a[1] - b[1]), plan = doc.typeOf(vp.v) === "PlanView";
+    const lo = vert ? Math.min(A[1], B2[1]) : Math.min(A[0], B2[0]), hi = vert ? Math.max(A[1], B2[1]) : Math.max(A[0], B2[0]), at = vert ? A[0] : A[1];
+    const witness = c => { const lid = `DL-${S0.number}-W${++k}`, e = 1 * vp.S;
+      add({ id: lid, type: "DetailLine", args: { curve: { type: "line", start: vert ? [at - e, c] : [c, at - e], end: vert ? [at + e, c] : [c, at + e] }, pen: "gossamer", view: { ref: vp.id } } });
+      return `${lid}:line`; };
+    let ra = null, rb = null;
+    // a grid line where the string ends on one (the set's bays), else the nearest wall face
+    if (plan) { const tol = 1.5 * vp.S, pick = c => { let best = null; for (const r of planRefs(doc, vert)) { const d = Math.abs(r.c - c) - (r.grid ? tol : 0); if (Math.abs(r.c - c) < tol && (!best || d < best.d)) best = { d, key: r.key }; } return best && best.key; }; ra = pick(lo); rb = pick(hi); }
+    const keyA = ra || witness(lo), keyB = (rb && rb !== ra) ? rb : witness(hi);
+    const id = `DM-${S0.number}-${++k}`;
+    add({ id, type: "Dimension", args: { of: [keyA, keyB], offset: plan ? 0 : at, view: { ref: vp.id }, locked: false, dimType: { ref: "DT-FH" } } });
+    if (plan) { const g = dimOffsetFor(doc, id, vert, at); if (g != null) H.ed.apply({ op: "set", id, key: "offset", value: g }, { regenerate: false }); }
+    placed.dims++;
+  }
+  return placed;
+}
+/** The model's lines a plan dimension can bind to: wall faces and grid lines square to what it measures. */
+function planRefs(doc, vert) {
+  const out = [];
+  for (const f of doc.elements()) { const t = doc.typeOf(f); if (!["Wall", "Grid", "Column"].includes(t) || doc.error(f)) continue;
+    let rs; try { rs = elementRefs(doc, f); } catch (e) { continue; }
+    for (const r of rs) if (r.kind === "line" && r.a && r.b) { const vx = Math.abs(r.a[0] - r.b[0]) < 0.5, hy = Math.abs(r.a[1] - r.b[1]) < 0.5;
+      // a vertical string (vert) measures heights along y: horizontal lines; a horizontal one, vertical lines
+      if (vert && hy) out.push({ key: `${doc.idOf(f)}:${r.key}`, c: r.a[1], grid: t === "Grid" }); if (!vert && vx) out.push({ key: `${doc.idOf(f)}:${r.key}`, c: r.a[0], grid: t === "Grid" }); } }
+  return out;
+}
+/** A plan dimension's offset that puts its line where the drawing has it. */
+function dimOffsetFor(doc, id, vert, at) {
+  try { doc.regenerate(); const f = doc.element(id), g = dimensionGeometry(doc, f); if (!g) return null; return Math.round((vert ? at - g.a[0] : at - g.a[1]) * (vert ? g.along[0] : g.along[1])); } catch (e) { return null; }
 }
 
 // ===== sample_schaeffer.js =====
@@ -17313,111 +17676,301 @@ function buildFpcSample() {
 function buildAiaSample() {
   const H = fhaProject("AIA North Carolina\nHeadquarters Building", { number: "0801", issued: "08 12 08", issue: "", issueDate: "", place: "WAKE COUNTY\nNORTH CAROLINA",
     firmAddress: "706 MONTFORD STREET\nRALEIGH NORTH CAROLINA 27603", drawn: "MG/ES", checked: "FH" });
-  const { doc, add, wall, floor, roof, stair, topo } = H; const RECT = H.R;
+  const { doc, add, wall, floor, roof, stair, topo, line } = H; const RECT = H.R;
   doc.meta.surveyElevation = ft(323);
   const L = doc.lib;
-  // the kit's types, and this building's own: its metal skin, ship-lap siding, a few storefront sizes
-  const wt = (id, name, mark, layers) => { L.types[id] = { family: "F-BASICWALL", name, mark, layers, coreStart: 1, coreEnd: 2, params: { Function: "Exterior" } }; };
-  wt("T-AIA-SKIN", "Standing seam metal panels on 2x6", "M1", [{ function: "Finish 1", thickness: 25, material: "M-FH-METAL" }, { function: "Structure", thickness: 140, material: "M-FH-STUD" }, { function: "Finish 2", thickness: 16, material: "M-FH-GYP" }]);
-  wt("T-AIA-SHIP", "Ship-lap wood siding on 2x6", "S1", [{ function: "Finish 1", thickness: 19, material: "M-FH-WOOD" }, { function: "Structure", thickness: 140, material: "M-FH-STUD" }, { function: "Finish 2", thickness: 16, material: "M-FH-GYP" }]);
-  const sf = (id, w, h, m) => { L.types[id] = { family: "F-CASEMENT", name: `Storefront ${w}'x${h}'`, mark: "8.1", width: ft(w), height: ft(h), frame: 50, mullions: m }; };
-  sf("T-AIA-SF1045", 10, 4.5, 1); sf("T-AIA-SF2157", 20.6, 5.7, 3); sf("T-AIA-SF1157", 10.6, 5.7, 1); sf("T-AIA-SF1557", 15.2, 5.7, 2);
-  sf("T-AIA-SF3097", 30, 9.7, 4); sf("T-AIA-SF2325", 21, 24.5, 3); sf("T-AIA-SF2309", 23, 9, 4); sf("T-AIA-SF1109", 10.7, 5.7, 1);
+  // ---------------------------------------------------------------- materials and assemblies, as the details specify them
+  const mat = (id, name, mark, cut, proj, shade) => { L.materials[id] = { name, mark, description: name, cut, projection: proj, shading: { colour: shade } }; };
+  mat("M-AIA-STUD", "Metal studs with batt insulation", "ST", { pattern: null, pen: "thin", lineColour: "#000000", background: "#ffffff" }, { pen: "thin" }, "#e3ddcf");
+  mat("M-AIA-RIGID", "Rigid insulation", "RI", { pattern: "P-RIGID", pen: "thin", lineColour: "#000000", background: "#ffffff" }, { pen: "thin" }, "#dfe8d0");
+  mat("M-AIA-SHEATH", "1/2\" fire retardant sheathing", "SH", { pattern: null, pen: "thin", lineColour: "#000000", background: "#ffffff" }, { pen: "thin" }, "#d9c39a");
+  mat("M-AIA-AIR", "Air space", "AS", { pattern: null, pen: "hairline", lineColour: "#000000", background: "#ffffff" }, { pen: "thin" }, "#ffffff");
+  mat("M-AIA-SIDING", "Ship lap wood siding", "6.2", { pattern: "P-TIMBER", pen: "medium", lineColour: "#000000", background: "#ffffff" }, { pen: "thin", pattern: "P-AIA-LAP", lineColour: "#8c8c8c" }, "#b08556");
+  mat("M-AIA-SEAM", "Standing seam metal panels", "7.1", { pattern: null, pen: "heavy", lineColour: "#000000", background: "#ffffff" }, { pen: "thin", pattern: "P-AIA-SEAM", lineColour: "#8c8c8c" }, "#8d949b");
+  mat("M-AIA-CEMENT", "Cementitious panel", "6.3", { pattern: null, pen: "medium", lineColour: "#000000", background: "#ffffff" }, { pen: "thin", pattern: "P-AIA-CEMENT", lineColour: "#a0a0a0" }, "#c4c3bd");
+  mat("M-AIA-STONE", "Stone", "4.1", { pattern: "P-STONE", pen: "heavy", lineColour: "#000000", background: "#ffffff" }, { pen: "thin", pattern: "P-AIA-STONE", lineColour: "#a0a0a0" }, "#cbc3b1");
+  mat("M-AIA-DECK", "Composite metal deck, concrete filled", "MD", { pattern: "P-CONC", pen: "medium", lineColour: "#000000", background: "#ffffff" }, { pen: "thin" }, "#b7b6b1");
+  mat("M-AIA-GRAVEL", "Drainage course, washed stone", "DC", { pattern: "P-GRAVEL", pen: "thin", lineColour: "#000000", background: "#ffffff" }, { pen: "thin" }, "#bdb6a6");
+  mat("M-AIA-ALUM", "Aluminum storefront, clear anodized", "8.1", { pattern: null, pen: "medium", lineColour: "#000000", background: "#e0e3e6" }, { pen: "thin" }, "#aab0b6");
+  Object.assign(L.patterns, {
+    "P-AIA-LAP": { name: "Ship lap, 6\" courses", kind: "model", lines: [{ angle: 0, origin: [0, 0], delta: [0, 152.4] }] },
+    "P-AIA-SEAM": { name: "Standing seam, 16\" o.c.", kind: "model", lines: [{ angle: 90, origin: [0, 0], delta: [0, 406.4] }] },
+    "P-AIA-CEMENT": { name: "Cementitious panels 4'x8'", kind: "model", lines: [{ angle: 0, origin: [0, 0], delta: [0, 1219.2] }, { angle: 90, origin: [0, 0], delta: [0, 2438.4] }] },
+    "P-AIA-STONE": { name: "Stone coursing", kind: "model", lines: [{ angle: 0, origin: [0, 0], delta: [0, 152.4] }] },
+  });
+  const wt = (id, name, mark, layers, fn = "Exterior") => { L.types[id] = { family: "F-BASICWALL", name, mark, layers, coreStart: 0, coreEnd: layers.length, params: { Function: fn } }; };
+  const lay = (fn, inch, material) => ({ function: fn, thickness: Math.round(inch * 25.4), material });
+  wt("T-AIA-C8", "Concrete wall 8\"", "C8", [lay("Structure", 8, "M-FH-CONC")], "Core");
+  wt("T-AIA-C12", "Concrete wall 12\"", "C12", [lay("Structure", 12, "M-FH-CONC")], "Core");
+  wt("T-AIA-C14", "Concrete wall 14\"", "C14", [lay("Structure", 13.9, "M-FH-CONC")], "Core");
+  wt("T-AIA-C24", "Concrete retaining wall 24\"", "C24", [lay("Structure", 24, "M-FH-CONC")], "Retaining");
+  // south and east: wood siding, air space, building paper, 1/2" FR sheathing, 6" metal studs 16" oc with batt, 5/8" gyp bd - 8 5/8"
+  wt("T-AIA-SPAN", "Ship lap siding on 6\" metal studs (south, east)", "S1", [lay("Finish 1", 0.75, "M-AIA-SIDING"), lay("Thermal/Air Layer", 0.75, "M-AIA-AIR"), lay("Substrate", 0.5, "M-AIA-SHEATH"),
+    lay("Structure", 6, "M-AIA-STUD"), lay("Finish 2", 0.625, "M-FH-GYP")]);
+  L.types["T-AIA-SPAN"].coreStart = 3; L.types["T-AIA-SPAN"].coreEnd = 4;
+  // north: metal roofing system on slip sheet and building paper, two layers 1 1/2" rigid, 5 3/8" studs, gyp bd - 12 1/4"
+  wt("T-AIA-SKIN", "Standing seam metal panels on 2 layers 1 1/2\" rigid (north)", "M1", [lay("Finish 1", 2.625, "M-AIA-SEAM"), lay("Thermal/Air Layer", 3, "M-AIA-RIGID"), lay("Substrate", 0.625, "M-AIA-SHEATH"),
+    lay("Structure", 5.375, "M-AIA-STUD"), lay("Finish 2", 0.625, "M-FH-GYP")]);
+  L.types["T-AIA-SKIN"].coreStart = 3; L.types["T-AIA-SKIN"].coreEnd = 4;
+  wt("T-AIA-P7", "Partition 7\" (plumbing)", "P7", [lay("Finish 1", 0.625, "M-FH-GYP"), lay("Structure", 5.75, "M-AIA-STUD"), lay("Finish 2", 0.625, "M-FH-GYP")], "Interior");
+  wt("T-AIA-P45", "Partition 4 1/2\"", "P4", [lay("Finish 1", 0.625, "M-FH-GYP"), lay("Structure", 3.25, "M-AIA-STUD"), lay("Finish 2", 0.625, "M-FH-GYP")], "Interior");
+  for (const k of ["T-AIA-P7", "T-AIA-P45"]) { L.types[k].family = "F-PARTITION"; L.types[k].coreStart = 1; L.types[k].coreEnd = 2; }
+  // storefront (8.1): aluminum 2" x 4 1/2", its grid set wall by wall
+  L.types["T-AIA-SF"] = { family: "F-CURTAINWALL", name: "Storefront 2\"x4 1/2\" (8.1)", mark: "8.1", layers: [lay("Structure", 4.5, "M-GLASS")], coreStart: 0, coreEnd: 1,
+    curtain: { vertical: { layout: "None" }, horizontal: { layout: "None" }, mullion: { width: 51, depth: 114, material: "M-AIA-ALUM" }, panel: { material: "M-GLASS", thickness: 25 } } };
+  const flt = (id, name, mark, layers) => { L.types[id] = { family: "F-FLOOR", name, mark, layers, coreStart: 0, coreEnd: layers.length }; };
+  flt("T-AIA-DECK", "4 1/2\" concrete slab on 1 1/2\" metal deck", "S2", [lay("Structure", 4.5, "M-FH-CONC"), lay("Structure", 1.5, "M-AIA-DECK")]);
+  flt("T-AIA-SOG", "6\" concrete slab on vapor barrier on 18\" drainage course", "S1", [lay("Structure", 6, "M-FH-CONC"), lay("Substrate", 18, "M-AIA-GRAVEL")]);
+  flt("T-AIA-CLG", "5/8\" gyp bd ceiling", "C1", [lay("Finish 1", 0.625, "M-FH-GYP")]);
+  flt("T-AIA-CAN", "Canopy: standing seam on framing, 1'-10\"", "CN", [lay("Finish 1", 2.625, "M-AIA-SEAM"), lay("Structure", 19.4, "M-AIA-STUD")]);
+  const col = (id, name, mark, o) => { L.types[id] = Object.assign({ family: "F-COLUMN", name, mark, material: "M-FH-STEEL" }, o); };
+  col("T-AIA-W10", "W10x49", "C1", { shape: "I", width: 254, depth: 254, flange: 14.2, web: 8.6 });
+  col("T-AIA-HSS10", "HSS 10x10x1/2", "C2", { shape: "RHS", width: 254, depth: 254, thick: 12.7 });
+  L.types["T-AIA-W14"] = { family: "F-STEELBEAM", name: "W14x22", mark: "B1", shape: "I", width: 127, depth: 349, flange: 8.5, web: 5.8, material: "M-FH-STEEL" };
+  // the girders A to B: cellular (castellated) beams 27" deep, 20" round openings at 24"
+  L.types["T-AIA-W18"] = { family: "F-STEELBEAM", name: "Cellular beam 27\" (20\" openings at 24\")", mark: "G1", shape: "I", width: 178, depth: 686, flange: 12.7, web: 9.5, material: "M-FH-STEEL", cells: { d: 508, spacing: 610 } };
+  L.types["T-AIA-W12"] = { family: "F-STEELBEAM", name: "W12x19 purlin", mark: "P1", shape: "I", width: 102, depth: 310, flange: 8.9, web: 5.8, material: "M-FH-STEEL" };
+  flt("T-AIA-SOFFIT", "Cementitious panels on 1 1/2\" hat channels", "SF", [lay("Finish 1", 0.5, "M-AIA-CEMENT"), lay("Structure", 1.5, "M-AIA-STUD")]);
 
-  // ---------------------------------------------------------------- levels and grids
+  // ---------------------------------------------------------------- levels and grids (the set's: from the cafe floor, 323'-0")
   H.level("L-0", "CAFE + EXHIBIT", 0); H.level("L-1", "LOBBY + MULTI-PURPOSE", ft(10)); H.level("L-2", "AIA", ft(24));
   H.level("L-3", "TENANT", ft(35.5)); H.level("L-T", "TOP OF CONSTRUCTION", ft(51 + 7.75 / 12));
   const GX = [0, 12, 24, 36, 48, 60, 72, 84, 96, 108, 116];
-  GX.forEach((x, i) => H.grid(`G-${i + 1}`, String(i + 1).padStart(2, "0"), PT(x, -44), PT(x, 44)));
-  H.grid("G-A", "A", PT(-20, 30), PT(146, 30)); H.grid("G-B", "B", PT(-20, 0), PT(146, 0));
+  GX.forEach((x, i) => H.grid(`G-${i + 1}`, String(i + 1).padStart(2, "0"), PT(x, -44), PT(x, 47.33)));
+  H.grid("G-A", "A", PT(-20, 30), PT(167.8, 30)); H.grid("G-B", "B", PT(-20, 0), PT(167.8, 0));
+  const SLAB = ft(0.5);                                     // the slabs' tops stand 6" over the levels (ELEV = 333'-6", 347'-6", 359'-0")
 
-  // ---------------------------------------------------------------- the shed roof: 2 1/8":12 falling south, 12'-9" over the south face
-  roof("RF-1", "Standing seam roof", FT([[-14, -12.8], [122, -12.8], [122, 31], [-14, 31]]), "L-0", ft(43.8), [10.2, null, null, null], { thickness: 300, material: "M-FH-METAL" });
+  // ---------------------------------------------------------------- the shed roof: 2:12 rising north, over the south eave at 43'-6"
+  const ROOFY0 = -12.8, EAVE = 43.5 + 0.9, SLOPE = 2 / 12;
+  roof("RF-1", "Standing seam roof on 6\" rigid on metal deck", FT([[-16, ROOFY0], [124, ROOFY0], [124, 31.2], [-16, 31.2]]), "L-0", ft(EAVE), [Math.atan(SLOPE) * 180 / Math.PI, null, null, null], { thickness: 216, material: "M-AIA-SEAM" });
   const r = { roof: "RF-1" };
 
+  // under the roof: W12 purlins about every 4' square to the slope, the sloped 5/8" gyp bd ceiling 2'-11" under the roof's top,
+  // and the flat cementitious soffit out to the eave
+  const roofTop = y => EAVE + (y - ROOFY0) * SLOPE;
+  for (let y = 27.33; y > -12.5; y -= 4) add({ id: `B-P${Math.round(y * 10)}`, type: "Beam", name: "Purlin", args: { axis: line(PT(-15, y), PT(123, y)), beamType: { ref: "T-AIA-W12" }, level: { ref: "L-0" }, topOffset: ft(roofTop(y) - 0.47), rotation: -Math.atan(SLOPE) * 180 / Math.PI } });
+  roof("RF-CLG", "Sloped gyp bd ceiling", FT([[-2.67, 0], [117, 0], [117, 29.5], [-2.67, 29.5]]), "L-0", ft(roofTop(0) - 2.9), [Math.atan(SLOPE) * 180 / Math.PI, null, null, null], { thickness: 16, material: "M-FH-GYP" });
+  floor("FL-SOF", "Eave soffit", FT([[-16, ROOFY0 + 0.4], [124, ROOFY0 + 0.4], [124, -1.33], [-16, -1.33]]), "T-AIA-SOFFIT", "L-0", ft(43.62));
+  // ---------------------------------------------------------------- structure: W10 columns on B, HSS 10 on A, beams and girders at the floors
+  GX.forEach((x, i) => add({ id: `C-B${i + 1}`, type: "Column", name: `Column B/${String(i + 1).padStart(2, "0")}`, args: { position: PT(x, 0), columnType: { ref: "T-AIA-W10" }, baseLevel: { ref: "L-0" }, height: ft(43.2), rotation: [60, 72, 84].includes(x) ? 90 : 0, baseOffset: 0 } }));
+  [48, 60, 72, 84].forEach(x => add({ id: `C-A${x}`, type: "Column", name: `Column A/${x}`, args: { position: PT(x, 30), columnType: { ref: "T-AIA-HSS10" }, baseLevel: { ref: "L-1" }, height: ft(40), rotation: 0, baseOffset: 0 } }));
+  for (const lv of ["L-1", "L-2", "L-3"]) {
+    const top = -ft(0.5) + SLAB - 152;                     // under the deck
+    add({ id: `B-B-${lv}`, type: "Beam", name: `Beam B ${lv}`, args: { axis: line(PT(-3, 0), PT(117, 0)), beamType: { ref: "T-AIA-W14" }, level: { ref: lv }, topOffset: SLAB - 152, rotation: 0 } });
+    add({ id: `B-A-${lv}`, type: "Beam", name: `Beam A ${lv}`, args: { axis: line(PT(-1, 29.4), PT(117, 29.4)), beamType: { ref: "T-AIA-W14" }, level: { ref: lv }, topOffset: SLAB - 152, rotation: 0 } });
+    GX.forEach((x, i) => add({ id: `G-${lv}-${i + 1}`, type: "Beam", name: `Girder ${String(i + 1).padStart(2, "0")} ${lv}`, args: { axis: line(PT(x, 0.4), PT(x, 29.6)), beamType: { ref: "T-AIA-W18" }, level: { ref: lv }, topOffset: SLAB - 152, rotation: 0 } }));
+    void top;
+  }
+
   // ---------------------------------------------------------------- floors
-  floor("FL-0", "Cafe + exhibit", FT(RECT(0.3, 0.3, 66, 29.7)), "T-FH-SOG", "L-0");
-  floor("FL-1", "Lobby + multi-purpose", FT(RECT(0.3, 0.3, 115.7, 29.7)), "T-FH-CONCDECK", "L-1");
-  floor("FL-2", "AIA", FT(RECT(0.3, 0.3, 115.7, 29.7)), "T-FH-CONCDECK", "L-2");
-  floor("FL-2B", "Balcony", FT(RECT(18.5, -5, 36, 0.3)), "T-FH-DECK", "L-2");
-  floor("FL-3", "Tenant", FT(RECT(0.3, 0.3, 115.7, 29.7)), "T-FH-CONCDECK", "L-3");
+  flt("T-AIA-SOG6", "6\" concrete slab on grade", "S0", [lay("Structure", 6, "M-FH-CONC")]);
+  floor("FL-0", "Cafe + exhibit slab", FT([[-2.92, -1], [65.67, -1], [65.67, 29.33], [-0.67, 29.33], [-0.67, 20.67], [-2.92, 20.67]]), "T-AIA-SOG6", "L-0");
+  const plate = FT([[-2.67, -1.33], [117.33, -1.33], [117.33, 29.9], [-2.67, 29.9]]);
+  // the lobby opens over the cafe on the west, and its stair goes down beside the elevator
+  H.floorHoles("FL-1W", "Lobby slab (over the cafe)", FT([[-2.67, -1.33], [66, -1.33], [66, 29.9], [-2.67, 29.9]]), [FT([[-2.5, -0.61], [11, -0.61], [11, 20.83], [-2.67, 20.83]]), FT([[24.33, 21.67], [35.67, 21.67], [35.67, 29.47], [24.33, 29.47]])], "T-AIA-DECK", "L-1", SLAB);
+  floor("FL-1E", "Multi-purpose slab on grade", FT([[66, -1.33], [117.33, -1.33], [117.33, 29.9], [66, 29.9]]), "T-AIA-SOG", "L-1", SLAB);
+  H.floorHoles("FL-2", "AIA slab", FT([[-2.67, -1.33], [117.33, -1.33], [117.33, 29.9], [97.14, 29.9], [97.14, 34], [46.86, 34], [46.86, 29.9], [-2.67, 29.9]]), [FT([[-2.5, -0.61], [18, -0.61], [18, 20.79], [-2.67, 20.79]])], "T-AIA-DECK", "L-2", SLAB);
+  floor("FL-2B", "Balcony", FT([[18.17, -5.67], [35.25, -5.67], [35.25, -1.33], [18.17, -1.33]]), "T-AIA-DECK", "L-2", SLAB);
+  floor("FL-3", "Tenant slab", plate, "T-AIA-DECK", "L-3", SLAB);
+  void plate;
+  // ceilings: 5/8" gyp bd 2'-9" under the slabs' tops
+  for (const lv of ["L-1", "L-2", "L-3"]) floor(`CL-${lv}`, `Ceiling under ${lv}`, FT([[-0.5, -0.61], [116.6, -0.61], [116.6, 29.5], [-0.5, 29.5]]), "T-AIA-CLG", lv, SLAB - ft(2.75));
 
-  // ---------------------------------------------------------------- walls
-  // north: the cafe's and lobby's glass under the metal skin, which runs past both ends to the roof
-  wall("W-NG0", PT(66, 30), PT(0, 30), "T-FH-GLASS", "L-0", "L-1", { topOffset: ft(4.5) });
-  wall("W-NG1", PT(116, 30), PT(66, 30), "T-FH-GLASS", "L-1", "L-1", { topOffset: ft(4.5) });
-  wall("W-N", PT(122, 30.4), PT(-14, 30.4), "T-AIA-SKIN", "L-1", "L-T", Object.assign({ baseOffset: ft(4.5) }, r));
-  // south: the cafe's retaining wall, then a wall a storey, ship-lap to the roof
-  wall("W-S0", PT(0, 0), PT(66, 0), "T-FH-CONC12", "L-0", "L-1");
-  wall("W-S1", PT(0, 0), PT(116, 0), "T-AIA-SHIP", "L-1", "L-2"); wall("W-S2", PT(0, 0), PT(116, 0), "T-AIA-SHIP", "L-2", "L-3");
-  wall("W-S3", PT(0, 0), PT(116, 0), "T-AIA-SHIP", "L-3", "L-T", r);
-  // the ends
-  wall("W-W", PT(0, 30), PT(0, 0), "T-FH-EXT6C", "L-0", "L-T", r); wall("W-E", PT(116, 0), PT(116, 30), "T-AIA-SHIP", "L-1", "L-T", r);
-  // the cores: two stairs and the elevator, the cafe's toilets and mechanical room
-  const CMU = "T-FH-CONC8";
-  wall("W-C1a", PT(0, 21.5), PT(23.5, 21.5), CMU, "L-0", "L-T", r); wall("W-C1b", PT(23.5, 21.5), PT(23.5, 30), CMU, "L-0", "L-T", r);
-  wall("W-C2a", PT(116, 21.5), PT(96, 21.5), CMU, "L-1", "L-T", r); wall("W-C2b", PT(96, 21.5), PT(96, 30), CMU, "L-1", "L-T", r);
-  wall("W-EL1", PT(36, 30), PT(36, 20), CMU, "L-0", "L-3"); wall("W-EL2", PT(36, 20), PT(47, 20), CMU, "L-0", "L-3"); wall("W-EL3", PT(47, 20), PT(47, 30), CMU, "L-0", "L-3");
-  wall("W-T1", PT(24, 0), PT(24, 12), "T-FH-INT4", "L-0", "L-1"); wall("W-T2", PT(24, 12), PT(66, 12), "T-FH-INT4", "L-0", "L-1");
-  wall("W-T3", PT(41, 0), PT(41, 12), "T-FH-INT4", "L-0", "L-1"); wall("W-T4", PT(50, 0), PT(50, 12), "T-FH-INT4", "L-0", "L-1");
-  wall("W-C0", PT(66, 0), PT(66, 30), CMU, "L-0", "L-1");
-  // the AIA floor's offices along the south, the tenant floor open
-  for (const x of [48, 60, 72, 84]) wall(`W-O${x}`, PT(x, 0), PT(x, 12), "T-FH-INT4", "L-2", "L-3");
-  wall("W-OC", PT(48, 12), PT(84, 12), "T-FH-INT4", "L-2", "L-3");
-  // the stairs: two flights a storey in each core
-  const S1 = [{ from: PT(5, 23.6), to: PT(15.5, 23.6) }, { from: PT(15.5, 27.6), to: PT(5, 27.6) }], S2 = [{ from: PT(111, 23.6), to: PT(100.5, 23.6) }, { from: PT(100.5, 27.6), to: PT(111, 27.6) }];
-  [["L-0", "L-1"], ["L-1", "L-2"], ["L-2", "L-3"]].forEach(([a, b], i) => stair(`ST-1${i}`, "Stair 000", a, b, S1, { width: ft(3.7) }));
-  [["L-1", "L-2"], ["L-2", "L-3"]].forEach(([a, b], i) => stair(`ST-2${i}`, "Stair 100", a, b, S2, { width: ft(3.7) }));
-  // the terrace steps down the west side, from the lobby's terrace to the cafe
-  stair("ST-T", "Terrace steps", "L-0", "L-1", [{ from: PT(-16, -14), to: PT(-44, -14) }], { width: ft(22), railings: "None", args: { maxRiser: 165, material: "M-FH-CONC" } });
-  floor("FL-TR", "Lobby terrace", FT(RECT(-16, -26, 0, 0)), "T-FH-SOG", "L-1");
+  // ---------------------------------------------------------------- the cores: concrete, from the cafe (or the lobby) to the roof
+  const C8 = "T-AIA-C8", C12 = "T-AIA-C12";
+  const op = (id, host, a, b, lev, sill, h) => { const hw = doc.element(host); void hw; add({ id, type: "Opening", args: { host: { ref: host }, profile: { kind: "rect", at: ft((a + b) / 2), sill: ft(sill) + lev, w: ft(b - a), h: ft(h) }, farProfile: null, depth: "through" } }); };
+  const LZ = { "L-0": 0, "L-1": ft(10), "L-2": ft(24), "L-3": ft(35.5) };
+  // west stair (000)
+  wall("W-SW-S", PT(-0.67, 21), PT(24.33, 21), C8, "L-0", null, Object.assign({ height: ft(47) }, r));
+  wall("W-SW-W", PT(-0.17, 20.67), PT(-0.17, 30.33), C12, "L-0", null, Object.assign({ height: ft(49) }, r));
+  wall("W-SW-E", PT(24, 20.67), PT(24, 30.33), C8, "L-0", null, Object.assign({ height: ft(49) }, r));
+  wall("W-SW-N", PT(-0.67, 29.83), PT(24.33, 29.83), C12, "L-0", null, Object.assign({ height: ft(50) }, r));
+  op("OP-SW-S0a", "W-SW-S", 0.67 + 0.67, 4 + 0.67, 0, 0, 8.5); op("OP-SW-S0b", "W-SW-S", 5.33 + 0.67, 18 + 0.67, 0, 0, 8.5);
+  for (const lv of ["L-1", "L-2", "L-3"]) { op(`OP-SW-S-${lv}`, "W-SW-S", 19.83 + 0.67, 22.83 + 0.67, LZ[lv], 0.5, 7); op(`OP-SW-W-${lv}`, "W-SW-W", 30.33 - 29.33, 30.33 - 27.33, LZ[lv], 3.5, 6); }
+  for (const lv of ["L-2", "L-3"]) op(`OP-SW-E-${lv}`, "W-SW-E", 25.67 - 20.67, 29.33 - 20.67, LZ[lv], 0.5, 7);
+  // elevator (001): concrete 8", its door on the west at every level
+  wall("W-EL-S", PT(35.67, 15), PT(43.27, 15), C8, "L-0", null, Object.assign({ height: ft(49) }, r));
+  wall("W-EL-N", PT(35.67, 24), PT(43.27, 24), C8, "L-0", null, Object.assign({ height: ft(49) }, r));
+  wall("W-EL-W", PT(36, 14.67), PT(36, 24.33), C8, "L-0", null, Object.assign({ height: ft(49) }, r));
+  wall("W-EL-E", PT(42.94, 14.67), PT(42.94, 24.33), C8, "L-0", null, Object.assign({ height: ft(49) }, r));
+  for (const lv of ["L-0", "L-1", "L-2", "L-3"]) op(`OP-EL-${lv}`, "W-EL-W", 16.21 - 14.67, 19.71 - 14.67, LZ[lv], lv === "L-0" ? 0 : 0.5, 7);
+  // the chase (104) beside it on the lobby floor
+  wall("W-CH-E", PT(48, 14.67), PT(48, 24.33), C8, "L-1", "L-2"); wall("W-CH-S", PT(43.27, 15), PT(48.33, 15), C8, "L-1", "L-2"); wall("W-CH-N", PT(43.27, 24), PT(48.33, 24), C8, "L-1", "L-2");
+  // east stair (100): from the lobby up
+  wall("W-SE-S", PT(95.67, 21), PT(116.33, 21), C8, "L-1", null, Object.assign({ baseOffset: -ft(1), height: ft(40) }, r));
+  wall("W-SE-W", PT(96, 20.67), PT(96, 30.49), C8, "L-1", null, Object.assign({ baseOffset: -ft(1), height: ft(40) }, r));
+  wall("W-SE-E", PT(115.83, 20.67), PT(115.83, 30.49), C12, "L-1", null, Object.assign({ baseOffset: -ft(1), height: ft(40) }, r));
+  wall("W-SE-N", PT(95.67, 29.91), PT(116.33, 29.91), "T-AIA-C14", "L-1", null, Object.assign({ baseOffset: -ft(1), height: ft(41) }, r));
+  for (const lv of ["L-1", "L-2", "L-3"]) op(`OP-SE-W-${lv}`, "W-SE-W", 25.83 - 20.67, 29.33 - 20.67, LZ[lv] + ft(1), 0.5, 7);
+  op("OP-SE-E-L-1", "W-SE-E", 25.5 - 20.67, 29.33 - 20.67, LZ["L-1"] + ft(1), 0.5, 7);
+  for (const lv of ["L-2", "L-3"]) op(`OP-SE-E-${lv}`, "W-SE-E", 27.33 - 20.67, 29.33 - 20.67, LZ[lv] + ft(1), 3.5, 6);
 
-  // ---------------------------------------------------------------- windows, doors, the green screen and the balcony
-  const w = H.window, d = H.door;
-  for (let i = 0; i < 9; i++) w(`WN-SC${i}`, "W-S3", ft(6 + 12 * i), "T-AIA-SF1045", ft(2.1));
-  w("WN-S21", "W-S2", ft(52.3), "T-AIA-SF2157", ft(2.1)); w("WN-S22", "W-S2", ft(77.7), "T-AIA-SF1157", ft(2.1)); w("WN-S23", "W-S2", ft(104), "T-AIA-SF1557", ft(2.1));
-  d("DR-S2", "W-S2", ft(29.7), "T-FH-D60G");
-  d("DR-S1", "W-S1", ft(29.7), "T-FH-D60G"); w("WN-S1", "W-S1", ft(72.5), "T-AIA-SF2309", 0);
-  w("WN-N2", "W-N", ft(122 - 82.3), "T-AIA-SF3097", ft(9.9));
-  w("WN-W", "W-W", ft(19.5), "T-AIA-SF2325", ft(10));
-  w("WN-E", "W-E", ft(17), "T-AIA-SF1109", ft(16.1)); d("DR-E", "W-E", ft(6), "T-FH-D30G");
-  add({ id: "RL-GS", type: "Railing", name: "Green screen", args: { level: { ref: "L-1" }, path: FT([[37, -2], [111, -2]]), height: ft(13), postSpacing: ft(12), postSize: 100, infill: "Mesh", material: "M-FH-STEEL" } });
-  add({ id: "RL-B", type: "Railing", name: "Balcony rail", args: { level: { ref: "L-2" }, path: FT([[18.7, 0], [18.7, -4.8], [35.8, -4.8], [35.8, 0]]), height: 1067, postSpacing: ft(4), postSize: 60, infill: "Rails", material: "M-FH-STEEL" } });
+  // ---------------------------------------------------------------- the cafe level (L-0): dug in on the south, east and north
+  wall("W-R0S", PT(-46, -2), PT(49, -2), "T-AIA-C24", "L-0", "L-1", { baseOffset: -ft(1) });
+  wall("W-R0S2", PT(49, -1.33), PT(66.33, -1.33), C8, "L-0", "L-1", { baseOffset: -ft(1) });
+  wall("W-R0E", PT(66, -1.67), PT(66, 29.33), C8, "L-0", "L-1", { baseOffset: -ft(1) });
+  add({ id: "GM-R0N", type: "Generic", name: "North retaining wall and exterior stair", args: { boundary: FT([[35.9, 29.33], [87.88, 29.33], [94.52, 40.83], [107.13, 40.83], [113.63, 47.33], [100.81, 47.33], [94.81, 41.33], [81.77, 41.33], [75.9, 31.17], [48.33, 31.17], [48.33, 33.17], [35.9, 33.17]]), level: { ref: "L-0" }, baseOffset: -ft(1), height: ft(11), ifcClass: "IfcWall", material: "M-FH-CONC", colour: "" } });
+  add({ id: "GM-R0P", type: "Generic", name: "Elevator machine pit", args: { boundary: FT([[36.58, 24.33], [43.27, 24.33], [43.27, 29.33], [36.58, 29.33]]), level: { ref: "L-0" }, baseOffset: -ft(1), height: ft(11), ifcClass: "IfcWall", material: "M-FH-CONC", colour: "" } });
+  wall("W-M0S", PT(43.27, 15), PT(51.17, 15), C8, "L-0", "L-1");
+  wall("W-M0S2", PT(54.17, 15), PT(65.67, 15), "T-AIA-P45", "L-0", "L-1");
+  // the cafe's toilets: M, JAN, W along the south
+  const P7 = "T-AIA-P7", P45 = "T-AIA-P45";
+  wall("W-T0N", PT(25.08, 10.38), PT(65.67, 10.38), P7, "L-0", "L-1");
+  op("OP-T0M", "W-T0N", 35.88 - 25.08, 38.88 - 25.08, 0, 0, 7); op("OP-T0J", "W-T0N", 41.08 - 25.08, 44.08 - 25.08, 0, 0, 7); op("OP-T0W", "W-T0N", 46.29 - 25.08, 49.29 - 25.08, 0, 0, 7);
+  wall("W-T0W", PT(25.38, -1), PT(25.38, 10.67), P7, "L-0", "L-1");
+  wall("W-T0a", PT(39.42, -1), PT(39.42, 10.38), P7, "L-0", "L-1"); wall("W-T0b", PT(45.75, -1), PT(45.75, 10.38), P7, "L-0", "L-1");
+  wall("W-T0c", PT(33.94, 5), PT(33.94, 10.38), P45, "L-0", "L-1"); wall("W-T0d", PT(51.23, 5), PT(51.23, 10.38), P45, "L-0", "L-1");
+  // the barista's counter walls and the storage in the stair core
+  wall("W-B0a", PT(4.52, 21.33), PT(4.52, 25.04), P45, "L-0", "L-1"); wall("W-B0b", PT(4.33, 25.23), PT(8.79, 25.23), P45, "L-0", "L-1"); wall("W-B0c", PT(8.79, 25.23), PT(8.79, 29.33), P45, "L-0", "L-1");
+  wall("W-B0d", PT(16.67, 25.23), PT(18.67, 25.23), P45, "L-0", "L-1"); wall("W-B0e", PT(16.67, 25.23), PT(16.67, 29.33), P45, "L-0", "L-1");
 
-  // ---------------------------------------------------------------- the ground: rising south and east; the lobby terrace at the lobby's floor
-    const contours = [];
-  for (let c = 1; c <= 9; c++) { const pts = []; for (let x = -70; x <= 190; x += 26) { const y = 30 - (c - 3 - 0.05 * x) / 0.2; if (y > -80 && y < 110) pts.push([ft(x), ft(y)]); } if (pts.length >= 2) contours.push({ z: ft(c), points: pts }); }
-  // south of the building the ground levels off at the lobby terrace's height
-  contours.push({ z: ft(9.8), points: FT([[-70, -30], [190, -30]]) }, { z: ft(9.8), points: FT([[-70, -80], [190, -80]]) });
-  // building pads: the cafe dug in to its floor, the lobby's east half on its own
-  topo("TS-1", "Existing grade", contours, FT(RECT(-70, -80, 190, 110)), -ft(10), [{ boundary: FT(RECT(-1, -1, 66, 31)), z: -ft(0.5) }, { boundary: FT(RECT(66, -1, 117, 31)), z: ft(9.5) }, { boundary: FT(RECT(-16, -26, -1, -1)), z: ft(9.7) }]);
-  [[-40, 60, 34], [150, 70, 30], [160, -30, 28], [60, -60, 30], [-50, -60, 26]].forEach(([x, y, c], i) => add({ id: `PL-${i + 1}`, type: "Planting", name: "Existing tree", args: { position: PT(x, y), topo: { ref: "TS-1" }, form: "Deciduous", canopy: ft(c), height: ft(c * 1.7), trunk: ft(c / 30), existing: true } }));
+  // ---------------------------------------------------------------- the lobby level (L-1)
+  wall("W-P1a", PT(95.85, 3.43), PT(95.85, 20.67), P45, "L-1", "L-2", { baseOffset: SLAB });
+  wall("W-P1b", PT(96.04, 3.62), PT(99.04, 3.62), P45, "L-1", "L-2", { baseOffset: SLAB });
+  wall("W-P1c", PT(95.67, 9.04), PT(117.03, 9.04), P7, "L-1", "L-2", { baseOffset: SLAB });
+  wall("W-P1d", PT(110.56, -0.61), PT(110.56, 8.75), P45, "L-1", "L-2", { baseOffset: SLAB });
+  op("OP-P1a", "W-P1a", 11.0 - 3.43, 19.0 - 3.43, ft(10) + SLAB, 0, 7);
 
+  // ---------------------------------------------------------------- the AIA level (L-2): the offices along the south, the core's rooms
+  const off = [[45, -0.43, 10.29], [60, 0.02, 10.29], [72, 0.02, 10.29], [84, 0.02, 10.29], [90.4, -0.61, 10.29]];
+  off.forEach(([x, a, b], i) => wall(`W-O2-${i}`, PT(x, a), PT(x, b), P45, "L-2", "L-3", { baseOffset: SLAB }));
+  wall("W-O2N", PT(45, 10.48), PT(97.88, 10.48), P45, "L-2", "L-3", { baseOffset: SLAB });
+  [[56.56, 60.19], [68.56, 72.19], [80.56, 84.19], [86.96, 90.58], [94.33, 97.88]].forEach(([a, b], i) => op(`OP-O2-${i}`, "W-O2N", a - 45, b - 45, ft(24) + SLAB, 0, 7));
+  wall("W-O2E", PT(97.88, -0.61), PT(97.88, 16.42), P7, "L-2", "L-3", { baseOffset: SLAB });
+  for (const lv of ["L-2", "L-3"]) {
+    const o = { baseOffset: SLAB };
+    wall(`W-K${lv}a`, PT(43.27, 14.96), PT(65.9, 14.96), P7, lv, lv === "L-2" ? "L-3" : "L-T", o);
+    wall(`W-K${lv}b`, PT(53.46, 15.25), PT(53.46, 23.67), P45, lv, lv === "L-2" ? "L-3" : "L-T", o);
+    wall(`W-K${lv}c`, PT(59.77, 15.25), PT(59.77, 23.75), P7, lv, lv === "L-2" ? "L-3" : "L-T", o);
+    wall(`W-K${lv}d`, PT(66.08, 14.96), PT(66.08, 23.75), P45, lv, lv === "L-2" ? "L-3" : "L-T", o);
+    wall(`W-K${lv}e`, PT(46.85, 24), PT(53.27, 24), P7, lv, lv === "L-2" ? "L-3" : "L-T", o);
+    wall(`W-K${lv}f`, PT(56.9, 24.04), PT(62.65, 24.04), P7, lv, lv === "L-2" ? "L-3" : "L-T", o);
+    wall(`W-K${lv}g`, PT(65.9, 24.04), PT(66.08, 24.04), P7, lv, lv === "L-2" ? "L-3" : "L-T", o);
+  }
+
+  // ---------------------------------------------------------------- stairs: two flights a storey in each core (12" treads), the lobby's open stair
+  const SW = [{ from: PT(6.67, 27.375), to: PT(19.67, 27.375) }, { from: PT(19.67, 23.29), to: PT(6.67, 23.29) }];
+  const SE = [{ from: PT(100.25, 27.375), to: PT(113.33, 27.375) }, { from: PT(113.33, 23.29), to: PT(100.25, 23.29) }];
+  const stA = { width: ft(3.42), railings: "Both", args: { maxRiser: 180, material: "M-FH-STEEL", numbers: false } };
+  [["L-0", "L-1"], ["L-1", "L-2"], ["L-2", "L-3"]].forEach(([a, b], i) => stair(`ST-W${i}`, "Stair 000", a, b, SW, stA));
+  [["L-1", "L-2"], ["L-2", "L-3"]].forEach(([a, b], i) => stair(`ST-E${i}`, "Stair 100", a, b, SE, stA));
+  stair("ST-L", "Lobby stair", "L-0", "L-1", [{ from: PT(35.4, 25.57), to: PT(24.6, 25.57) }], { width: ft(7.6), railings: "Both", args: { maxRiser: 180, material: "M-FH-CONC", numbers: false } });
+  // ---------------------------------------------------------------- the envelope: south and east siding with storefronts set in it,
+  // the north standing seam skin between the tubes on A with its punched windows, the west storefront wall
+  const SP = "T-AIA-SPAN";
+  wall("W-S1", PT(-3.5, -0.97), PT(117.38, -0.97), SP, "L-1", "L-2", { baseOffset: SLAB, topOffset: 0 });
+  wall("W-S2", PT(-3.5, -0.97), PT(117.38, -0.97), SP, "L-2", "L-3", { baseOffset: 0 });
+  wall("W-S3", PT(-3.5, -0.97), PT(117.38, -0.97), SP, "L-3", null, Object.assign({ height: ft(10) }, r));
+  wall("W-E", PT(117.03, -1.33), PT(117.03, 21.33), SP, "L-1", null, { baseOffset: SLAB, height: ft(42.03 - 10.5) });
+  // a storefront set in a wall: its opening in the host, and a curtain wall filling it with its own grid (Revit's embedded storefront)
+  const SF = (id, host, u0, u1, z0, z1, vs, hs, panels = {}) => {
+    const hw = doc.element(host), c = doc.argValue(hw, "centreline"), d0 = [c.end[0] - c.start[0], c.end[1] - c.start[1]], Lh = Math.hypot(...d0), dn = [d0[0] / Lh, d0[1] / Lh];
+    const base = H.levelZ(doc.argValue(hw, "baseLevel").ref) + (doc.argValue(hw, "baseOffset") || 0);
+    add({ id: `OP-${id}`, type: "Opening", args: { host: { ref: host }, profile: { kind: "rect", at: (ft(u0) + ft(u1)) / 2, sill: ft(z0) - base, w: ft(u1) - ft(u0), h: ft(z1 - z0) }, farProfile: null, depth: "through" } });
+    const a = [c.start[0] + dn[0] * ft(u0), c.start[1] + dn[1] * ft(u0)], b = [c.start[0] + dn[0] * ft(u1), c.start[1] + dn[1] * ft(u1)];
+    add({ id, type: "Wall", name: `Storefront ${id}`, args: { centreline: line(a, b), mounting: "Centred", wallType: { ref: "T-AIA-SF" }, baseLevel: { ref: "L-0" }, baseOffset: ft(z0), topLevel: null, topOffset: 0, height: ft(z1 - z0), flipped: false,
+      curtainGrid: { vertical: { positions: vs.map(v => ft(v - u0)) }, horizontal: { positions: hs.map(h => ft(h - z0)) }, panels } } });
+  };
+  H.SF = SF;
+  // ---- north: the standing seam skin on A, running past both ends; perforated sunscreens over its windows; the box at the AIA floor
+  L.types["T-AIA-PANEL"] = { family: "F-BASICWALL", name: "Standing seam metal panels on hat channels (over concrete)", mark: "M2", layers: [lay("Finish 1", 2.625, "M-AIA-SEAM")], coreStart: 0, coreEnd: 1, params: { Function: "Exterior" } };
+  mat("M-AIA-PERF", "Perforated metal sun screen", "7.3", { pattern: null, pen: "medium", lineColour: "#000000", background: "#ffffff" }, { pen: "thin", pattern: "P-AIA-PERF", lineColour: "#8a8a8a" }, "#9aa0a6");
+  L.patterns["P-AIA-PERF"] = { name: "Perforated metal", kind: "drafting", lines: [{ angle: 0, origin: [0, 0], delta: [0.35, 0.6], dashes: [0.08, -0.6] }] };
+  const NZ0 = 12.49, NTOP = 51.67;
+  wall("W-N", PT(24.33, 29.98), PT(95.67, 29.98), "T-AIA-SKIN", "L-0", null, { baseOffset: ft(10.5), height: ft(NTOP - 10.5) });
+  wall("W-NW", PT(-16, 29.98), PT(-0.67, 29.98), "T-AIA-SKIN", "L-0", null, { baseOffset: ft(NZ0), height: ft(NTOP - NZ0) });
+  wall("W-NE", PT(116.33, 29.98), PT(124, 29.98), "T-AIA-SKIN", "L-0", null, { baseOffset: ft(NZ0), height: ft(NTOP - NZ0) });
+  wall("W-NC1", PT(-0.67, 30.44), PT(24.33, 30.44), "T-AIA-PANEL", "L-0", null, { baseOffset: ft(NZ0), height: ft(NTOP - NZ0) });
+  wall("W-NC2", PT(95.67, 30.44), PT(116.33, 30.44), "T-AIA-PANEL", "L-0", null, { baseOffset: ft(NZ0), height: ft(NTOP - NZ0) });
+  // the canopy the skin turns under along the north: 1'-10" deep, level on the west, rising 2'-9" to the east end
+  floor("FL-CAN0", "North canopy (west)", FT([[-16, 30.49], [24.33, 30.49], [24.33, 36], [-16, 36]]), "T-AIA-CAN", "L-0", ft(12.49));
+  roof("RF-CAN", "North canopy", FT([[24.33, 30.49], [24.33, 36], [124, 36], [124, 30.49]]), "L-0", ft(12.49), [Math.atan(2.77 / 99.67) * 180 / Math.PI, null, null, null], { thickness: 558, material: "M-AIA-SEAM" });
+  const PF = "M-AIA-PERF";
+  // the lobby's storefront under the canopy, the sunscreened windows over it
+  SF("SF-N1", "W-N", 47.8 - 24.33, 95.67 - 24.33, 10.5, 21.2, [60, 72, 84].map(x => x - 24.33), [12.6, 13.3], { "*,1": "M-AIA-SEAM", "*,2": PF });
+  SF("SF-N1b", "W-N", 0, 36 - 24.33, 11.6, 21.2, [], [], { "0,0": PF });
+  SF("SF-N2", "W-N", 26.1 - 24.33, 36 - 24.33, 23.9, 33, [], [], { "0,0": PF });
+  [[47.8, 52.5], [59.8, 64.5], [71.8, 76.5]].forEach(([a, b], i) => SF(`SF-N3m${i}`, "W-N", a - 24.33, b - 24.33, 35.3, 42.7, [], [], { "0,0": PF }));
+  SF("SF-N3a", "W-N", 0, 36 - 24.33, 35.3, 47.6, [], [], { "0,0": PF }); SF("SF-N3b", "W-N", 83.9 - 24.33, 95.6 - 24.33, 35.3, 47.6, [], [], { "0,0": PF });
+  [[36.3, 47.5], [48.4, 59.5], [60.4, 71.5], [72.4, 83.6]].forEach(([a, b], i) => SF(`SF-N3u${i}`, "W-N", a - 24.33, b - 24.33, 43.2, 47.6, [], [], { "0,0": PF }));
+  // the box: siding and storefront, projecting 3'-6" at the AIA floor
+  add({ id: "OP-BX", type: "Opening", args: { host: { ref: "W-N" }, profile: { kind: "rect", at: ft((46.86 + 95.67) / 2 - 24.33), sill: ft(22.94 - 10.5), w: ft(95.67 - 46.86), h: ft(33.42 - 22.94) }, farProfile: null, depth: "through" } });
+  wall("W-BXW", PT(46.86, 30.49), PT(46.86, 34), SP, "L-0", null, { baseOffset: ft(22.94), height: ft(33.42 - 22.94) });
+  wall("W-BXE", PT(97.14, 34), PT(97.14, 30.49), SP, "L-0", null, { baseOffset: ft(22.94), height: ft(33.42 - 22.94) });
+  wall("W-BXN", PT(97.14, 33.64), PT(46.86, 33.64), SP, "L-0", null, { baseOffset: ft(22.94), height: ft(33.42 - 22.94) });
+  SF("SF-BX", "W-BXN", 97.14 - 96.62, 97.14 - 66.44, 24.0, 32.75, [93.95, 84.7, 81.78, 72.7, 69.78].map(x => 97.14 - x), [27.09], { "0,1": { m: "M-GLASS", swing: "L" }, "2,1": { m: "M-GLASS", swing: "L" }, "4,1": { m: "M-GLASS", swing: "L" } });
+  floor("FL-BXR", "Box roof", FT([[46.86, 30.49], [97.14, 30.49], [97.14, 34], [46.86, 34]]), "T-AIA-DECK", "L-0", ft(33.42));
+
+  // ---- east: siding over the south bay, the stair's door at grade, the clerestory up under the roof
+  SF("SF-E1", "W-E", 0.68 + 1.33, 4.01 + 1.33, 10.5, 17.19, [], [], { "0,0": { m: "M-GLASS", swing: "D" } });
+  SF("SF-E2", "W-E", 10.92 + 1.33, 22.0 + 1.33, 23.96, 32.84, [14.3 + 1.33], [], { "0,0": { m: "M-GLASS", swing: "L" } });
+  // the clerestory: its grid under the roof's slope (the curtain wall's top follows the roof it is attached to)
+  wall("W-E3", PT(117.03, -1.33), PT(117.03, 21.33), "T-AIA-SF", "L-0", null, Object.assign({ baseOffset: ft(42.03), height: ft(8) }, r));
+  H.set("W-E3", "curtainGrid", { vertical: { positions: [0.66, 7.5, 14.33].map(v => ft(v + 1.33)) }, horizontal: { positions: [] } });
+  H.set("W-S3", "height", ft(42.03 - 35.5));
+  add({ id: "OP-SE-EG", type: "Opening", args: { host: { ref: "W-SE-E" }, profile: { kind: "rect", at: ft((25.5 + 28.83) / 2 - 20.67), sill: ft(4.94 - 9), w: ft(28.83 - 25.5), h: ft(12.11 - 4.94) }, farProfile: null, depth: "through" } });
+
+  // ---- west: the storefront wall of the cafe and the lobby's void, three storeys and up under the roof
+  wall("W-W", PT(-2.92, 21.33), PT(-2.92, -1.33), "T-AIA-SF", "L-0", null, Object.assign({ baseOffset: 0, height: ft(47) }, r));
+  H.set("W-W", "curtainGrid", { vertical: { positions: [21.25 - 17.9, 21.25 - 11.5, 21.25 - 5.26].map(v => ft(v + 0.08)) }, horizontal: { positions: [7.0, 7.46, 12.17, 13.17, 21.08, 22.08, 32.96, 33.13, 38.5, 38.67].map(ft) },
+    panels: { "*,1": "M-AIA-ALUM", "*,3": "M-AIA-ALUM", "*,5": "M-AIA-ALUM", "*,7": "M-AIA-ALUM", "*,8": "M-AIA-SIDING", "*,9": "M-AIA-ALUM", "1,0": { m: "M-GLASS", swing: "D" } } });
+  // south, lobby: a glass ribbon over the terrace's stone; the storefront of the lobby and the multi-purpose room (doors, folding doors)
+  const R_ = "R", D_ = "D";
+  SF("SF-S1a", "W-S1", -3.5 + 3.5, 19 + 3.5, 13.17, 15.83, [0 + 3.5, 12 + 3.5], []);
+  SF("SF-S1b", "W-S1", 19.17 + 3.5, 95.5 + 3.5, 10.5, 21.08, [26.69, 33.31, 42, 48, 54, 60.5, 66, 72, 78, 83.5, 90].map(x => x + 3.5), [13.0, 17.3],
+    { "1,0": { m: "M-GLASS", swing: D_ }, "1,1": { m: "M-GLASS", swing: D_ }, "6,0": { m: "M-GLASS", swing: D_ }, "6,1": { m: "M-GLASS", swing: D_ }, "7,0": { m: "M-GLASS", swing: D_ }, "7,1": { m: "M-GLASS", swing: D_ }, "8,0": { m: "M-GLASS", swing: D_ }, "8,1": { m: "M-GLASS", swing: D_ }, "9,0": { m: "M-GLASS", swing: D_ }, "9,1": { m: "M-GLASS", swing: D_ } });
+  // south, AIA: the balcony's doors and the offices' windows (fixed lights, 3' operable sashes)
+  SF("SF-S2a", "W-S2", 19.17 + 3.5, 35.42 + 3.5, 24.5, 32.96, [26.92, 33.08].map(x => x + 3.5), [31.08], { "1,0": { m: "M-GLASS", swing: D_ } });
+  SF("SF-S2b", "W-S2", 42.5 + 3.5, 60 + 3.5, 27.17, 32.96, [45.04, 56.96].map(x => x + 3.5), [], { "0,0": { m: "M-GLASS", swing: R_ }, "2,0": { m: "M-GLASS", swing: R_ } });
+  SF("SF-S2c", "W-S2", 60 + 3.5, 72 + 3.5, 27.17, 32.96, [68.96 + 3.5], [], { "1,0": { m: "M-GLASS", swing: R_ } });
+  SF("SF-S2d", "W-S2", 72 + 3.5, 83.73 + 3.5, 27.17, 32.96, [80.69 + 3.5], [], { "1,0": { m: "M-GLASS", swing: R_ } });
+  SF("SF-S2e", "W-S2", 90.25 + 3.5, 93.25 + 3.5, 27.17, 32.96, [], [], { "0,0": { m: "M-GLASS", swing: R_ } });
+  SF("SF-S2f", "W-S2", 97.92 + 3.5, 111 + 3.5, 27.17, 34.83, [108 + 3.5], [33.04], { "1,0": { m: "M-GLASS", swing: R_ } });
+  // south, tenant: the clerestory under the eave, a 3' operable sash at every grid line and fixed lights between
+  { const vs = []; for (let k = 0; k <= 9; k++) vs.push(12 * k, 12 * k + 3, 12 * k + 6); const sw = {}; for (let k = 0; k <= 9; k++) sw[`${1 + 3 * k},0`] = { m: "M-GLASS", swing: R_ };
+    SF("SF-S3", "W-S3", 0, 116.5 + 3.5, 38.58, 43.42, vs.filter(x => x < 113).map(x => x + 3.5), [], sw); }
+  // ---------------------------------------------------------------- the ground, from the elevations' grade lines: the plaza on the south and
+  // east at the lobby's floor (333'), the cafe's terrace on the west at 323', the north falling from 1' to the east's 4'
+  const G_ = (z, pts) => ({ z: ft(z), points: FT(pts) });
+  const contours = [G_(10, [[-46, -3.3], [150, -3.3]]), G_(10, [[-60, -40], [150, -40]]), G_(10, [[119, -1.4], [150, -1.4]]),
+    G_(0, [[-46, -0.8], [-3.3, -0.8], [-3.3, 29.2], [-46, 29.2]]), G_(0.5, [[-78, 36], [-3.3, 36]]), G_(1, [[-78, 40], [2, 38]]), G_(0, [[2, 33.5], [47, 33.5]]),
+    G_(-0.6, [[48, 31.4], [117.6, 31.4]]), G_(5.9, [[119, 13.5], [150, 13.5]]), G_(4.4, [[119, 29.5], [150, 29.5]]), G_(3.8, [[100, 46], [150, 46]]), G_(2, [[-70, 60], [150, 60]])];
+  topo("TS-1", "Existing grade", contours, FT(RECT(-80, -60, 160, 70)), -ft(10), [{ boundary: FT(RECT(-3.2, -1.4, 66.3, 29.4)), z: -ft(0.5) }, { boundary: FT(RECT(66.3, -1.4, 117.4, 30.5)), z: ft(9.5) }]);
   // ---------------------------------------------------------------- views
   const PC = [ft(-50), ft(-40), ft(150), ft(42)];
-  H.plan("V-P0", "PLAN cafe + exhibit", "L-0", { top: 2300, cut: 1200, bottom: -300, depth: -600 }, PC, 100);
-  H.plan("V-P1", "PLAN lobby + multi-purpose", "L-1", { top: 2300, cut: 1200, bottom: -300, depth: -3500 }, PC, 100);
-  H.plan("V-P2", "PLAN aia", "L-2", { top: 2300, cut: 1200, bottom: -300, depth: -4000 }, PC, 100);
-  H.plan("V-P3", "PLAN tenant", "L-3", { top: 2300, cut: 1200, bottom: -300, depth: -4000 }, PC, 100);
-  H.plan("V-PR", "ROOF PLAN", "L-T", { top: ft(10), cut: ft(8), bottom: -ft(60), depth: -ft(62) }, PC, 100, "VS-FH-SITE");
+  H.plan("V-P0", "PLAN cafe + exhibit", "L-0", { top: 2300, cut: 1200, bottom: -300, depth: -600 }, PC, 96);
+  H.plan("V-P1", "PLAN lobby + multi-purpose", "L-1", { top: 2300, cut: 1200, bottom: -300, depth: -3500 }, PC, 96);
+  H.plan("V-P2", "PLAN aia", "L-2", { top: 2300, cut: 1200, bottom: -300, depth: -4000 }, PC, 96);
+  H.plan("V-P3", "PLAN tenant", "L-3", { top: 2300, cut: 1200, bottom: -300, depth: -4000 }, PC, 96);
+  H.plan("V-PR", "ROOF PLAN", "L-T", { top: ft(10), cut: ft(8), bottom: -ft(60), depth: -ft(62) }, PC, 96, "VS-FH-SITE");
   const EZ = [-ft(6), ft(58)];
-  H.elev("V-W", "ELEVATION west", PT(-60, -45), PT(-60, 60), ft(100), "L-0", [ft(10), EZ[0], ft(100), EZ[1]], 100);
-  H.elev("V-N", "ELEVATION north", PT(-40, 60), PT(160, 60), ft(80), "L-0", [ft(10), EZ[0], ft(200), EZ[1]], 100);
-  H.elev("V-E", "ELEVATION east", PT(170, 60), PT(170, -45), ft(100), "L-0", [ft(10), EZ[0], ft(100), EZ[1]], 100);
-  H.elev("V-S", "ELEVATION south", PT(160, -45), PT(-60, -45), ft(80), "L-0", [ft(10), EZ[0], ft(215), EZ[1]], 100);
-  H.sect("V-X", "SECTION", PT(31, -30), PT(31, 45), ft(6), "L-0", [ft(-2), EZ[0], ft(76), EZ[1]], 50);
+  H.elev("V-W", "ELEVATION west", PT(-60, -45), PT(-60, 60), ft(100), "L-0", [ft(10), EZ[0], ft(100), EZ[1]], 96);
+  H.elev("V-N", "ELEVATION north", PT(-40, 60), PT(160, 60), ft(80), "L-0", [ft(10), EZ[0], ft(200), EZ[1]], 96);
+  H.elev("V-E", "ELEVATION east", PT(170, 60), PT(170, -45), ft(100), "L-0", [ft(10), EZ[0], ft(100), EZ[1]], 96);
+  H.elev("V-S", "ELEVATION south", PT(160, -45), PT(-60, -45), ft(80), "L-0", [ft(10), EZ[0], ft(215), EZ[1]], 96);
+  // the sections: A402 at 01+6' looking east (A on the left), A403 at 06+6' looking west (B on the left)
+  const XC = [ft(3), -ft(10), ft(92), ft(54)];
+  H.sect("V-X", "SECTION", PT(30, -34.5), PT(30, 49.33), ft(6), "L-0", XC, 48);
+  H.sect("V-X2", "SECTION ", PT(66.6, 49.33), PT(66.6, -34.5), ft(6), "L-0", [ft(3), -ft(10), ft(92), ft(54)], 48);
   H.view3d("V-3D", "AXONOMETRIC", { azimuth: 215, elevation: 24, target: [ft(58), ft(12), ft(20)] }, 200);
 
-  // ---------------------------------------------------------------- sheets: the set's, on ARCH D, the strip at the right
-  const pl = p0 => H.place(p0, [0, 0], [ft(50), ft(0)], PC, 100, 96);
-  H.sheet("A201", "Ground Level Plans", [["V-P0", pl([283.8, 433.4])], ["V-P1", pl([283.8, 133.3])]]);
-  H.sheet("A202", "AIA NC + Tenant Level Plans", [["V-P2", pl([283.8, 433.4])], ["V-P3", pl([283.8, 133.3])]]);
-  const ev = (p0, s, crop) => H.place(p0, [s, 0], [(crop[0] + crop[2]) / 2, ft(25)], crop, 100, 96);
-  H.sheet("A301", "Elevations", [["V-W", ev([217.4, 405.7], ft(30), [ft(10), EZ[0], ft(100), EZ[1]])], ["V-N", ev([642.2, 48.7], ft(160), [ft(10), EZ[0], ft(200), EZ[1]])]]);
-  H.sheet("A302", "Elevations", [["V-E", ev([613.4, 405.7], ft(45), [ft(10), EZ[0], ft(100), EZ[1]])], ["V-S", ev([331.9, 43.7], ft(60), [ft(10), EZ[0], ft(215), EZ[1]])]]);
-  H.sheet("A402", "Section", [["V-X", H.place([406.6, 147.5], [ft(15), 0], [ft(37), ft(25)], [ft(-2), EZ[0], ft(76), EZ[1]], 50, 48)]]);
-  H.sheet("A901", "Axonometric", [["V-3D", [420, 300]]]);
-  H.joinWalls();
+  // ---------------------------------------------------------------- sheets: the set's own (its PDF's title strips, names and notes)
+  H.useSet("aia");
+  const pl = p0 => H.place(p0, [0, 0], [ft(50), ft(0)], PC, 96, 96);
+  H.pdfSheet(1, [["V-P0", pl([283.8, 433.4])], ["V-P1", pl([283.8, 133.3])]]);
+  H.pdfSheet(2, [["V-P2", pl([283.8, 433.4])], ["V-P3", pl([283.8, 133.3])]]);
+  const ev = (p0, s, crop) => H.place(p0, [s, 0], [(crop[0] + crop[2]) / 2, ft(25)], crop, 96, 96);
+  H.pdfSheet(5, [["V-W", ev([217.4, 405.7], ft(30), [ft(10), EZ[0], ft(100), EZ[1]])], ["V-N", ev([642.2, 48.7], ft(160), [ft(10), EZ[0], ft(200), EZ[1]])]]);
+  H.pdfSheet(6, [["V-E", ev([613.4, 405.7], ft(45), [ft(10), EZ[0], ft(100), EZ[1]])], ["V-S", ev([331.9, 43.7], ft(60), [ft(10), EZ[0], ft(215), EZ[1]])]]);
+  H.pdfSheet(3, [["V-X", H.at([407.0, 145.46], [ft(19.33), 0], XC, 48), { noTitle: true }]]);
+  H.pdfSheet(4, [["V-X2", H.at([451.45, 145.46], [ft(34.5), 0], [ft(3), -ft(10), ft(92), ft(54)], 48), { noTitle: true }]]);
+  H.sheet("A901", "Axonometric", [["V-3D", [420, 300]]], "ARCH D", { titleBlock: "SY-TB-AIA" });
+  // the datums where the set draws them: level heads at the left (the east elevation's at the right), grid heads over the drawing
+  H.pdfDatums(5, "V-W", { levels: [103.06, 153.86], gridHead: 586.32, gridFoot: 386 }); H.pdfDatums(5, "V-N", { levels: [103.06, 153.86], gridHead: 229.83, gridFoot: 30 });
+  H.pdfDatums(6, "V-E", { levels: [822.92, 772.12], gridHead: 586.52, gridFoot: 386 });
+  H.pdfDatums(3, "V-X", { levels: [197.45, 299.05], gridHead: 507.41, gridFoot: 85, R: 6.35 }); H.pdfDatums(4, "V-X2", { levels: [851.5, 749.9], gridHead: 507.41, gridFoot: 85, R: 6.35 }); H.pdfDatums(6, "V-S", { levels: [103.06, 153.86], gridHead: 224.84, gridFoot: 25 });
+  for (const pg of [1, 2, 3, 4, 5, 6]) H.annotate(pg, { rooms: pg <= 2 });
+  H.joinTolerance = 50; H.joinWalls();
   doc.regenerate();
   return doc;
 }

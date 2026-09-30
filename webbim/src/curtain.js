@@ -17,7 +17,8 @@ import { profileAt, pointAt } from "./walls.js";
 export function curtainOf(type, inst) {
   const c = type && type.curtain; if (!c) return null;
   const o = inst || {};
-  return Object.assign({}, c, { vertical: Object.assign({}, c.vertical, o.vertical), horizontal: Object.assign({}, c.horizontal, o.horizontal) });
+  // panels swapped one by one (Revit's panel type per cell): { "i,j": material | "none" }, i along the wall, j up it
+  return Object.assign({}, c, { vertical: Object.assign({}, c.vertical, o.vertical), horizontal: Object.assign({}, c.horizontal, o.horizontal), panels: Object.assign({}, c.panels, o.panels) });
 }
 /** Grid positions strictly inside (0, L) for one direction. */
 function cwPositions(spec, L) {
@@ -85,7 +86,7 @@ export function curtainPanels(w) {
   }
   // openings take their panels out (a door or a storefront set in the grid)
   const ops = w.openings || [];
-  if (!ops.length) return out;
+  if (!ops.length) return withMaterial(w, out);
   const res = [];
   for (const p of out) {
     let pieces = [p.poly];
@@ -98,7 +99,13 @@ export function curtainPanels(w) {
       return r; });
     for (const poly of pieces) res.push({ i: p.i, j: p.j, poly });
   }
-  return res;
+  return withMaterial(w, res);
+}
+/** Each panel's material: its own (swapped), else the system's; a panel swapped to "none" is left open. */
+function withMaterial(w, list) {
+  const c = w.curtain, dflt = (c.panel && c.panel.material) || "M-GLASS", sw = c.panels || {};
+  // a cell's entry is a material, or { m: material, swing: "L" | "R" | "T" | "B" | "D" } for an operable sash or a door
+  return list.map(p => { const v = sw[`${p.i},${p.j}`] || sw[`*,${p.j}`] || sw[`${p.i},*`] || dflt; return Object.assign(p, typeof v === "object" ? { material: v.m || dflt, swing: v.swing || null } : { material: v }); }).filter(p => p.material !== "none");
 }
 /** The mullions as centre lines in (u, z above the base): the border (its top along the rake), every vertical
  *  up to the top, every horizontal across the stretches the top leaves it. */
@@ -121,7 +128,7 @@ export function curtainPieces(w, doc) {
   const g = curtainGrid(w), c = w.curtain, n = w.stack.s.length - 1, sc = (w.stack.s[0] + w.stack.s[n]) / 2;
   const pc = (c.panel && c.panel.thickness) || 25, pm = (c.panel && c.panel.material) || "M-GLASS", mm = (c.mullion && c.mullion.material) || "M-ALUM";
   const colourOf = m => (((doc && doc.lib.materials[m]) || {}).shading || {}).colour;
-  const glass = /GLASS|GLAZ/i.test(pm);
+  const isGlass = m => /GLASS|GLAZ/i.test(m);
   const box = (u0, u1, s0, s1) => [pointAt(w, s0, u0), pointAt(w, s0, u1), pointAt(w, s1, u1), pointAt(w, s1, u0)];
   const out = [];
   for (const p of curtainPanels(w)) {
@@ -129,7 +136,8 @@ export function curtainPieces(w, doc) {
     const zt = Math.max(...p.poly.map(q => q[1])), flat = p.poly.length === 4 && p.poly.every(q => Math.abs(q[1] - zb) < 1e-6 || Math.abs(q[1] - zt) < 1e-6);
     // a clipped panel's top: the polygon's upper chain, as a height at a plan point
     const top = flat ? null : (() => { const up = p.poly.filter(q => q[1] > zb + 1e-6).sort((a, b) => a[0] - b[0]); return pt => { const u = Math.max(u0, Math.min(u1, cwUAlong(w, pt))); for (let k = 1; k < up.length; k++) if (u <= up[k][0] + 1e-9) { const a = up[k - 1], b = up[k]; return w.z0 + (b[0] - a[0] < 1e-9 ? b[1] : a[1] + (b[1] - a[1]) * (u - a[0]) / (b[0] - a[0])); } return w.z0 + (up.length ? up[up.length - 1][1] : zt); }; })();
-    out.push({ foot: box(u0, u1, sc - pc / 2, sc + pc / 2), z0: w.z0 + zb, z1: w.z0 + zt, topAt: top, sub: glass ? "Glass" : "Panel", colour: glass ? undefined : colourOf(pm), zRef: w.z0 });
+    const g = isGlass(p.material);
+    out.push({ foot: box(u0, u1, sc - pc / 2, sc + pc / 2), z0: w.z0 + zb, z1: w.z0 + zt, topAt: top, sub: g ? "Glass" : "Panel", colour: g ? undefined : colourOf(p.material), zRef: w.z0 });
   }
   const m2 = g.mw / 2, d2 = g.md / 2;
   for (const mu of curtainMullions(w)) {
