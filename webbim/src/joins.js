@@ -132,6 +132,12 @@ function resolveNode(ends, row, say, P = null) {
     let C = intersectLines(E.left, G.right);
     if (!C) C = projectPoint(E.left, P);             // collinear continuation
     const limit = MITER_LIMIT * Math.max(E.half, G.half);
+    // Two faces all but in line (a wall carried on by the next one, or two walls a hair off each other's
+    // line): their intersection runs off to hundreds of metres, and a mitre there would draw the wall out to
+    // it. Each is cut square at the node instead - the AIA's chase and kitchen walls, 1/2" off the elevator's
+    // line, were drawn 400' long.
+    // So too two walls leaving the node the same way (stacked walls of different storeys, their ends on one point).
+    if (dist(C, P) > limit && (Math.abs(phi - Math.PI) < 0.1 || phi < 0.1 || phi > TAU - 0.1)) { leftCorner[k] = projectPoint(E.left, P); rightCorner[(k + 1) % n] = projectPoint(G.right, P); continue; }
     if (phi > Math.PI + 1e-9 && dist(C, P) > limit) {
       // Past the miter limit: bevel. Same rule as stroke rendering (§3.4, test 5).
       const Bl = projectPoint(E.left, P), Br = projectPoint(G.right, P);
