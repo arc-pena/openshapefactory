@@ -513,6 +513,8 @@ function renderQAT() {
     b("open"), b("save"), h("span", { class: "qsep" }), b("undo"), b("redo"), h("span", { class: "qsep" }),
     b("dim"), b("text"), h("span", { class: "qsep" }), b("default3d"), b("elev"), b("thin"), b("closehidden"),
     h("div", { class: "qtitle" }, h("b", {}, app.doc.meta.name), viewName ? " — " + viewName : ""),
+    h("button", { class: "qswitch", title: "Prompts to Claude: feedback with images, kept in the project file", onclick: () => app.promptPanel && app.promptPanel.toggle(true) }, icon("text", 15), h("span", {}, "Prompts"),
+      (() => { const n = ((app.doc.meta.prompts || {}).entries || []).filter(e => e.status === "open").length; return n ? h("span", { style: { marginLeft: "4px", background: "var(--note-bg)", color: "var(--note)", borderRadius: "8px", padding: "0 6px" } }, String(n)) : null; })()),
     h("button", { class: "qbtn", title: "Export (PDF set, DXF)", "aria-label": "Export", onclick: () => exportDialog() }, icon("exportI", 16)),
     h("button", { class: "qswitch", title: "Switch to the parametric CAD interface (PC) - the same model", onclick: () => switchToCad() }, icon("view3d", 15), h("span", {}, "Parametric CAD")));
 }

@@ -62,7 +62,7 @@ export function installPromptPanel(app) {
   document.head.append(css); document.body.append(panel, tab);
 
   function toggle(open) { st.open = open; store("prompts-open", open); render(); }
-  function save() { if (app.saveDraftSoon) app.saveDraftSoon(); if (app.markChanged) app.markChanged(); renderTab(); }
+  function save() { if (app.saveDraftSoon) app.saveDraftSoon(); if (app.refresh) app.refresh({ keepMain: true }); renderTab(); }
   function context() {
     const d = app.doc, v = d.element(app.activeView), ctx = {};
     if (v) { const t = d.typeOf(v); if (t === "Sheet") ctx.sheet = String(d.argValue(v, "number") || app.activeView); else ctx.view = app.activeView; ctx.viewName = String(v.get("Name") || app.activeView); }
@@ -98,7 +98,7 @@ export function installPromptPanel(app) {
   function renderTab() {
     if (!app.doc) { tab.style.display = "none"; return; }
     const n = promptLog(app.doc).entries.filter(e => e.status === "open").length;
-    clear(tab).append("Prompts", n ? h("span", { class: "n" }, String(n)) : null);
+    clear(tab).append("Prompts"); if (n) tab.append(h("span", { class: "n" }, String(n)));
     tab.style.display = st.open ? "none" : "";
   }
   function render() {
