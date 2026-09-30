@@ -389,12 +389,15 @@ export class Document {
   serialise() { return JSON.stringify(this.toJSON(), null, 2) + "\n"; }
 }
 
+const META_KEYS = ["format", "version", "units", "name", "displayUnits", "project", "annotation", "defaultDimType", "scaleNames", "surveyElevation", "prompts"];
 export function loadDocument(input) {
   const src = typeof input === "string" ? JSON.parse(input) : input;
   const doc = new Document();
   const report = doc.loadReport;
   if (src.format && src.format !== "web-bim-document") report.push(`format "${src.format}" read as web-bim-document`);
-  for (const k of ["format", "version", "units", "name", "displayUnits", "project"]) if (src[k] !== undefined) doc.meta[k] = src[k];
+  // the project's settings kept beside the elements: its display units and information, its office's annotation
+  // standard, and the prompt log (the architect's feedback and Claude's answers) - all back where they were written
+  for (const k of META_KEYS) if (src[k] !== undefined) doc.meta[k] = src[k];
   let factor = 1;
   if (doc.meta.units && doc.meta.units !== "mm") {
     factor = { m: 1000, cm: 10, in: 25.4, ft: 304.8 }[doc.meta.units];
@@ -426,7 +429,7 @@ export function loadDocument(input) {
   // … wire second. Dangling references become notes on the holder (§2.3).
   doc.joins = clone(src.joins || []); doc.constraints = clone(src.constraints || []);
   doc.graph = clone(src.graph || { layout: {} }); doc.browser = clone(src.browser || {});
-  const knownTop = new Set(["format", "version", "units", "name", "elements", "joins", "constraints", "graph", "browser", ...LIB_ORDER]);
+  const knownTop = new Set([...META_KEYS, "elements", "joins", "constraints", "graph", "browser", ...LIB_ORDER]);
   for (const [k, v] of Object.entries(src)) if (!knownTop.has(k)) doc.extra[k] = clone(v);
   return doc;
 }

@@ -31,6 +31,7 @@ import { dimStyleManager } from "./dimstyleui.js";
 import { sunOf } from "./sun.js";
 import { renderPanel, typeEditor, vvDialog, viewStyleEditor, materialsEditor } from "./panel.js";
 import { titleBlockEditor } from "./tbeditor.js";
+import { installPromptPanel } from "./promptpanel.js";
 import { isTitleFamily } from "./titleblocks.js";
 import { renderSchedule, newScheduleDialog, scheduleProperties } from "./scheduleui.js";
 import { renderSpaceGraph, importProgram, briefDialog, sheetDiagramUrl } from "./sgui.js";
@@ -182,10 +183,12 @@ function setDocument(doc, note) {
   if (!app.tabs.length) { const p = firstOf("PlanView"); if (p) app.tabs = [p]; }
   app.activeView = saved && app.tabs.includes(saved.active) ? saved.active : app.tabs[0] || null;
   app.refresh();
+  if (app.promptPanel) app.promptPanel.render();
   if (note) app.say(note.msg, note.kind);
 }
 function default3D() { const f = app.doc.elements().find(g => app.doc.typeOf(g) === "View3D" && g.get("Name") === "{3D}") || app.doc.elements().find(g => app.doc.typeOf(g) === "View3D"); return f ? app.doc.idOf(f) : null; }
 let draftTimer = null;
+app.saveDraftSoon = () => saveDraftSoon();
 function saveDraftSoon() { clearTimeout(draftTimer); draftTimer = setTimeout(() => { try { store("draft-v6", app.doc.toJSON()); } catch (e) { /* too big or blocked: the draft is a convenience only */ } }, 800); }
 
 // ---------------------------------------------------------------- the command registry
@@ -249,6 +252,7 @@ const COMMANDS = {
   schedule: { label: "Schedule", icon: "schedule", run: () => newSchedule() },
   sheet: { label: "Sheet", icon: "sheet", run: () => newSheet() },
   // the open (or selected) sheet's title block family, in its own editor window
+  prompts: { label: "Prompts", icon: "text", run: () => app.promptPanel && app.promptPanel.toggle(true) },
   edittitleblock: { label: "Title Block", icon: "sheet", run: () => { const d = app.doc, id = [...app.selection].find(i => d.element(i) && d.typeOf(d.element(i)) === "Sheet") || (d.element(app.activeView) && d.typeOf(d.element(app.activeView)) === "Sheet" ? app.activeView : null)
     || (d.elements().find(f => d.typeOf(f) === "Sheet") ? d.idOf(d.elements().find(f => d.typeOf(f) === "Sheet")) : null);
     const tb = id ? F.refId(d.element(id), "titleBlock") : Object.keys(d.lib.symbols).find(k => isTitleFamily(d.lib.symbols[k]));
@@ -331,7 +335,7 @@ const RIBBON = [
   { tab: "View", panels: [
     { title: "Graphics", items: [big("vv"), big("viewstyles"), small("thin"), small("zoomfit")] },
     { title: "Create", items: [big("planview"), big("default3d"), big("sectionbox"), big("section"), small("elev"), small("schedule"), big("sheet"), small("edittitleblock")] },
-    { title: "Windows", items: [small("graph"), small("tree"), small("closehidden")] },
+    { title: "Windows", items: [big("prompts"), small("graph"), small("tree"), small("closehidden")] },
     { title: "Interface", items: [big("cadmode")] },
   ] },
   { tab: "Manage", panels: [
@@ -1542,6 +1546,7 @@ async function boot() {
   // the one sample the tool carries: Casa Mazatlan, opened on its ground floor sheet
   const fresh = !doc;
   if (!doc) doc = buildMazatlanSample();
+  installPromptPanel(app);
   setDocument(doc, note || { msg: "Casa Mazatlan: the INAH set rebuilt as a model - 17 A3 sheets A001-A904 in the set's title band", kind: "ok" });
   if (fresh) app.openView("SH-A101");
 }

@@ -13,6 +13,7 @@ import { Editor, propagate, massingStoreys, geomKey } from "./ops.js";
 import { sectionRows, findSection, sectionType } from "./sectionlib.js";
 import { elementRefs } from "./bim.js";
 import { curtainPanels, curtainMullions } from "./curtain.js";
+import { addPrompt, setPromptStatus, removePrompt, promptTree, promptBrief } from "./prompts.js";
 import { viewReferences, viewMeasure } from "./scene.js";
 import { DIM_ARROWS, dimStyleOf, formatDimension } from "./dimstyles.js";
 import { viewLineGeometry, viewContext, sectionBoxKey, dimText, deriveView, planScene, elevationScene, placements, textWidth, sheetScene, visibilityKey, sectionCut, cutOutline, SHEET_DISPLAYS, sheetDisplayOf, dimensionGeometry } from "./scene.js";
@@ -2422,3 +2423,25 @@ testCase("M84", "Title blocks are families: lines, text, labels and symbols draw
   return { pass: held && proj && dflt && north && own && hidden && lib, detail: { held, proj, dflt, north, own, hidden, lib } };
 });
 
+
+testCase("M85", "The project's conversation lives in its file: the architect's prompts (words, images, the view and selection they are about) and Claude's answers form a tree that saves, reopens and reads out as a brief of what is still open; the office's annotation standard survives the same round trip", () => {
+  const doc = newDocument("prompts");
+  doc.meta.annotation = { kind: "revit", levelStyle: "fha" }; doc.meta.scaleNames = "imperial";
+  const a = addPrompt(doc, { text: "Grid bubble text too big on A201", context: { sheet: "A201", selection: ["G-3"] }, images: [{ name: "a.png", type: "image/png", w: 2, h: 2, data: "data:image/png;base64,AA==" }] });
+  const b = addPrompt(doc, { text: "Mitre the north-east corner", context: { view: "V-P1" } });
+  const r = addPrompt(doc, { text: "Bubble text now fits its circle.", author: "claude", parent: a.id });
+  const f = addPrompt(doc, { text: "Also on A202 please", parent: r.id });
+  setPromptStatus(doc, b.id, "done");
+  const back = loadDocument(JSON.parse(doc.serialise()));
+  const tree = promptTree(back), ids = tree.map(n => n.entry.id);
+  // roots newest first (P2 then P1); P1 has Claude's answer P3, which has the follow-up P4
+  const shape = ids.join(",") === "P2,P1" && tree[1].replies[0].entry.id === "P3" && tree[1].replies[0].replies[0].entry.id === "P4";
+  const answered = back.meta.prompts.entries.find(e => e.id === "P1").status === "answered" && back.meta.prompts.entries.find(e => e.id === "P4").status === "open";
+  const image = (back.meta.prompts.entries[0].images || [])[0]?.name === "a.png";
+  const brief = promptBrief(back), briefOk = brief.includes("P1") && brief.includes("sheet A201") && brief.includes("P4") && !brief.includes("Mitre");
+  const standard = (back.meta.annotation || {}).levelStyle === "fha" && back.meta.scaleNames === "imperial" && !("annotation" in back.extra);
+  let refused = false; try { addPrompt(back, { text: "x", parent: "P99" }); } catch (e) { refused = true; }
+  const gone = removePrompt(back, "P1") === 3 && back.meta.prompts.entries.length === 1;
+  void f;
+  return { pass: shape && answered && image && briefOk && standard && refused && gone, detail: { ids, answered, image, briefOk, standard, refused, gone } };
+});
