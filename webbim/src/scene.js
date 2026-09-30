@@ -601,6 +601,12 @@ function drawStairPlan(doc, ctx, B, f, p, V) {
   const gH = Object.assign({}, gT, { dash: LINE_TYPES.hidden }), num = F.bool(f, "numbers") !== false;
   const at = (q, s, side) => add(add(q.from, mul(q.d, s)), mul(q.n, side * S.W / 2));
   let broke = false;
+  // numbered and labelled only where it leaves or reaches this floor: a flight further down is drawn, not written on
+  const atFloor = Math.abs(S.z0 - V.E) < 60 || Math.abs(S.z1 - V.E) < 60;
+  // where a stair arrives in the footprint of the one going on up, the risers are the upper one's to number
+  const box = st => { const q = st.flights.flatMap(fl => [fl.from, fl.to]); return [Math.min(...q.map(v => v[0])), Math.min(...q.map(v => v[1])), Math.max(...q.map(v => v[0])), Math.max(...q.map(v => v[1]))]; };
+  const mine = box(S), goesOn = Math.abs(S.z0 - V.E) >= 60 && doc.elements().some(g => { if (g === f || doc.typeOf(g) !== "Stair") return false; const o = (doc.plan(g) || {}).stair; if (!o || Math.abs(o.z0 - V.E) >= 60) return false;
+    const b = box(o); return b[0] < mine[2] && b[2] > mine[0] && b[1] < mine[3] && b[3] > mine[1]; });
   for (const q of S.flights) {
     // where the cut plane passes through this flight: a riser whose step rises past it
     let kCut = below ? Infinity : q.steps.findIndex(st => st.z > V.cutZ + 1); if (kCut < 0) kCut = Infinity;
@@ -618,8 +624,10 @@ function drawStairPlan(doc, ctx, B, f, p, V) {
       const s0 = Math.max(0, sCut - q.g * 0.5), a = at(q, s0 - q.g * 0.4, 1), b = at(q, s0 + q.g * 0.4, -1), m = add(mul(add(a, b), 0.5), [0, 0]), z = mul(q.d, q.g * 0.3);
       B.stroke([lineSeg(a, add(m, z)), lineSeg(add(m, z), sub(m, z)), lineSeg(sub(m, z), b)], { weight: penWeight(doc, "medium", ctx.scale), colour: "#000" }, cat, id); broke = true;
     }
-    if (num) q.steps.forEach((st, i) => { if (i === q.steps.length - 1) return; const c = add(q.from, mul(q.d, (st.s + q.steps[i + 1].s) / 2)), off = add(c, mul(q.n, -S.W * 0.28));
-      B.text(B.P(off), String(st.no), 1.8, { align: "centre", valign: "middle", layer: "Annotation-Text", id, rot: 0 }); });
+    // the numbers fit their treads: smaller at a small scale, and left off where a tread is too narrow to hold one
+    const nh = Math.min(1.8, 0.8 * q.g / ctx.scale / textWidth(String(q.steps.length), 1));
+    if (num && atFloor && !goesOn && nh >= 0.9) q.steps.forEach((st, i) => { if (i === q.steps.length - 1) return; const c = add(q.from, mul(q.d, (st.s + q.steps[i + 1].s) / 2)), off = add(c, mul(q.n, -S.W * 0.28));
+      B.text(B.P(off), String(st.no), nh, { align: "centre", valign: "middle", layer: "Annotation-Text", id, rot: 0 }); });
   }
   for (const l of S.landings) B.stroke(polyPath(l.poly), below || l.z <= V.cutZ ? gT : gH, cat, id);
   // the walking line, from the first riser to the last, its arrow at the top
@@ -632,7 +640,8 @@ function drawStairPlan(doc, ctx, B, f, p, V) {
   B.stroke(polyPath([e, add(sub(e, mul(d, hs)), mul(n, hs * 0.45)), add(sub(e, mul(d, hs)), mul(n, -hs * 0.45))]), gT, cat, id);
   B.fill(polyPath([e, add(sub(e, mul(d, hs)), mul(n, hs * 0.45)), add(sub(e, mul(d, hs)), mul(n, -hs * 0.45))]), "#000", cat, id);
   const s0 = path[0], d0 = normalise(sub(path[1] || e, s0));
-  B.text(B.P(sub(s0, mul(d0, 1.5 * ctx.scale))), up ? "UP" : "DN", 2.2, { align: "centre", valign: "middle", layer: "Annotation-Text", id });
+  // UP or DN only on the stair that leaves or reaches this floor: a flight seen further down, in the view's depth, is not labelled
+  if (atFloor) B.text(B.P(sub(s0, mul(d0, 1.5 * ctx.scale))), up ? "UP" : "DN", 2.2, { align: "centre", valign: "middle", layer: "Annotation-Text", id });
   B.hit(id, p.foot);
 }
 /** The ground in plan, as a survey draws it: contour lines at the surface's interval, every nth heavier and
@@ -824,8 +833,11 @@ function flagHead(B, at, look, AS, top, bottom, id, withNumberOutside = null) {
   if (bottom != null && top != null) {
     B.text([at[0], at[1] + 0.35], top, h, { align: "centre", layer: "Annotation-Marker", id, font, marker: "top" });
     B.text([at[0], at[1] - h - 0.55], bottom, h, { align: "centre", layer: "Annotation-Marker", id, font, marker: "bottom" });
-  } else B.text([at[0], at[1] - h / 2], top ?? bottom ?? "", h, { align: "centre", layer: "Annotation-Marker", id, font });
-  if (withNumberOutside != null) B.text(add(at, add(mul(look, K + 1.4), [0, -h / 2])), withNumberOutside, h, { align: "left", layer: "Annotation-Marker", id, font });
+  } else { const s = top ?? bottom ?? "", w = textWidth(s, h, font), hh = w > 1.8 * R ? h * 1.8 * R / w : h;   // a long sheet number fits the circle
+    B.text([at[0], at[1] - hh / 2], s, hh, { align: "centre", layer: "Annotation-Marker", id, font }); }
+  // the view's number beyond the flag's point, set away from it on the side the flag points to
+  if (withNumberOutside != null) { const al = look[0] > 0.3 ? "left" : look[0] < -0.3 ? "right" : "centre", q = add(at, mul(look, K + 1.4));
+    B.text(add(q, [0, al === "centre" ? (look[1] > 0 ? 0.4 : -h - 0.4) : -h / 2]), withNumberOutside, h, { align: al, layer: "Annotation-Marker", id, font }); }
 }
 function drawSectionFlag(doc, ctx, B, f, place, c, d, look, AS) {
   const id = doc.idOf(f), pl = place.get(id), heads = F.choice(f, "heads") || "Both ends";

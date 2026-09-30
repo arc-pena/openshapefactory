@@ -220,7 +220,8 @@ export function fhaProject(name, project) {
       add({ id, type: "SectionView", name, args: Object.assign({ line: line(a, b), depth: o.depth || 1800, scale: S, baseLevel: { ref: o.base || "L-0" }, top: o.top || 20000, style: { ref: "VS-FH-DET" }, detailLevel: "Fine",
         clip: { rect: crop, visible: false, active: true, annotation: [20, 20, 20, 20] }, heads: "End", groundLine: false, levelExtent: [crop[0], crop[2]],
         overrides: Object.assign({ __annoK: 1, __gridTop: o.gridTop ?? crop[3] + (o.gridHead ? 400 : 0), __gridBottom: o.gridBottom ?? crop[1], __gridHeads: !!o.gridHead }, o.overrides || {}) },
-        o.callout ? { callout: o.callout } : {}) });
+        // a detail is a callout (of its parent, or of none): it is never marked as a cut on the plans and elevations
+        { callout: o.callout || {} }) });
       return [id, [(rect[0] + rect[2]) / 2, (rect[1] + rect[3]) / 2], Object.assign({ number: o.number }, o.vp || {})]; },
     /** A detail sheet's drafting, lifted from its PDF (tools/fha/dlift.py) into its views: the batts as insulation
      *  (the repeating detail, at the cavity's width), the rest as the view's detail components - what the model's cut
@@ -274,8 +275,16 @@ function annotatePage(H, page, o) {
     notesView = { id, S: 1, map: q => q }; return notesView; };
   const claim = q => vps.filter(v => q[0] >= v.rect[0] && q[0] <= v.rect[2] && q[1] >= v.rect[1] && q[1] <= v.rect[3]).sort((a, b) => a.area - b.area)[0] || null;
   const isTitle = n => titles.has(n.t.toUpperCase()) || /^\d+(\/\d+)?" = 1'-0"$|^1" = 1'-0"$|^N\.?T\.?S\.?$/i.test(n.t) && !n.leader;
+  const gridNames = new Set(doc.elements().filter(f => doc.typeOf(f) === "Grid").map(f => String(doc.argValue(f, "name") || "")));
+  const viewTitleNear = n => (doc.argValue(sh, "viewports") || []).some(vp => vp.titleAt && Math.hypot(vp.titleAt[0] - (n.bb[0] + n.bb[2]) / 2, vp.titleAt[1] - (n.bb[1] + n.bb[3]) / 2) < 6);
   const skip = n => (o.skip && o.skip(n)) || isTitle(n) || (n.end === "none" && n.leader && n.leader.length === 2 && Math.abs(n.leader[0][1] - n.leader[1][1]) < 0.05 && (titles.has(n.t.toUpperCase()) || /" = /.test(n.t)))
-    || levelWords.has(n.t.toUpperCase()) || /^\d{3}'-\d+( \d\/\d)?"$/.test(n.t);
+    // a grid's head (a letter or two on its line): the model's grid draws it
+    || (n.t.length <= 2 && n.leader && n.leader.length === 2 && Math.abs(n.leader[0][0] - n.leader[1][0]) < 0.05 && Math.abs(n.leader[0][1] - n.leader[1][1]) > 8)
+    || (!n.leader && gridNames.has(n.t.trim()))
+    // a view title's number: the sheet's view title draws it
+    || (/^\d{1,2}$/.test(n.t) && viewTitleNear(n))
+    // a level's head (its height over its name, one block or two): the model's level draws it
+    || n.t.split("\n").every(l => levelWords.has(l.trim().toUpperCase()) || /^\d{3}'-\d+( \d\/\d)?"$/.test(l.trim()));
   // the view titles where the drawing has them: the circle left of the name, the rule as long as drawn
   { const vpl = (doc.argValue(sh, "viewports") || []).map(x => Object.assign({}, x)); let moved = false;
     for (const n of P.notes) { if (!n.leader || n.end !== "none") continue; const x = vpl.find(vp => String(doc.element(vp.view.ref).get("Name") || "").toUpperCase() === n.t.toUpperCase()); if (!x || x.titleAt) continue;

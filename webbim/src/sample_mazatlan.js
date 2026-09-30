@@ -489,9 +489,12 @@ export function buildMazatlanSample() {
       }
       return best && best.r;
     };
-    let k = 0;
+    let k = 0; const done = [];
     for (const dm of data.dims) {
       if (Math.abs(dm.to - dm.from) < 50) continue;
+      // the set's own file carries some strings twice, one over the other: one dimension each
+      if (done.some(o => o.h === dm.h && o.value === dm.value && Math.abs(o.at - dm.at) < 100 && Math.abs(Math.min(o.from, o.to) - Math.min(dm.from, dm.to)) < 60)) continue;
+      done.push(dm);
       const vert = dm.h;                         // a horizontal string measures between vertical lines
       if (!dm.value) continue;
       // what the string measures that the model does not hold (a stair's tread, a niche, a door's leaf) is

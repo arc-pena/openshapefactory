@@ -287,14 +287,14 @@ export function buildAiaSample() {
   H.plan("V-P3", "PLAN tenant", "L-3", { top: 2300, cut: 1200, bottom: -300, depth: -4000 }, PC, 96);
   H.plan("V-PR", "ROOF PLAN", "L-T", { top: ft(10), cut: ft(8), bottom: -ft(60), depth: -ft(62) }, PC, 96, "VS-FH-SITE");
   const EZ = [-ft(6), ft(58)];
-  H.elev("V-W", "ELEVATION west", PT(-60, -45), PT(-60, 60), ft(100), "L-0", [ft(10), EZ[0], ft(100), EZ[1]], 96);
-  H.elev("V-N", "ELEVATION north", PT(-40, 60), PT(160, 60), ft(80), "L-0", [ft(10), EZ[0], ft(200), EZ[1]], 96);
-  H.elev("V-E", "ELEVATION east", PT(170, 60), PT(170, -45), ft(100), "L-0", [ft(10), EZ[0], ft(100), EZ[1]], 96);
-  H.elev("V-S", "ELEVATION south", PT(160, -45), PT(-60, -45), ft(80), "L-0", [ft(10), EZ[0], ft(215), EZ[1]], 96);
+  H.elev("V-W", "ELEVATION west", PT(-60, -45), PT(-60, 60), ft(100), "L-0", [ft(10), EZ[0], ft(100), EZ[1]], 96, { top: ft(58) });
+  H.elev("V-N", "ELEVATION north", PT(-40, 60), PT(160, 60), ft(80), "L-0", [ft(10), EZ[0], ft(200), EZ[1]], 96, { top: ft(58) });
+  H.elev("V-E", "ELEVATION east", PT(170, 60), PT(170, -45), ft(100), "L-0", [ft(10), EZ[0], ft(100), EZ[1]], 96, { top: ft(58) });
+  H.elev("V-S", "ELEVATION south", PT(160, -45), PT(-60, -45), ft(80), "L-0", [ft(10), EZ[0], ft(215), EZ[1]], 96, { top: ft(58) });
   // the sections: A402 at 01+6' looking east (A on the left), A403 at 06+6' looking west (B on the left)
   const XC = [ft(3), -ft(10), ft(92), ft(54)];
-  H.sect("V-X", "SECTION", PT(30, -34.5), PT(30, 49.33), ft(6), "L-0", XC, 48);
-  H.sect("V-X2", "SECTION ", PT(66.6, 49.33), PT(66.6, -34.5), ft(6), "L-0", [ft(3), -ft(10), ft(92), ft(54)], 48);
+  H.sect("V-X", "SECTION", PT(30, -34.5), PT(30, 49.33), ft(6), "L-0", XC, 48, { top: ft(58) });
+  H.sect("V-X2", "SECTION ", PT(66.6, 49.33), PT(66.6, -34.5), ft(6), "L-0", [ft(3), -ft(10), ft(92), ft(54)], 48, { top: ft(58) });
   H.view3d("V-3D", "AXONOMETRIC", { azimuth: 215, elevation: 24, target: [ft(58), ft(12), ft(20)] }, 200);
 
   // ---------------------------------------------------------------- sheets: the set's own (its PDF's title strips, names and notes)

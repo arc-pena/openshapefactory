@@ -96,7 +96,7 @@ export function buildPavilionSample() {
   elev("V-E-N", "North Elevation", [-2000, 18000], [38000, 18000], 22000);
   elev("V-E-E", "East Elevation", [39000, 16000], [39000, -2000], 42000);
   elev("V-E-W", "West Elevation", [-3000, -2000], [-3000, 16000], 42000);
-  add({ id: "V-S-A", type: "SectionView", name: "Section A-A", args: { line: line([-2000, 7000], [38000, 7000]), depth: 9000, scale: 100, baseLevel: { ref: "L0" }, top: 6000, style: { ref: "VS-CONSTRUCTION" }, detailLevel: "Medium", clip: { rect: null, visible: false, active: false } } });
+  add({ id: "V-S-A", type: "SectionView", name: "Section A-A", args: { line: line([-7000, 7000], [43000, 7000]), depth: 9000, scale: 100, baseLevel: { ref: "L0" }, top: 6000, style: { ref: "VS-CONSTRUCTION" }, detailLevel: "Medium", clip: { rect: null, visible: false, active: false } } });
   add({ id: "V-S-B", type: "SectionView", name: "Section B-B", args: { line: line([22300, -2500], [22300, 16500]), depth: 16000, scale: 100, baseLevel: { ref: "L0" }, top: 6000, style: { ref: "VS-CONSTRUCTION" }, detailLevel: "Medium", clip: { rect: null, visible: false, active: false } } });
   add({ id: "V-3D", type: "View3D", name: "Axonometric", args: { camera: { azimuth: 215, elevation: 32, target: [18000, 7000, 2000] }, scale: 100, style: { ref: "VS-CONSTRUCTION" }, visualStyle: "Shaded", render: { mode: "lines", hidden: false, rasterDPI: 300, silhouetteWeight: 0.35 } } });
   add({ id: "V-3D2", type: "View3D", name: "View from the Steps", args: { camera: { azimuth: 200, elevation: 14, target: [22000, 8000, 2500] }, scale: 150, style: { ref: "VS-PRESENTATION" }, visualStyle: "Shaded" } });
