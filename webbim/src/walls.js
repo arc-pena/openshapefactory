@@ -164,7 +164,7 @@ function cleanProfile(pr, L) {
   return q;
 }
 /** The height of a profile at u: `side` picks the left (-1) or right (+1) value where the profile steps. */
-function profileAt(pr, u, side = 0) {
+export function profileAt(pr, u, side = 0) {
   if (u <= pr[0][0]) return pr[0][1];
   for (let k = 1; k < pr.length; k++) {
     const a = pr[k - 1], b = pr[k];

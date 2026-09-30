@@ -286,6 +286,30 @@ export function typeEditor(app, typeId) {
           h("div", { style: { marginTop: "8px", display: "flex", gap: "8px" } }, h("button", { class: "btn small", onclick: () => { t.layers.push({ function: "Finish 1", thickness: 13, material: "M-PLAS" }); rowsUI(); redraw(); } }, "+ Layer")), core),
         h("div", {}, cv, h("div", { class: "muted", style: { fontSize: "11.5px", marginTop: "4px" } }, "Live section at 1:10, drawn through the same scene renderer as every view."))));
   }
+  // Revit's curtain wall: any wall type becomes a glazing or panelling system - a grid of mullions and panels
+  if (isWall && r.category === "IfcWall") {
+    const cw = h("div", { style: { display: "grid", gap: "6px" } });
+    const LAYOUTS = ["None", "Fixed distance", "Fixed number", "Maximum spacing"], JUST = ["Beginning", "Centre", "End"];
+    const mats = cur => Object.entries(doc.lib.materials).map(([k, m]) => h("option", { value: k, selected: k === cur }, (m.mark ? m.mark + " · " : "") + m.name));
+    const lenIn = (obj, key, label) => h("input", { type: "text", value: obj[key] != null ? fmtLen(obj[key]) : "", style: { width: "80px" }, "aria-label": label, placeholder: label, onchange: e => { try { obj[key] = Math.max(0, parseLength(e.target.value)); } catch (err) { e.target.value = obj[key] != null ? fmtLen(obj[key]) : ""; } } });
+    const axis = (key, label) => { const a = t.curtain[key] = t.curtain[key] || { layout: "None" };
+      return h("div", { style: { display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" } }, h("b", { style: { width: "130px" } }, label),
+        h("select", { "aria-label": `${label} layout`, onchange: e => { a.layout = e.target.value; } }, LAYOUTS.map(o => h("option", { selected: o === (a.layout || "None") }, o))),
+        "spacing", lenIn(a, "spacing", `${label} spacing`),
+        "number", h("input", { type: "number", min: 1, value: a.number || "", style: { width: "56px" }, "aria-label": `${label} number`, oninput: e => { a.number = Number(e.target.value) || undefined; } }),
+        h("select", { "aria-label": `${label} justification`, onchange: e => { a.justify = e.target.value; } }, JUST.map(o => h("option", { selected: o === (a.justify || "Beginning") }, o)))); };
+    const fill = () => { clear(cw); if (!t.curtain) return;
+      const m = t.curtain.mullion = t.curtain.mullion || { width: 50, depth: 150, material: "M-ALUM" }, pn = t.curtain.panel = t.curtain.panel || { material: "M-GLASS", thickness: 25 };
+      cw.append(axis("vertical", "Vertical grid"), axis("horizontal", "Horizontal grid"),
+        h("div", { style: { display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" } }, h("b", { style: { width: "130px" } }, "Mullions"), "width", lenIn(m, "width", "Mullion width"), "depth", lenIn(m, "depth", "Mullion depth"),
+          h("select", { "aria-label": "Mullion material", onchange: e => { m.material = e.target.value; } }, mats(m.material)),
+          h("label", {}, h("input", { type: "checkbox", checked: t.curtain.border !== false, onchange: e => { t.curtain.border = e.target.checked; } }), " border mullions")),
+        h("div", { style: { display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" } }, h("b", { style: { width: "130px" } }, "Panels"), "thickness", lenIn(pn, "thickness", "Panel thickness"),
+          h("select", { "aria-label": "Panel material", onchange: e => { pn.material = e.target.value; } }, mats(pn.material))),
+        h("div", { class: "muted small" }, "Openings in the wall take their panels out; a wall under a gable or attached to a roof trims its grid to its top. A wall can override the grid with its own Curtain grid property.")); };
+    body.append(h("h3", {}, h("label", {}, h("input", { type: "checkbox", checked: !!t.curtain, "aria-label": "Curtain wall system", onchange: e => { t.curtain = e.target.checked ? { vertical: { layout: "Fixed distance", spacing: 1500 }, horizontal: { layout: "Fixed distance", spacing: 1500 } } : undefined; if (!t.curtain) delete t.curtain; fill(); } }), " Curtain wall system (a grid of mullions and glass or cladding panels)")), cw);
+    fill();
+  }
   const specs = Object.entries(r.specs || {}).concat(Object.entries(doc.lib.paramSpecs).filter(([k, s]) => s.binding === "type" && (s.categories.includes("*") || s.categories.includes(r.category))));
   const ptab = h("tbody");
   t.params = t.params || {};

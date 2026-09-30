@@ -12,6 +12,7 @@ import { newDocument, openDocument, measureRefs, resolveReference, importPlacer 
 import { Editor, propagate, massingStoreys, geomKey } from "./ops.js";
 import { sectionRows, findSection, sectionType } from "./sectionlib.js";
 import { elementRefs } from "./bim.js";
+import { curtainPanels, curtainMullions } from "./curtain.js";
 import { viewReferences, viewMeasure } from "./scene.js";
 import { DIM_ARROWS, dimStyleOf, formatDimension } from "./dimstyles.js";
 import { viewLineGeometry, viewContext, sectionBoxKey, dimText, deriveView, planScene, elevationScene, placements, textWidth, sheetScene, visibilityKey, sectionCut, cutOutline, SHEET_DISPLAYS, sheetDisplayOf, dimensionGeometry } from "./scene.js";
@@ -2380,5 +2381,28 @@ testCase("M82", "Walls meet as they are drawn or traced: a corner whose ends sto
   let free = 0; const ok = ["buildWalnutSample", "buildFpcSample"].map(n => ({ n, doc: n === "buildWalnutSample" ? buildWalnutSample() : buildFpcSample() }));
   for (const { doc: d } of ok) for (const f of d.elements().filter(g => d.typeOf(g) === "Wall")) for (const e of ["start", "end"]) if (d.plan(f).ends[e].k === "free") free++;
   return { pass: corner && tee && stacked && arc && free === 0, detail: { corner, tee, stacked, arc, free, A: P("A").ends, D: P("D").ends.end.k } };
+});
+
+testCase("M83", "A curtain wall: its type's grid divides the face into panels with a mullion on every grid line and round the border; under a gable the top chord follows the rake, the verticals stop against it and every transom is trimmed where it meets it; a door opening takes its panels out; it is drawn so in elevation, its mullions are cut in plan and it builds as glass and mullions in 3D", () => {
+  const doc = newDocument("cw"), ed = new Editor(doc);
+  doc.lib.types["T-CW"] = { family: "F-CURTAINWALL", name: "Curtain", mark: "CW", layers: [{ function: "Structure", thickness: 150, material: "M-GLASS" }], coreStart: 0, coreEnd: 1,
+    curtain: { vertical: { layout: "Fixed distance", spacing: 1000, justify: "Centre" }, horizontal: { spacing: 1200 }, mullion: { width: 60, depth: 150, material: "M-STEEL" }, panel: { material: "M-GLASS" } } };
+  const A = e => ed.apply({ op: "add", element: e }, { regenerate: false });
+  A({ id: "L0", type: "Level", args: { name: "L0", elevation: 0 } });
+  A({ id: "W", type: "Wall", args: { centreline: { type: "line", start: [0, 0], end: [6000, 0] }, mounting: "Centred", wallType: { ref: "T-CW" }, baseLevel: { ref: "L0" }, height: 3000, topProfile: [[0, 3000], [3000, 5200], [6000, 3000]] } });
+  A({ id: "OP", type: "Opening", args: { host: { ref: "W" }, profile: { kind: "rect", at: 1500, sill: 0, w: 1000, h: 2100 }, farProfile: null, depth: "through" } });
+  A({ id: "VE", type: "ElevationView", args: { line: { type: "line", start: [7000, -3000], end: [-1000, -3000] }, depth: 10000, scale: 50, baseLevel: { ref: "L0" }, top: 7000 } });
+  A({ id: "VP", type: "PlanView", args: { level: { ref: "L0" }, scale: 50, viewRange: { top: 2300, cut: 1200, bottom: 0 } } });
+  doc.regenerate();
+  const w = doc.plan(doc.element("W")), panels = curtainPanels(w), mull = curtainMullions(w);
+  const top = u => u <= 3000 ? 3000 + 2200 * u / 3000 : 3000 + 2200 * (6000 - u) / 3000;
+  const under = panels.every(p => p.poly.every(([u, z]) => z <= top(u) - 60 + 1));
+  const clipped = panels.filter(p => p.poly.length !== 4).length >= 4;
+  const holeFree = panels.every(p => !p.poly.every(([u, z]) => u >= 1000 - 1 && u <= 2000 + 1 && z <= 2100 + 1));
+  const transoms = mull.filter(m => m.kind === "h" && !m.border), trimmed = transoms.every(m => m.a[1] <= top(m.a[0]) + 1 && m.a[1] <= top(m.b[0]) + 1) && transoms.some(m => m.b[0] - m.a[0] < 6000 - 200);
+  const apex = mull.some(m => m.kind === "v" && Math.abs(m.a[0] - 3000) < 1 && Math.abs(m.b[1] - 5200) < 1);
+  const glass = w.pieces.filter(p => p.sub === "Glass").length, mullions = w.pieces.filter(p => p.sub === "Mullion").length;
+  const el = elevationScene(doc, doc.element("VE")).prims.length > 60, pl = planScene(doc, doc.element("VP")).prims.filter(p => p.id === "W").length;
+  return { pass: under && clipped && holeFree && trimmed && apex && glass === panels.length && mullions > 10 && el && pl >= 6, detail: { panels: panels.length, under, clipped, holeFree, trimmed, apex, glass, mullions, el, pl } };
 });
 

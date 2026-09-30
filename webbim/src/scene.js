@@ -20,6 +20,7 @@ import { F, propertyOf, evalParam, displayParam } from "./ocaf.js";
 import { formatValue, parse, evaluate } from "./expr.js";
 import { wallRegions, coarseMaterial, blocks, wallAt, leanInvolved } from "./joins.js";
 import { pointAt, uOf, wallSurfaces, cutAtHeight, plane, LAYER_PRIORITY, wallTop, topBreaks } from "./walls.js";
+import { curtainPanels, curtainMullions, curtainGrid } from "./curtain.js";
 import { cropLoop, loopBBox, annotationRect, isAnnotationLayer } from "./crop.js";
 import { resolveGraphics, categoryOf, penWeight, rulesFor, categoryVisible, mix, LINE_TYPES, matches, effectiveStyle, hiddenByRule } from "./styles.js";
 import { measureRefs, resolveReference, elementRefs, sheetSize, regionAreas, importPlacer, importLayerMap, sketchPath } from "./bim.js";
@@ -492,7 +493,7 @@ function drawWall(doc, ctx, B, f, w, bnd, cutZ) {
     return;
   }
   let regions, wz = w;
-  if (!w.fast && w.curve.type === "line" && w.topSlope) {
+  if (!w.fast && w.curve.type === "line" && w.topSlope && !w.curtain) {
     // The general surface path (§3.1): sloped tops and leaning faces cut at the real height.
     regions = [];
     for (const piece of w.pieces || []) {
@@ -529,6 +530,14 @@ function drawWall(doc, ctx, B, f, w, bnd, cutZ) {
       B.stroke([e.seg], e.role === "layer" ? Object.assign({}, g, { weight: gLayer.weight === "none" ? "none" : gLayer.weight }) : g, "IfcWall", id);
     }
     B.hit(id, samplePath(r.path, 16));
+  }
+  // a curtain wall's mullions where the plan cuts them: a box on every vertical grid line (and the border's ends)
+  if (w.curtain && w.curve.type === "line") {
+    const cg = curtainGrid(w), n = w.stack.s.length - 1, sc = (w.stack.s[0] + w.stack.s[n]) / 2, gm = resolveGraphics(doc, ctx, f, "cut", "Cut");
+    for (const mu of curtainMullions(w)) { if (mu.kind !== "v" || cutZ < w.z0 + mu.a[1] || cutZ > w.z0 + mu.b[1]) continue;
+      const u0 = Math.max(0, mu.a[0] - cg.mw / 2), u1 = Math.min(w.L, mu.a[0] + cg.mw / 2);
+      const box = [pointAt(w, sc - cg.md / 2, u0), pointAt(w, sc - cg.md / 2, u1), pointAt(w, sc + cg.md / 2, u1), pointAt(w, sc + cg.md / 2, u0)];
+      B.fill(polyPath(box), "#ffffff", "IfcWall", id); B.stroke(polyPath(box), gm, "IfcWall", id); }
   }
 }
 /** Batt insulation is a drafting symbol drawn along the layer, sized to it. */
@@ -1924,6 +1933,11 @@ function elevWall(doc, f, w, V, sOf, depthOf, ctx) {
           else if (Math.max(a[1], b[1]) > top(x0) + 1e-6) continue; }
         curves.push([a, b]); }
     }
+  }
+  // a curtain wall: its panels, each outlined inside its mullions (the grid cut by the wall's own outline)
+  if (w.curtain && w.curve.type === "line") {
+    const mapU = u => sOf(pointAt(w, nearS, u)), mapZ = z => V(foot[0], w.z0 + z)[1];
+    for (const p of curtainPanels(w)) { const q = p.poly.map(([u, z]) => [mapU(u), mapZ(z)]); for (let k = 0; k < q.length; k++) curves.push([q[k], q[(k + 1) % q.length]]); }
   }
   // Silhouette minus see-through holes, as convex slabs (for the occluder list).
   const sil = [];

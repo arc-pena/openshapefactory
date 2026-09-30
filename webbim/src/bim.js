@@ -19,6 +19,7 @@ import { regionsOf, regionPaths, FINE, elementSegs, bridgeHoles } from "./bimske
 import { placeMesh, meshBox, meshMeasure, levelsIn, weldTriangles } from "./massing.js";
 import { DIM_TYPES } from "./dimstyles.js";
 import { footprintRoofBody, attachedProfile } from "./archelements.js";
+import { curtainOf, curtainPieces } from "./curtain.js";
 import {
   PEN_ISO, PATTERNS, MATERIALS, PARAM_SPECS, CATEGORIES, FAMILIES, TYPES, TEXT_TYPES, SYMBOLS, VS_PRESENTATION, VS_CONSTRUCTION,
 } from "./library.js";
@@ -121,6 +122,8 @@ declare({ type: "Wall", guid: "wb-0101", category: "IfcWall", kind: "wall", idPr
     json("topProfile", "Top profile", null, { group: "Constraints" }),
     // Revit's Attach Top: the wall's top follows the underside of a roof above it (a gable end, a clerestory)
     ref("attachTop", "Top attached to roof", ["roof"], { group: "Constraints" }),
+    // a curtain wall's own grid, over its type's (Revit's instance grid lines): { vertical, horizontal }
+    json("curtainGrid", "Curtain grid", null, { group: "Curtain" }),
   ],
   handles: (f, doc) => {
     const c = F.json(f, "centreline"), w = doc.plan(f);
@@ -154,6 +157,7 @@ BUILDERS.Wall = {
     const w = wallRecord({ id: doc.idOf(f), centreline: F.json(f, "centreline"), type: t, mounting: F.choice(f, "mounting"),
       mountOffset: F.real(f, "mountOffset"), flipped: F.bool(f, "flipped"), z0, height, slope: F.json(f, "slope"), stats: doc.stats, zFloor: levelElev(doc, f) + ((F.json(f, "slope") || {}).pivotZ || 0), topProfile });
     if (w.L < TOL) throw new Error("the centreline has no length");
+    w.curtain = curtainOf(t, F.json(f, "curtainGrid"));
     const len = w.L, thick = w.stack.T;
     // the face's area: under its top profile (a gable), or its length times its height
     let faceArea = len * w.height;
@@ -1371,7 +1375,7 @@ export function systemPass(doc, rebuilt) {
     w.joinNotes = notes.get(id) || [];
     if (!dirty.has(id) && w.pieces) continue;
     doc.stats.resolved[id] = (doc.stats.resolved[id] || 0) + 1;
-    try { w.pieces = solidPieces(w, w.openings, doc.stats); w.solidError = null; }
+    try { w.pieces = w.curtain && w.curve.type === "line" ? curtainPieces(w, doc) : solidPieces(w, w.openings, doc.stats); w.solidError = null; }
     catch (e) { w.solidError = e.message; w.pieces = w.pieces || []; }
     w.resolvedRev = ++doc.modelRevision;
   }

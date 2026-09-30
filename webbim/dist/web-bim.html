@@ -2043,6 +2043,7 @@ const FAMILIES = {
   "F-BASICWALL": { name: "Basic Wall", extends: "F-WALL", paramDefaults: { Function: "Interior" } },
   "F-EXTCAV":    { name: "Ext Cavity", extends: "F-BASICWALL", paramSpecs: { CavityWidth: { kind: "Length", binding: "type" } }, paramDefaults: { FireRating: "60", Function: "Exterior" } },
   "F-PARTITION": { name: "Partition", extends: "F-BASICWALL", paramDefaults: { FireRating: "30", Function: "Interior" } },
+  "F-CURTAINWALL": { name: "Curtain Wall", extends: "F-WALL", paramDefaults: { Function: "Exterior" } },
   "F-DOOR":      { name: "Door", category: "IfcDoor", system: "Door", sealed: true },
   "F-SINGLEDOOR":{ name: "Single Flush", extends: "F-DOOR", paramDefaults: { FireRating: "-" } },
   "F-WINDOW":    { name: "Window", category: "IfcWindow", system: "Window", sealed: true },
@@ -2070,6 +2071,13 @@ const TYPES = {
   "T-BLOCK215":  { family: "F-BASICWALL", name: "Block 215 plastered", mark: "IW2",
     layers: [ { function: "Finish 1", thickness: 13, material: "M-PLAS" }, { function: "Structure", thickness: 190, material: "M-BLOCK" }, { function: "Finish 1", thickness: 13, material: "M-PLAS" } ],
     coreStart: 1, coreEnd: 2, params: { FireRating: "120", AcousticRw: 45, Function: "Core" } },
+  // curtain walls (Revit's): a grid of mullions with glass or cladding panels, trimmed to the wall's outline
+  "T-CW1500":    { family: "F-CURTAINWALL", name: "Curtain wall 1500 grid", mark: "CW1", layers: [ { function: "Structure", thickness: 150, material: "M-GLASS" } ], coreStart: 0, coreEnd: 1,
+    curtain: { vertical: { layout: "Fixed distance", spacing: 1500, justify: "Centre" }, horizontal: { layout: "Fixed distance", spacing: 1500 }, mullion: { width: 50, depth: 150, material: "M-ALUM" }, panel: { material: "M-GLASS", thickness: 25 } } },
+  "T-STOREFRONT": { family: "F-CURTAINWALL", name: "Storefront 1200, sill and transom", mark: "SF1", layers: [ { function: "Structure", thickness: 115, material: "M-GLASS" } ], coreStart: 0, coreEnd: 1,
+    curtain: { vertical: { layout: "Maximum spacing", spacing: 1200 }, horizontal: { positions: [900, 2400] }, mullion: { width: 45, depth: 115, material: "M-ALUM" }, panel: { material: "M-GLASS", thickness: 25 } } },
+  "T-RAINSCREEN": { family: "F-CURTAINWALL", name: "Rainscreen panels 1200×600", mark: "RS1", layers: [ { function: "Structure", thickness: 60, material: "M-ALUM" } ], coreStart: 0, coreEnd: 1,
+    curtain: { vertical: { layout: "Fixed distance", spacing: 1200 }, horizontal: { layout: "Fixed distance", spacing: 600 }, mullion: { width: 10, depth: 60, material: "M-ALUM" }, panel: { material: "M-ALUM", thickness: 4 } } },
   "T-DOOR915":   { family: "F-SINGLEDOOR", name: "Single 915×2100", mark: "D1", width: 915, height: 2100, leafThickness: 44, frame: 40 },
   "T-DOOR915G":  { family: "F-SINGLEDOOR", name: "Single 915×2100 glazed", mark: "D2", width: 915, height: 2100, leafThickness: 44, frame: 40, glazed: true },
   "T-DOOR1015":  { family: "F-SINGLEDOOR", name: "Single 1015×2100", mark: "D3", width: 1015, height: 2100, leafThickness: 54, frame: 40, params: { FireRating: "30" } },
@@ -2597,6 +2605,153 @@ function wallPieces(w, spans, opts = {}) {
   }
   return pieces;
 }
+
+// ===== curtain.js =====
+//! Revit's curtain wall: a wall type whose body is a grid instead of layers. Vertical grid lines along the
+//! wall and horizontal ones up it - at a fixed distance (from the start, the end or centred), a fixed number,
+//! or listed one by one - divide its face into panels (glass, or an opaque cladding panel: the same system
+//! draws a storefront and a rainscreen's joints), and a mullion runs on every grid line and round the border.
+//! The grid is cut by the wall's own outline: under a gable or a roof the wall is attached to, the top border
+//! follows the rake as its top chord, the vertical mullions stop against it and each transom is trimmed where
+//! it meets it; openings in the wall take their panels out.
+//!
+//! Type: `curtain: { vertical, horizontal, mullion: { width, depth, material }, border, panel: { material, thickness } }`
+//! with each direction `{ layout: "Fixed distance" | "Fixed number" | "None", spacing, number, justify:
+//! "Beginning" | "Centre" | "End", positions: [mm from the start / the base] }`. A wall can override its type's
+//! grid with its own `curtainGrid` (Revit's instance grid).
+
+
+
+/** The wall's curtain system, its type's merged with the instance's own grid; null for an ordinary wall. */
+function curtainOf(type, inst) {
+  const c = type && type.curtain; if (!c) return null;
+  const o = inst || {};
+  return Object.assign({}, c, { vertical: Object.assign({}, c.vertical, o.vertical), horizontal: Object.assign({}, c.horizontal, o.horizontal) });
+}
+/** Grid positions strictly inside (0, L) for one direction. */
+function cwPositions(spec, L) {
+  if (!spec) return [];
+  if (Array.isArray(spec.positions)) return spec.positions.filter(x => x > 1 && x < L - 1).sort((a, b) => a - b);
+  const lay = spec.layout || (spec.number ? "Fixed number" : spec.spacing ? "Fixed distance" : "None");
+  if (lay === "Fixed number") { const n = Math.max(1, spec.number | 0); return Array.from({ length: n - 1 }, (_, i) => L * (i + 1) / n); }
+  if (lay === "Maximum spacing") { const n = Math.max(1, Math.ceil(L / (spec.spacing || L) - 1e-9)); return Array.from({ length: n - 1 }, (_, i) => L * (i + 1) / n); }
+  if (lay !== "Fixed distance" || !(spec.spacing > 1)) return [];
+  const sp = spec.spacing, off = spec.offset || 0, out = [];
+  const j = spec.justify || "Beginning";
+  const start = j === "End" ? (L - off) % sp : j === "Centre" ? (L / 2 + off) % sp : off % sp;
+  for (let x = start; x < L - 1; x += sp) if (x > 1) out.push(x);
+  return out;
+}
+/** The wall's top above its base at u (a profile, a raking top, or flat). */
+function topAbove(w, u) {
+  if (w.profile) return profileAt(w.profile, u, 0);
+  return w.height + (w.topSlope ? Math.tan(w.topSlope) * u : 0);
+}
+/** Where the top changes slope along the wall, with both ends. */
+function cwTopBreaks(w) { return [...new Set([0, w.L, ...(w.profile ? w.profile.map(q => q[0]) : [])])].sort((a, b) => a - b); }
+/** The stretches of [0, L] where f(u) = top(u) - drop stays above z: a transom's extent under a gable. */
+function cwAbove(w, z, drop) {
+  const U = cwTopBreaks(w), f = u => topAbove(w, u) - drop - z, out = [];
+  let cur = f(0) > 1e-6 ? 0 : null;
+  for (let i = 1; i < U.length; i++) {
+    const a = U[i - 1], b = U[i], fa = f(a + 1e-9), fb = f(b - 1e-9);
+    if ((fa > 0) !== (fb > 0) && Math.abs(fb - fa) > 1e-9) { const x = a + (b - a) * fa / (fa - fb); if (fa > 0) { if (cur !== null) out.push([cur, x]); cur = null; } else cur = x; }
+    else if (fa <= 0 && fb > 0 && cur === null) cur = a;
+  }
+  if (cur !== null) out.push([cur, w.L]);
+  return out.filter(([a, b]) => b - a > 1);
+}
+/** The grid: vertical lines' u, horizontal lines' z (above the base), and the system's sizes. */
+function curtainGrid(w) {
+  const c = w.curtain, L = w.L, H = Math.max(...cwTopBreaks(w).map(u => topAbove(w, u)));
+  const mw = (c.mullion && c.mullion.width) || 50, md = (c.mullion && c.mullion.depth) || 150;
+  return { us: cwPositions(c.vertical, L), zs: cwPositions(c.horizontal, H), mw, md, border: c.border !== false, L, H };
+}
+/** Panels as polygons in (u, z above the base): each grid cell inset by half a mullion, clipped under the
+ *  top (less half a mullion - the top chord), and less the openings the wall hosts. */
+function curtainPanels(w) {
+  const g = curtainGrid(w), m = g.mw / 2, b = g.border ? g.mw : m;
+  const U = [0, ...g.us, g.L], Z = [0, ...g.zs, g.H], out = [];
+  for (let i = 0; i + 1 < U.length; i++) for (let j = 0; j + 1 < Z.length; j++) {
+    const ua = U[i] + (i === 0 ? b : m), ub = U[i + 1] - (i + 1 === U.length - 1 ? b : m), za = Z[j] + (j === 0 ? b : m), zt = Z[j + 1] - m;
+    if (ub - ua < 1 || zt - za < 1) continue;
+    const drop = b;
+    // the cell's top: under its own grid line, and under the wall's top wherever that comes lower
+    const f = u => Math.min(zt, topAbove(w, u) - drop);
+    const bp = new Set([ua, ub]);
+    for (const u of cwTopBreaks(w)) if (u > ua && u < ub) bp.add(u);
+    const us0 = [...bp].sort((x, y) => x - y);
+    for (let k = 1; k < us0.length; k++) { const a = us0[k - 1], c2 = us0[k], ta = topAbove(w, a + 1e-9) - drop, tb = topAbove(w, c2 - 1e-9) - drop;
+      for (const lev of [zt, za]) if ((ta - lev) * (tb - lev) < 0) bp.add(a + (c2 - a) * (ta - lev) / (ta - tb)); }
+    const us = [...bp].sort((x, y) => x - y);
+    let run = [];
+    const flush = () => { if (run.length >= 2) { const poly = [[run[0], za], [run[run.length - 1], za], ...run.slice().reverse().map(u => [u, f(u)])]
+      const clean = poly.filter((q, k) => { const r = poly[(k + poly.length - 1) % poly.length]; return Math.abs(q[0] - r[0]) > 1e-6 || Math.abs(q[1] - r[1]) > 1e-6; });
+      if (clean.length >= 3) out.push({ i, j, poly: clean }); } run = []; };
+    let last = null;
+    for (const u of us) { if (f(u) > za + 1e-6) { if (!run.length && last !== null) run.push(last); run.push(u); } else { if (run.length) { run.push(u); flush(); } last = u; } }
+    flush();
+  }
+  // openings take their panels out (a door or a storefront set in the grid)
+  const ops = w.openings || [];
+  if (!ops.length) return out;
+  const res = [];
+  for (const p of out) {
+    let pieces = [p.poly];
+    for (const op of ops) pieces = pieces.flatMap(poly => { const xs = poly.map(q => q[0]), ys = poly.map(q => q[1]), x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+      const ox0 = op.u0, ox1 = op.u1, oy0 = op.sill, oy1 = op.sill + op.h;
+      if (ox1 <= x0 || ox0 >= x1 || oy1 <= y0 || oy0 >= y1) return [poly];
+      if (poly.length !== 4) return ox0 <= x0 && ox1 >= x1 && oy0 <= y0 && oy1 >= y1 ? [] : [poly];
+      const r = []; const R = (a, b2, c, d) => { if (b2 - a > 1 && d - c > 1) r.push([[a, c], [b2, c], [b2, d], [a, d]]); };
+      R(x0, Math.max(x0, ox0), y0, y1); R(Math.min(x1, ox1), x1, y0, y1); R(Math.max(x0, ox0), Math.min(x1, ox1), y0, Math.max(y0, oy0)); R(Math.max(x0, ox0), Math.min(x1, ox1), Math.min(y1, oy1), y1);
+      return r; });
+    for (const poly of pieces) res.push({ i: p.i, j: p.j, poly });
+  }
+  return res;
+}
+/** The mullions as centre lines in (u, z above the base): the border (its top along the rake), every vertical
+ *  up to the top, every horizontal across the stretches the top leaves it. */
+function curtainMullions(w) {
+  const g = curtainGrid(w), out = [], ops = w.openings || [];
+  const cutV = (u, z0, z1) => { let spans = [[z0, z1]]; for (const op of ops) if (u > op.u0 && u < op.u1) spans = spans.flatMap(([a, b]) => [[a, Math.min(b, op.sill)], [Math.max(a, op.sill + op.h), b]]).filter(([a, b]) => b - a > 1); return spans; };
+  const cutH = (z, u0, u1) => { let spans = [[u0, u1]]; for (const op of ops) if (z > op.sill && z < op.sill + op.h) spans = spans.flatMap(([a, b]) => [[a, Math.min(b, op.u0)], [Math.max(a, op.u1), b]]).filter(([a, b]) => b - a > 1); return spans; };
+  for (const u of g.us) for (const [a, b] of cutV(u, 0, topAbove(w, u))) out.push({ kind: "v", a: [u, a], b: [u, b] });
+  for (const z of g.zs) for (const [ua, ub] of cwAbove(w, z, g.border ? g.mw : 0)) for (const [a, b] of cutH(z, ua, ub)) out.push({ kind: "h", a: [a, z], b: [b, z] });
+  if (g.border) {
+    for (const u of [0, g.L]) out.push({ kind: "v", a: [u, 0], b: [u, topAbove(w, u)], border: true });
+    for (const [a, b] of cutH(0, 0, g.L)) out.push({ kind: "h", a: [a, 0], b: [b, 0], border: true });
+    const U = cwTopBreaks(w);
+    for (let i = 1; i < U.length; i++) out.push({ kind: "top", a: [U[i - 1], topAbove(w, U[i - 1] + 1e-9)], b: [U[i], topAbove(w, U[i] - 1e-9)], border: true });
+  }
+  return out;
+}
+/** 3D pieces: a thin panel per cell and a prism per mullion, on the wall's centre (straight walls). */
+function curtainPieces(w, doc) {
+  const g = curtainGrid(w), c = w.curtain, n = w.stack.s.length - 1, sc = (w.stack.s[0] + w.stack.s[n]) / 2;
+  const pc = (c.panel && c.panel.thickness) || 25, pm = (c.panel && c.panel.material) || "M-GLASS", mm = (c.mullion && c.mullion.material) || "M-ALUM";
+  const colourOf = m => (((doc && doc.lib.materials[m]) || {}).shading || {}).colour;
+  const glass = /GLASS|GLAZ/i.test(pm);
+  const box = (u0, u1, s0, s1) => [pointAt(w, s0, u0), pointAt(w, s0, u1), pointAt(w, s1, u1), pointAt(w, s1, u0)];
+  const out = [];
+  for (const p of curtainPanels(w)) {
+    const xs = p.poly.map(q => q[0]), u0 = Math.min(...xs), u1 = Math.max(...xs), zb = Math.min(...p.poly.map(q => q[1]));
+    const zt = Math.max(...p.poly.map(q => q[1])), flat = p.poly.length === 4 && p.poly.every(q => Math.abs(q[1] - zb) < 1e-6 || Math.abs(q[1] - zt) < 1e-6);
+    // a clipped panel's top: the polygon's upper chain, as a height at a plan point
+    const top = flat ? null : (() => { const up = p.poly.filter(q => q[1] > zb + 1e-6).sort((a, b) => a[0] - b[0]); return pt => { const u = Math.max(u0, Math.min(u1, cwUAlong(w, pt))); for (let k = 1; k < up.length; k++) if (u <= up[k][0] + 1e-9) { const a = up[k - 1], b = up[k]; return w.z0 + (b[0] - a[0] < 1e-9 ? b[1] : a[1] + (b[1] - a[1]) * (u - a[0]) / (b[0] - a[0])); } return w.z0 + (up.length ? up[up.length - 1][1] : zt); }; })();
+    out.push({ foot: box(u0, u1, sc - pc / 2, sc + pc / 2), z0: w.z0 + zb, z1: w.z0 + zt, topAt: top, sub: glass ? "Glass" : "Panel", colour: glass ? undefined : colourOf(pm), zRef: w.z0 });
+  }
+  const m2 = g.mw / 2, d2 = g.md / 2;
+  for (const mu of curtainMullions(w)) {
+    if (mu.kind === "v") { const u0 = Math.max(0, mu.a[0] - m2), u1 = Math.min(w.L, mu.a[0] + m2), uc = mu.a[0];
+      const reachesTop = Math.abs(mu.b[1] - topAbove(w, uc)) < 1;
+      out.push({ foot: box(u0, u1, sc - d2, sc + d2), z0: w.z0 + mu.a[1], z1: w.z0 + mu.b[1], topAt: reachesTop && (w.profile || w.topSlope) ? (pt => w.z0 + topAbove(w, Math.max(0, Math.min(w.L, cwUAlong(w, pt))))) : null, sub: "Mullion", colour: colourOf(mm), zRef: w.z0 }); }
+    else if (mu.kind === "h") out.push({ foot: box(mu.a[0], mu.b[0], sc - d2, sc + d2), z0: w.z0 + Math.max(0, mu.a[1] - m2), z1: w.z0 + mu.a[1] + m2, topAt: null, sub: "Mullion", colour: colourOf(mm), zRef: w.z0 });
+    else { const ua = mu.a[0], ub = mu.b[0];
+      out.push({ foot: box(ua, ub, sc - d2, sc + d2), z0: w.z0 + Math.min(mu.a[1], mu.b[1]) - g.mw, z1: w.z0 + Math.max(mu.a[1], mu.b[1]), topAt: pt => w.z0 + topAbove(w, Math.max(0, Math.min(w.L, cwUAlong(w, pt)))), sub: "Mullion", colour: colourOf(mm), zRef: w.z0 }); }
+  }
+  return out;
+}
+function cwUAlong(w, p) { return (p[0] - w.a[0]) * w.d[0] + (p[1] - w.a[1]) * w.d[1]; }
 
 // ===== spaces.js =====
 //! Planar face-finding (spec §3.6): turn a soup of straight segments into the
@@ -7532,6 +7687,7 @@ BUILDERS.Ramp = {
 
 
 
+
 const L = (v) => ({ kind: "Length", v });
 const N = (v) => ({ kind: "Number", v });
 const T = (v) => ({ kind: "Text", v: String(v) });
@@ -7630,6 +7786,8 @@ declare({ type: "Wall", guid: "wb-0101", category: "IfcWall", kind: "wall", idPr
     json("topProfile", "Top profile", null, { group: "Constraints" }),
     // Revit's Attach Top: the wall's top follows the underside of a roof above it (a gable end, a clerestory)
     ref("attachTop", "Top attached to roof", ["roof"], { group: "Constraints" }),
+    // a curtain wall's own grid, over its type's (Revit's instance grid lines): { vertical, horizontal }
+    json("curtainGrid", "Curtain grid", null, { group: "Curtain" }),
   ],
   handles: (f, doc) => {
     const c = F.json(f, "centreline"), w = doc.plan(f);
@@ -7663,6 +7821,7 @@ BUILDERS.Wall = {
     const w = wallRecord({ id: doc.idOf(f), centreline: F.json(f, "centreline"), type: t, mounting: F.choice(f, "mounting"),
       mountOffset: F.real(f, "mountOffset"), flipped: F.bool(f, "flipped"), z0, height, slope: F.json(f, "slope"), stats: doc.stats, zFloor: levelElev(doc, f) + ((F.json(f, "slope") || {}).pivotZ || 0), topProfile });
     if (w.L < TOL) throw new Error("the centreline has no length");
+    w.curtain = curtainOf(t, F.json(f, "curtainGrid"));
     const len = w.L, thick = w.stack.T;
     // the face's area: under its top profile (a gable), or its length times its height
     let faceArea = len * w.height;
@@ -8880,7 +9039,7 @@ function systemPass(doc, rebuilt) {
     w.joinNotes = notes.get(id) || [];
     if (!dirty.has(id) && w.pieces) continue;
     doc.stats.resolved[id] = (doc.stats.resolved[id] || 0) + 1;
-    try { w.pieces = solidPieces(w, w.openings, doc.stats); w.solidError = null; }
+    try { w.pieces = w.curtain && w.curve.type === "line" ? curtainPieces(w, doc) : solidPieces(w, w.openings, doc.stats); w.solidError = null; }
     catch (e) { w.solidError = e.message; w.pieces = w.pieces || []; }
     w.resolvedRev = ++doc.modelRevision;
   }
@@ -12228,6 +12387,7 @@ function scheduleRows(doc, v) {
 
 
 
+
 // ---------------------------------------------------------------- text metrics
 /** Text height is cap height in paper mm (the drafting convention); the em
  *  follows from the font's cap height, identically on canvas and in the PDF. */
@@ -12690,7 +12850,7 @@ function drawWall(doc, ctx, B, f, w, bnd, cutZ) {
     return;
   }
   let regions, wz = w;
-  if (!w.fast && w.curve.type === "line" && w.topSlope) {
+  if (!w.fast && w.curve.type === "line" && w.topSlope && !w.curtain) {
     // The general surface path (§3.1): sloped tops and leaning faces cut at the real height.
     regions = [];
     for (const piece of w.pieces || []) {
@@ -12727,6 +12887,14 @@ function drawWall(doc, ctx, B, f, w, bnd, cutZ) {
       B.stroke([e.seg], e.role === "layer" ? Object.assign({}, g, { weight: gLayer.weight === "none" ? "none" : gLayer.weight }) : g, "IfcWall", id);
     }
     B.hit(id, samplePath(r.path, 16));
+  }
+  // a curtain wall's mullions where the plan cuts them: a box on every vertical grid line (and the border's ends)
+  if (w.curtain && w.curve.type === "line") {
+    const cg = curtainGrid(w), n = w.stack.s.length - 1, sc = (w.stack.s[0] + w.stack.s[n]) / 2, gm = resolveGraphics(doc, ctx, f, "cut", "Cut");
+    for (const mu of curtainMullions(w)) { if (mu.kind !== "v" || cutZ < w.z0 + mu.a[1] || cutZ > w.z0 + mu.b[1]) continue;
+      const u0 = Math.max(0, mu.a[0] - cg.mw / 2), u1 = Math.min(w.L, mu.a[0] + cg.mw / 2);
+      const box = [pointAt(w, sc - cg.md / 2, u0), pointAt(w, sc - cg.md / 2, u1), pointAt(w, sc + cg.md / 2, u1), pointAt(w, sc + cg.md / 2, u0)];
+      B.fill(polyPath(box), "#ffffff", "IfcWall", id); B.stroke(polyPath(box), gm, "IfcWall", id); }
   }
 }
 /** Batt insulation is a drafting symbol drawn along the layer, sized to it. */
@@ -14122,6 +14290,11 @@ function elevWall(doc, f, w, V, sOf, depthOf, ctx) {
           else if (Math.max(a[1], b[1]) > top(x0) + 1e-6) continue; }
         curves.push([a, b]); }
     }
+  }
+  // a curtain wall: its panels, each outlined inside its mullions (the grid cut by the wall's own outline)
+  if (w.curtain && w.curve.type === "line") {
+    const mapU = u => sOf(pointAt(w, nearS, u)), mapZ = z => V(foot[0], w.z0 + z)[1];
+    for (const p of curtainPanels(w)) { const q = p.poly.map(([u, z]) => [mapU(u), mapZ(z)]); for (let k = 0; k < q.length; k++) curves.push([q[k], q[(k + 1) % q.length]]); }
   }
   // Silhouette minus see-through holes, as convex slabs (for the occluder list).
   const sil = [];
@@ -20564,6 +20737,7 @@ function mergeModel(cur, next) {
 
 
 
+
 const CASES = [];
 const testCase = (id, name, fn, opts = {}) => CASES.push(Object.assign({ id, name, fn }, opts));
 const approx = (a, b, tol = 1e-6) => Math.abs(a - b) <= tol;
@@ -22905,6 +23079,29 @@ testCase("M82", "Walls meet as they are drawn or traced: a corner whose ends sto
   return { pass: corner && tee && stacked && arc && free === 0, detail: { corner, tee, stacked, arc, free, A: P("A").ends, D: P("D").ends.end.k } };
 });
 
+testCase("M83", "A curtain wall: its type's grid divides the face into panels with a mullion on every grid line and round the border; under a gable the top chord follows the rake, the verticals stop against it and every transom is trimmed where it meets it; a door opening takes its panels out; it is drawn so in elevation, its mullions are cut in plan and it builds as glass and mullions in 3D", () => {
+  const doc = newDocument("cw"), ed = new Editor(doc);
+  doc.lib.types["T-CW"] = { family: "F-CURTAINWALL", name: "Curtain", mark: "CW", layers: [{ function: "Structure", thickness: 150, material: "M-GLASS" }], coreStart: 0, coreEnd: 1,
+    curtain: { vertical: { layout: "Fixed distance", spacing: 1000, justify: "Centre" }, horizontal: { spacing: 1200 }, mullion: { width: 60, depth: 150, material: "M-STEEL" }, panel: { material: "M-GLASS" } } };
+  const A = e => ed.apply({ op: "add", element: e }, { regenerate: false });
+  A({ id: "L0", type: "Level", args: { name: "L0", elevation: 0 } });
+  A({ id: "W", type: "Wall", args: { centreline: { type: "line", start: [0, 0], end: [6000, 0] }, mounting: "Centred", wallType: { ref: "T-CW" }, baseLevel: { ref: "L0" }, height: 3000, topProfile: [[0, 3000], [3000, 5200], [6000, 3000]] } });
+  A({ id: "OP", type: "Opening", args: { host: { ref: "W" }, profile: { kind: "rect", at: 1500, sill: 0, w: 1000, h: 2100 }, farProfile: null, depth: "through" } });
+  A({ id: "VE", type: "ElevationView", args: { line: { type: "line", start: [7000, -3000], end: [-1000, -3000] }, depth: 10000, scale: 50, baseLevel: { ref: "L0" }, top: 7000 } });
+  A({ id: "VP", type: "PlanView", args: { level: { ref: "L0" }, scale: 50, viewRange: { top: 2300, cut: 1200, bottom: 0 } } });
+  doc.regenerate();
+  const w = doc.plan(doc.element("W")), panels = curtainPanels(w), mull = curtainMullions(w);
+  const top = u => u <= 3000 ? 3000 + 2200 * u / 3000 : 3000 + 2200 * (6000 - u) / 3000;
+  const under = panels.every(p => p.poly.every(([u, z]) => z <= top(u) - 60 + 1));
+  const clipped = panels.filter(p => p.poly.length !== 4).length >= 4;
+  const holeFree = panels.every(p => !p.poly.every(([u, z]) => u >= 1000 - 1 && u <= 2000 + 1 && z <= 2100 + 1));
+  const transoms = mull.filter(m => m.kind === "h" && !m.border), trimmed = transoms.every(m => m.a[1] <= top(m.a[0]) + 1 && m.a[1] <= top(m.b[0]) + 1) && transoms.some(m => m.b[0] - m.a[0] < 6000 - 200);
+  const apex = mull.some(m => m.kind === "v" && Math.abs(m.a[0] - 3000) < 1 && Math.abs(m.b[1] - 5200) < 1);
+  const glass = w.pieces.filter(p => p.sub === "Glass").length, mullions = w.pieces.filter(p => p.sub === "Mullion").length;
+  const el = elevationScene(doc, doc.element("VE")).prims.length > 60, pl = planScene(doc, doc.element("VP")).prims.filter(p => p.id === "W").length;
+  return { pass: under && clipped && holeFree && trimmed && apex && glass === panels.length && mullions > 10 && el && pl >= 6, detail: { panels: panels.length, under, clipped, holeFree, trimmed, apex, glass, mullions, el, pl } };
+});
+
 
 // ===== ui_util.js =====
 //! Small DOM vocabulary shared by the interface modules. The interface only
@@ -23876,6 +24073,30 @@ function typeEditor(app, typeId) {
         h("div", {}, h("table", {}, h("thead", {}, h("tr", {}, ["#", "Function", "Thickness", "Material", "Priority", ""].map(x => h("th", {}, x)))), tbody),
           h("div", { style: { marginTop: "8px", display: "flex", gap: "8px" } }, h("button", { class: "btn small", onclick: () => { t.layers.push({ function: "Finish 1", thickness: 13, material: "M-PLAS" }); rowsUI(); redraw(); } }, "+ Layer")), core),
         h("div", {}, cv, h("div", { class: "muted", style: { fontSize: "11.5px", marginTop: "4px" } }, "Live section at 1:10, drawn through the same scene renderer as every view."))));
+  }
+  // Revit's curtain wall: any wall type becomes a glazing or panelling system - a grid of mullions and panels
+  if (isWall && r.category === "IfcWall") {
+    const cw = h("div", { style: { display: "grid", gap: "6px" } });
+    const LAYOUTS = ["None", "Fixed distance", "Fixed number", "Maximum spacing"], JUST = ["Beginning", "Centre", "End"];
+    const mats = cur => Object.entries(doc.lib.materials).map(([k, m]) => h("option", { value: k, selected: k === cur }, (m.mark ? m.mark + " · " : "") + m.name));
+    const lenIn = (obj, key, label) => h("input", { type: "text", value: obj[key] != null ? fmtLen(obj[key]) : "", style: { width: "80px" }, "aria-label": label, placeholder: label, onchange: e => { try { obj[key] = Math.max(0, parseLength(e.target.value)); } catch (err) { e.target.value = obj[key] != null ? fmtLen(obj[key]) : ""; } } });
+    const axis = (key, label) => { const a = t.curtain[key] = t.curtain[key] || { layout: "None" };
+      return h("div", { style: { display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" } }, h("b", { style: { width: "130px" } }, label),
+        h("select", { "aria-label": `${label} layout`, onchange: e => { a.layout = e.target.value; } }, LAYOUTS.map(o => h("option", { selected: o === (a.layout || "None") }, o))),
+        "spacing", lenIn(a, "spacing", `${label} spacing`),
+        "number", h("input", { type: "number", min: 1, value: a.number || "", style: { width: "56px" }, "aria-label": `${label} number`, oninput: e => { a.number = Number(e.target.value) || undefined; } }),
+        h("select", { "aria-label": `${label} justification`, onchange: e => { a.justify = e.target.value; } }, JUST.map(o => h("option", { selected: o === (a.justify || "Beginning") }, o)))); };
+    const fill = () => { clear(cw); if (!t.curtain) return;
+      const m = t.curtain.mullion = t.curtain.mullion || { width: 50, depth: 150, material: "M-ALUM" }, pn = t.curtain.panel = t.curtain.panel || { material: "M-GLASS", thickness: 25 };
+      cw.append(axis("vertical", "Vertical grid"), axis("horizontal", "Horizontal grid"),
+        h("div", { style: { display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" } }, h("b", { style: { width: "130px" } }, "Mullions"), "width", lenIn(m, "width", "Mullion width"), "depth", lenIn(m, "depth", "Mullion depth"),
+          h("select", { "aria-label": "Mullion material", onchange: e => { m.material = e.target.value; } }, mats(m.material)),
+          h("label", {}, h("input", { type: "checkbox", checked: t.curtain.border !== false, onchange: e => { t.curtain.border = e.target.checked; } }), " border mullions")),
+        h("div", { style: { display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" } }, h("b", { style: { width: "130px" } }, "Panels"), "thickness", lenIn(pn, "thickness", "Panel thickness"),
+          h("select", { "aria-label": "Panel material", onchange: e => { pn.material = e.target.value; } }, mats(pn.material))),
+        h("div", { class: "muted small" }, "Openings in the wall take their panels out; a wall under a gable or attached to a roof trims its grid to its top. A wall can override the grid with its own Curtain grid property.")); };
+    body.append(h("h3", {}, h("label", {}, h("input", { type: "checkbox", checked: !!t.curtain, "aria-label": "Curtain wall system", onchange: e => { t.curtain = e.target.checked ? { vertical: { layout: "Fixed distance", spacing: 1500 }, horizontal: { layout: "Fixed distance", spacing: 1500 } } : undefined; if (!t.curtain) delete t.curtain; fill(); } }), " Curtain wall system (a grid of mullions and glass or cladding panels)")), cw);
+    fill();
   }
   const specs = Object.entries(r.specs || {}).concat(Object.entries(doc.lib.paramSpecs).filter(([k, s]) => s.binding === "type" && (s.categories.includes("*") || s.categories.includes(r.category))));
   const ptab = h("tbody");
