@@ -385,11 +385,12 @@ Schaeffer, Walnut Creek, First Presbyterian); see `webbim/tools/fha/`.
 5. **Sets contradict themselves.** Examples: a roof 3" apart between A403 and
    A501, and grid B called C in the details. Record the conflict, choose one
    value in the model, and say which.
-6. **Tracing is fidelity, not intelligence.** `dlift.py` lifts what the
-   model's cut does not draw as 2D detail components; batts become insulation
-   runs, and PDF tiling hatches become tile patterns. It proves the model
-   against the PDF. It is the wrong end state for new work, which needs
-   parametric components.
+6. **The model draws the sheets; nothing is traced.** A drawing lifted from a PDF and laid in a view as 2D
+   linework, or a page's image pasted on a sheet, is not a model: it does not schedule, does not move with
+   the design, does not render in 3D, and the architect cannot trust it. Read the PDF only to measure. Every
+   line on a plan or elevation must be drawn by a model element (a wall, a door from its swing, a fixture
+   family from its symbol, a finish floor from its hatch, a window from its tag), or be an annotation of
+   one. When the model cannot yet draw something, leave it out and say so.
 7. **Fix the engine, not the view.** Mitres, bubble text and annotation scale
    were sometimes tuned per view, and that hid bugs. Annotation must size from
    the profile and the paper, once.
@@ -405,14 +406,18 @@ Schaeffer, Walnut Creek, First Presbyterian); see `webbim/tools/fha/`.
 10. **The PDF may clip what it draws.** Poche is often one black rectangle
     cut back to the piers by a clipping path the vectors do not carry. Read
     what is really black off the page's raster before making walls of it.
-11. **Shaded views are raster.** Revit exports elevations with shadows or
-    materials as image tiles. Composite the tiles into one image in sheet
-    space and lay it on the sheet (multiply); the words, tags, levels and
-    grids stay live annotation over it.
+11. **Shaded views are raster.** Revit exports elevations with shadows or materials as image tiles.
+    Composite the tiles in sheet space to measure from them (a window's sill and head, a finish's
+    shade), never to put them on a sheet. The elevation on the sheet is the model's own view.
 12. **Pages can be cut off.** A plotted-to-PDF sheet may lose part of its
     width. Detect it (the page covers less than the sheet), tell the
     architect which sheets, and ask for an uncropped export; the model can
     still carry the rest.
+
+13. **Teach the model the set's own words.** A finish tag's leader points at a surface: paint the element
+    there with that finish (a material of that code), and the tag becomes the model's own material tag. A
+    window or door tag (mark over type) names the element in that opening. A hatch's step and phase are a
+    finish floor's surface pattern.
 
 ## The prompt panel and the project's conversation
 

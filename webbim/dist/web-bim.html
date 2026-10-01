@@ -1854,7 +1854,7 @@ function propertyOf(doc, f, key) {
   if (a && (a.kind === "Text" || a.kind === "Choice")) return { kind: "Text", v: String(doc.argValue(f, key)) };
   const p = doc.getParam(f, key);
   if (p !== undefined) return evalParam(doc, f, p);
-  for (const tk of ["wallType", "doorType", "windowType", "columnType", "floorType", "beamType"]) {
+  for (const tk of ["wallType", "doorType", "windowType", "columnType", "floorType", "beamType", "fixtureType"]) {
     const id = a ? null : (decl && decl.args.some(x => x.key === tk) ? (doc.argValue(f, tk) || {}).ref : null);
     if (id) { const t = doc.resolveType(id); if (t && t.params[key] !== undefined) return evalParam(doc, f, t.params[key]); if (key === "TypeMark" && t) return { kind: "Text", v: t.mark || t.name || id }; }
   }
@@ -2004,8 +2004,9 @@ function drawTitleFamily(doc, sh, W, H, tb, io) {
     let s = (it.prefix || "") + s0 + (it.suffix || ""); if (it.upper) s = s.toUpperCase();
     if (!s) return;
     let h = it.h || 2.5;
-    if (it.room && io.tw) { const tw = io.tw(s, h, it.font); if (tw > it.room) h *= it.room / tw; }
-    io.txt(P(at, it), s, h, Object.assign({ rot: it.rot || 0, align: it.align || "left" }, it.font ? { font: it.font } : {}, it.colour ? { colour: it.colour } : {}));
+    const wf = it.widthFactor || 1;
+    if (it.room && io.tw) { const tw = io.tw(s, h, it.font) * wf; if (tw > it.room) h *= it.room / tw; }
+    io.txt(P(at, it), s, h, Object.assign({ rot: it.rot || 0, align: it.align || "left" }, it.font ? { font: it.font } : {}, it.colour ? { colour: it.colour } : {}, wf !== 1 ? { widthFactor: wf } : {}));
   }
 }
 
@@ -2448,6 +2449,10 @@ const FAMILIES = {
   "F-COLUMN":    { name: "Column", category: "IfcColumn", system: "Column", sealed: true },
   "F-RCCOLUMN":  { name: "RC Column", extends: "F-COLUMN" },
   "F-FLOOR":     { name: "Floor", category: "IfcSlab", system: "Floor", sealed: true },
+  // fixtures: a family's plan symbol and body, placed as instances (sanitary, casework, appliances, equipment)
+  "F-FIXTURE":   { name: "Fixture", category: "Furniture", system: "Fixture", sealed: true },
+  "F-SANITARY":  { name: "Sanitary fixture", extends: "F-FIXTURE" },
+  "F-CASEWORK":  { name: "Casework", extends: "F-FIXTURE" },
   "F-BEAM":      { name: "Beam", category: "IfcBeam", system: "Beam", sealed: true },
   "F-STEELBEAM": { name: "Steel I-section", extends: "F-BEAM" },
   "F-RCBEAM":    { name: "RC Beam", extends: "F-BEAM" },
@@ -8967,6 +8972,33 @@ BUILDERS.Furniture = { build: (f, doc) => {
   return { plan: { paths, fill: "#EEF0F3", z0, z1: z0 + 750 }, data: { props: {} } };
 } };
 
+// ---------------------------------------------------------------- fixtures: a family type placed as instances
+// A fixture (a WC, a basin, a kitchen run, a wardrobe) is an instance of its type: the type holds the family's
+// symbolic plan lines and its body (a footprint pulled up through a height above a base), in its own frame; the
+// instance holds where it stands, its turn and whether it is mirrored. Many instances share one type, as Revit's
+// families do - change the type, every instance follows.
+declare({ type: "Fixture", guid: "wb-0303", category: "Furniture", kind: "fixture", idPrefix: "FX",
+  summary: "An instance of a fixture type (sanitary, casework, equipment): its type's plan symbol in plan, its body in 3D.",
+  args: [ point2d("position", "Position", [0, 0]), real("rotation", "Rotation", 0, -360, 360, 1, "°"), bool("mirror", "Mirrored", false),
+          ref("fixtureType", "Type", ["fixtureType"]), ref("level", "Level", ["level"]),
+          real("baseOffset", "Base offset", 0, -100000, 100000, 1, "mm", { group: "Constraints" }) ],
+  handles: (f) => [{ key: "move", at: F.point(f, "position"), constraint: "free2d", writes: "position" }] });
+BUILDERS.Fixture = {
+  precondition: (f) => F.type(f, "fixtureType") ? null : "pick a fixture type",
+  build: (f, doc) => {
+    const t = F.type(f, "fixtureType") || {}, c = F.point(f, "position"), rot = F.real(f, "rotation") * Math.PI / 180, mx = F.bool(f, "mirror") ? -1 : 1;
+    const tr = p => { const x = p[0] * mx, y = p[1]; return [c[0] + x * Math.cos(rot) - y * Math.sin(rot), c[1] + x * Math.sin(rot) + y * Math.cos(rot)]; };
+    const z0 = levelElev(doc, f, "level") + F.real(f, "baseOffset"), zb = z0 + (t.base || 0), zt = zb + (t.height || 900), material = t.material || "M-TIMBER";
+    // the plan symbol: open polylines (a WC's bowl, a sink's bowls, a bench's front), as the family draws them
+    const paths = (t.lines || []).map(pl => { const pts = pl.map(tr); const path = []; for (let i = 1; i < pts.length; i++) path.push({ k: "L", a: pts[i - 1], b: pts[i] }); return path; }).filter(x => x.length);
+    const bodies = (t.bodies || (t.body ? [{ loop: t.body, base: 0, height: t.height || 900 }] : [])).filter(b => b.loop && b.loop.length >= 3);
+    const parts = bodies.map(b => { const foot = b.loop.map(tr); return { foot: polyArea(foot) < 0 ? foot.reverse() : foot, z0: zb + (b.base || 0), z1: zb + (b.base || 0) + (b.height || t.height || 900), sub: "Body", material: b.material || material }; });
+    const foot = parts.length ? parts[0].foot : [c, c, c];
+    const area = parts.reduce((a, pt) => a + Math.abs(polyArea(pt.foot)), 0);
+    return { plan: { paths, fill: null, symbol: true, foot, z0: zb, z1: zt, parts, material },
+      data: { value: 1, kind: "Count", parts, props: { Type: T(t.name || ""), Area: { kind: "Area", v: area }, Height: L(zt - zb) } } };
+  } };
+
 // ---------------------------------------------------------------- spaces (§3.6)
 declare({ type: "Space", guid: "wb-0401", category: "IfcSpace", kind: "space", idPrefix: "SP",
   summary: "The volume between two horizontal surfaces, bounded by room-bounding elements. Found by planar face-finding; kept by its anchor.",
@@ -9279,8 +9311,10 @@ BUILDERS.RepeatingDetail = { build: () => ({ data: {} }) };
 declare({ type: "MaterialTag", guid: "wb-0707", category: "Annotation", kind: "detail", idPrefix: "MT",
   summary: "A material tag: it reads what lies beneath it - at its leader's point, or under the tag itself when the leader is off - and shows that material's Mark, Name or Description, or the element's own Mark or its type's. Nothing recognised there: it shows ?",
   args: [ point2d("target", "Leader point", [0, 0]), point2d("position", "Tag position", [600, 600]),
-          choice("show", "Shows", ["Mark", "Name", "Mark · Name", "Description", "Mark · Description", "Element Mark", "Type Mark", "Element Mark · Material Mark"], 0),
-          choice("frame", "Frame", ["Keynote box", "None", "Circle", "Oblong"], 0, { group: "Graphics" }),
+          choice("show", "Shows", ["Mark", "Name", "Mark · Name", "Description", "Mark · Description", "Element Mark", "Type Mark", "Element Mark · Material Mark", "Element Mark / Type Mark"], 0),
+          choice("frame", "Frame", ["Keynote box", "None", "Circle", "Oblong", "Split circle", "Diamond"], 0, { group: "Graphics" }),
+          // a tag of one element (a door, a window): it follows that element, not what lies under it
+          ref("element", "Tags", ["door", "window", "wall", "column", "floor", "roof"], { group: "Constraints" }),
           bool("leader", "Leader", true, { group: "Graphics" }),
           real("textSize", "Text size (paper mm)", 2.5, 0.5, 30, 0.1, "", { group: "Graphics" }),
           ref("view", "View", ["view"], { view: true }) ],
@@ -9588,7 +9622,7 @@ function elementParts(doc, f) {
   if (!p) return [];
   if (t === "Wall") return (p.pieces || []).map(pc => Object.assign({ sub: "Wall" }, pc));
   if (t === "Column") return [{ foot: p.foot.length ? p.foot : samplePath(p.path).slice(0, -1), holes: p.holes || [], z0: p.z0, z1: p.z1, sub: "Column", smooth: p.foot.length === 16 || p.foot.length === 32, colour: p.colour }];
-  if (t === "Door" || t === "Window" || t === "Floor" || t === "Beam" || t === "Generic") { const d = doc.data(f); return (d && d.parts) || (p.parts || []); }
+  if (t === "Door" || t === "Window" || t === "Floor" || t === "Beam" || t === "Generic" || t === "Fixture") { const d = doc.data(f); return (d && d.parts) || (p.parts || []); }
   return [];
 }
 
@@ -11174,9 +11208,19 @@ class Editor {
   emit(r) { for (const fn of this.listeners) fn(r); }
 
   /** Apply one op (or a list) as one step. Returns {ok, error?, conflicts?, ...}. */
-  apply(op, { regenerate = true, coalesce = null } = {}) {
+  apply(op, { regenerate = true, coalesce = null, undoable = true } = {}) {
     const ops = Array.isArray(op) ? op : [op];
     const key = coalesce || (ops.length === 1 ? ops[0].coalesce || null : null);
+    // a builder writing a whole project (thousands of elements) takes no undo steps: a snapshot per edit would
+    // copy the document each time. What fails then is not rolled back - the builder stops on it
+    if (!undoable) {
+      let result = { ok: true };
+      try { for (const o of ops) { const h = HANDLERS[o.op]; if (!h) throw new Error(`"${o.op}" is not an edit this document understands`);
+        const r = h(this.doc, o, this); if (r && r.conflicts) return this.finish({ ok: false, conflicts: r.conflicts, error: r.error }); result = Object.assign(result, r || {}); } }
+      catch (err) { return this.finish({ ok: false, error: err.message, at: err.at }); }
+      if (regenerate) this.doc.regenerate();
+      return this.finish(result);
+    }
     const snap = snapshot(this.doc);
     let result = { ok: true };
     try {
@@ -12212,7 +12256,7 @@ function isPinned(doc, f) { const decl = f && doc.declOf(f); return !!(decl && d
 
 
 const GROUP_ORDER = ["Constraints", "Dimensions", "Graphics", "Extents", "Construction", "Identity Data", "Phasing", "Finishes", "Other"];
-const TYPE_KEYS = ["wallType", "doorType", "windowType", "columnType", "floorType", "beamType"];
+const TYPE_KEYS = ["wallType", "doorType", "windowType", "columnType", "floorType", "beamType", "fixtureType"];
 
 /** Which editor a kind gets. Geometry is never a text box (§4.5, test 37e). */
 function editorFor(arg) {
@@ -13024,15 +13068,26 @@ function planScene(doc, v, opts = {}) {
       if (bnd === "above" || bnd === "below") continue;
       const g = resolveGraphics(doc, ctx, f, bnd === "cut" ? "cut" : bnd === "beyond" ? "beyond" : "projection");
       if (bnd === "cut") B.fill(p.path, g.fill || ((doc.lib.materials[p.material] || {}).cut || {}).background || "#e9eaec", "IfcSlab", doc.idOf(f));
-      B.stroke(p.path, g, "IfcSlab", doc.idOf(f)); B.hit(doc.idOf(f), p.foot);
+      // a finish whose material says so draws no edge in projection (its pattern is its edge, as a tile floor reads)
+      const pm0 = doc.lib.materials[((p.parts || []).reduce((a, x) => (!a || x.z1 > a.z1 ? x : a), null) || {}).material || p.material];
+      if (!(bnd === "projection" && pm0 && pm0.projection && pm0.projection.edges === false)) B.stroke(p.path, g, "IfcSlab", doc.idOf(f));
+      B.hit(doc.idOf(f), p.foot);
       // seen from above, a floor is its top layer
       const top = (p.parts || []).reduce((a, x) => (!a || x.z1 > a.z1 ? x : a), null);
+      // ... and its surface pattern (boards, tiles, pavers), in the material's projection pen, as Revit draws a
+      // floor's surface pattern in plan
+      if (bnd === "projection") { const pm = doc.lib.materials[(top && top.material) || p.material], pj = pm && pm.projection, pat = pj && pj.pattern && doc.lib.patterns[pj.pattern];
+        if (pat) { B.hatch(p.path, pat, pj.pattern, pj.lineColour || g.colour, penWeight(doc, pj.pen || "gossamer", S), "IfcSlab", doc.idOf(f));
+          // a model pattern is set out from the project's origin, wherever the view is cropped
+          const last = B.prims[B.prims.length - 1]; if (last && last.t === "hatch") last.origin = B.P([0, 0]); } }
       B.mat.push({ id: doc.idOf(f), material: (top && top.material) || p.material, poly: p.foot, floor: true });
     }
     if (t === "SiteBoundary" && vis(f)) {
       // the plot lines: a heavy property-line chain; the setback line dashed inside it; the area written in
       const p = doc.plan(f); if (!p) continue; const id = doc.idOf(f);
-      B.stroke(polyPath(p.pts), { weight: penWeight(doc, "bold", S), colour: "#1b1f24", dash: [9, 1.5, 1.2, 1.5, 1.2, 1.5] }, "Site", id);
+      // the office may draw its plot line its own way (a red chain): the view style's Site colour and pen
+      const so = (ctx.style && ctx.style.byCategory && ctx.style.byCategory.Site) || {};
+      B.stroke(polyPath(p.pts), { weight: so.pen ? penWeight(doc, so.pen, S) : penWeight(doc, "bold", S), colour: so.colour || "#1b1f24", dash: so.dash || [9, 1.5, 1.2, 1.5, 1.2, 1.5] }, "Site", id);
       if (p.setbacks.some(x => x > 0)) B.stroke(polyPath(p.buildable), { weight: penWeight(doc, "thin", S), colour: "#d0312d", dash: LINE_TYPES.dashed1 }, "Site", id);
       const c = p.pts.reduce((a, q) => add(a, q), [0, 0]).map(v => v / p.pts.length), d = doc.data(f);
       if (d && d.props && F.bool(f, "label") !== false) B.text(add(B.P(c), [0, 0]), `SITE ${fmtArea(d.props["Site area"].v)}`, 3.5, { align: "centre", layer: "Site", id, colour: "#1b1f24" });
@@ -13202,6 +13257,13 @@ function planScene(doc, v, opts = {}) {
       if (!(fr.sill + w.z0 < cutZ && fr.sill + fr.h + w.z0 > cutZ && band(w.z0, w.z1) === "cut")) continue;
       const wz = leanInvolved(w) ? wallAt(w, Math.max(w.z0, Math.min(w.z1, cutZ))) : w, n_ = wz.stack.s.length - 1;
       B.hit(doc.idOf(f), [pointAt(wz, wz.stack.s[0], fr.u0), pointAt(wz, wz.stack.s[0], fr.u1), pointAt(wz, wz.stack.s[n_], fr.u1), pointAt(wz, wz.stack.s[n_], fr.u0)]);
+    }
+    // a fixture draws its family's symbol: its lines where it stands below the cut (or is cut), no fill
+    if (t === "Fixture") {
+      const p = doc.plan(f); if (!p) continue; const bnd = band(p.z0, p.z1); if (bnd !== "projection" && bnd !== "cut") continue;
+      const g = resolveGraphics(doc, ctx, f, "projection");
+      B.stroke(p.paths.flat(), g, "Furniture", doc.idOf(f));
+      if (p.foot && p.foot.length >= 3) B.hit(doc.idOf(f), p.foot);
     }
     if (t === "Furniture") {
       const p = doc.plan(f); if (!p) continue; const bnd = band(p.z0, p.z1); if (bnd !== "projection" && bnd !== "cut") continue;
@@ -13518,7 +13580,11 @@ const DEPT = ["#dce9f7", "#f8e3cf", "#dff1e2", "#f3dcec", "#fff2c4", "#e4e0f7", 
 function departmentColour(v) { let h = 0; for (const c of v) h = (h * 31 + c.charCodeAt(0)) >>> 0; return DEPT[h % DEPT.length]; }
 
 function drawGrid(doc, ctx, B, f) {
-  const c = F.json(f, "line"), id = doc.idOf(f), S = ctx.scale;
+  const id = doc.idOf(f), S = ctx.scale, OV = ctx.overrides || {};
+  // a view may draw a grid shorter than the model has it (Revit's 2D extents): its own line for this grid, or
+  // every grid cut to a box (model mm) - the heads where the line then ends
+  let c = (OV[id] && OV[id].gridLine) || F.json(f, "line");
+  if (OV.__gridBox) { c = clipSegment(c, OV.__gridBox); if (!c) return; }
   const g = resolveGraphics(doc, ctx, f, "projection"), AS = annotationStyle(doc);
   const endL = AS.gridEnd * S, Lg = dist(c.start, c.end);
   if (endL > 0 && Lg > 2 * endL) {
@@ -13534,6 +13600,14 @@ function drawGrid(doc, ctx, B, f) {
     gridHead(doc, B, f, B.P(p), mul(d, sgn), g, id);
   }
   B.hit(id, [c.start, c.end], "curve");
+}
+/** A line cut to a box [x0, y0, x1, y1] (Liang-Barsky): null when it misses the box. */
+function clipSegment(c, r) {
+  const [x0, y0] = c.start, dx = c.end[0] - x0, dy = c.end[1] - y0; let t0 = 0, t1 = 1;
+  for (const [p, q] of [[-dx, x0 - r[0]], [dx, r[2] - x0], [-dy, y0 - r[1]], [dy, r[3] - y0]]) {
+    if (p === 0) { if (q < 0) return null; continue; }
+    const t = q / p; if (p < 0) { if (t > t1) return null; if (t > t0) t0 = t; } else { if (t < t0) return null; if (t < t1) t1 = t; } }
+  return Object.assign({}, c, { start: [x0 + dx * t0, y0 + dy * t0], end: [x0 + dx * t1, y0 + dy * t1] });
 }
 /** The project's annotation style: how its datums and markers are drawn - the drafting office's standard.
  *  "classic" is this app's own; "revit" draws as Revit's defaults do (flag heads on sections and elevations,
@@ -13866,6 +13940,7 @@ function materialAt(doc, B, q) {
 }
 /** An element's own material: its Material parameter, its type's, or its type's first (exterior / top) layer's. */
 function elementMaterial(doc, f) {
+  const pt = paramValue(doc, f, "Paint"); if (pt && doc.lib.materials[pt]) return pt;
   const p = paramValue(doc, f, "Material"); if (p && doc.lib.materials[p]) return p;
   for (const k of ["wallType", "floorType", "columnType", "beamType", "doorType", "windowType"]) {
     const id = F.refId(f, k); if (!id) continue; const t = doc.resolveType(id); if (!t) continue;
@@ -13912,11 +13987,28 @@ function oblongPath(x0, y0, x1, y1) {
   const r = (y1 - y0) / 2, cy = (y0 + y1) / 2, a = x0 + r, b = Math.max(a, x1 - r);
   return [lineSeg([a, y0], [b, y0]), { k: "A", c: [b, cy], r, a0: -Math.PI / 2, a1: Math.PI / 2 }, lineSeg([b, y1], [a, y1]), { k: "A", c: [a, cy], r, a0: Math.PI / 2, a1: 3 * Math.PI / 2 }];
 }
+const frame0 = f => F.choice(f, "frame") || "Keynote box";
+/** A door's or a window's tag as Australian offices draw it: a circle split by a rule, the element's Mark over its
+ *  type's (A.G.23 / WT01). The words fit the circle; a leader, if on, runs to the element. */
+function drawSplitTag(doc, ctx, B, f, elId, pq, tq, leader) {
+  const id = doc.idOf(f), em = elementMarks(doc, elId), top = em.mark || "?", bot = em.typeMark || "?", ts = F.real(f, "textSize") || 1.62;
+  const P = B.P(pq), T = B.P(tq), wf = annotationStyle(doc).widthFactor || 1;
+  const w = Math.max(textWidth(top, ts, undefined, wf), textWidth(bot, ts, undefined, wf)), R = Math.max(3.1, w / 2 + 0.5), col = elId ? "#000000" : "#b3261e";
+  const g = { weight: penWeight(doc, "hairline", ctx.scale), colour: col }, font = annotationStyle(doc).font || undefined;
+  if (leader && dist(T, P) > R + 0.2) { B.stroke([lineSeg(T, add(P, mul(normalise(sub(T, P)), R)))], g, "Annotation-Tag", id, true); }
+  B.fill(circlePath(P, R), "#ffffff", "Annotation-Tag", id, true); B.stroke(circlePath(P, R), g, "Annotation-Tag", id, true);
+  B.stroke([lineSeg([P[0] - R, P[1]], [P[0] + R, P[1]])], g, "Annotation-Tag", id, true);
+  B.text([P[0], P[1] + 0.55], top, ts, { align: "centre", layer: "Annotation-Tag", id, colour: col, font, widthFactor: wf });
+  B.text([P[0], P[1] - 0.55 - ts], bot, ts, { align: "centre", layer: "Annotation-Tag", id, colour: col, font, widthFactor: wf });
+  const S = ctx.scale; B.hit(id, [[(P[0] - R) * S, (P[1] - R) * S], [(P[0] + R) * S, (P[1] - R) * S], [(P[0] + R) * S, (P[1] + R) * S], [(P[0] - R) * S, (P[1] + R) * S]]);
+}
 function drawMaterialTag(doc, ctx, B, f) {
   const id = doc.idOf(f), pq = F.point(f, "position"), leader = doc.argValue(f, "leader") !== false;
   // what it reads: at its leader's point, or - leader off - under the tag itself
   const tq = leader ? F.point(f, "target") : pq, show = F.choice(f, "show");
-  const found = materialAt(doc, B, tq), elId = /Element|Type/.test(show || "") ? elementUnder(doc, B, tq) : null;
+  // a tag of one element names that element; otherwise it reads what lies under its point
+  const bound = F.refId(f, "element"), found = bound ? null : materialAt(doc, B, tq), elId = bound || (/Element|Type/.test(show || "") ? elementUnder(doc, B, tq) : null);
+  if (show === "Element Mark / Type Mark" || frame0(f) === "Split circle") { drawSplitTag(doc, ctx, B, f, elId, pq, tq, leader); return; }
   const text = materialTagText(doc, found && found.material, show, elId || (found && found.id));
   const ts = F.real(f, "textSize") || 2.5, frame = F.choice(f, "frame") || "Keynote box";
   const T = B.P(tq), P = B.P(pq), w = textWidth(text, ts), pad = ts * 0.45;
@@ -13924,6 +14016,9 @@ function drawMaterialTag(doc, ctx, B, f) {
   const right = P[0] >= T[0];
   const box = [P[0] - w / 2 - pad, P[1] - ts / 2 - pad, P[0] + w / 2 + pad, P[1] + ts / 2 + pad];
   if (frame === "Oblong") { const r = (box[3] - box[1]) / 2; box[0] -= r * 0.5; box[2] += r * 0.5; }
+  // a finish tag as Australian offices draw it: the code in a diamond (a square turned 45 degrees)
+  const dr = Math.max(w / 2 + pad * 0.6, ts * 1.1) * 1.08;
+  if (frame === "Diamond") { box[0] = P[0] - dr; box[2] = P[0] + dr; box[1] = P[1] - dr; box[3] = P[1] + dr; }
   // the leader: from the point to the near side of the tag, a dot where it rests
   if (leader && dist(T, P) > 1e-6) {
     const end = frame === "Circle" ? add(P, mul(normalise(sub(T, P)), Math.max(w / 2, ts / 2) + pad)) : [right ? box[0] : box[2], P[1]];
@@ -13933,6 +14028,7 @@ function drawMaterialTag(doc, ctx, B, f) {
   const rect = polyPath([[box[0], box[1]], [box[2], box[1]], [box[2], box[3]], [box[0], box[3]]]);
   if (frame === "Keynote box") { B.fill(rect, "#ffffff", "Annotation-Tag", id, true); B.stroke(rect, g, "Annotation-Tag", id, true); }
   if (frame === "Oblong") { const ob = oblongPath(...box); B.fill(ob, "#ffffff", "Annotation-Tag", id, true); B.stroke(ob, g, "Annotation-Tag", id, true); }
+  if (frame === "Diamond") { const dp = polyPath([[P[0] - dr, P[1]], [P[0], P[1] - dr], [P[0] + dr, P[1]], [P[0], P[1] + dr]]); B.fill(dp, "#ffffff", "Annotation-Tag", id, true); B.stroke(dp, g, "Annotation-Tag", id, true); }
   if (frame === "Circle") { const r = Math.max(w / 2, ts / 2) + pad; B.fill(circlePath(P, r), "#ffffff", "Annotation-Tag", id, true); B.stroke(circlePath(P, r), g, "Annotation-Tag", id, true); }
   B.text([P[0], P[1] - ts * 0.36], text, ts, { align: "centre", layer: "Annotation-Tag", id, colour: col });
   const S = ctx.scale; B.hit(id, [[box[0] * S, box[1] * S], [box[2] * S, box[1] * S], [box[2] * S, box[3] * S], [box[0] * S, box[3] * S]]);
@@ -14431,6 +14527,24 @@ function drawDatums(doc, ctx, B, v, G) {
       B.hit(id, [[ext[0], z - 50], [ext[1], z - 50], [ext[1], z + 50], [ext[0], z + 50]]);
       continue;
     }
+    if (AS.levelStyle === "techne") {
+      // the Australian office's datum (Techne): at the head, the RL in mm, a hollow V with its point on the level on a
+      // short heavy bar, the level's name; the line thin and grey across the view. Heads at the right unless the view
+      // says left, and then the order reads the other way (the name outside)
+      const id = doc.idOf(f), right = (vov.__levelHead || AS.levelHeads) !== "Left", hp = B.P([right ? ext[1] : ext[0], z]), op = B.P([right ? ext[0] : ext[1], z]);
+      const font = AS.font || undefined, th = AS.levelText, sg = right ? 1 : -1, wf = AS.widthFactor || 1;
+      const sd = (doc.meta && doc.meta.surveyElevation) || 0, val = String(Math.round(z + Z0 + sd));
+      B.stroke([lineSeg(add(hp, [-2.33, 3.3]), hp), lineSeg(hp, add(hp, [2.33, 3.3]))], { weight: 0.1, colour: "#000" }, "IfcBuildingStorey", id, true);
+      B.stroke([lineSeg(add(hp, [-2.98, 0]), add(hp, [3.01, 0]))], { weight: 0.25, colour: "#000" }, "IfcBuildingStorey", id, true);
+      B.stroke([lineSeg(add(hp, [-4.0 * sg, 0]), op)], { weight: 0.085, colour: AS.levelLineColour || "#8c8c8c", dash: LINE_TYPES.centre }, "IfcBuildingStorey", id, true);
+      // at the right: RL, V, name; at the left: name, V, RL (the RL always toward the drawing)
+      if (right) { B.text(add(hp, [-10.26, 1.54]), val, th, { layer: "IfcBuildingStorey", id, font, widthFactor: wf, align: "left" });
+        B.text(add(hp, [4.53, 1.54]), String(F.text(f, "name")).replace(/\n/g, " "), th, { layer: "IfcBuildingStorey", id, font, widthFactor: wf, align: "left" }); }
+      else { B.text(add(hp, [4.0, 1.54]), val, th, { layer: "IfcBuildingStorey", id, font, widthFactor: wf, align: "left" });
+        B.text(add(hp, [-4.53, 1.54]), String(F.text(f, "name")).replace(/\n/g, " "), th, { layer: "IfcBuildingStorey", id, font, widthFactor: wf, align: "right" }); }
+      B.hit(id, [[ext[0], z - 50], [ext[1], z - 50], [ext[1], z + 50], [ext[0], z + 50]]);
+      continue;
+    }
     if (AS.levelHeads === "Left") {
       // Revit's level head at the left: the name, a heavy V with its point on the level, the height in mm; the
       // line solid under the height, then dashed across the view
@@ -14545,11 +14659,21 @@ function drawDatums(doc, ctx, B, v, G) {
 function surfaceOf(doc, it) {
   const f = it.f, t = doc.typeOf(f);
   let m = null;
-  if (t === "Wall") { const w = doc.plan(f); if (w && w.stack && w.stack.layers.length) { const L = w.stack.layers; m = L.length === 1 ? L[0].material : (it.nearMaterial || L[0].material); } }
+  // a painted finish (Revit's Paint: a material given to the element's faces) is what its surface shows
+  const painted = paramValue(doc, f, "Paint"); if (painted && doc.lib.materials[painted]) m = painted;
+  else if (t === "Wall") { const w = doc.plan(f); if (w && w.stack && w.stack.layers.length) { const L = w.stack.layers; m = L.length === 1 ? L[0].material : (it.nearMaterial || L[0].material); } }
   else if (t === "Generic" || t === "Lattice" || t === "Roof") m = F.text(f, "material");
   else if (t === "Floor" && it.cat === "IfcSlab") m = null;
   const mp = m && (doc.lib.materials[m] || {}).projection;
   return mp && (mp.background || mp.pattern) ? { m, bg: mp.background || null, pat: mp.pattern || null, colour: mp.patternColour || mp.lineColour || "#a6a6a6" } : null;
+}
+/** The door or window filling an opening, from an index built once per view (not a scan per opening). */
+function fillerOf(doc, ctx, opId) {
+  const holder = ctx || fillerOf; let ix = holder.__fillers;
+  if (!ix || ix.doc !== doc || ix.n !== doc.elements().length) { const m = new Map();
+    for (const g of doc.elements()) { const t = doc.typeOf(g); if (t === "Door" || t === "Window") { const r = F.refId(g, "fills"); if (r) m.set(r, g); } }
+    ix = holder.__fillers = { doc, n: doc.elements().length, m }; }
+  return opId ? ix.m.get(opId) || null : null;
 }
 function drawSurfaces(doc, ctx, B, vis) {
   const out = [], S = ctx.scale;
@@ -14579,6 +14703,8 @@ function drawSurfaces(doc, ctx, B, vis) {
     if (sf.bg) out.push({ t: "fill", path, colour: sf.bg, layer: it.cat + "-Surface", id: it.id });
     const pat = sf.pat && doc.lib.patterns[sf.pat];
     if (pat) out.push({ t: "hatch", path, pattern: Object.assign({ id: sf.pat }, pat), scale: pat.kind === "model" ? 1 / S : 1, colour: sf.colour, weight: penWeight(doc, "hairline", S), layer: it.cat + "-Surface", id: it.id });
+    // its windows and doors: their glass and leaves white over the wall's surface
+    if (it.glass && it.glass.length && (sf.bg || pat)) out.push({ t: "fill", path: it.glass.flatMap(q => polyPath(q.map(p => B.P(p)))), colour: "#ffffff", layer: it.cat + "-Surface", id: it.id });
   }
   return out;
 }
@@ -14860,7 +14986,7 @@ function elevWall(doc, f, w, V, sOf, depthOf, ctx) {
     if (depthOf(p) <= front + 2) curves.push([[sp, baseZ], [sp, V(p, topAt(p))[1]]]);
   }
   // Openings: near-face rectangle, and the see-through hole cut from the silhouette.
-  const holes = [];
+  const holes = [], glass = [];
   const nearS = (() => { const a = depthOf(pointAt(w, w.stack.s[0], w.L / 2)), b = depthOf(pointAt(w, w.stack.s[n], w.L / 2)); return a <= b ? w.stack.s[0] : w.stack.s[n]; })();
   for (const op of w.openings || []) {
     const a1 = sOf(pointAt(w, w.stack.s[0], op.u0)), b1 = sOf(pointAt(w, w.stack.s[0], op.u1));
@@ -14869,15 +14995,17 @@ function elevWall(doc, f, w, V, sOf, depthOf, ctx) {
     const na = sOf(pointAt(w, nearS, op.u0)), nb = sOf(pointAt(w, nearS, op.u1));
     const lo = Math.min(na, nb), hi = Math.max(na, nb);
     // the filler's type may give the opening an arched head (round, or pointed as a Gothic window): its outline arches
-    const fg = doc.elements().find(g => (doc.typeOf(g) === "Door" || doc.typeOf(g) === "Window") && F.refId(g, "fills") === op.id);
+    const fg = fillerOf(doc, ctx, op.id);
     const fty = fg && (doc.lib.types[F.refId(fg, doc.typeOf(fg) === "Door" ? "doorType" : "windowType")] || {}), head = fty && fty.head && fty.head !== "Square" ? fty.head : null;
     if (head) curves.push(...archOutline(lo, hi, za, zb2, head));
     else curves.push([[lo, za], [hi, za]], [[hi, za], [hi, zb2]], [[hi, zb2], [lo, zb2]], [[lo, zb2], [lo, za]]);
     // a hole to see through, unless a door or window drawn here fills it (its leaf or glass stands in front)
-    const filled = ctx && doc.elements().some(g => (doc.typeOf(g) === "Door" || doc.typeOf(g) === "Window") && F.refId(g, "fills") === op.id && categoryVisible(ctx, categoryOf(doc, g)));
+    const filled = ctx && fg && categoryVisible(ctx, categoryOf(doc, fg));
     if (!op.recess && !filled) { const sa = Math.max(Math.min(a1, b1), Math.min(a2, b2)), sb = Math.min(Math.max(a1, b1), Math.max(a2, b2)); if (sb - sa > 1) holes.push([sa, sb, za, zb2]); }
+    // a filled opening's glass or leaf faces the eye: the wall's surface (its brick, its render) stops there
+    if (filled && !op.recess) glass.push([[lo, za], [hi, za], [hi, zb2], [lo, zb2]]);
     // a bare opening is picked by its own outline here (a filled one through its door or window, below)
-    if (op.id && !doc.elements().some(g => (doc.typeOf(g) === "Door" || doc.typeOf(g) === "Window") && F.refId(g, "fills") === op.id)) fillerHits.push({ id: op.id, poly: [[lo, za], [hi, za], [hi, zb2], [lo, zb2]] });
+    if (op.id && !fg) fillerHits.push({ id: op.id, poly: [[lo, za], [hi, za], [hi, zb2], [lo, zb2]] });
     // the filler's own elevation rep, mapped from host (u, z)
     for (const g of doc.elements()) if ((doc.typeOf(g) === "Door" || doc.typeOf(g) === "Window") && (!ctx || categoryVisible(ctx, categoryOf(doc, g))) && doc.data(g) && doc.data(g).frame && doc.data(g).frame.u0 === op.u0 && doc.data(g).host === w.id) {
       const er = doc.elev(g); if (!er) continue;
@@ -14921,7 +15049,7 @@ function elevWall(doc, f, w, V, sOf, depthOf, ctx) {
     for (const [ha, hb] of zs) { if (ha > z) sil.push([[sa, z], [sb, z], [sb, ha], [sa, ha]]); z = Math.max(z, hb); }
     sil.push([[sa, z], [sb, z], [sb, topLine(sb)], [sa, topLine(sa)]]);
   }
-  return { id: w.id, f, fillerHits, depth: Math.max(0, Math.min(...dd)), depthMax: Math.max(...dd), s0, s1, curves, sil: sil.length ? sil : [[[s0, baseZ], [s1, baseZ], [s1, t1], [s0, t0]]], cat: "IfcWall", panelSurf: panelSurf.length ? panelSurf : null, dashCurves };
+  return { id: w.id, f, fillerHits, depth: Math.max(0, Math.min(...dd)), depthMax: Math.max(...dd), s0, s1, curves, sil: sil.length ? sil : [[[s0, baseZ], [s1, baseZ], [s1, t1], [s0, t0]]], cat: "IfcWall", glass, panelSurf: panelSurf.length ? panelSurf : null, dashCurves };
 }
 /** An arched head's outline in a drawing's (s, z): the jambs up to the springing, then the arch - a semicircle, or two
  *  arcs meeting at a point (an equilateral Gothic arch) - to the head at z1; the sill across the bottom. */
@@ -15868,7 +15996,9 @@ function hatchFamilies(p) {
       }
     }
     const a = L.angle * Math.PI / 180, c = Math.cos(a), sn = Math.sin(a);
-    const o = [(p.origin || [0, 0])[0] + (L.origin || [0, 0])[0] * s, (p.origin || [0, 0])[1] + (L.origin || [0, 0])[1] * s];
+    // the cell draws its line half a step up (clear of the cell's edge): the cell is set half a step down, so the
+    // line passes through the pattern's origin as the pattern says
+    const o = [(p.origin || [0, 0])[0] + (L.origin || [0, 0])[0] * s + sn * across / 2 * s, (p.origin || [0, 0])[1] + (L.origin || [0, 0])[1] * s - c * across / 2 * s];
     const k = PT_PER_MM;
     // pattern space → default page space (points): the pattern ignores the page CTM
     const matrix = [k * s * c, k * s * sn, -k * s * sn, k * s * c, k * o[0], k * o[1]];
@@ -17222,8 +17352,8 @@ function fhaProject(name, project) {
   doc.meta.annotation = { kind: "revit", font: "Futura", gridHead: 6.35, gridText: 2.47, gridEnd: 4, gridCentreColour: "#000000",
     markerRadius: 4.76, markerText: 3.95, markerSheetText: 2.0, calloutSheet: false, levelText: 2.0, levelValueText: 2.0, levelHeads: "Left", levelStyle: "fha", sectionStyle: "fha", annoRef: 96 };
   const ed = new Editor(doc), L = doc.lib;
-  const add = element => { const r = ed.apply({ op: "add", element }, { regenerate: false }); if (!r.ok) throw new Error(`${element.id || element.type}: ${r.error}`); return r.id; };
-  const set = (id, key, value) => ed.apply({ op: "set", id, key, value }, { regenerate: false });
+  const add = element => { const r = ed.apply({ op: "add", element }, { regenerate: false, undoable: !H.bulk }); if (!r.ok) throw new Error(`${element.id || element.type}: ${r.error}`); return r.id; };
+  const set = (id, key, value) => ed.apply({ op: "set", id, key, value }, { regenerate: false, undoable: !H.bulk });
   const line = (a, b) => ({ type: "line", start: a, end: b });
 
   // ---------------------------------------------------------------- pens, lettering, dimensions
@@ -17465,13 +17595,13 @@ function annotatePage(H, page, o) {
   let notesView = null;
   const sheetNotes = () => { if (notesView) return notesView; const id = `V-N-${S0.number}`;
     add({ id, type: "DraftingView", name: `${S0.number} SHEET NOTES`, args: { scale: 1, clip: { rect: [0, 0, P.size[0], P.size[1]], visible: false, active: true } } });
-    const vpsNow = doc.argValue(sh, "viewports") || []; H.ed.apply({ op: "set", id: doc.idOf(sh), key: "viewports", value: vpsNow.concat([{ id: `VP${vpsNow.length + 1}`, view: { ref: id }, at: [P.size[0] / 2, P.size[1] / 2], clipVisible: false, noTitle: true }]) }, { regenerate: false });
+    const vpsNow = doc.argValue(sh, "viewports") || []; H.ed.apply({ op: "set", id: doc.idOf(sh), key: "viewports", value: vpsNow.concat([{ id: `VP${vpsNow.length + 1}`, view: { ref: id }, at: [P.size[0] / 2, P.size[1] / 2], clipVisible: false, noTitle: true }]) }, { regenerate: false, undoable: !H.bulk });
     notesView = { id, S: 1, map: q => q }; return notesView; };
   const claim = q => vps.filter(v => q[0] >= v.rect[0] && q[0] <= v.rect[2] && q[1] >= v.rect[1] && q[1] <= v.rect[3]).sort((a, b) => a.area - b.area)[0] || null;
   const isTitle = n => titles.has(n.t.toUpperCase()) || /^\d+(\/\d+)?" = 1'-0"$|^1" = 1'-0"$|^N\.?T\.?S\.?$/i.test(n.t) && !n.leader;
   const gridNames = new Set(doc.elements().filter(f => doc.typeOf(f) === "Grid").map(f => String(doc.argValue(f, "name") || "")));
   const viewTitleNear = n => (doc.argValue(sh, "viewports") || []).some(vp => vp.titleAt && Math.hypot(vp.titleAt[0] - (n.bb[0] + n.bb[2]) / 2, vp.titleAt[1] - (n.bb[1] + n.bb[3]) / 2) < 6);
-  const skip = n => (o.skip && o.skip(n)) || isTitle(n) || (n.end === "none" && n.leader && n.leader.length === 2 && Math.abs(n.leader[0][1] - n.leader[1][1]) < 0.05 && (titles.has(n.t.toUpperCase()) || /" = /.test(n.t)))
+  const skip = n => o.keepAll ? !!(o.skip && o.skip(n)) : (o.skip && o.skip(n)) || isTitle(n) || (n.end === "none" && n.leader && n.leader.length === 2 && Math.abs(n.leader[0][1] - n.leader[1][1]) < 0.05 && (titles.has(n.t.toUpperCase()) || /" = /.test(n.t)))
     // a grid's head (a letter or two on its line): the model's grid draws it
     || (n.t.length <= 2 && n.leader && n.leader.length === 2 && Math.abs(n.leader[0][0] - n.leader[1][0]) < 0.05 && Math.abs(n.leader[0][1] - n.leader[1][1]) > 8)
     || (!n.leader && gridNames.has(n.t.trim()))
@@ -17483,7 +17613,7 @@ function annotatePage(H, page, o) {
   { const vpl = (doc.argValue(sh, "viewports") || []).map(x => Object.assign({}, x)); let moved = false;
     for (const n of P.notes) { if (!n.leader || n.end !== "none") continue; const x = vpl.find(vp => String(doc.element(vp.view.ref).get("Name") || "").toUpperCase() === n.t.toUpperCase()); if (!x || x.titleAt) continue;
       x.titleAt = [+(n.at[0] - FHA_VIEW_TITLE.nameDx).toFixed(2), +(n.at[1] - FHA_VIEW_TITLE.nameDy).toFixed(2)]; x.titleLength = +(Math.max(n.leader[0][0], n.leader[1][0]) - x.titleAt[0]).toFixed(2); moved = true; }
-    if (moved) H.ed.apply({ op: "set", id: doc.idOf(sh), key: "viewports", value: vpl }, { regenerate: false }); }
+    if (moved) H.ed.apply({ op: "set", id: doc.idOf(sh), key: "viewports", value: vpl }, { regenerate: false, undoable: !H.bulk }); }
   let k = 0; const placed = { notes: 0, dims: 0, bubbles: 0, sheet: 0 };
   // room tags (a name and a three-figure number): rooms of the plan's level, tagged as the office tags them
   const isTag = n => { const ls = n.t.split("\n"); return (ls.length === 2 || ls.length === 3) && ls.some(l => /^\d{3}$/.test(l.trim())) && n.h > 2 && n.h < 2.5; };
@@ -17519,7 +17649,7 @@ function annotatePage(H, page, o) {
     let [a, b] = dm.line; const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], vp = claim(mid); if (!vp) continue;
     // the drafted line runs on past its arrows: in a section or a detail the string's own value (at the view's
     // scale) sets its length, centred where the line is
-    { const L = ftInOf(dm.t), len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    { const L = (o.lengthOf || ftInOf)(dm.t), len = Math.hypot(b[0] - a[0], b[1] - a[1]);
       if (L != null && doc.typeOf(vp.v) !== "PlanView" && len > 0 && Math.abs(len - L / vp.S) > 0.4) { const k = L / vp.S / len / 2, dx = (b[0] - a[0]) * k, dy = (b[1] - a[1]) * k; a = [mid[0] - dx, mid[1] - dy]; b = [mid[0] + dx, mid[1] + dy]; } }
     const A = vp.map(a), B2 = vp.map(b), vert = Math.abs(a[0] - b[0]) < Math.abs(a[1] - b[1]), plan = doc.typeOf(vp.v) === "PlanView";
     const lo = vert ? Math.min(A[1], B2[1]) : Math.min(A[0], B2[0]), hi = vert ? Math.max(A[1], B2[1]) : Math.max(A[0], B2[0]), at = vert ? A[0] : A[1];
@@ -17531,8 +17661,8 @@ function annotatePage(H, page, o) {
     if (plan) { const tol = 1.5 * vp.S, pick = c => { let best = null; for (const r of planRefs(doc, vert)) { const d = Math.abs(r.c - c) - (r.grid ? tol : 0); if (Math.abs(r.c - c) < tol && (!best || d < best.d)) best = { d, key: r.key }; } return best && best.key; }; ra = pick(lo); rb = pick(hi); }
     const keyA = ra || witness(lo), keyB = (rb && rb !== ra) ? rb : witness(hi);
     const id = `DM-${S0.number}-${++k}`;
-    add({ id, type: "Dimension", args: { of: [keyA, keyB], offset: plan ? 0 : at, view: { ref: vp.id }, locked: false, dimType: { ref: "DT-FH" } } });
-    if (plan) { const g = dimOffsetFor(doc, id, vert, at); if (g != null) H.ed.apply({ op: "set", id, key: "offset", value: g }, { regenerate: false }); }
+    add({ id, type: "Dimension", args: { of: [keyA, keyB], offset: plan ? 0 : at, view: { ref: vp.id }, locked: false, dimType: { ref: o.dimType || doc.meta.defaultDimType || "DT-FH" } } });
+    if (plan) { const g = dimOffsetFor(doc, id, vert, at); if (g != null) H.ed.apply({ op: "set", id, key: "offset", value: g }, { regenerate: false, undoable: !H.bulk }); }
     placed.dims++;
   }
   return placed;

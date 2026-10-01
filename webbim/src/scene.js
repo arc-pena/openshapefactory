@@ -1121,6 +1121,7 @@ export function materialAt(doc, B, q) {
 }
 /** An element's own material: its Material parameter, its type's, or its type's first (exterior / top) layer's. */
 export function elementMaterial(doc, f) {
+  const pt = paramValue(doc, f, "Paint"); if (pt && doc.lib.materials[pt]) return pt;
   const p = paramValue(doc, f, "Material"); if (p && doc.lib.materials[p]) return p;
   for (const k of ["wallType", "floorType", "columnType", "beamType", "doorType", "windowType"]) {
     const id = F.refId(f, k); if (!id) continue; const t = doc.resolveType(id); if (!t) continue;
@@ -1196,6 +1197,9 @@ function drawMaterialTag(doc, ctx, B, f) {
   const right = P[0] >= T[0];
   const box = [P[0] - w / 2 - pad, P[1] - ts / 2 - pad, P[0] + w / 2 + pad, P[1] + ts / 2 + pad];
   if (frame === "Oblong") { const r = (box[3] - box[1]) / 2; box[0] -= r * 0.5; box[2] += r * 0.5; }
+  // a finish tag as Australian offices draw it: the code in a diamond (a square turned 45 degrees)
+  const dr = Math.max(w / 2 + pad * 0.6, ts * 1.1) * 1.08;
+  if (frame === "Diamond") { box[0] = P[0] - dr; box[2] = P[0] + dr; box[1] = P[1] - dr; box[3] = P[1] + dr; }
   // the leader: from the point to the near side of the tag, a dot where it rests
   if (leader && dist(T, P) > 1e-6) {
     const end = frame === "Circle" ? add(P, mul(normalise(sub(T, P)), Math.max(w / 2, ts / 2) + pad)) : [right ? box[0] : box[2], P[1]];
@@ -1205,6 +1209,7 @@ function drawMaterialTag(doc, ctx, B, f) {
   const rect = polyPath([[box[0], box[1]], [box[2], box[1]], [box[2], box[3]], [box[0], box[3]]]);
   if (frame === "Keynote box") { B.fill(rect, "#ffffff", "Annotation-Tag", id, true); B.stroke(rect, g, "Annotation-Tag", id, true); }
   if (frame === "Oblong") { const ob = oblongPath(...box); B.fill(ob, "#ffffff", "Annotation-Tag", id, true); B.stroke(ob, g, "Annotation-Tag", id, true); }
+  if (frame === "Diamond") { const dp = polyPath([[P[0] - dr, P[1]], [P[0], P[1] - dr], [P[0] + dr, P[1]], [P[0], P[1] + dr]]); B.fill(dp, "#ffffff", "Annotation-Tag", id, true); B.stroke(dp, g, "Annotation-Tag", id, true); }
   if (frame === "Circle") { const r = Math.max(w / 2, ts / 2) + pad; B.fill(circlePath(P, r), "#ffffff", "Annotation-Tag", id, true); B.stroke(circlePath(P, r), g, "Annotation-Tag", id, true); }
   B.text([P[0], P[1] - ts * 0.36], text, ts, { align: "centre", layer: "Annotation-Tag", id, colour: col });
   const S = ctx.scale; B.hit(id, [[box[0] * S, box[1] * S], [box[2] * S, box[1] * S], [box[2] * S, box[3] * S], [box[0] * S, box[3] * S]]);
@@ -1835,7 +1840,9 @@ function drawDatums(doc, ctx, B, v, G) {
 function surfaceOf(doc, it) {
   const f = it.f, t = doc.typeOf(f);
   let m = null;
-  if (t === "Wall") { const w = doc.plan(f); if (w && w.stack && w.stack.layers.length) { const L = w.stack.layers; m = L.length === 1 ? L[0].material : (it.nearMaterial || L[0].material); } }
+  // a painted finish (Revit's Paint: a material given to the element's faces) is what its surface shows
+  const painted = paramValue(doc, f, "Paint"); if (painted && doc.lib.materials[painted]) m = painted;
+  else if (t === "Wall") { const w = doc.plan(f); if (w && w.stack && w.stack.layers.length) { const L = w.stack.layers; m = L.length === 1 ? L[0].material : (it.nearMaterial || L[0].material); } }
   else if (t === "Generic" || t === "Lattice" || t === "Roof") m = F.text(f, "material");
   else if (t === "Floor" && it.cat === "IfcSlab") m = null;
   const mp = m && (doc.lib.materials[m] || {}).projection;

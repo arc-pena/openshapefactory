@@ -325,7 +325,7 @@ function annotatePage(H, page, o) {
     let [a, b] = dm.line; const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], vp = claim(mid); if (!vp) continue;
     // the drafted line runs on past its arrows: in a section or a detail the string's own value (at the view's
     // scale) sets its length, centred where the line is
-    { const L = ftInOf(dm.t), len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    { const L = (o.lengthOf || ftInOf)(dm.t), len = Math.hypot(b[0] - a[0], b[1] - a[1]);
       if (L != null && doc.typeOf(vp.v) !== "PlanView" && len > 0 && Math.abs(len - L / vp.S) > 0.4) { const k = L / vp.S / len / 2, dx = (b[0] - a[0]) * k, dy = (b[1] - a[1]) * k; a = [mid[0] - dx, mid[1] - dy]; b = [mid[0] + dx, mid[1] + dy]; } }
     const A = vp.map(a), B2 = vp.map(b), vert = Math.abs(a[0] - b[0]) < Math.abs(a[1] - b[1]), plan = doc.typeOf(vp.v) === "PlanView";
     const lo = vert ? Math.min(A[1], B2[1]) : Math.min(A[0], B2[0]), hi = vert ? Math.max(A[1], B2[1]) : Math.max(A[0], B2[0]), at = vert ? A[0] : A[1];

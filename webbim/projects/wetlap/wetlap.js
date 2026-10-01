@@ -15,7 +15,8 @@
 
 import { fhaProject } from "../../src/sample_fha.js";
 import { emptySketch, weld } from "../../src/bimsketch.js";
-import { textWidth } from "../../src/scene.js";
+import { textWidth, deriveView } from "../../src/scene.js";
+import { pointInPoly } from "../../src/geom2d.js";
 
 // the survey datum: the model's zero is the apartments' ground floor, RL 25600
 const DATUM = 25600;
@@ -99,6 +100,8 @@ export function buildWetlap(D) {
   L.materials["M-WL-EXBR"].projection = { pen: "gossamer", pattern: "P-WL-BRICK", lineColour: "#b4b4b4" };
   mat("M-WL-GROUND", "Ground", "GL", { pattern: null, pen: "thin", lineColour: "#000000", background: "#d0d0d0" }, "#8f8a7f");
   L.materials["M-WL-GROUND"].projection = { pen: "thin", background: "#cfcfcf" };
+  mat("M-WL-GLASS", "Glass balustrade", "BAL", { pattern: null, pen: "thin", lineColour: "#000000", background: "#ffffff" }, "#cfe3ea");
+  L.types["T-WL-BAL"] = { family: "F-BASICWALL", name: "Glass balustrade 1100", mark: "BAL-01", layers: [{ function: "Structure", thickness: 30, material: "M-WL-GLASS" }], coreStart: 0, coreEnd: 1, params: { Function: "Exterior" } };
   L.types["T-WL-SLAB"] = { family: "F-FLOOR", name: "Concrete slab 200", mark: "SL1", layers: [{ function: "Structure", thickness: 200, material: "M-WL-CONC" }], coreStart: 0, coreEnd: 1 };
   const wtype = (cls, t) => { const id = `T-WL-${cls}-${t}`; if (!L.types[id]) {
       const m = cls === "C" ? "M-WL-CONC" : cls === "EX" ? "M-WL-EXBR" : "M-WL-PART", nm = cls === "C" ? "Concrete / masonry" : cls === "EX" ? "Existing brick" : "Partition";
@@ -332,11 +335,20 @@ export function buildWetlap(D) {
     // the set's boards, tiles or pavers, set out on the set's lines (tools/finishes.py)
     for (const r of ((D.fin || {})[pg] || [])) { const ty = finType(r); if (!ty) continue; const id = `FN-${pg}-${++nFin}`;
       if (r.holes && r.holes.length) H.floorHoles(id, L.types[ty].name, r.ring, r.holes, ty, P.lev, 0); else H.floor(id, L.types[ty].name, r.ring, ty, P.lev, 0);
-      set(id, "params", { Building: bld }); }
+      set(id, "params.Building", bld); }
     // the fixtures and joinery: instances of the family types the plans' symbols make (tools/fixtures.py)
     for (const fx of ((D.fix || {}).pages || {})[pg] || []) { const ty = fixType(fx.type); if (!ty) continue;
       add({ id: `FX-${pg}-${++nF}`, type: "Fixture", name: L.types[ty].name, args: { position: fx.at, rotation: fx.rot, mirror: false, fixtureType: { ref: ty }, level: { ref: P.lev }, baseOffset: 0 }, params: { Building: bld } }); }
-    if (Number.isFinite(bb[0])) add({ id: `FL-${P.lev}-${pg}`, type: "Floor", name: `Slab ${P.lev} (${bld.toLowerCase()})`, args: { boundary: H.R(r5(bb[0]), r5(bb[1]), r5(bb[2]), r5(bb[3])), floorType: { ref: "T-WL-SLAB" }, level: { ref: P.lev }, heightOffset: 0 }, params: { Building: bld } });
+    // the floor plate: what stands and is finished on this level, unioned (tools/slabs.py); its free edges (a
+    // balcony's, a terrace's) carry a glass balustrade above the ground floor
+    const plates = (D.slab || {})[pg] || [];
+    plates.forEach((pl, i) => { const id = `FL-${P.lev}-${pg}${i ? "-" + i : ""}`;
+      if (pl.holes.length) H.floorHoles(id, `Slab ${P.lev}`, pl.ring, pl.holes, "T-WL-SLAB", P.lev, 0); else H.floor(id, `Slab ${P.lev}`, pl.ring, "T-WL-SLAB", P.lev, 0);
+      set(id, "params.Building", bld);
+      if (!["L-B", "L-AG", "L-LG"].includes(P.lev)) pl.free.forEach(e => { for (let k = 1; k < e.length; k++) { const id2 = `BAL-${pg}-${++nW}`;
+        add({ id: id2, type: "Wall", name: "Balustrade BAL-01", args: { centreline: H.line(e[k - 1], e[k]), mounting: "Centred", wallType: { ref: "T-WL-BAL" }, baseLevel: { ref: P.lev }, baseOffset: 0,
+          topLevel: null, topOffset: 0, height: 1100, flipped: false }, params: { Building: bld } }); } }); });
+    if (!plates.length && Number.isFinite(bb[0])) add({ id: `FL-${P.lev}-${pg}`, type: "Floor", name: `Slab ${P.lev} (${bld.toLowerCase()})`, args: { boundary: H.R(r5(bb[0]), r5(bb[1]), r5(bb[2]), r5(bb[3])), floorType: { ref: "T-WL-SLAB" }, level: { ref: P.lev }, heightOffset: 0 }, params: { Building: bld } });
   }
 
   // ---------------------------------------------------------------- the existing north façade's two gables
@@ -362,11 +374,15 @@ export function buildWetlap(D) {
   // ---------------------------------------------------------------- views and sheets
   const S0 = pg => S.sheets[pg];
   // sheets carry views of the model and annotation only: nothing traced, no pictures of the set
-  const sheet = (pg, vps) => H.pdfSheet(+pg, vps, { size: "A1", orientation: "landscape" });
+  const sheet = (pg, vps) => { const id = H.pdfSheet(+pg, vps, { size: "A1", orientation: "landscape" });
+    const sc = [...new Set(vps.map(v => doc.argValue(doc.element(v[0]), "scale")).filter(x => x && x > 1))];
+    // the strip writes the scale the drawings share (the sheet's notes, at 1:1, are not a drawing)
+    if (sc.length === 1) set(`SH-${S0(pg).number}`, "scaleLabel", `1 : ${sc[0]}`);
+    return id; };
   const skipLevels = new Set(LEVELS.map(l => l[2]));
-  const annotate = (pg, extra = {}) => H.annotate(+pg, Object.assign({ dimType: "DT-WL",
+  const annotate = (pg, extra = {}) => H.annotate(+pg, Object.assign({ dimType: "DT-WL", lengthOf: t => /^\d+$/.test(String(t).trim()) ? +t : null,
     // the level heads and the door and window tags are the model's own
-    skip: n => skipLevels.has(n.t.trim().toUpperCase()) || /^[A-Z]\.[A-Z0-9]+\.\d+\n[A-Z]{2,3}\.?\d*$/.test(n.t),
+    skip: n => n.__tagged || skipLevels.has(n.t.trim().toUpperCase()) || /^[A-Z]\.[A-Z0-9]+\.\d+\n[A-Z]{2,3}\.?\d*$/.test(n.t),
     skipDim: dm => /^\d{5}$/.test(dm.t) && LEVELS.some(l => String(l[1]) === dm.t) }, extra));
 
   const T = globalThis.__WL_TRACE ? (m => console.log(`${((Date.now() - globalThis.__WL_T0) / 1000).toFixed(1)}s ${m}`)) : () => {};
@@ -381,7 +397,7 @@ export function buildWetlap(D) {
     const { a, b, sRef } = elevLine(E);
     const sOf = px => sRef + (px - E.ref[1]) * 100, zOf = py => E.z0[0] + (py - E.z0[1]) * 100;
     const crop = [Math.round(sOf(E.rect[0])), Math.round(zOf(E.rect[1])), Math.round(sOf(E.rect[2])), Math.round(zOf(E.rect[3]))];
-    add({ id: E.id, type: "ElevationView", name: E.name, args: { line: H.line(a, b), depth: 160000, scale: 100, baseLevel: { ref: E.bld === "L" ? "L-LG" : "L-AG" }, top: 30000, style: { ref: "VS-WL-ELEV" },
+    add({ id: E.id, type: "ElevationView", name: E.name, args: { line: H.line(a, b), depth: 160000, scale: 100, baseLevel: { ref: "L-AG" }, top: 30000, style: { ref: "VS-WL-ELEV" },
       detailLevel: "Medium", clip: { rect: crop, visible: false, active: true, annotation: [0, 0, 0, 0] }, groundLine: false,
       levelExtent: [Math.min(sOf(E.head), sOf(E.head > (E.rect[0] + E.rect[2]) / 2 ? E.rect[0] : E.rect[2])), Math.max(sOf(E.head), sOf(E.head > (E.rect[0] + E.rect[2]) / 2 ? E.rect[0] : E.rect[2]))],
       overrides: Object.assign({ __levelHead: E.head > (E.rect[0] + E.rect[2]) / 2 ? "Right" : "Left", __gridTop: zOf(E.gridHead) - 4.5 * 100, __gridBottom: crop[1] },
@@ -389,9 +405,35 @@ export function buildWetlap(D) {
         Object.fromEntries(LEVELS.filter(l => l[0] !== "L-B" && (E.bld === "L" ? !/LOFTS/.test(l[2]) : /LOFTS/.test(l[2]))).map(l => [l[0], { visible: false }]))) } });
     return [E.id, [(E.rect[0] + E.rect[2]) / 2, (E.rect[1] + E.rect[3]) / 2], { noTitle: true }]; };
 
+  // ---------------------------------------------------------------- finishes, from the elevations' finish tags
+  // A finish tag (XREN-02, XMT-01, EX-BR...) points at a surface: the front-most element there takes that finish
+  // as its paint (a material of that code, its colour the set's shade at the point), and the tag is the model's
+  // own material tag in a diamond, reading the material it rests on.
+  const FINISH = /^(X[A-Z]{1,3}|EX)-[A-Z0-9]{2,3}$/;
+  const finishMat = (code, grey) => { const id = `M-WL-${code}`; if (!L.materials[id]) {
+      const g = Math.round(grey == null ? 230 : grey), hexg = "#" + [g, g, g].map(v => v.toString(16).padStart(2, "0")).join("");
+      L.materials[id] = { name: code, mark: code, description: `Finish ${code}`, cut: { pattern: null, pen: "thin", lineColour: "#000000", background: "#ffffff" },
+        projection: { pen: "gossamer", background: g < 248 ? hexg : null, lineColour: "#9a9a9a" }, shading: { colour: hexg } }; }
+    return id; };
+  const finishes = pg => { const sh = doc.element(`SH-${S0(pg).number}`), R = (D.ras || {})[pg]; let n = 0;
+    const scenes = {};
+    for (const nt of S.pages[pg].notes) { if (!FINISH.test(nt.t.trim()) || !nt.leader || nt.leader.length < 2) continue;
+      const tip = nt.leader[nt.leader.length - 1], vp = (doc.argValue(sh, "viewports") || []).find(v => { const E = (ELEVS[pg] || []).find(e => e.id === v.view.ref); return E && tip[0] >= E.rect[0] && tip[0] <= E.rect[2] && tip[1] >= E.rect[1] && tip[1] <= E.rect[3]; });
+      if (!vp) continue; const vid = vp.view.ref, q = H.paperToView(+pg, vid, tip);
+      if (!scenes[vid]) { doc.regenerate(); scenes[vid] = deriveView(doc, doc.element(vid), {}); }
+      let best = null; for (const h of scenes[vid].hits) { if (h.depth == null || !h.pts || h.pts.length < 3 || !pointInPoly(q, h.pts)) continue; const t = doc.typeOf(doc.element(h.id) || {}); if (!["Wall", "Floor", "Generic", "Column", "Roof"].includes(t)) continue; if (!best || h.depth < best.depth) best = h; }
+      let grey = null; if (R) { const [rx, ry, rw, rh] = R.rect, k = R.gw / rw, u = Math.round((tip[0] - rx) * k), v = Math.round((ry + rh - tip[1]) * k); let sum = 0, c = 0;
+        for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) { const x = u + dx, y = v + dy; if (x >= 0 && y >= 0 && x < R.gw && y < R.gh) { const val = R.buf[y * R.gw + x]; if (val > 60) { sum += val; c++; } } } if (c) grey = sum / c; }
+      const code = nt.t.trim(), mid = code === "EX-BR" ? "M-WL-EXBR" : finishMat(code, grey);
+      if (best && code !== "EX-BR") H.ed.apply({ op: "set", id: best.id, key: "params.Paint", value: mid }, { regenerate: false, undoable: false });
+      const c = [(nt.bb[0] + nt.bb[2]) / 2, (nt.bb[1] + nt.bb[3]) / 2];
+      add({ id: `MT-${S0(pg).number}-${++n}`, type: "MaterialTag", name: code, args: { target: q, position: H.paperToView(+pg, vid, c), show: "Mark", frame: "Diamond", leader: true, textSize: 1.3, view: { ref: vid } } });
+      nt.__tagged = true; }
+    return n; };
+
   for (let pg = 1; pg <= 38; pg++) {
     const P = PLANS[pg], sh = S0(pg); T(`page ${pg}`);
-    if (ELEVS[pg]) { sheet(pg, ELEVS[pg].map(E => elevation(pg, E))); annotate(pg); continue; }
+    if (ELEVS[pg]) { sheet(pg, ELEVS[pg].map(E => elevation(pg, E))); finishes(pg); annotate(pg); continue; }
     if (P) {
       const sc = P.scale || 100, O = P.o, M = q => [Math.round((q[0] - O[0]) * sc), Math.round((q[1] - O[1]) * sc)];
       const c0 = M([DRAWING[0], DRAWING[1]]), c1 = M([DRAWING[2], DRAWING[3]]), crop = [c0[0], c0[1], c1[0], c1[1]], vid = `V-${sh.number}`;
