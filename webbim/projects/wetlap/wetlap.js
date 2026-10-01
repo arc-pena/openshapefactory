@@ -47,18 +47,20 @@ const DRAWING = [4, 50, 837, 590];
 // the elevations: each view's direction (from its grids' order on the sheet), a grid and an RL where the set draws
 // them, its drawing's area, where its level heads are and its grid heads' height
 const ELEVS = {
-  36: [{ id: "V-EL-N", name: "PROPOSED WETLAP NORTH ELEVATION", look: "+x", ref: ["G", 258.8], z0: [0, 356.25], rect: [215, 340, 600, 575], head: 575.66, gridHead: 579.3, bld: "A" },
-       { id: "V-EL-E", name: "PROPOSED WETLAP EAST ELEVATION", look: "-y", ref: ["1", 582.0], z0: [0, 86.6], rect: [40, 75, 770, 312], head: 759.76, gridHead: 317.1, bld: "A" }],
-  37: [{ id: "V-EL-W", name: "PROPOSED WETLAP WEST ELEVATION", look: "+y", ref: ["1", 152.1], z0: [0, 349.03], rect: [60, 340, 650, 572], head: 101.7, gridHead: 576.6, bld: "A", line: -25000 },
+  36: [{ id: "V-EL-N", name: "PROPOSED WETLAP NORTH ELEVATION", look: "+x", marker: [-4006, 7480], ref: ["G", 258.8], z0: [0, 356.25], rect: [215, 340, 600, 575], head: 575.66, gridHead: 579.3, bld: "A" },
+       { id: "V-EL-E", name: "PROPOSED WETLAP EAST ELEVATION", look: "-y", marker: [26954, 27110], ref: ["1", 582.0], z0: [0, 86.6], rect: [40, 75, 770, 312], head: 759.76, gridHead: 317.1, bld: "A" }],
+  37: [{ id: "V-EL-W", name: "PROPOSED WETLAP WEST ELEVATION", look: "+y", marker: [20194, -5410], ref: ["1", 152.1], z0: [0, 349.03], rect: [60, 340, 650, 572], head: 101.7, gridHead: 576.6, bld: "A", line: -25000 },
        { id: "V-EL-S", name: "PROPOSED WETLAP SOUTH ELEVATION", look: "-x", ref: ["A", 231.2], z0: [0, 101.1], rect: [60, 62, 560, 322], head: 69.9, gridHead: 325.9, bld: "A", line: 47500 }],
-  38: [{ id: "V-EL-LW", name: "PROPOSED LOFTS WEST ELEVATION", look: "+y", ref: ["10", 84.7], z0: [1900, 371.44], rect: [60, 345, 580, 577], head: 561.36, gridHead: 581.1, bld: "L", line: -25000 },
+  38: [{ id: "V-EL-LW", name: "PROPOSED LOFTS WEST ELEVATION", look: "+y", marker: [59278, -6559], ref: ["10", 84.7], z0: [1900, 371.44], rect: [60, 345, 580, 577], head: 561.36, gridHead: 581.1, bld: "L", line: -25000 },
        { id: "V-EL-LS", name: "PROPOSED LOFTS SOUTH ELEVATION", look: "-x", ref: ["H", 153.4], z0: [1900, 134.72], rect: [60, 62, 330, 325], head: 96.6, gridHead: 329.6, bld: "L", line: 82000 },
-       { id: "V-EL-LE", name: "PROPOSED LOFTS EAST ELEVATION", look: "-y", ref: ["19", 459.6], z0: [1900, 134.72], rect: [420, 62, 800, 310], head: 432.4, gridHead: 314.3, bld: "L" }],
+       { id: "V-EL-LE", name: "PROPOSED LOFTS EAST ELEVATION", look: "-y", marker: [59278, 13881], ref: ["19", 459.6], z0: [1900, 134.72], rect: [420, 62, 800, 310], head: 432.4, gridHead: 314.3, bld: "L" }],
 };
 /** An elevation's line (in front of its face, looking along its direction) and its coordinate at its ref grid. */
 function elevLine(E) {
-  const LN = { "+x": [[E.line ?? -8000, -40000], [E.line ?? -8000, 90000]], "-x": [[E.line ?? 100000, 90000], [E.line ?? 100000, -40000]],
-    "+y": [[120000, E.line ?? -25000], [-40000, E.line ?? -25000]], "-y": [[-40000, E.line ?? 30000], [120000, E.line ?? 30000]] }[E.look];
+  // the view's line runs through its marker on the plans (where the set has the elevation's tag), else in front
+  const mk = E.marker, ln = mk ? (E.look.endsWith("x") ? mk[0] : mk[1]) : E.line, md = mk ? (E.look.endsWith("x") ? mk[1] : mk[0]) : 25000, h = 65000;
+  const LN = { "+x": [[ln ?? -8000, md - h], [ln ?? -8000, md + h]], "-x": [[ln ?? 100000, md + h], [ln ?? 100000, md - h]],
+    "+y": [[md + h, ln ?? -25000], [md - h, ln ?? -25000]], "-y": [[md - h, ln ?? 30000], [md + h, ln ?? 30000]] }[E.look];
   const [a, b] = LN, dl = Math.hypot(b[0] - a[0], b[1] - a[1]), d = [(b[0] - a[0]) / dl, (b[1] - a[1]) / dl];
   const g = gridCoord(E.ref[0]), Pref = E.look.endsWith("x") ? [0, g] : [g, 0];
   return { a, b, d, sRef: (b[0] - Pref[0]) * d[0] + (b[1] - Pref[1]) * d[1] };
@@ -117,6 +119,10 @@ export function buildWetlap(D) {
   style("VS-WL-PLAN", "Techne - plans", ["IfcSpace", "Planting", "Topography", "IfcBeam"]);
   // the structural slab is not drawn on the plans (its finishes are)
   L.viewStyles["VS-WL-PLAN"].rules = [{ id: "R-SLAB", name: "Structural slab not drawn", when: { param: "Type", is: "T-WL-SLAB" }, then: { visible: false } }];
+  // the existing fabric only (a demolition plan): everything not of the existing phase hidden
+  L.viewStyles["VS-WL-EXIST"] = Object.assign(JSON.parse(JSON.stringify(L.viewStyles["VS-WL-PLAN"])), { name: "Techne - existing (demolition)" });
+  L.viewStyles["VS-WL-EXIST"].byCategory = Object.assign({}, L.viewStyles["VS-WL-EXIST"].byCategory, { IfcGrid: { visible: false }, Site: { visible: false } });
+  L.viewStyles["VS-WL-EXIST"].rules = [{ id: "R-NOT-EXISTING", name: "Only the existing fabric", when: { all: [{ none: [{ param: "Phase", is: "Existing" }] }, { none: [{ param: "Category", in: ["Annotation", "Detail", "IfcGrid", "IfcBuildingStorey", "View", "Sheet"] }] }] }, then: { visible: false } }];
   // fixtures and joinery in the set's grey hairline
   L.viewStyles["VS-WL-PLAN"].byCategory.Furniture = { visible: true, projection: { pen: "gossamer", colour: "#aaaaaa", fill: "none" } };
   // each building's plans show that building only (the other is hatched and named in the drafting, as the set has it)
@@ -321,7 +327,7 @@ export function buildWetlap(D) {
     const wall = (a, b, cls, t) => { if (Math.hypot(b[0] - a[0], b[1] - a[1]) < 40 || overlaps(P.lev, a, b, t)) return; placed.push([P.lev, a, b, t]); grow(a); grow(b);
       const id = `W-${pg}-${++nW}`; mine.push({ id, a, b, cls, t });
       add({ id, type: "Wall", name: `${cls === "P" ? "Partition" : cls === "EX" ? "Existing brick" : "Wall"} ${t}`, args: { centreline: H.line(a, b), mounting: "Centred", wallType: { ref: wtype(cls, t) },
-        baseLevel: { ref: P.lev }, baseOffset: 0, topLevel: P.top ? { ref: P.top } : null, topOffset: 0, height: top.height || 3000, flipped: false }, params: { Building: bld } }); };
+        baseLevel: { ref: P.lev }, baseOffset: 0, topLevel: P.top ? { ref: P.top } : null, topOffset: 0, height: top.height || 3000, flipped: false }, params: cls === "EX" ? { Building: bld, Phase: "Existing" } : { Building: bld } }); };
     // the existing brick first: where a pair of lines also runs along it (a sill, a frame), the solid poche is the wall
     for (const r of Lf.brick) { const w = r[2] - r[0], h = r[3] - r[1];
       if (w >= h) wall([r5(r[0]), r5((r[1] + r[3]) / 2)], [r5(r[2]), r5((r[1] + r[3]) / 2)], "EX", r5(h)); else wall([r5((r[0] + r[2]) / 2), r5(r[1])], [r5((r[0] + r[2]) / 2), r5(r[3])], "EX", r5(w)); }
@@ -329,7 +335,7 @@ export function buildWetlap(D) {
     for (const r of Lf.cols) { const c = [r5((r[0] + r[2]) / 2), r5((r[1] + r[3]) / 2)]; grow(c);
       if (placed.some(w => w[0] === P.lev && w[3] === -1 && Math.hypot(w[1][0] - c[0], w[1][1] - c[1]) < 50)) continue; placed.push([P.lev, c, c, -1]);
       add({ id: `C-${pg}-${++nC}`, type: "Column", name: "Existing column", args: { position: c, columnType: { ref: ctype(r5(r[2] - r[0]), r5(r[3] - r[1])) }, baseLevel: { ref: P.lev },
-        height: P.top ? Z[P.top] - Z[P.lev] : 1200, rotation: 0, baseOffset: 0 }, params: { Building: bld } }); }
+        height: P.top ? Z[P.top] - Z[P.lev] : 1200, rotation: 0, baseOffset: 0 }, params: { Building: bld, Phase: "Existing" } }); }
     openings(pg, P, bld, mine, top);
     // the floor finishes: each hatched region of the plan a finish floor on the slab, its material's surface pattern
     // the set's boards, tiles or pavers, set out on the set's lines (tools/finishes.py)
@@ -380,7 +386,8 @@ export function buildWetlap(D) {
     if (sc.length === 1) set(`SH-${S0(pg).number}`, "scaleLabel", `1 : ${sc[0]}`);
     return id; };
   const skipLevels = new Set(LEVELS.map(l => l[2]));
-  const annotate = (pg, extra = {}) => H.annotate(+pg, Object.assign({ dimType: "DT-WL", lengthOf: t => /^\d+$/.test(String(t).trim()) ? +t : null,
+  // strict: only text, dimensions on the model and leaders - no drafted lines, no bubbles drawn as circles
+  const annotate = (pg, extra = {}) => H.annotate(+pg, Object.assign({ modelOnly: true, dimType: "DT-WL", lengthOf: t => /^\d+$/.test(String(t).trim()) ? +t : null,
     // the level heads and the door and window tags are the model's own
     skip: n => n.__tagged || skipLevels.has(n.t.trim().toUpperCase()) || /^[A-Z]\.[A-Z0-9]+\.\d+\n[A-Z]{2,3}\.?\d*$/.test(n.t),
     skipDim: dm => /^\d{5}$/.test(dm.t) && LEVELS.some(l => String(l[1]) === dm.t) }, extra));
@@ -401,8 +408,9 @@ export function buildWetlap(D) {
       detailLevel: "Medium", clip: { rect: crop, visible: false, active: true, annotation: [0, 0, 0, 0] }, groundLine: false,
       levelExtent: [Math.min(sOf(E.head), sOf(E.head > (E.rect[0] + E.rect[2]) / 2 ? E.rect[0] : E.rect[2])), Math.max(sOf(E.head), sOf(E.head > (E.rect[0] + E.rect[2]) / 2 ? E.rect[0] : E.rect[2]))],
       overrides: Object.assign({ __levelHead: E.head > (E.rect[0] + E.rect[2]) / 2 ? "Right" : "Left", __gridTop: zOf(E.gridHead) - 4.5 * 100, __gridBottom: crop[1] },
-        // the other building's levels are not this view's
-        Object.fromEntries(LEVELS.filter(l => l[0] !== "L-B" && (E.bld === "L" ? !/LOFTS/.test(l[2]) : /LOFTS/.test(l[2]))).map(l => [l[0], { visible: false }]))) } });
+        // the other building's levels and grids are not this view's (and the basement only where the set shows it)
+        Object.fromEntries(LEVELS.filter(l => (l[0] === "L-B" ? +pg === 36 : (E.bld === "L" ? !/LOFTS/.test(l[2]) : /LOFTS/.test(l[2])))).map(l => [l[0], { visible: false }])),
+        Object.fromEntries(Object.keys(gridIds).filter(n => E.bld === "L" ? "ABCDEFG".includes(n) && n.length === 1 : (/^\d+$/.test(n) ? +n > 13 : "HIJK".includes(n))).map(n => [gridIds[n], { visible: false }]))) } });
     return [E.id, [(E.rect[0] + E.rect[2]) / 2, (E.rect[1] + E.rect[3]) / 2], { noTitle: true }]; };
 
   // ---------------------------------------------------------------- finishes, from the elevations' finish tags
@@ -434,9 +442,22 @@ export function buildWetlap(D) {
   for (let pg = 1; pg <= 38; pg++) {
     const P = PLANS[pg], sh = S0(pg); T(`page ${pg}`);
     if (ELEVS[pg]) { sheet(pg, ELEVS[pg].map(E => elevation(pg, E))); finishes(pg); annotate(pg); continue; }
+    // the demolition plan: the ground floor's existing fabric (its brick and columns), where the set draws it -
+    // located by its piers on the existing ones (tools: 15 piers agree on the origin)
+    if (pg === 5) { const O = [55.2, 203.4], M = q => [Math.round((q[0] - O[0]) * 100), Math.round((q[1] - O[1]) * 100)], r0 = [20, 110, 445, 530];
+      const c0 = M([r0[0], r0[1]]), c1 = M([r0[2], r0[3]]);
+      add({ id: "V-A0050-1", type: "PlanView", name: "GROUND LEVEL DEMOLITION PLAN", args: { level: { ref: "L-AG" }, scale: 100, viewRange: { top: 2300, cut: 1200, bottom: 0 }, detailLevel: "Fine",
+        style: { ref: "VS-WL-EXIST" }, clip: { rect: [c0[0], c0[1], c1[0], c1[1]], visible: false, active: true, annotation: [0, 0, 0, 0] } } });
+      // the elevations' markers are not on the set's demolition plan (Hide in View)
+      set("V-A0050-1", "overrides", Object.fromEntries(Object.values(ELEVS).flat().map(E => [E.id, { visible: false }])));
+      sheet(pg, [["V-A0050-1", [(r0[0] + r0[2]) / 2, (r0[1] + r0[3]) / 2], { noTitle: true }]]); annotate(pg); continue; }
     if (P) {
       const sc = P.scale || 100, O = P.o, M = q => [Math.round((q[0] - O[0]) * sc), Math.round((q[1] - O[1]) * sc)];
-      const c0 = M([DRAWING[0], DRAWING[1]]), c1 = M([DRAWING[2], DRAWING[3]]), crop = [c0[0], c0[1], c1[0], c1[1]], vid = `V-${sh.number}`;
+      // the view's crop: as far as the set draws (its lines' extent on the page, a margin round it)
+      const ext = (() => { const Lf = D.lift[pg]; if (!Lf) return DRAWING; let b = [Infinity, Infinity, -Infinity, -Infinity];
+        for (const r of Object.values(Lf.res)) for (const pl of r.l) { const q = dec(pl); for (let i = 0; i < q.length; i += 2) { const x = q[i], y = q[i + 1]; if (x < DRAWING[0] || x > DRAWING[2] || y < DRAWING[1] || y > DRAWING[3]) continue; b = [Math.min(b[0], x), Math.min(b[1], y), Math.max(b[2], x), Math.max(b[3], y)]; } }
+        return Number.isFinite(b[0]) ? [Math.max(DRAWING[0], b[0] - 3), Math.max(DRAWING[1], b[1] - 3), Math.min(DRAWING[2], b[2] + 3), Math.min(DRAWING[3], b[3] + 3)] : DRAWING; })();
+      const c0 = M([ext[0], ext[1]]), c1 = M([ext[2], ext[3]]), crop = [c0[0], c0[1], c1[0], c1[1]], vid = `V-${sh.number}`;
       add({ id: vid, type: "PlanView", name: sh.name, args: { level: { ref: P.lev }, scale: sc, viewRange: { top: 2300, cut: 1200, bottom: 0 }, detailLevel: "Fine", style: { ref: P.style || (P.o === LOFT || [14, 31].includes(pg) ? "VS-WL-PLAN-LOFT" : "VS-WL-PLAN-APT") },
         clip: { rect: crop, visible: false, active: true, annotation: [0, 0, 0, 0] } } });
       // the grids as this sheet draws them: where each line starts and ends (its head at the end), the rest hidden
@@ -457,7 +478,7 @@ export function buildWetlap(D) {
       // the door and window tags: the elements' own, where the set puts them (only the elements this page modelled)
       for (const pt of placedTags.filter(x => +x.pg === pg || (PLANS[x.pg] && PLANS[x.pg].lev === P.lev && PLANS[x.pg].o === P.o && pg !== +x.pg && false)))
         add({ id: `TG-${sh.number}-${++nTag}`, type: "MaterialTag", name: `Tag ${pt.t.mark}`, args: { target: M(pt.t.paper), position: M(pt.t.paper), show: "Element Mark / Type Mark", frame: "Split circle", leader: false, textSize: 1.62, element: { ref: pt.el }, view: { ref: vid } } });
-      sheet(pg, [[vid, [(DRAWING[0] + DRAWING[2]) / 2, (DRAWING[1] + DRAWING[3]) / 2], { noTitle: true }]]);
+      sheet(pg, [[vid, [(ext[0] + ext[2]) / 2, (ext[1] + ext[3]) / 2], { noTitle: true }]]);
       annotate(pg);
     } else {
       // a sheet of drafting (the site and location plans, the notes, the demolition, the elevations): the set's
@@ -466,6 +487,7 @@ export function buildWetlap(D) {
       add({ id: vid, type: "DraftingView", name: sh.name, args: { scale: 1, clip: { rect: [0, 0, 841, 594], visible: false, active: true } } });
       sheet(pg, [[vid, [420.5, 297], { noTitle: true }]]);
       annotate(pg, { keepAll: true, skip: () => false, skipBubble: () => false });
+      // a sheet with no drawing of the model yet: its words only
       // the RLs over their level lines (read as dimension strings): words, where the set writes them
       S.pages[pg].dims.filter(dm => /^\d{5}$/.test(dm.t)).forEach((dm, i) => add({ id: `TX-${sh.number}-RL${i + 1}`, type: "Text",
         args: { content: dm.t, position: dm.at, rotation: dm.rot || 0, textType: { ref: "TT-WL-18" }, wrapWidth: 1000, leaders: [], view: { ref: vid } } }));

@@ -10,7 +10,7 @@ import { newDocument, elementRefs } from "./bim.js";
 import { Editor } from "./ops.js";
 import { fhaPdf } from "./fha_pdf.js";
 import { emptySketch, weld } from "./bimsketch.js";
-import { dimensionGeometry } from "./scene.js";
+import { dimensionGeometry, viewReferences } from "./scene.js";
 
 export const ft = v => Math.round(v * 304.8);                  // a dimension read in feet, in mm
 export const FT = pts => pts.map(p => [ft(p[0]), ft(p[1])]);
@@ -269,7 +269,14 @@ function annotatePage(H, page, o) {
   const levelWords = new Set(doc.elements().filter(f => doc.typeOf(f) === "Level").flatMap(f => [String(doc.argValue(f, "name") || "").toUpperCase()]));
   const own = o.own || null;   // the sheet's own notes: a drafting view over the whole sheet, made when first needed
   let notesView = null;
-  const sheetNotes = () => { if (notesView) return notesView; const id = `V-N-${S0.number}`;
+  // strict (o.modelOnly): nothing drafted - the sheet's loose notes go into its largest model view, whose annotation
+  // crop opens to the whole sheet (text is annotation, it may stand anywhere); a sheet with no model view keeps a
+  // notes view that holds only text
+  const hostView = () => { if (!o.modelOnly || !vps.length) return null; const big = vps.slice().sort((a, b) => b.area - a.area)[0];
+    const clip = Object.assign({}, doc.argValue(big.v, "clip")); clip.annotation = [2000, 2000, 2000, 2000]; H.ed.apply({ op: "set", id: big.id, key: "clip", value: clip }, { regenerate: false, undoable: !H.bulk });
+    return big; };
+  let hosted = null;
+  const sheetNotes = () => { if (o.modelOnly && vps.length) return hosted || (hosted = hostView()); if (notesView) return notesView; const id = `V-N-${S0.number}`;
     add({ id, type: "DraftingView", name: `${S0.number} SHEET NOTES`, args: { scale: 1, clip: { rect: [0, 0, P.size[0], P.size[1]], visible: false, active: true } } });
     const vpsNow = doc.argValue(sh, "viewports") || []; H.ed.apply({ op: "set", id: doc.idOf(sh), key: "viewports", value: vpsNow.concat([{ id: `VP${vpsNow.length + 1}`, view: { ref: id }, at: [P.size[0] / 2, P.size[1] / 2], clipVisible: false, noTitle: true }]) }, { regenerate: false, undoable: !H.bulk });
     notesView = { id, S: 1, map: q => q }; return notesView; };
@@ -290,7 +297,7 @@ function annotatePage(H, page, o) {
     for (const n of P.notes) { if (!n.leader || n.end !== "none") continue; const x = vpl.find(vp => String(doc.element(vp.view.ref).get("Name") || "").toUpperCase() === n.t.toUpperCase()); if (!x || x.titleAt) continue;
       x.titleAt = [+(n.at[0] - FHA_VIEW_TITLE.nameDx).toFixed(2), +(n.at[1] - FHA_VIEW_TITLE.nameDy).toFixed(2)]; x.titleLength = +(Math.max(n.leader[0][0], n.leader[1][0]) - x.titleAt[0]).toFixed(2); moved = true; }
     if (moved) H.ed.apply({ op: "set", id: doc.idOf(sh), key: "viewports", value: vpl }, { regenerate: false, undoable: !H.bulk }); }
-  let k = 0; const placed = { notes: 0, dims: 0, bubbles: 0, sheet: 0 };
+  let k = 0; const placed = { notes: 0, dims: 0, bubbles: 0, sheet: 0 }, refCache = new Map();
   // room tags (a name and a three-figure number): rooms of the plan's level, tagged as the office tags them
   const isTag = n => { const ls = n.t.split("\n"); return (ls.length === 2 || ls.length === 3) && ls.some(l => /^\d{3}$/.test(l.trim())) && n.h > 2 && n.h < 2.5; };
   for (const n of P.notes) {
@@ -314,6 +321,10 @@ function annotatePage(H, page, o) {
   for (const b of P.bubbles) {
     // grid heads and view numbers are the model's own; keynotes (3.1, 6.2...) and tags are placed here
     if (o.skipBubble ? o.skipBubble(b) : !/\./.test(b.t)) continue;
+    // strict: a bubble drawn as a circle is drafting - its words stay, as text
+    if (o.modelOnly) { const c = [b.circle[0], b.circle[1]], vp = claim(c) || sheetNotes(); if (!vp) continue;
+      add({ id: `TX-${S0.number}-${++k}`, type: "Text", args: { content: b.t, position: vp.map(b.at), rotation: 0, textType: { ref: textTypeFor(L, b.h, b.font, b.ls) }, wrapWidth: 1000, leaders: [], view: { ref: vp.id }, align: b.align || "left" } });
+      placed.bubbles++; continue; }
     const c = [b.circle[0], b.circle[1]], vp = claim(c) || sheetNotes(), cc = vp.map(c), r = b.circle[2] * vp.S;
     add({ id: `DL-${S0.number}-B${++k}`, type: "DetailLine", args: { curve: { type: "arc", centre: cc, radius: r, start: 0, end: 360, ccw: true }, pen: "thin", view: { ref: vp.id } } });
     add({ id: `TX-${S0.number}-${++k}`, type: "Text", args: { content: b.t, position: vp.map(b.at), rotation: 0, textType: { ref: textTypeFor(L, b.h, b.font, b.ls) }, wrapWidth: 1000, leaders: [], view: { ref: vp.id }, align: b.align || "left" } });
@@ -335,6 +346,15 @@ function annotatePage(H, page, o) {
     let ra = null, rb = null;
     // a grid line where the string ends on one (the set's bays), else the nearest wall face
     if (plan) { const tol = 1.5 * vp.S, pick = c => { let best = null; for (const r of planRefs(doc, vert)) { const d = Math.abs(r.c - c) - (r.grid ? tol : 0); if (Math.abs(r.c - c) < tol && (!best || d < best.d)) best = { d, key: r.key }; } return best && best.key; }; ra = pick(lo); rb = pick(hi); }
+    // an elevation's or a section's string: its ends on what the view sees there - levels and floors for heights,
+    // grids and walls' edges for widths (the levels and grids first)
+    if (!plan && o.modelOnly) { let refs = refCache.get(vp.id); if (!refs) { try { doc.regenerate(); refs = viewReferences(doc, vp.v); } catch (e) { refs = []; } refCache.set(vp.id, refs); }
+      const tol = 1.2 * vp.S, want = vert ? "h" : "v", at0 = c => { let best = null;
+        for (const r of refs) { if (r.dir !== want) continue; const val = want === "h" ? r.z : r.s, d = Math.abs(val - c) - (/:plane$/.test(r.key) || r.name === "line" ? tol * 0.5 : 0);
+          if (Math.abs(val - c) < tol && (!best || d < best.d)) best = { d, key: r.key }; } return best && best.key; };
+      ra = at0(lo); rb = at0(hi); }
+    // strict: a dimension measures the model - both its ends on model references, or it is not placed
+    if (o.modelOnly && (!ra || !rb || ra === rb)) { placed.dropped = (placed.dropped || 0) + 1; continue; }
     const keyA = ra || witness(lo), keyB = (rb && rb !== ra) ? rb : witness(hi);
     const id = `DM-${S0.number}-${++k}`;
     add({ id, type: "Dimension", args: { of: [keyA, keyB], offset: plan ? 0 : at, view: { ref: vp.id }, locked: false, dimType: { ref: o.dimType || doc.meta.defaultDimType || "DT-FH" } } });

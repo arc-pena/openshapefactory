@@ -454,7 +454,7 @@ export function planScene(doc, v, opts = {}) {
       B.hit(doc.idOf(f), samplePath(p.paths[0]));
     }
     if (t === "Grid" && vis(f)) drawGrid(doc, ctx, B, f);
-    if (t === "ElevationView" && categoryVisible(ctx, "Annotation")) drawElevationMarker(doc, ctx, B, f, place);
+    if (t === "ElevationView" && categoryVisible(ctx, "Annotation") && (hov[doc.idOf(f)] || {}).visible !== false) drawElevationMarker(doc, ctx, B, f, place);
     // a callout's detail is marked by its boundary on its parent, not by a cut line
     if (t === "SectionView" && categoryVisible(ctx, "Annotation") && !doc.argValue(f, "callout")) drawSectionMarker(doc, ctx, B, f, place);
     if (t === "RoomSeparator" && F.refId(f, "level") === (lv && doc.idOf(lv))) { const c = F.json(f, "line"); B.stroke([lineSeg(c.start, c.end)], { weight: penWeight(doc, "hairline", S), colour: "#6b7684", dash: LINE_TYPES.dashed2 }, "IfcSpace-Separator", doc.idOf(f)); B.hit(doc.idOf(f), [c.start, c.end], "curve"); }
@@ -1814,7 +1814,7 @@ function drawDatums(doc, ctx, B, v, G) {
     B.hit(id, [[t, -300], [t, top]], "curve");
     B.hit(id, [[t - 3 * S, top], [t + 3 * S, top], [t + 3 * S, top + 7 * S], [t - 3 * S, top + 7 * S]]);
   }
-  for (const f of doc.elements()) if (doc.typeOf(f) === "Grid" && categoryVisible(ctx, "IfcGrid")) {
+  for (const f of doc.elements()) if (doc.typeOf(f) === "Grid" && categoryVisible(ctx, "IfcGrid") && (vov[doc.idOf(f)] || {}).visible !== false) {
     const gl = F.json(f, "line"), gd = normalise(sub(gl.end, gl.start));
     const den = d[0] * gd[1] - d[1] * gd[0]; if (Math.abs(den) < 1e-9) continue;
     const t = ((gl.start[0] - o[0]) * gd[1] - (gl.start[1] - o[1]) * gd[0]) / den;

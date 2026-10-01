@@ -12,6 +12,11 @@ Nothing on the sheets is traced. The PDF is read only to measure from:
 - window heights and finish shades from its elevation images, at build time.
 
 What a sheet shows is drawn by model elements, or is an annotation of them.
+There are no detail lines, filled regions, symbols, imported CAD or pictures
+anywhere. What a view owns is only text, dimensions bound to model elements,
+and tags of model elements. A floor's pattern in plan is the floor material's
+surface pattern. `node audit.mjs` checks all of this and fails on anything
+drafted.
 
 ## What is in the model
 
@@ -70,6 +75,12 @@ What a sheet shows is drawn by model elements, or is an annotation of them.
   - the site and location plans' context (adjacent buildings, streets).
 
   Those sheets show only what the model has.
+- **Four sheets are notes only:** A0000, A0001, A0010 and A0055. Their
+  drawings (the cover, the site context, the demolition elevations) need
+  context and demolition modelling that is not done yet, so they carry the
+  set's text and nothing drafted.
+- **78 dimensions are left out.** One or both of their ends do not land on
+  a model element.
 - **Fixture types are many** (one per distinct symbol). Similar symbols are not
   yet merged into one family.
 
@@ -86,5 +97,6 @@ python3 slabs.py ../data/wl_slab.json            # floor plates, balustrade edge
 python3 site.py                                  # site boundary
 python3 rast.py 36-38 ../data/raster 6 && python3 rawgray.py   # elevation images, for measuring only
 cd .. && node build.mjs --pdf A0100,A0800        # -> wetlap.json (+ out/*.pdf)
+node audit.mjs                                   # the model-only test: PASS or the list of drafted elements
 python3 tools/ovs.py out/A0100.pdf 8 100 0,0,841,594 check.png # overlay proof: red ours, blue the set
 ```
