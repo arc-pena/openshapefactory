@@ -12,7 +12,7 @@ import { categoryOf } from "./styles.js";
 import { resolveReference } from "./bim.js";
 
 const GROUP_ORDER = ["Constraints", "Dimensions", "Graphics", "Extents", "Construction", "Identity Data", "Phasing", "Finishes", "Other"];
-export const TYPE_KEYS = ["wallType", "doorType", "windowType", "columnType", "floorType", "beamType"];
+export const TYPE_KEYS = ["wallType", "doorType", "windowType", "columnType", "floorType", "beamType", "fixtureType"];
 
 /** Which editor a kind gets. Geometry is never a text box (§4.5, test 37e). */
 export function editorFor(arg) {

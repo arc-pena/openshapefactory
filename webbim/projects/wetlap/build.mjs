@@ -11,9 +11,10 @@ const here = path.dirname(fileURLToPath(import.meta.url)), data = p => path.join
 const t0 = Date.now();
 const set = JSON.parse(fs.readFileSync(data("wetlap_set.json"), "utf8"));
 const lift = JSON.parse(fs.readFileSync(data("wl_lift.json"), "utf8"));
-const meta = JSON.parse(fs.readFileSync(data("raster/r.json"), "utf8")), urls = {};
-for (const pg of Object.keys(meta)) urls[pg] = "data:image/jpeg;base64," + fs.readFileSync(data(`raster/r${String(pg).padStart(2, "0")}.jpg`)).toString("base64");
-const doc = buildWetlap({ set, lift, raster: { meta, urls } });
+const fix = JSON.parse(fs.readFileSync(data("wl_fix.json"), "utf8"));
+const fin = JSON.parse(fs.readFileSync(data("wl_fin.json"), "utf8"));
+const site = JSON.parse(fs.readFileSync(data("wl_site.json"), "utf8"));
+const doc = buildWetlap({ set, lift, fix, fin, site });
 const errs = doc.elements().filter(f => doc.error(f));
 console.log(`built in ${Date.now() - t0} ms: ${doc.elements().length} elements, ${errs.length} with errors`);
 for (const f of errs.slice(0, 12)) console.log("  ", doc.idOf(f), doc.error(f));

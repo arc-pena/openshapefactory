@@ -249,15 +249,26 @@ export function planScene(doc, v, opts = {}) {
       if (bnd === "above" || bnd === "below") continue;
       const g = resolveGraphics(doc, ctx, f, bnd === "cut" ? "cut" : bnd === "beyond" ? "beyond" : "projection");
       if (bnd === "cut") B.fill(p.path, g.fill || ((doc.lib.materials[p.material] || {}).cut || {}).background || "#e9eaec", "IfcSlab", doc.idOf(f));
-      B.stroke(p.path, g, "IfcSlab", doc.idOf(f)); B.hit(doc.idOf(f), p.foot);
+      // a finish whose material says so draws no edge in projection (its pattern is its edge, as a tile floor reads)
+      const pm0 = doc.lib.materials[((p.parts || []).reduce((a, x) => (!a || x.z1 > a.z1 ? x : a), null) || {}).material || p.material];
+      if (!(bnd === "projection" && pm0 && pm0.projection && pm0.projection.edges === false)) B.stroke(p.path, g, "IfcSlab", doc.idOf(f));
+      B.hit(doc.idOf(f), p.foot);
       // seen from above, a floor is its top layer
       const top = (p.parts || []).reduce((a, x) => (!a || x.z1 > a.z1 ? x : a), null);
+      // ... and its surface pattern (boards, tiles, pavers), in the material's projection pen, as Revit draws a
+      // floor's surface pattern in plan
+      if (bnd === "projection") { const pm = doc.lib.materials[(top && top.material) || p.material], pj = pm && pm.projection, pat = pj && pj.pattern && doc.lib.patterns[pj.pattern];
+        if (pat) { B.hatch(p.path, pat, pj.pattern, pj.lineColour || g.colour, penWeight(doc, pj.pen || "gossamer", S), "IfcSlab", doc.idOf(f));
+          // a model pattern is set out from the project's origin, wherever the view is cropped
+          const last = B.prims[B.prims.length - 1]; if (last && last.t === "hatch") last.origin = B.P([0, 0]); } }
       B.mat.push({ id: doc.idOf(f), material: (top && top.material) || p.material, poly: p.foot, floor: true });
     }
     if (t === "SiteBoundary" && vis(f)) {
       // the plot lines: a heavy property-line chain; the setback line dashed inside it; the area written in
       const p = doc.plan(f); if (!p) continue; const id = doc.idOf(f);
-      B.stroke(polyPath(p.pts), { weight: penWeight(doc, "bold", S), colour: "#1b1f24", dash: [9, 1.5, 1.2, 1.5, 1.2, 1.5] }, "Site", id);
+      // the office may draw its plot line its own way (a red chain): the view style's Site colour and pen
+      const so = (ctx.style && ctx.style.byCategory && ctx.style.byCategory.Site) || {};
+      B.stroke(polyPath(p.pts), { weight: so.pen ? penWeight(doc, so.pen, S) : penWeight(doc, "bold", S), colour: so.colour || "#1b1f24", dash: so.dash || [9, 1.5, 1.2, 1.5, 1.2, 1.5] }, "Site", id);
       if (p.setbacks.some(x => x > 0)) B.stroke(polyPath(p.buildable), { weight: penWeight(doc, "thin", S), colour: "#d0312d", dash: LINE_TYPES.dashed1 }, "Site", id);
       const c = p.pts.reduce((a, q) => add(a, q), [0, 0]).map(v => v / p.pts.length), d = doc.data(f);
       if (d && d.props && F.bool(f, "label") !== false) B.text(add(B.P(c), [0, 0]), `SITE ${fmtArea(d.props["Site area"].v)}`, 3.5, { align: "centre", layer: "Site", id, colour: "#1b1f24" });
@@ -427,6 +438,13 @@ export function planScene(doc, v, opts = {}) {
       if (!(fr.sill + w.z0 < cutZ && fr.sill + fr.h + w.z0 > cutZ && band(w.z0, w.z1) === "cut")) continue;
       const wz = leanInvolved(w) ? wallAt(w, Math.max(w.z0, Math.min(w.z1, cutZ))) : w, n_ = wz.stack.s.length - 1;
       B.hit(doc.idOf(f), [pointAt(wz, wz.stack.s[0], fr.u0), pointAt(wz, wz.stack.s[0], fr.u1), pointAt(wz, wz.stack.s[n_], fr.u1), pointAt(wz, wz.stack.s[n_], fr.u0)]);
+    }
+    // a fixture draws its family's symbol: its lines where it stands below the cut (or is cut), no fill
+    if (t === "Fixture") {
+      const p = doc.plan(f); if (!p) continue; const bnd = band(p.z0, p.z1); if (bnd !== "projection" && bnd !== "cut") continue;
+      const g = resolveGraphics(doc, ctx, f, "projection");
+      B.stroke(p.paths.flat(), g, "Furniture", doc.idOf(f));
+      if (p.foot && p.foot.length >= 3) B.hit(doc.idOf(f), p.foot);
     }
     if (t === "Furniture") {
       const p = doc.plan(f); if (!p) continue; const bnd = band(p.z0, p.z1); if (bnd !== "projection" && bnd !== "cut") continue;
@@ -1149,11 +1167,28 @@ function oblongPath(x0, y0, x1, y1) {
   const r = (y1 - y0) / 2, cy = (y0 + y1) / 2, a = x0 + r, b = Math.max(a, x1 - r);
   return [lineSeg([a, y0], [b, y0]), { k: "A", c: [b, cy], r, a0: -Math.PI / 2, a1: Math.PI / 2 }, lineSeg([b, y1], [a, y1]), { k: "A", c: [a, cy], r, a0: Math.PI / 2, a1: 3 * Math.PI / 2 }];
 }
+const frame0 = f => F.choice(f, "frame") || "Keynote box";
+/** A door's or a window's tag as Australian offices draw it: a circle split by a rule, the element's Mark over its
+ *  type's (A.G.23 / WT01). The words fit the circle; a leader, if on, runs to the element. */
+function drawSplitTag(doc, ctx, B, f, elId, pq, tq, leader) {
+  const id = doc.idOf(f), em = elementMarks(doc, elId), top = em.mark || "?", bot = em.typeMark || "?", ts = F.real(f, "textSize") || 1.62;
+  const P = B.P(pq), T = B.P(tq), wf = annotationStyle(doc).widthFactor || 1;
+  const w = Math.max(textWidth(top, ts, undefined, wf), textWidth(bot, ts, undefined, wf)), R = Math.max(3.1, w / 2 + 0.5), col = elId ? "#000000" : "#b3261e";
+  const g = { weight: penWeight(doc, "hairline", ctx.scale), colour: col }, font = annotationStyle(doc).font || undefined;
+  if (leader && dist(T, P) > R + 0.2) { B.stroke([lineSeg(T, add(P, mul(normalise(sub(T, P)), R)))], g, "Annotation-Tag", id, true); }
+  B.fill(circlePath(P, R), "#ffffff", "Annotation-Tag", id, true); B.stroke(circlePath(P, R), g, "Annotation-Tag", id, true);
+  B.stroke([lineSeg([P[0] - R, P[1]], [P[0] + R, P[1]])], g, "Annotation-Tag", id, true);
+  B.text([P[0], P[1] + 0.55], top, ts, { align: "centre", layer: "Annotation-Tag", id, colour: col, font, widthFactor: wf });
+  B.text([P[0], P[1] - 0.55 - ts], bot, ts, { align: "centre", layer: "Annotation-Tag", id, colour: col, font, widthFactor: wf });
+  const S = ctx.scale; B.hit(id, [[(P[0] - R) * S, (P[1] - R) * S], [(P[0] + R) * S, (P[1] - R) * S], [(P[0] + R) * S, (P[1] + R) * S], [(P[0] - R) * S, (P[1] + R) * S]]);
+}
 function drawMaterialTag(doc, ctx, B, f) {
   const id = doc.idOf(f), pq = F.point(f, "position"), leader = doc.argValue(f, "leader") !== false;
   // what it reads: at its leader's point, or - leader off - under the tag itself
   const tq = leader ? F.point(f, "target") : pq, show = F.choice(f, "show");
-  const found = materialAt(doc, B, tq), elId = /Element|Type/.test(show || "") ? elementUnder(doc, B, tq) : null;
+  // a tag of one element names that element; otherwise it reads what lies under its point
+  const bound = F.refId(f, "element"), found = bound ? null : materialAt(doc, B, tq), elId = bound || (/Element|Type/.test(show || "") ? elementUnder(doc, B, tq) : null);
+  if (show === "Element Mark / Type Mark" || frame0(f) === "Split circle") { drawSplitTag(doc, ctx, B, f, elId, pq, tq, leader); return; }
   const text = materialTagText(doc, found && found.material, show, elId || (found && found.id));
   const ts = F.real(f, "textSize") || 2.5, frame = F.choice(f, "frame") || "Keynote box";
   const T = B.P(tq), P = B.P(pq), w = textWidth(text, ts), pad = ts * 0.45;

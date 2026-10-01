@@ -894,6 +894,33 @@ BUILDERS.Furniture = { build: (f, doc) => {
   return { plan: { paths, fill: "#EEF0F3", z0, z1: z0 + 750 }, data: { props: {} } };
 } };
 
+// ---------------------------------------------------------------- fixtures: a family type placed as instances
+// A fixture (a WC, a basin, a kitchen run, a wardrobe) is an instance of its type: the type holds the family's
+// symbolic plan lines and its body (a footprint pulled up through a height above a base), in its own frame; the
+// instance holds where it stands, its turn and whether it is mirrored. Many instances share one type, as Revit's
+// families do - change the type, every instance follows.
+declare({ type: "Fixture", guid: "wb-0303", category: "Furniture", kind: "fixture", idPrefix: "FX",
+  summary: "An instance of a fixture type (sanitary, casework, equipment): its type's plan symbol in plan, its body in 3D.",
+  args: [ point2d("position", "Position", [0, 0]), real("rotation", "Rotation", 0, -360, 360, 1, "°"), bool("mirror", "Mirrored", false),
+          ref("fixtureType", "Type", ["fixtureType"]), ref("level", "Level", ["level"]),
+          real("baseOffset", "Base offset", 0, -100000, 100000, 1, "mm", { group: "Constraints" }) ],
+  handles: (f) => [{ key: "move", at: F.point(f, "position"), constraint: "free2d", writes: "position" }] });
+BUILDERS.Fixture = {
+  precondition: (f) => F.type(f, "fixtureType") ? null : "pick a fixture type",
+  build: (f, doc) => {
+    const t = F.type(f, "fixtureType") || {}, c = F.point(f, "position"), rot = F.real(f, "rotation") * Math.PI / 180, mx = F.bool(f, "mirror") ? -1 : 1;
+    const tr = p => { const x = p[0] * mx, y = p[1]; return [c[0] + x * Math.cos(rot) - y * Math.sin(rot), c[1] + x * Math.sin(rot) + y * Math.cos(rot)]; };
+    const z0 = levelElev(doc, f, "level") + F.real(f, "baseOffset"), zb = z0 + (t.base || 0), zt = zb + (t.height || 900), material = t.material || "M-TIMBER";
+    // the plan symbol: open polylines (a WC's bowl, a sink's bowls, a bench's front), as the family draws them
+    const paths = (t.lines || []).map(pl => { const pts = pl.map(tr); const path = []; for (let i = 1; i < pts.length; i++) path.push({ k: "L", a: pts[i - 1], b: pts[i] }); return path; }).filter(x => x.length);
+    const bodies = (t.bodies || (t.body ? [{ loop: t.body, base: 0, height: t.height || 900 }] : [])).filter(b => b.loop && b.loop.length >= 3);
+    const parts = bodies.map(b => { const foot = b.loop.map(tr); return { foot: polyArea(foot) < 0 ? foot.reverse() : foot, z0: zb + (b.base || 0), z1: zb + (b.base || 0) + (b.height || t.height || 900), sub: "Body", material: b.material || material }; });
+    const foot = parts.length ? parts[0].foot : [c, c, c];
+    const area = parts.reduce((a, pt) => a + Math.abs(polyArea(pt.foot)), 0);
+    return { plan: { paths, fill: null, symbol: true, foot, z0: zb, z1: zt, parts, material },
+      data: { value: 1, kind: "Count", parts, props: { Type: T(t.name || ""), Area: { kind: "Area", v: area }, Height: L(zt - zb) } } };
+  } };
+
 // ---------------------------------------------------------------- spaces (§3.6)
 declare({ type: "Space", guid: "wb-0401", category: "IfcSpace", kind: "space", idPrefix: "SP",
   summary: "The volume between two horizontal surfaces, bounded by room-bounding elements. Found by planar face-finding; kept by its anchor.",
@@ -1206,8 +1233,10 @@ BUILDERS.RepeatingDetail = { build: () => ({ data: {} }) };
 declare({ type: "MaterialTag", guid: "wb-0707", category: "Annotation", kind: "detail", idPrefix: "MT",
   summary: "A material tag: it reads what lies beneath it - at its leader's point, or under the tag itself when the leader is off - and shows that material's Mark, Name or Description, or the element's own Mark or its type's. Nothing recognised there: it shows ?",
   args: [ point2d("target", "Leader point", [0, 0]), point2d("position", "Tag position", [600, 600]),
-          choice("show", "Shows", ["Mark", "Name", "Mark · Name", "Description", "Mark · Description", "Element Mark", "Type Mark", "Element Mark · Material Mark"], 0),
-          choice("frame", "Frame", ["Keynote box", "None", "Circle", "Oblong"], 0, { group: "Graphics" }),
+          choice("show", "Shows", ["Mark", "Name", "Mark · Name", "Description", "Mark · Description", "Element Mark", "Type Mark", "Element Mark · Material Mark", "Element Mark / Type Mark"], 0),
+          choice("frame", "Frame", ["Keynote box", "None", "Circle", "Oblong", "Split circle", "Diamond"], 0, { group: "Graphics" }),
+          // a tag of one element (a door, a window): it follows that element, not what lies under it
+          ref("element", "Tags", ["door", "window", "wall", "column", "floor", "roof"], { group: "Constraints" }),
           bool("leader", "Leader", true, { group: "Graphics" }),
           real("textSize", "Text size (paper mm)", 2.5, 0.5, 30, 0.1, "", { group: "Graphics" }),
           ref("view", "View", ["view"], { view: true }) ],

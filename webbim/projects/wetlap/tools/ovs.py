@@ -26,5 +26,6 @@ if mine == "-": a.save(out); sys.exit(0)
 mp = pymupdf.open(mine)[0]; k = 72 / 25.4; Hm = mp.rect.height
 b = mp.get_pixmap(dpi=dpi, clip=pymupdf.Rect(box[0] * k, Hm - box[3] * k, box[2] * k, Hm - box[1] * k))
 b = Image.frombytes("RGB", (b.width, b.height), b.samples).resize(a.size)
-A_, B_ = ImageOps.invert(a.convert("L")), ImageOps.invert(b.convert("L"))
+# ink, stretched so the set's light greys (0xaa hairlines) show as clearly as black
+A_, B_ = [ImageOps.invert(x.convert("L")).point(lambda v: min(255, v * 3)) for x in (a, b)]
 Image.merge("RGB", (ImageOps.invert(A_), ImageOps.invert(ImageChops.lighter(A_, B_)), ImageOps.invert(B_))).save(out)

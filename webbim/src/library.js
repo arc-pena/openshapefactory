@@ -143,6 +143,10 @@ export const FAMILIES = {
   "F-COLUMN":    { name: "Column", category: "IfcColumn", system: "Column", sealed: true },
   "F-RCCOLUMN":  { name: "RC Column", extends: "F-COLUMN" },
   "F-FLOOR":     { name: "Floor", category: "IfcSlab", system: "Floor", sealed: true },
+  // fixtures: a family's plan symbol and body, placed as instances (sanitary, casework, appliances, equipment)
+  "F-FIXTURE":   { name: "Fixture", category: "Furniture", system: "Fixture", sealed: true },
+  "F-SANITARY":  { name: "Sanitary fixture", extends: "F-FIXTURE" },
+  "F-CASEWORK":  { name: "Casework", extends: "F-FIXTURE" },
   "F-BEAM":      { name: "Beam", category: "IfcBeam", system: "Beam", sealed: true },
   "F-STEELBEAM": { name: "Steel I-section", extends: "F-BEAM" },
   "F-RCBEAM":    { name: "RC Beam", extends: "F-BEAM" },

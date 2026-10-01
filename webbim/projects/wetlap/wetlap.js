@@ -14,6 +14,7 @@
 //!     drafted layer, pen for pen; the elevations' and site plans' shaded raster as the sheet's own image.
 
 import { fhaProject } from "../../src/sample_fha.js";
+import { emptySketch, weld } from "../../src/bimsketch.js";
 import { textWidth } from "../../src/scene.js";
 
 // the survey datum: the model's zero is the apartments' ground floor, RL 25600
@@ -69,6 +70,8 @@ export function buildWetlap(D) {
   const mat = (id, name, mark, cut, shade) => { L.materials[id] = { name, mark, description: name, cut, projection: { pen: "gossamer" }, shading: { colour: shade } }; };
   mat("M-WL-CONC", "Concrete (new)", "CON", { pattern: null, pen: "thin", lineColour: "#000000", background: "#ffffff" }, "#c9c7c2");
   mat("M-WL-PART", "Plasterboard on stud", "PB", { pattern: null, pen: "thin", lineColour: "#ababab", background: "#ffffff" }, "#eeeae4");
+  mat("M-WL-JOINERY", "Joinery (laminate)", "JN", { pattern: null, pen: "gossamer", lineColour: "#aaaaaa", background: "#ffffff" }, "#e9e4dc");
+  mat("M-WL-CERAMIC", "Vitreous china", "VC", { pattern: null, pen: "gossamer", lineColour: "#aaaaaa", background: "#ffffff" }, "#f4f4f2");
   mat("M-WL-EXBR", "Existing brick / structure", "EX-BR", { pattern: null, pen: "thin", lineColour: "#000000", background: "#000000" }, "#9c5c46");
   L.types["T-WL-SLAB"] = { family: "F-FLOOR", name: "Concrete slab 200", mark: "SL1", layers: [{ function: "Structure", thickness: 200, material: "M-WL-CONC" }], coreStart: 0, coreEnd: 1 };
   const wtype = (cls, t) => { const id = `T-WL-${cls}-${t}`; if (!L.types[id]) {
@@ -82,11 +85,15 @@ export function buildWetlap(D) {
   const base = JSON.parse(JSON.stringify(L.viewStyles["VS-FH-PLAN"]));
   const style = (id, name, hide) => { L.viewStyles[id] = Object.assign(JSON.parse(JSON.stringify(base)), { name }); const s = L.viewStyles[id];
     s.byCategory = Object.assign({}, s.byCategory); for (const c of hide) s.byCategory[c] = { visible: false }; s.byCategory.IfcGrid = Object.assign({}, s.byCategory.IfcGrid, { colour: "#8c8c8c" }); };
-  style("VS-WL-PLAN", "Techne - plans", ["IfcSlab", "IfcSpace", "Furniture", "Planting", "Topography", "IfcBeam"]);
+  style("VS-WL-PLAN", "Techne - plans", ["IfcSpace", "Planting", "Topography", "IfcBeam"]);
+  // the structural slab is not drawn on the plans (its finishes are)
+  L.viewStyles["VS-WL-PLAN"].rules = [{ id: "R-SLAB", name: "Structural slab not drawn", when: { param: "Type", is: "T-WL-SLAB" }, then: { visible: false } }];
+  // fixtures and joinery in the set's grey hairline
+  L.viewStyles["VS-WL-PLAN"].byCategory.Furniture = { visible: true, projection: { pen: "gossamer", colour: "#aaaaaa", fill: "none" } };
   // each building's plans show that building only (the other is hatched and named in the drafting, as the set has it)
   for (const [id, name, other] of [["VS-WL-PLAN-APT", "Techne - plans, apartments", "LOFTS"], ["VS-WL-PLAN-LOFT", "Techne - plans, lofts", "APARTMENTS"]]) {
     L.viewStyles[id] = Object.assign(JSON.parse(JSON.stringify(L.viewStyles["VS-WL-PLAN"])), { name });
-    L.viewStyles[id].rules = [{ id: `R-HIDE-${other}`, name: `The ${other.toLowerCase()} hidden`, when: { param: "Building", is: other }, then: { visible: false } }]; }
+    L.viewStyles[id].rules = L.viewStyles["VS-WL-PLAN"].rules.concat([{ id: `R-HIDE-${other}`, name: `The ${other.toLowerCase()} hidden`, when: { param: "Building", is: other }, then: { visible: false } }]); }
   style("VS-WL-GRID", "Techne - grid setout", ["IfcSlab", "IfcWall", "IfcColumn", "IfcSpace", "IfcStair", "Furniture", "Planting", "Topography", "IfcBeam", "IfcWindow", "IfcDoor"]);
   L.viewStyles["VS-WL-3D"] = Object.assign(JSON.parse(JSON.stringify(L.viewStyles["VS-FH-3D"])), { name: "Techne - 3D" });
 
@@ -113,18 +120,156 @@ export function buildWetlap(D) {
   const overlaps = (lev, a, b, t) => placed.some(w => { if (w[0] !== lev) return false;
     const d = [b[0] - a[0], b[1] - a[1]], L0 = Math.hypot(...d); if (!L0) return true; const u = [d[0] / L0, d[1] / L0];
     const e = [w[2][0] - w[1][0], w[2][1] - w[1][1]], L1 = Math.hypot(...e); if (!L1) return false; if (Math.abs(u[0] * e[1] - u[1] * e[0]) / L1 > 0.02) return false;
-    const off = Math.abs(-(w[1][0] - a[0]) * u[1] + (w[1][1] - a[1]) * u[0]); if (off > (t + w[3]) / 2 - 5) return false;
+    // a duplicate lies over the other (its band inside, not touching) along most of the new wall
+    const off = Math.abs(-(w[1][0] - a[0]) * u[1] + (w[1][1] - a[1]) * u[0]); if (off > Math.abs(t - w[3]) / 2 + 30) return false;
     const s0 = (w[1][0] - a[0]) * u[0] + (w[1][1] - a[1]) * u[1], s1 = (w[2][0] - a[0]) * u[0] + (w[2][1] - a[1]) * u[1];
-    return Math.min(L0, Math.max(s0, s1)) - Math.max(0, Math.min(s0, s1)) > 0.5 * Math.min(L0, L1); });
+    return Math.min(L0, Math.max(s0, s1)) - Math.max(0, Math.min(s0, s1)) > 0.5 * L0; });
   const r5 = v => Math.round(v / 5) * 5;
-  let nW = 0, nC = 0;
+  const dec = v => { const o = v.slice(0, 2); for (let i = 2; i < v.length; i++) o.push(o[i - 2] + v[i]); return o.map(x => x / 100); };
+  // ---------------------------------------------------------------- doors and windows
+  // Read off the plans, built as elements: a door where the set draws a swing (its centre the hinge, its radius
+  // the leaf, the side it bulges to the facing), in the gap its wall leaves; a window or a sliding door where a
+  // wall breaks under a window or door tag (A.G.23 / WT01: its Mark over its type); a window in every break of
+  // the existing brick. The wall is closed over the gap and the opening cut in it, so the plans, elevations, 3D and
+  // schedules all draw the one element.
+  const dtypes = {}, wtypes = {};
+  const dtype = (code, w, o = {}) => { const id = `T-WL-${code}-${w}`; if (!L.types[id]) L.types[id] = Object.assign({ family: "F-SINGLEDOOR", name: `${code} door ${w}x2040`, mark: code, width: w, height: 2040, leafThickness: 40, frame: 35 }, o); return id; };
+  const wtypeW = (code, w, h) => { const id = `T-WL-${code}-${w}x${h}`; if (!L.types[id]) L.types[id] = { family: "F-CASEMENT", name: `${code} window ${w}x${h}`, mark: code, width: w, height: h, frame: 50, mullions: Math.max(0, Math.round(w / 1200) - 1) }; return id; };
+  let nD = 0, nWin = 0, nTag = 0;
+  const tagsOf = (pg, O) => (S.pages[pg].notes || []).filter(n => /^[A-Z]\.[A-Z0-9]+\.\d+\n[A-Z]{2,3}\.?\d*$/.test(n.t))
+    .map(n => { const [mark, code] = n.t.split("\n"), c = [(n.bb[0] + n.bb[2]) / 2, (n.bb[1] + n.bb[3]) / 2]; return { mark, code, paper: c, at: [(c[0] - O[0]) * 100, (c[1] - O[1]) * 100] }; })
+    .filter((t, i, all) => all.findIndex(u => u.mark === t.mark && Math.hypot(u.at[0] - t.at[0], u.at[1] - t.at[1]) < 300) === i);
+  // a quarter circle drawn as a cubic: its centre from the tangent at its start, its radius
+  const arcOf = q => { const P0 = [q[0], q[1]], P1 = [q[2], q[3]], P3 = [q[6], q[7]], t0 = [P1[0] - P0[0], P1[1] - P0[1]], lt = Math.hypot(...t0); if (lt < 1e-6) return null;
+    const n0 = [-t0[1] / lt, t0[0] / lt], d = [P0[0] - P3[0], P0[1] - P3[1]], den = 2 * (n0[0] * d[0] + n0[1] * d[1]); if (Math.abs(den) < 1e-6) return null;
+    const t = -(d[0] * d[0] + d[1] * d[1]) / den, C = [P0[0] + n0[0] * t, P0[1] + n0[1] * t], r = Math.abs(t);
+    return { C, r, E: [P0, P3] }; };
+  const openings = (pg, P, bld, walls, top) => {
+    const Lf = D.lift[pg], O = P.o, M = q => [(q[0] - O[0]) * 100, (q[1] - O[1]) * 100], tags = tagsOf(pg, O), used = new Set();
+    // the swings: arcs of a door's radius, one per hinge
+    const arcs = [];
+    const keep = a => { if (a && a.r > 550 && a.r < 1250 && !arcs.some(b => Math.hypot(b.C[0] - a.C[0], b.C[1] - a.C[1]) < 60 && Math.abs(b.r - a.r) < 60)) arcs.push(a); };
+    for (const r of Object.values(Lf.res)) {
+      for (const c of r.c) { const q = dec(c); keep(arcOf([...M([q[0], q[1]]), ...M([q[2], q[3]]), ...M([q[4], q[5]]), ...M([q[6], q[7]])])); }
+      // the PDF flattens most swings into polylines: a circle through the first, middle and last points that every
+      // point keeps to, turning a quarter or more
+      for (const pl of r.l) { if (pl.length < 12) continue; const q = dec(pl), all = []; for (let i = 0; i < q.length; i += 2) all.push(M([q[i], q[i + 1]]));
+        // a swing is often chained to its leaf: split the chain where it turns sharply, fit each smooth run
+        const runs = [[all[0]]];
+        for (let i = 1; i < all.length; i++) { const r0 = runs[runs.length - 1]; if (r0.length >= 2) { const a0 = r0[r0.length - 2], a1 = r0[r0.length - 1], b1 = all[i];
+            const v1 = [a1[0] - a0[0], a1[1] - a0[1]], v2 = [b1[0] - a1[0], b1[1] - a1[1]], cs = (v1[0] * v2[0] + v1[1] * v2[1]) / (Math.hypot(...v1) * Math.hypot(...v2) || 1);
+            if (cs < 0.87 || Math.hypot(...v2) > 400) { runs.push([a1, b1]); continue; } } r0.push(all[i]); }
+        for (const pts of runs) { if (pts.length < 5) continue;
+        const A = pts[0], B = pts[pts.length >> 1], Cq = pts[pts.length - 1], d = 2 * (A[0] * (B[1] - Cq[1]) + B[0] * (Cq[1] - A[1]) + Cq[0] * (A[1] - B[1])); if (Math.abs(d) < 1e-6) continue;
+        const a2 = A[0] * A[0] + A[1] * A[1], b2 = B[0] * B[0] + B[1] * B[1], c2 = Cq[0] * Cq[0] + Cq[1] * Cq[1];
+        const C = [(a2 * (B[1] - Cq[1]) + b2 * (Cq[1] - A[1]) + c2 * (A[1] - B[1])) / d, (a2 * (Cq[0] - B[0]) + b2 * (A[0] - Cq[0]) + c2 * (B[0] - A[0])) / d], r = Math.hypot(A[0] - C[0], A[1] - C[1]);
+        if (pts.some(p => Math.abs(Math.hypot(p[0] - C[0], p[1] - C[1]) - r) > 0.04 * r)) continue;
+        const ang = Math.acos(Math.max(-1, Math.min(1, ((A[0] - C[0]) * (Cq[0] - C[0]) + (A[1] - C[1]) * (Cq[1] - C[1])) / (r * r)))); if (ang < 1.2) continue;
+        keep({ C, r, E: [A, Cq] }); } } }
+    // walls by line: direction (0-180 deg) and offset, to 20 mm; each piece's span along it
+    const lines = new Map(), lineOf = w => { const dx = w.b[0] - w.a[0], dy = w.b[1] - w.a[1], L0 = Math.hypot(dx, dy); let u = [dx / L0, dy / L0]; if (u[0] < -1e-9 || (Math.abs(u[0]) < 1e-9 && u[1] < 0)) u = [-u[0], -u[1]];
+      const n = [-u[1], u[0]], off = w.a[0] * n[0] + w.a[1] * n[1], s0 = w.a[0] * u[0] + w.a[1] * u[1], s1 = w.b[0] * u[0] + w.b[1] * u[1]; return { u, n, off, s0: Math.min(s0, s1), s1: Math.max(s0, s1) }; };
+    for (const w of walls) { const g = lineOf(w), key = `${Math.round(Math.atan2(g.u[1], g.u[0]) * 180 / Math.PI)}|${Math.round(g.off / 20)}|${w.cls}`; if (!lines.has(key)) lines.set(key, []); lines.get(key).push(Object.assign({ w }, g)); }
+    for (const run of lines.values()) run.sort((a, b) => a.s0 - b.s0);
+    const at = (g, s_) => [r5(g.u[0] * s_ + g.n[0] * g.off), r5(g.u[1] * s_ + g.n[1] * g.off)];
+    // close a gap [sa, sb] on a line with a piece of its wall; returns its id
+    const bridge = (g, sa, sb, name) => { const id = `W-${pg}-${++nW}`;
+      add({ id, type: "Wall", name, args: { centreline: H.line(at(g, sa), at(g, sb)), mounting: "Centred", wallType: { ref: wtype(g.w.cls, g.w.t) },
+        baseLevel: { ref: P.lev }, baseOffset: 0, topLevel: P.top ? { ref: P.top } : null, topOffset: 0, height: top.height || 3000, flipped: false }, params: { Building: bld } }); return id; };
+    const nearestTag = (p, codes, d = 2500) => { let best = null, bd = d; for (const t of tags) { if (used.has(t) || !codes.test(t.code)) continue; const dd = Math.hypot(t.at[0] - p[0], t.at[1] - p[1]); if (dd < bd) { bd = dd; best = t; } } return best; };
+    const gaps = [];
+    for (const run of lines.values()) for (let i = 0; i + 1 < run.length; i++) { const A = run[i], B = run[i + 1];
+      if (Math.abs(A.w.t - B.w.t) > 10 || B.s0 - A.s1 < 250 || B.s0 - A.s1 > 6000) continue; gaps.push({ g: A, sa: A.s1, sb: B.s0, cls: A.w.cls }); }
+    // doors: the swing is the door. Its centre is the hinge; of its ends, the one on a wall line is the leaf shut
+    // (that wall hosts it, the opening from the hinge to there), the other the side it opens to. The wall is closed
+    // over the opening where it breaks there, and the door cut in it.
+    if (globalThis.__WL_DEBUG) globalThis.__WL_DEBUG[pg] = { arcs, gaps: gaps.length, tags: tags.length, doors: [] };
+    const pieces = [...lines.values()].flat();
+    for (const a of arcs) {
+      let best = null;
+      for (const E of a.E) { const d = [E[0] - a.C[0], E[1] - a.C[1]], L0 = Math.hypot(...d); if (L0 < 1) continue; const u0 = [d[0] / L0, d[1] / L0];
+        for (const g of pieces) { if (Math.abs(u0[0] * g.u[1] - u0[1] * g.u[0]) > 0.08) continue;
+          const off = Math.abs(a.C[0] * g.n[0] + a.C[1] * g.n[1] - g.off); if (off > g.w.t / 2 + 150) continue;
+          const sC = a.C[0] * g.u[0] + a.C[1] * g.u[1], sE = E[0] * g.u[0] + E[1] * g.u[1], lo = Math.min(sC, sE), hi = Math.max(sC, sE);
+          // the wall line runs up to the opening (a piece ends near a jamb)
+          const reach = Math.min(Math.abs(g.s1 - lo), Math.abs(g.s0 - hi), (g.s0 <= lo && g.s1 >= hi) ? 0 : 1e9);
+          if (reach > 400) continue; const score = off + reach; if (!best || score < best.score) best = { g, E, sC, sE, lo, hi, score }; } }
+      if (!best) continue;
+      const { g, E, sC, lo, hi } = best, key = `${Math.round(Math.atan2(g.u[1], g.u[0]) * 180 / Math.PI)}|${Math.round(g.off / 20)}|${g.w.cls}`, run = lines.get(key) || [g];
+      // the opening: hinge to shut leaf, and its frame each side; the wall closed from the pieces either side
+      const f0 = lo - 35, f1 = hi + 35;
+      if (run.some(x => x.s0 < f0 + 1 && x.s1 > f1 - 1)) { /* the wall runs through: host there */ }
+      const left = run.filter(x => x.s1 <= f0 + 60).sort((x, y) => y.s1 - x.s1)[0], right = run.filter(x => x.s0 >= f1 - 60).sort((x, y) => x.s0 - y.s0)[0];
+      const sa = left && f0 - left.s1 < 400 ? Math.min(f0, left.s1) : f0, sb = right && right.s0 - f1 < 400 ? Math.max(f1, right.s0) : f1;
+      const through = run.find(x => x.s0 < f0 + 1 && x.s1 > f1 - 1);
+      let host, atU;
+      if (through) { host = through.w.id; const ws = through.w.a[0] * g.u[0] + through.w.a[1] * g.u[1]; atU = Math.abs((lo + hi) / 2 - ws); }
+      else { host = bridge(g, sa, sb, "Wall over door"); atU = (lo + hi) / 2 - sa; const pc = { w: { id: host, a: at(g, sa), b: at(g, sb), cls: g.w.cls, t: g.w.t }, u: g.u, n: g.n, off: g.off, s0: sa, s1: sb }; run.push(pc); run.sort((x, y) => x.s0 - y.s0); }
+      for (const G of gaps) if (!G.done && G.g.off === g.off && G.sa < hi && G.sb > lo) G.done = true;
+      // hand and facing, in the host's own frame (its start to its end, its left the side a door opens to)
+      const hw = doc.argValue(doc.element(host), "centreline"), hu = [hw.end[0] - hw.start[0], hw.end[1] - hw.start[1]], hl = Math.hypot(...hu), hn = [-hu[1] / hl, hu[0] / hl];
+      const Eo = a.E.find(x => x !== E), side = (Eo[0] - a.C[0]) * hn[0] + (Eo[1] - a.C[1]) * hn[1];
+      const hingeS = (a.C[0] - hw.start[0]) * hu[0] / hl + (a.C[1] - hw.start[1]) * hu[1] / hl, shutS = (E[0] - hw.start[0]) * hu[0] / hl + (E[1] - hw.start[1]) * hu[1] / hl;
+      const w = r5(hi - lo + 70), mid = at(g, (lo + hi) / 2), t = nearestTag(mid, /^DT/, 3000), id = `D-${pg}-${++nD}`;
+      H.door(id, host, Math.round(through ? atU : atU), dtype(t ? t.code : "DT", w), { flipHand: hingeS > shutS, flipFacing: side < 0, mark: t ? t.mark : id });
+      if (t) { used.add(t); placedTags.push({ pg, el: id, t }); }
+      if (globalThis.__WL_DEBUG) globalThis.__WL_DEBUG[pg].doors.push(id);
+    }
+    // windows between the existing piers (the brick façades are piers with windows between, no wall line to break):
+    // a window tag still unplaced, two piers in line either side of it, the window from face to face
+    const piers = (Lf.cols || []).map(r => ({ x0: Math.min(r[0], r[2]), y0: Math.min(r[1], r[3]), x1: Math.max(r[0], r[2]), y1: Math.max(r[1], r[3]) }));
+    for (const t of tags) { if (used.has(t) || !/^(WT|WEX|LT)/.test(t.code)) continue; let best = null;
+      for (const vert of [true, false]) for (const a of piers) for (const b of piers) { if (a === b) continue;
+        const ca = vert ? (a.x0 + a.x1) / 2 : (a.y0 + a.y1) / 2, cb = vert ? (b.x0 + b.x1) / 2 : (b.y0 + b.y1) / 2; if (Math.abs(ca - cb) > 120) continue;
+        const lo = vert ? a.y1 : a.x1, hi = vert ? b.y0 : b.x0, tp = vert ? t.at[1] : t.at[0], line = (ca + cb) / 2, off = Math.abs((vert ? t.at[0] : t.at[1]) - line);
+        if (hi - lo < 300 || hi - lo > 4500 || tp < lo - 200 || tp > hi + 200 || off > 1800) continue;
+        if (piers.some(c => c !== a && c !== b && Math.abs((vert ? (c.x0 + c.x1) / 2 : (c.y0 + c.y1) / 2) - line) < 150 && (vert ? c.y0 : c.x0) > lo - 1 && (vert ? c.y1 : c.x1) < hi + 1)) continue;
+        const score = off + (hi - lo) * 0.2; if (!best || score < best.score) best = { score, vert, lo, hi, line, th: Math.min(vert ? a.x1 - a.x0 : a.y1 - a.y0, vert ? b.x1 - b.x0 : b.y1 - b.y0) }; }
+      if (!best) continue;
+      const { vert, lo, hi, line } = best, th = r5(Math.max(100, best.th)), A = vert ? [r5(line), r5(lo)] : [r5(lo), r5(line)], B = vert ? [r5(line), r5(hi)] : [r5(hi), r5(line)];
+      const id = `W-${pg}-${++nW}`, w = r5(hi - lo), code = t.code;
+      add({ id, type: "Wall", name: "Existing brick over window", args: { centreline: H.line(A, B), mounting: "Centred", wallType: { ref: wtype("EX", th) }, baseLevel: { ref: P.lev }, baseOffset: 0,
+        topLevel: P.top ? { ref: P.top } : null, topOffset: 0, height: top.height || 3000, flipped: false }, params: { Building: bld } });
+      const wid = `WN-${pg}-${++nWin}`; H.window(wid, id, w / 2, wtypeW(code, w, code === "WEX" ? 2100 : 2400), code === "WEX" ? 700 : 300, { mark: t.mark });
+      used.add(t); placedTags.push({ pg, el: wid, t }); }
+    // windows and sliding doors: the tagged gaps, and every gap in the existing brick
+    for (const G of gaps) { if (G.done) continue; const g = G.g, mid = at(g, (G.sa + G.sb) / 2), w = r5(G.sb - G.sa);
+      const t = nearestTag(mid, /^(WT|DT|LT|WEX)/, 3000);
+      if (!t && G.cls !== "EX") continue; G.done = true;
+      const host = bridge(g, G.sa, G.sb, t ? `Wall over ${t.code}` : "Existing brick over window"), code = t ? t.code : "WEX";
+      if (/^DT/.test(code)) { const id = `D-${pg}-${++nD}`; H.door(id, host, w / 2, dtype(code, w, { glazed: true }), { mark: t.mark, args: { operation: "Sliding" } }); used.add(t); placedTags.push({ pg, el: id, t }); }
+      else { const id = `WN-${pg}-${++nWin}`, h = code === "WEX" ? 2100 : 2400, sill = code === "WEX" ? 700 : 300;
+        H.window(id, host, w / 2, wtypeW(code, w, h), sill, { mark: t ? t.mark : `EX.${nWin}` }); if (t) { used.add(t); placedTags.push({ pg, el: id, t }); } }
+    }
+  };
+  const placedTags = [];
+  let nW = 0, nC = 0, nF = 0, nFin = 0;
+  // a finish's pattern, material and floor type: boards one way at their step, or a grid of tiles or pavers
+  const FIN_NAME = { "#d4d4d4": "Timber floor", "#d2d2d2": "Floor tiles", "#787878": "Pavers", "#7f7f7f": "Decking", "#e4e4e4": "Tiles", "#cccccc": "Carpet" };
+  const finType = r => { const nm = FIN_NAME[r.pen] || "Floor finish", key = `${r.kind}-${r.step}-${r.phase}${r.step2 ? `x${r.step2}-${r.phase2}` : ""}-${r.pen.slice(1)}`;
+    const pid = `P-WL-${key}`, mid = `M-WL-FIN-${key}`, tid = `T-WL-FIN-${key}`;
+    if (!L.patterns[pid]) { const lines = [];
+      if (r.kind === "boards-H" || r.kind === "grid") lines.push({ angle: 0, origin: [0, r.phase], delta: [0, r.step] });
+      if (r.kind === "boards-V") lines.push({ angle: 90, origin: [r.phase, 0], delta: [0, r.step] });
+      if (r.kind === "grid") lines.push({ angle: 90, origin: [r.phase2 || 0, 0], delta: [0, r.step2 || r.step] });
+      L.patterns[pid] = { name: `${nm} ${r.step}${r.step2 ? "x" + r.step2 : ""}`, kind: "model", lines }; }
+    if (!L.materials[mid]) L.materials[mid] = { name: `${nm} ${r.step}${r.step2 ? "x" + r.step2 : ""}`, mark: nm.split(" ").map(w => w[0]).join(""), description: nm,
+      cut: { pattern: null, pen: "thin", lineColour: "#000000", background: "#ffffff" }, projection: { pen: "gossamer", pattern: pid, lineColour: r.pen, edges: false }, shading: { colour: nm === "Timber floor" ? "#b58c5e" : "#d9d6cf" } };
+    if (!L.types[tid]) L.types[tid] = { family: "F-FLOOR", name: `${nm} ${r.step}${r.step2 ? "x" + r.step2 : ""}`, mark: "FF", layers: [{ function: "Finish 1", thickness: 20, material: mid }], coreStart: 0, coreEnd: 1 };
+    return tid; };
+  const FIXFAM = { WC: "F-SANITARY", Basin: "F-SANITARY", Bath: "F-SANITARY", Vanity: "F-CASEWORK", Bench: "F-CASEWORK", Island: "F-CASEWORK", Appliance: "F-FIXTURE", Joinery: "F-CASEWORK" };
+  const FIXMAT = { WC: "M-WL-CERAMIC", Basin: "M-WL-CERAMIC", Bath: "M-WL-CERAMIC" };
+  const fixType = key => { const t = ((D.fix || {}).types || {})[key]; if (!t) return null; const id = `T-WL-FX-${key}`;
+    if (!L.types[id]) L.types[id] = { family: FIXFAM[t.kind] || "F-FIXTURE", name: `${t.kind} ${key.slice(0, 5)}`, mark: t.kind.slice(0, 3).toUpperCase(), lines: t.lines, body: t.body, height: t.height, base: 0, material: FIXMAT[t.kind] || "M-WL-JOINERY" };
+    return id; };
   for (const [pg, P] of Object.entries(PLANS)) {
     if (!P.walls) continue; const Lf = D.lift[pg]; if (!Lf) continue;
     const bld = P.o === LOFT || +pg === 14 ? "LOFTS" : "APARTMENTS";
     const top = P.top ? { top: P.top } : { height: 1200 }, bb = [Infinity, Infinity, -Infinity, -Infinity];
     const grow = q => { bb[0] = Math.min(bb[0], q[0]); bb[1] = Math.min(bb[1], q[1]); bb[2] = Math.max(bb[2], q[0]); bb[3] = Math.max(bb[3], q[1]); };
+    const mine = [];
     const wall = (a, b, cls, t) => { if (Math.hypot(b[0] - a[0], b[1] - a[1]) < 40 || overlaps(P.lev, a, b, t)) return; placed.push([P.lev, a, b, t]); grow(a); grow(b);
-      const id = `W-${pg}-${++nW}`;
+      const id = `W-${pg}-${++nW}`; mine.push({ id, a, b, cls, t });
       add({ id, type: "Wall", name: `${cls === "P" ? "Partition" : cls === "EX" ? "Existing brick" : "Wall"} ${t}`, args: { centreline: H.line(a, b), mounting: "Centred", wallType: { ref: wtype(cls, t) },
         baseLevel: { ref: P.lev }, baseOffset: 0, topLevel: P.top ? { ref: P.top } : null, topOffset: 0, height: top.height || 3000, flipped: false }, params: { Building: bld } }); };
     // the existing brick first: where a pair of lines also runs along it (a sill, a frame), the solid poche is the wall
@@ -135,28 +280,35 @@ export function buildWetlap(D) {
       if (placed.some(w => w[0] === P.lev && w[3] === -1 && Math.hypot(w[1][0] - c[0], w[1][1] - c[1]) < 50)) continue; placed.push([P.lev, c, c, -1]);
       add({ id: `C-${pg}-${++nC}`, type: "Column", name: "Existing column", args: { position: c, columnType: { ref: ctype(r5(r[2] - r[0]), r5(r[3] - r[1])) }, baseLevel: { ref: P.lev },
         height: P.top ? Z[P.top] - Z[P.lev] : 1200, rotation: 0, baseOffset: 0 }, params: { Building: bld } }); }
+    openings(pg, P, bld, mine, top);
+    // the floor finishes: each hatched region of the plan a finish floor on the slab, its material's surface pattern
+    // the set's boards, tiles or pavers, set out on the set's lines (tools/finishes.py)
+    for (const r of ((D.fin || {})[pg] || [])) { const ty = finType(r); if (!ty) continue; const id = `FN-${pg}-${++nFin}`;
+      if (r.holes && r.holes.length) H.floorHoles(id, L.types[ty].name, r.ring, r.holes, ty, P.lev, 0); else H.floor(id, L.types[ty].name, r.ring, ty, P.lev, 0);
+      set(id, "params", { Building: bld }); }
+    // the fixtures and joinery: instances of the family types the plans' symbols make (tools/fixtures.py)
+    for (const fx of ((D.fix || {}).pages || {})[pg] || []) { const ty = fixType(fx.type); if (!ty) continue;
+      add({ id: `FX-${pg}-${++nF}`, type: "Fixture", name: L.types[ty].name, args: { position: fx.at, rotation: fx.rot, mirror: false, fixtureType: { ref: ty }, level: { ref: P.lev }, baseOffset: 0 }, params: { Building: bld } }); }
     if (Number.isFinite(bb[0])) add({ id: `FL-${P.lev}-${pg}`, type: "Floor", name: `Slab ${P.lev} (${bld.toLowerCase()})`, args: { boundary: H.R(r5(bb[0]), r5(bb[1]), r5(bb[2]), r5(bb[3])), floorType: { ref: "T-WL-SLAB" }, level: { ref: P.lev }, heightOffset: 0 }, params: { Building: bld } });
   }
 
+  // ---------------------------------------------------------------- the site: its boundary as the grid setout draws it
+  if (D.site && D.site.length > 2) { const sk = emptySketch(); D.site.forEach((p, i) => sk.elements.push({ id: "e" + (i + 1), type: "line", a: p, b: D.site[(i + 1) % D.site.length] }));
+    add({ id: "SITE-1", type: "SiteBoundary", name: "Site boundary", args: { sketch: weld(sk), edges: {}, setback: 0, level: { ref: "L-AG" }, showPlanes: false, planeHeight: 60000, label: false } }); }
+  for (const st of Object.values(L.viewStyles)) if (/^VS-WL/.test(st.name || "") || true) { st.byCategory = Object.assign({}, st.byCategory, { Site: Object.assign({ visible: true }, (st.byCategory || {}).Site, { colour: "#ff0000", pen: "extra", dash: [12, 2, 1.5, 2, 1.5, 2] }) }); }
+
   // ---------------------------------------------------------------- views and sheets
-  const dec = v => { const o = v.slice(0, 2); for (let i = 2; i < v.length; i++) o.push(o[i - 2] + v[i]); return o.map(x => x / 100); };
-  const drafted = (pg, vid) => { const Lf = D.lift[pg]; if (!Lf) return; const S = doc.argValue(doc.element(vid), "scale"), o0 = H.paperToView(+pg, vid, [0, 0]), elements = [];
-    for (const [key, r] of Object.entries(Lf.res)) { const [ws, c] = key.split("|"), w = +ws;
-      if (r.l.length) elements.push({ type: "path", layer: "DRAFTED", w, c, p: r.l.map(dec) });
-      if (r.c.length) elements.push({ type: "path", layer: "DRAFTED", w, c, s: r.c.map(q => ["C", ...dec(q)]) }); }
-    const fills = Lf.fills.map(([v, c]) => { const q = dec(v), pts = []; for (let i = 0; i < q.length; i += 2) pts.push([q[i], q[i + 1]]); return { layer: "DRAFTED", pts, colour: c }; });
-    add({ id: `CAD-${vid.slice(2)}`, type: "CADImport", name: "Drafted (from the set)", args: { file: `${S0(pg).number} (drafted)`, drawing: { elements, constraints: [], texts: [], fills, layers: [{ name: "DRAFTED", on: true, colour: "#000000" }] },
-      view: { ref: vid }, offsetX: o0[0], offsetY: o0[1], scale: S, rotation: 0, pinned: true } }); };
   const S0 = pg => S.sheets[pg];
-  const images = pg => { const m = D.raster.meta[pg], url = D.raster.urls[pg]; return m && url ? [{ rect: m.rect, url, w: m.w, h: m.h, blend: "multiply" }] : []; };
-  const sheet = (pg, vps) => { const id = H.pdfSheet(+pg, vps, { size: "A1", orientation: "landscape" }); const im = images(pg); if (im.length) set(`SH-${S0(pg).number}`, "images", im); return id; };
+  // sheets carry views of the model and annotation only: nothing traced, no pictures of the set
+  const sheet = (pg, vps) => H.pdfSheet(+pg, vps, { size: "A1", orientation: "landscape" });
   const skipLevels = new Set(LEVELS.map(l => l[2]));
   const annotate = (pg, extra = {}) => H.annotate(+pg, Object.assign({ dimType: "DT-WL",
-    skip: n => skipLevels.has(n.t.trim().toUpperCase()),
+    // the level heads and the door and window tags are the model's own
+    skip: n => skipLevels.has(n.t.trim().toUpperCase()) || /^[A-Z]\.[A-Z0-9]+\.\d+\n[A-Z]{2,3}\.?\d*$/.test(n.t),
     skipDim: dm => /^\d{5}$/.test(dm.t) && LEVELS.some(l => String(l[1]) === dm.t) }, extra));
 
   const T = globalThis.__WL_TRACE ? (m => console.log(`${((Date.now() - globalThis.__WL_T0) / 1000).toFixed(1)}s ${m}`)) : () => {};
-  globalThis.__WL_T0 = Date.now(); T(`model: ${nW} walls, ${nC} columns`);
+  globalThis.__WL_T0 = Date.now(); T(`model: ${nW} walls, ${nC} columns, ${nD} doors, ${nWin} windows`);
   for (let pg = 1; pg <= 38; pg++) {
     const P = PLANS[pg], sh = S0(pg); T(`page ${pg}`);
     if (P) {
@@ -179,15 +331,17 @@ export function buildWetlap(D) {
           ov[gid] = { gridLine: { type: "line", start: [far, y], end: [head, y] } }; }
       }
       set(vid, "overrides", ov);
+      // the door and window tags: the elements' own, where the set puts them (only the elements this page modelled)
+      for (const pt of placedTags.filter(x => +x.pg === pg || (PLANS[x.pg] && PLANS[x.pg].lev === P.lev && PLANS[x.pg].o === P.o && pg !== +x.pg && false)))
+        add({ id: `TG-${sh.number}-${++nTag}`, type: "MaterialTag", name: `Tag ${pt.t.mark}`, args: { target: M(pt.t.paper), position: M(pt.t.paper), show: "Element Mark / Type Mark", frame: "Split circle", leader: false, textSize: 1.62, element: { ref: pt.el }, view: { ref: vid } } });
       sheet(pg, [[vid, [(DRAWING[0] + DRAWING[2]) / 2, (DRAWING[1] + DRAWING[3]) / 2], { noTitle: true }]]);
-      drafted(pg, vid); annotate(pg);
+      annotate(pg);
     } else {
       // a sheet of drafting (the site and location plans, the notes, the demolition, the elevations): the set's
       // drawing on the sheet as it is, its words as annotation
       const vid = `V-D-${sh.number}`;
       add({ id: vid, type: "DraftingView", name: sh.name, args: { scale: 1, clip: { rect: [0, 0, 841, 594], visible: false, active: true } } });
       sheet(pg, [[vid, [420.5, 297], { noTitle: true }]]);
-      drafted(pg, vid);
       annotate(pg, { keepAll: true, skip: () => false, skipBubble: () => false });
       // the RLs over their level lines (read as dimension strings): words, where the set writes them
       S.pages[pg].dims.filter(dm => /^\d{5}$/.test(dm.t)).forEach((dm, i) => add({ id: `TX-${sh.number}-RL${i + 1}`, type: "Text",

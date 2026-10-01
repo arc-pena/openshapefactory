@@ -216,7 +216,9 @@ export function hatchFamilies(p) {
       }
     }
     const a = L.angle * Math.PI / 180, c = Math.cos(a), sn = Math.sin(a);
-    const o = [(p.origin || [0, 0])[0] + (L.origin || [0, 0])[0] * s, (p.origin || [0, 0])[1] + (L.origin || [0, 0])[1] * s];
+    // the cell draws its line half a step up (clear of the cell's edge): the cell is set half a step down, so the
+    // line passes through the pattern's origin as the pattern says
+    const o = [(p.origin || [0, 0])[0] + (L.origin || [0, 0])[0] * s + sn * across / 2 * s, (p.origin || [0, 0])[1] + (L.origin || [0, 0])[1] * s - c * across / 2 * s];
     const k = PT_PER_MM;
     // pattern space → default page space (points): the pattern ignores the page CTM
     const matrix = [k * s * c, k * s * sn, -k * s * sn, k * s * c, k * o[0], k * o[1]];
