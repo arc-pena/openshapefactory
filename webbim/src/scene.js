@@ -1713,8 +1713,11 @@ function drawDatums(doc, ctx, B, v, G) {
       B.stroke([lineSeg(add(hp, [-2.33, 3.3]), hp), lineSeg(hp, add(hp, [2.33, 3.3]))], { weight: 0.1, colour: "#000" }, "IfcBuildingStorey", id, true);
       B.stroke([lineSeg(add(hp, [-2.98, 0]), add(hp, [3.01, 0]))], { weight: 0.25, colour: "#000" }, "IfcBuildingStorey", id, true);
       B.stroke([lineSeg(add(hp, [-4.0 * sg, 0]), op)], { weight: 0.085, colour: AS.levelLineColour || "#8c8c8c", dash: LINE_TYPES.centre }, "IfcBuildingStorey", id, true);
-      B.text(add(hp, [-10.26 * sg, 1.54]), val, th, { layer: "IfcBuildingStorey", id, font, widthFactor: wf, align: right ? "left" : "right" });
-      B.text(add(hp, [4.53 * sg, 1.54]), String(F.text(f, "name")).replace(/\n/g, " "), th, { layer: "IfcBuildingStorey", id, font, widthFactor: wf, align: right ? "left" : "right" });
+      // at the right: RL, V, name; at the left: name, V, RL (the RL always toward the drawing)
+      if (right) { B.text(add(hp, [-10.26, 1.54]), val, th, { layer: "IfcBuildingStorey", id, font, widthFactor: wf, align: "left" });
+        B.text(add(hp, [4.53, 1.54]), String(F.text(f, "name")).replace(/\n/g, " "), th, { layer: "IfcBuildingStorey", id, font, widthFactor: wf, align: "left" }); }
+      else { B.text(add(hp, [4.0, 1.54]), val, th, { layer: "IfcBuildingStorey", id, font, widthFactor: wf, align: "left" });
+        B.text(add(hp, [-4.53, 1.54]), String(F.text(f, "name")).replace(/\n/g, " "), th, { layer: "IfcBuildingStorey", id, font, widthFactor: wf, align: "right" }); }
       B.hit(id, [[ext[0], z - 50], [ext[1], z - 50], [ext[1], z + 50], [ext[0], z + 50]]);
       continue;
     }
@@ -1838,6 +1841,14 @@ function surfaceOf(doc, it) {
   const mp = m && (doc.lib.materials[m] || {}).projection;
   return mp && (mp.background || mp.pattern) ? { m, bg: mp.background || null, pat: mp.pattern || null, colour: mp.patternColour || mp.lineColour || "#a6a6a6" } : null;
 }
+/** The door or window filling an opening, from an index built once per view (not a scan per opening). */
+function fillerOf(doc, ctx, opId) {
+  const holder = ctx || fillerOf; let ix = holder.__fillers;
+  if (!ix || ix.doc !== doc || ix.n !== doc.elements().length) { const m = new Map();
+    for (const g of doc.elements()) { const t = doc.typeOf(g); if (t === "Door" || t === "Window") { const r = F.refId(g, "fills"); if (r) m.set(r, g); } }
+    ix = holder.__fillers = { doc, n: doc.elements().length, m }; }
+  return opId ? ix.m.get(opId) || null : null;
+}
 function drawSurfaces(doc, ctx, B, vis) {
   const out = [], S = ctx.scale;
   // only worth it where some surface is coloured: then every nearer face covers it (a white wall too)
@@ -1866,6 +1877,8 @@ function drawSurfaces(doc, ctx, B, vis) {
     if (sf.bg) out.push({ t: "fill", path, colour: sf.bg, layer: it.cat + "-Surface", id: it.id });
     const pat = sf.pat && doc.lib.patterns[sf.pat];
     if (pat) out.push({ t: "hatch", path, pattern: Object.assign({ id: sf.pat }, pat), scale: pat.kind === "model" ? 1 / S : 1, colour: sf.colour, weight: penWeight(doc, "hairline", S), layer: it.cat + "-Surface", id: it.id });
+    // its windows and doors: their glass and leaves white over the wall's surface
+    if (it.glass && it.glass.length && (sf.bg || pat)) out.push({ t: "fill", path: it.glass.flatMap(q => polyPath(q.map(p => B.P(p)))), colour: "#ffffff", layer: it.cat + "-Surface", id: it.id });
   }
   return out;
 }
@@ -2147,7 +2160,7 @@ function elevWall(doc, f, w, V, sOf, depthOf, ctx) {
     if (depthOf(p) <= front + 2) curves.push([[sp, baseZ], [sp, V(p, topAt(p))[1]]]);
   }
   // Openings: near-face rectangle, and the see-through hole cut from the silhouette.
-  const holes = [];
+  const holes = [], glass = [];
   const nearS = (() => { const a = depthOf(pointAt(w, w.stack.s[0], w.L / 2)), b = depthOf(pointAt(w, w.stack.s[n], w.L / 2)); return a <= b ? w.stack.s[0] : w.stack.s[n]; })();
   for (const op of w.openings || []) {
     const a1 = sOf(pointAt(w, w.stack.s[0], op.u0)), b1 = sOf(pointAt(w, w.stack.s[0], op.u1));
@@ -2156,15 +2169,17 @@ function elevWall(doc, f, w, V, sOf, depthOf, ctx) {
     const na = sOf(pointAt(w, nearS, op.u0)), nb = sOf(pointAt(w, nearS, op.u1));
     const lo = Math.min(na, nb), hi = Math.max(na, nb);
     // the filler's type may give the opening an arched head (round, or pointed as a Gothic window): its outline arches
-    const fg = doc.elements().find(g => (doc.typeOf(g) === "Door" || doc.typeOf(g) === "Window") && F.refId(g, "fills") === op.id);
+    const fg = fillerOf(doc, ctx, op.id);
     const fty = fg && (doc.lib.types[F.refId(fg, doc.typeOf(fg) === "Door" ? "doorType" : "windowType")] || {}), head = fty && fty.head && fty.head !== "Square" ? fty.head : null;
     if (head) curves.push(...archOutline(lo, hi, za, zb2, head));
     else curves.push([[lo, za], [hi, za]], [[hi, za], [hi, zb2]], [[hi, zb2], [lo, zb2]], [[lo, zb2], [lo, za]]);
     // a hole to see through, unless a door or window drawn here fills it (its leaf or glass stands in front)
-    const filled = ctx && doc.elements().some(g => (doc.typeOf(g) === "Door" || doc.typeOf(g) === "Window") && F.refId(g, "fills") === op.id && categoryVisible(ctx, categoryOf(doc, g)));
+    const filled = ctx && fg && categoryVisible(ctx, categoryOf(doc, fg));
     if (!op.recess && !filled) { const sa = Math.max(Math.min(a1, b1), Math.min(a2, b2)), sb = Math.min(Math.max(a1, b1), Math.max(a2, b2)); if (sb - sa > 1) holes.push([sa, sb, za, zb2]); }
+    // a filled opening's glass or leaf faces the eye: the wall's surface (its brick, its render) stops there
+    if (filled && !op.recess) glass.push([[lo, za], [hi, za], [hi, zb2], [lo, zb2]]);
     // a bare opening is picked by its own outline here (a filled one through its door or window, below)
-    if (op.id && !doc.elements().some(g => (doc.typeOf(g) === "Door" || doc.typeOf(g) === "Window") && F.refId(g, "fills") === op.id)) fillerHits.push({ id: op.id, poly: [[lo, za], [hi, za], [hi, zb2], [lo, zb2]] });
+    if (op.id && !fg) fillerHits.push({ id: op.id, poly: [[lo, za], [hi, za], [hi, zb2], [lo, zb2]] });
     // the filler's own elevation rep, mapped from host (u, z)
     for (const g of doc.elements()) if ((doc.typeOf(g) === "Door" || doc.typeOf(g) === "Window") && (!ctx || categoryVisible(ctx, categoryOf(doc, g))) && doc.data(g) && doc.data(g).frame && doc.data(g).frame.u0 === op.u0 && doc.data(g).host === w.id) {
       const er = doc.elev(g); if (!er) continue;
@@ -2208,7 +2223,7 @@ function elevWall(doc, f, w, V, sOf, depthOf, ctx) {
     for (const [ha, hb] of zs) { if (ha > z) sil.push([[sa, z], [sb, z], [sb, ha], [sa, ha]]); z = Math.max(z, hb); }
     sil.push([[sa, z], [sb, z], [sb, topLine(sb)], [sa, topLine(sa)]]);
   }
-  return { id: w.id, f, fillerHits, depth: Math.max(0, Math.min(...dd)), depthMax: Math.max(...dd), s0, s1, curves, sil: sil.length ? sil : [[[s0, baseZ], [s1, baseZ], [s1, t1], [s0, t0]]], cat: "IfcWall", panelSurf: panelSurf.length ? panelSurf : null, dashCurves };
+  return { id: w.id, f, fillerHits, depth: Math.max(0, Math.min(...dd)), depthMax: Math.max(...dd), s0, s1, curves, sil: sil.length ? sil : [[[s0, baseZ], [s1, baseZ], [s1, t1], [s0, t0]]], cat: "IfcWall", glass, panelSurf: panelSurf.length ? panelSurf : null, dashCurves };
 }
 /** An arched head's outline in a drawing's (s, z): the jambs up to the springing, then the arch - a semicircle, or two
  *  arcs meeting at a point (an equilateral Gothic arch) - to the head at z1; the sill across the bottom. */

@@ -42,7 +42,28 @@ const PLANS = {
   26: { lev: "L-AG", o: APT }, 27: { lev: "L-A1", o: APT }, 28: { lev: "L-A2", o: APT }, 29: { lev: "L-A3", o: APT }, 30: { lev: "L-A4", o: APT },
   31: { lev: "L-B", o: [-162.95, 251.81] }, 32: { lev: "L-LG", o: LOFT }, 33: { lev: "L-L1", o: LOFT }, 34: { lev: "L-L2", o: LOFT }, 35: { lev: "L-L3", o: LOFT },
 };
-const DRAWING = [4, 50, 837, 590];      // where a sheet's drawing is (above the title strip), sheet mm
+const DRAWING = [4, 50, 837, 590];
+// the elevations: each view's direction (from its grids' order on the sheet), a grid and an RL where the set draws
+// them, its drawing's area, where its level heads are and its grid heads' height
+const ELEVS = {
+  36: [{ id: "V-EL-N", name: "PROPOSED WETLAP NORTH ELEVATION", look: "+x", ref: ["G", 258.8], z0: [0, 356.25], rect: [215, 340, 600, 575], head: 575.66, gridHead: 579.3, bld: "A" },
+       { id: "V-EL-E", name: "PROPOSED WETLAP EAST ELEVATION", look: "-y", ref: ["1", 582.0], z0: [0, 86.6], rect: [40, 75, 770, 312], head: 759.76, gridHead: 317.1, bld: "A" }],
+  37: [{ id: "V-EL-W", name: "PROPOSED WETLAP WEST ELEVATION", look: "+y", ref: ["1", 152.1], z0: [0, 349.03], rect: [60, 340, 650, 572], head: 101.7, gridHead: 576.6, bld: "A", line: -25000 },
+       { id: "V-EL-S", name: "PROPOSED WETLAP SOUTH ELEVATION", look: "-x", ref: ["A", 231.2], z0: [0, 101.1], rect: [60, 62, 560, 322], head: 69.9, gridHead: 325.9, bld: "A", line: 47500 }],
+  38: [{ id: "V-EL-LW", name: "PROPOSED LOFTS WEST ELEVATION", look: "+y", ref: ["10", 84.7], z0: [1900, 371.44], rect: [60, 345, 580, 577], head: 561.36, gridHead: 581.1, bld: "L", line: -25000 },
+       { id: "V-EL-LS", name: "PROPOSED LOFTS SOUTH ELEVATION", look: "-x", ref: ["H", 153.4], z0: [1900, 134.72], rect: [60, 62, 330, 325], head: 96.6, gridHead: 329.6, bld: "L", line: 82000 },
+       { id: "V-EL-LE", name: "PROPOSED LOFTS EAST ELEVATION", look: "-y", ref: ["19", 459.6], z0: [1900, 134.72], rect: [420, 62, 800, 310], head: 432.4, gridHead: 314.3, bld: "L" }],
+};
+/** An elevation's line (in front of its face, looking along its direction) and its coordinate at its ref grid. */
+function elevLine(E) {
+  const LN = { "+x": [[E.line ?? -8000, -40000], [E.line ?? -8000, 90000]], "-x": [[E.line ?? 100000, 90000], [E.line ?? 100000, -40000]],
+    "+y": [[120000, E.line ?? -25000], [-40000, E.line ?? -25000]], "-y": [[-40000, E.line ?? 30000], [120000, E.line ?? 30000]] }[E.look];
+  const [a, b] = LN, dl = Math.hypot(b[0] - a[0], b[1] - a[1]), d = [(b[0] - a[0]) / dl, (b[1] - a[1]) / dl];
+  const g = gridCoord(E.ref[0]), Pref = E.look.endsWith("x") ? [0, g] : [g, 0];
+  return { a, b, d, sRef: (b[0] - Pref[0]) * d[0] + (b[1] - Pref[1]) * d[1] };
+}
+const gridCoord = n => /^\d+$/.test(n) ? GX[+n - 1] : GY[n];
+      // where a sheet's drawing is (above the title strip), sheet mm
 
 /** The project, from its extracted data: { set, lift, raster: { meta, urls } } (see build.mjs). */
 export function buildWetlap(D) {
@@ -73,6 +94,11 @@ export function buildWetlap(D) {
   mat("M-WL-JOINERY", "Joinery (laminate)", "JN", { pattern: null, pen: "gossamer", lineColour: "#aaaaaa", background: "#ffffff" }, "#e9e4dc");
   mat("M-WL-CERAMIC", "Vitreous china", "VC", { pattern: null, pen: "gossamer", lineColour: "#aaaaaa", background: "#ffffff" }, "#f4f4f2");
   mat("M-WL-EXBR", "Existing brick / structure", "EX-BR", { pattern: null, pen: "thin", lineColour: "#000000", background: "#000000" }, "#9c5c46");
+  // the existing brick seen in elevation: stretcher bond, 230 x 76 with 10 joints (Revit's brick surface pattern)
+  L.patterns["P-WL-BRICK"] = { name: "Brick stretcher bond 230x86", kind: "model", lines: [{ angle: 0, origin: [0, 0], delta: [0, 86] }, { angle: 90, origin: [0, 0], delta: [86, 120], dashes: [86, -86] }] };
+  L.materials["M-WL-EXBR"].projection = { pen: "gossamer", pattern: "P-WL-BRICK", lineColour: "#b4b4b4" };
+  mat("M-WL-GROUND", "Ground", "GL", { pattern: null, pen: "thin", lineColour: "#000000", background: "#d0d0d0" }, "#8f8a7f");
+  L.materials["M-WL-GROUND"].projection = { pen: "thin", background: "#cfcfcf" };
   L.types["T-WL-SLAB"] = { family: "F-FLOOR", name: "Concrete slab 200", mark: "SL1", layers: [{ function: "Structure", thickness: 200, material: "M-WL-CONC" }], coreStart: 0, coreEnd: 1 };
   const wtype = (cls, t) => { const id = `T-WL-${cls}-${t}`; if (!L.types[id]) {
       const m = cls === "C" ? "M-WL-CONC" : cls === "EX" ? "M-WL-EXBR" : "M-WL-PART", nm = cls === "C" ? "Concrete / masonry" : cls === "EX" ? "Existing brick" : "Partition";
@@ -126,6 +152,25 @@ export function buildWetlap(D) {
     return Math.min(L0, Math.max(s0, s1)) - Math.max(0, Math.min(s0, s1)) > 0.5 * L0; });
   const r5 = v => Math.round(v / 5) * 5;
   const dec = v => { const o = v.slice(0, 2); for (let i = 2; i < v.length; i++) o.push(o[i - 2] + v[i]); return o.map(x => x / 100); };
+  // a window's sill and head, read off the set's elevation that faces it: its span projected onto that sheet, the
+  // rows where its frame draws a line across most of that span (the lowest above the floor, the highest below
+  // the next floor). Measured at build time; the elevations in the file are the model's own.
+  const measureWin = (c, u, w, z0, z1, bld) => { if (!D.ras) return null;
+    for (const [pg, list] of Object.entries(ELEVS)) { const R = D.ras[pg]; if (!R) continue;
+      for (const E of list) { if ((E.bld === "L") !== (bld === "LOFTS")) continue; const alongY = E.look.endsWith("x"); if (alongY ? Math.abs(u[1]) < 0.9 : Math.abs(u[0]) < 0.9) continue;
+        const ln = elevLine(E), d = ln.d, sOfP = P => (ln.b[0] - P[0]) * d[0] + (ln.b[1] - P[1]) * d[1];
+        const px = P => E.ref[1] + (sOfP(P) - ln.sRef) / 100, py = z => E.z0[1] + (z - E.z0[0]) / 100;
+        let x1 = px([c[0] - u[0] * w * 0.4, c[1] - u[1] * w * 0.4]), x2 = px([c[0] + u[0] * w * 0.4, c[1] + u[1] * w * 0.4]); if (x1 > x2) [x1, x2] = [x2, x1];
+        if (x1 < E.rect[0] || x2 > E.rect[2]) continue;
+        const [rx, ry, rw, rh] = R.rect, k = R.gw / rw, U = x => Math.round((x - rx) * k), V = y => Math.round((ry + rh - y) * k);
+        const u1 = U(x1), u2 = U(x2), vTop = V(py(z1 - 60)), vBot = V(py(z0 + 40)); if (u2 - u1 < 4 || vBot <= vTop) continue;
+        const rows = [];
+        for (let v = vTop; v <= vBot; v++) { if (v < 0 || v >= R.gh) continue; let dk = 0; for (let x = u1; x <= u2; x++) if (R.buf[v * R.gw + x] < 120) dk++; if (dk / (u2 - u1 + 1) > 0.55) rows.push(v); }
+        if (rows.length < 2) continue;
+        const zOf = v => E.z0[0] + ((ry + rh - v / k) - E.z0[1]) * 100, head = zOf(rows[0]), sill = zOf(rows[rows.length - 1]);
+        if (head - sill < 500) continue;
+        return { sill: r5(sill - z0), h: r5(head - sill) }; } }
+    return null; };
   // ---------------------------------------------------------------- doors and windows
   // Read off the plans, built as elements: a door where the set draws a swing (its centre the hinge, its radius
   // the leaf, the side it bulges to the facing), in the gap its wall leaves; a window or a sliding door where a
@@ -135,7 +180,7 @@ export function buildWetlap(D) {
   const dtypes = {}, wtypes = {};
   const dtype = (code, w, o = {}) => { const id = `T-WL-${code}-${w}`; if (!L.types[id]) L.types[id] = Object.assign({ family: "F-SINGLEDOOR", name: `${code} door ${w}x2040`, mark: code, width: w, height: 2040, leafThickness: 40, frame: 35 }, o); return id; };
   const wtypeW = (code, w, h) => { const id = `T-WL-${code}-${w}x${h}`; if (!L.types[id]) L.types[id] = { family: "F-CASEMENT", name: `${code} window ${w}x${h}`, mark: code, width: w, height: h, frame: 50, mullions: Math.max(0, Math.round(w / 1200) - 1) }; return id; };
-  let nD = 0, nWin = 0, nTag = 0;
+  let nD = 0, nWin = 0, nTag = 0, nMeas = 0;
   const tagsOf = (pg, O) => (S.pages[pg].notes || []).filter(n => /^[A-Z]\.[A-Z0-9]+\.\d+\n[A-Z]{2,3}\.?\d*$/.test(n.t))
     .map(n => { const [mark, code] = n.t.split("\n"), c = [(n.bb[0] + n.bb[2]) / 2, (n.bb[1] + n.bb[3]) / 2]; return { mark, code, paper: c, at: [(c[0] - O[0]) * 100, (c[1] - O[1]) * 100] }; })
     .filter((t, i, all) => all.findIndex(u => u.mark === t.mark && Math.hypot(u.at[0] - t.at[0], u.at[1] - t.at[1]) < 300) === i);
@@ -230,7 +275,8 @@ export function buildWetlap(D) {
       const id = `W-${pg}-${++nW}`, w = r5(hi - lo), code = t.code;
       add({ id, type: "Wall", name: "Existing brick over window", args: { centreline: H.line(A, B), mounting: "Centred", wallType: { ref: wtype("EX", th) }, baseLevel: { ref: P.lev }, baseOffset: 0,
         topLevel: P.top ? { ref: P.top } : null, topOffset: 0, height: top.height || 3000, flipped: false }, params: { Building: bld } });
-      const wid = `WN-${pg}-${++nWin}`; H.window(wid, id, w / 2, wtypeW(code, w, code === "WEX" ? 2100 : 2400), code === "WEX" ? 700 : 300, { mark: t.mark });
+      const m = measureWin([(A[0] + B[0]) / 2, (A[1] + B[1]) / 2], vert ? [0, 1] : [1, 0], w, Z[P.lev], P.top ? Z[P.top] : Z[P.lev] + 3000, bld);
+      const wid = `WN-${pg}-${++nWin}`; H.window(wid, id, w / 2, wtypeW(code, w, m ? m.h : code === "WEX" ? 2100 : 2400), m ? m.sill : code === "WEX" ? 700 : 300, { mark: t.mark });
       used.add(t); placedTags.push({ pg, el: wid, t }); }
     // windows and sliding doors: the tagged gaps, and every gap in the existing brick
     for (const G of gaps) { if (G.done) continue; const g = G.g, mid = at(g, (G.sa + G.sb) / 2), w = r5(G.sb - G.sa);
@@ -238,7 +284,8 @@ export function buildWetlap(D) {
       if (!t && G.cls !== "EX") continue; G.done = true;
       const host = bridge(g, G.sa, G.sb, t ? `Wall over ${t.code}` : "Existing brick over window"), code = t ? t.code : "WEX";
       if (/^DT/.test(code)) { const id = `D-${pg}-${++nD}`; H.door(id, host, w / 2, dtype(code, w, { glazed: true }), { mark: t.mark, args: { operation: "Sliding" } }); used.add(t); placedTags.push({ pg, el: id, t }); }
-      else { const id = `WN-${pg}-${++nWin}`, h = code === "WEX" ? 2100 : 2400, sill = code === "WEX" ? 700 : 300;
+      else { const id = `WN-${pg}-${++nWin}`, m = measureWin(mid, g.u, w, Z[P.lev], P.top ? Z[P.top] : Z[P.lev] + 3000, bld);
+        const h = m ? m.h : code === "WEX" ? 2100 : 2400, sill = m ? m.sill : code === "WEX" ? 700 : 300;
         H.window(id, host, w / 2, wtypeW(code, w, h), sill, { mark: t ? t.mark : `EX.${nWin}` }); if (t) { used.add(t); placedTags.push({ pg, el: id, t }); } }
     }
   };
@@ -292,6 +339,21 @@ export function buildWetlap(D) {
     if (Number.isFinite(bb[0])) add({ id: `FL-${P.lev}-${pg}`, type: "Floor", name: `Slab ${P.lev} (${bld.toLowerCase()})`, args: { boundary: H.R(r5(bb[0]), r5(bb[1]), r5(bb[2]), r5(bb[3])), floorType: { ref: "T-WL-SLAB" }, level: { ref: P.lev }, heightOffset: 0 }, params: { Building: bld } });
   }
 
+  // ---------------------------------------------------------------- the existing north façade's two gables
+  // The warehouse's brick end wall rises in two gables over Level 3 (the new Level 4 set back behind them):
+  // the Level 3 walls on that face take the gables as their top profile (Revit's Edit Profile). Heights above
+  // Level 3, read off the north elevation: eaves at the ends, two ridges, the valley between.
+  const GABLE = [[24045, 530], [18035, 3650], [11685, 185], [5445, 3650], [-445, 530]];
+  const gableAt = y => { for (let i = 1; i < GABLE.length; i++) { const [y0, z0] = GABLE[i - 1], [y1, z1] = GABLE[i]; if (y <= y0 && y >= y1) return z0 + (z1 - z0) * (y0 - y) / (y0 - y1); } return 530; };
+  for (const f of doc.elements()) { if (doc.typeOf(f) !== "Wall" || (doc.argValue(f, "baseLevel") || {}).ref !== "L-A3") continue;
+    const c = doc.argValue(f, "centreline"); if (Math.abs(c.start[0] - c.end[0]) > 50 || Math.abs(c.start[0]) > 900) continue;
+    const L0 = Math.abs(c.end[1] - c.start[1]), sgn = Math.sign(c.end[1] - c.start[1]), pts = [[0, gableAt(c.start[1])]];
+    for (const [y] of GABLE) { const u = (y - c.start[1]) * sgn; if (u > 0 && u < L0) pts.push([u, gableAt(y)]); }
+    pts.push([L0, gableAt(c.end[1])]); pts.sort((a, b) => a[0] - b[0]);
+    set(doc.idOf(f), "topProfile", pts.map(([u, z]) => [Math.round(u), Math.round(z)])); }
+  // the ground: the site's earth under its ground level, as the elevations cut and show it
+  if (D.site) add({ id: "GM-GROUND", type: "Generic", name: "Ground", args: { boundary: D.site, level: { ref: "L-AG" }, baseOffset: -1600, height: 900, ifcClass: "IfcGeographicElement", material: "M-WL-GROUND", category: "Topography" } });
+
   // ---------------------------------------------------------------- the site: its boundary as the grid setout draws it
   if (D.site && D.site.length > 2) { const sk = emptySketch(); D.site.forEach((p, i) => sk.elements.push({ id: "e" + (i + 1), type: "line", a: p, b: D.site[(i + 1) % D.site.length] }));
     add({ id: "SITE-1", type: "SiteBoundary", name: "Site boundary", args: { sketch: weld(sk), edges: {}, setback: 0, level: { ref: "L-AG" }, showPlanes: false, planeHeight: 60000, label: false } }); }
@@ -309,8 +371,27 @@ export function buildWetlap(D) {
 
   const T = globalThis.__WL_TRACE ? (m => console.log(`${((Date.now() - globalThis.__WL_T0) / 1000).toFixed(1)}s ${m}`)) : () => {};
   globalThis.__WL_T0 = Date.now(); T(`model: ${nW} walls, ${nC} columns, ${nD} doors, ${nWin} windows`);
+  // ---------------------------------------------------------------- the elevations: views of the model
+  // Each view's direction from its grids' order on the sheet (letters or numbers, rising or falling left to right),
+  // placed so a grid and an RL land where the set draws them; its crop the drawing's area; its levels the
+  // building's own, their heads where the set has them; its grid heads at the set's height.
+  L.viewStyles["VS-WL-ELEV"] = Object.assign(JSON.parse(JSON.stringify(L.viewStyles["VS-FH-ELEV"])), { name: "Techne - elevations" });
+  L.viewStyles["VS-WL-ELEV"].byCategory = Object.assign({}, L.viewStyles["VS-WL-ELEV"].byCategory, { IfcGrid: { colour: "#8c8c8c" }, Site: { visible: false } });
+  const elevation = (pg, E) => {
+    const { a, b, sRef } = elevLine(E);
+    const sOf = px => sRef + (px - E.ref[1]) * 100, zOf = py => E.z0[0] + (py - E.z0[1]) * 100;
+    const crop = [Math.round(sOf(E.rect[0])), Math.round(zOf(E.rect[1])), Math.round(sOf(E.rect[2])), Math.round(zOf(E.rect[3]))];
+    add({ id: E.id, type: "ElevationView", name: E.name, args: { line: H.line(a, b), depth: 160000, scale: 100, baseLevel: { ref: E.bld === "L" ? "L-LG" : "L-AG" }, top: 30000, style: { ref: "VS-WL-ELEV" },
+      detailLevel: "Medium", clip: { rect: crop, visible: false, active: true, annotation: [0, 0, 0, 0] }, groundLine: false,
+      levelExtent: [Math.min(sOf(E.head), sOf(E.head > (E.rect[0] + E.rect[2]) / 2 ? E.rect[0] : E.rect[2])), Math.max(sOf(E.head), sOf(E.head > (E.rect[0] + E.rect[2]) / 2 ? E.rect[0] : E.rect[2]))],
+      overrides: Object.assign({ __levelHead: E.head > (E.rect[0] + E.rect[2]) / 2 ? "Right" : "Left", __gridTop: zOf(E.gridHead) - 4.5 * 100, __gridBottom: crop[1] },
+        // the other building's levels are not this view's
+        Object.fromEntries(LEVELS.filter(l => l[0] !== "L-B" && (E.bld === "L" ? !/LOFTS/.test(l[2]) : /LOFTS/.test(l[2]))).map(l => [l[0], { visible: false }]))) } });
+    return [E.id, [(E.rect[0] + E.rect[2]) / 2, (E.rect[1] + E.rect[3]) / 2], { noTitle: true }]; };
+
   for (let pg = 1; pg <= 38; pg++) {
     const P = PLANS[pg], sh = S0(pg); T(`page ${pg}`);
+    if (ELEVS[pg]) { sheet(pg, ELEVS[pg].map(E => elevation(pg, E))); annotate(pg); continue; }
     if (P) {
       const sc = P.scale || 100, O = P.o, M = q => [Math.round((q[0] - O[0]) * sc), Math.round((q[1] - O[1]) * sc)];
       const c0 = M([DRAWING[0], DRAWING[1]]), c1 = M([DRAWING[2], DRAWING[3]]), crop = [c0[0], c0[1], c1[0], c1[1]], vid = `V-${sh.number}`;

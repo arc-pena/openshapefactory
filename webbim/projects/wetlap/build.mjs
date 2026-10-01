@@ -14,7 +14,10 @@ const lift = JSON.parse(fs.readFileSync(data("wl_lift.json"), "utf8"));
 const fix = JSON.parse(fs.readFileSync(data("wl_fix.json"), "utf8"));
 const fin = JSON.parse(fs.readFileSync(data("wl_fin.json"), "utf8"));
 const site = JSON.parse(fs.readFileSync(data("wl_site.json"), "utf8"));
-const doc = buildWetlap({ set, lift, fix, fin, site });
+// the elevations' raster, for measuring window heights at build time (it is not written into the project)
+const rmeta = JSON.parse(fs.readFileSync(data("raster/r.json"), "utf8")), ras = {};
+for (const pg of ["36", "37", "38"]) { const f = data(`raster/r${pg}.gray`); if (fs.existsSync(f)) ras[pg] = { rect: rmeta[pg].rect, gw: rmeta[pg].gw, gh: rmeta[pg].gh, buf: fs.readFileSync(f) }; }
+const doc = buildWetlap({ set, lift, fix, fin, site, ras });
 const errs = doc.elements().filter(f => doc.error(f));
 console.log(`built in ${Date.now() - t0} ms: ${doc.elements().length} elements, ${errs.length} with errors`);
 for (const f of errs.slice(0, 12)) console.log("  ", doc.idOf(f), doc.error(f));
