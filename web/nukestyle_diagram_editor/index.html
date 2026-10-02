@@ -3701,6 +3701,18 @@ canvasEl.addEventListener('pointerdown', e => {
   // Right button: remember what was pressed and leave the event alone; capturing it would
   // retarget the context menu event to the canvas.
   if (e.button === 2) { ui._ctxNode = nodeEl ? nodeEl.dataset.id : null; return; }
+  // DOUBLE PRESS, told apart here rather than by the browser's dblclick: the first press selects the
+  // node and the graph is redrawn, so the element under the pointer is replaced between the two
+  // presses and the browser never fires dblclick (nor click) at all.
+  if (e.button === 0 && !pin && !spaceDown && !e.altKey) {
+    const now = performance.now(), id = nodeEl ? nodeEl.dataset.id : bd ? null : '', last = ui._lastPress;
+    ui._lastPress = { id, t: now, x: e.clientX, y: e.clientY };
+    if (last && id !== null && last.id === id && now - last.t < 450 && Math.hypot(e.clientX - last.x, e.clientY - last.y) < 8) {
+      ui._lastPress = null; e.preventDefault();
+      if (id) openOnDouble(g.nodes[id]); else showTabMenu(e.clientX, e.clientY);
+      return;
+    }
+  }
   canvasEl.setPointerCapture(e.pointerId);
   if (e.button === 1 || (e.button === 0 && (spaceDown || e.altKey)) || (e.pointerType === 'touch' && !nodeEl && !pin && !bd)) { drag = { type: 'pan', x: e.clientX, y: e.clientY, px: ui.pan.x, py: ui.pan.y }; canvasEl.classList.add('panning'); return; }
   if (e.button === 2) return;
@@ -3779,11 +3791,11 @@ canvasEl.addEventListener('pointerup', e => {
     else drawWires();
   }
 });
-canvasEl.addEventListener('dblclick', e => {
-  const nodeEl = e.target.closest('.node'); if (!nodeEl) { showTabMenu(e.clientX, e.clientY); return; }
-  const n = currentGraph().nodes[nodeEl.dataset.id];
+// What a double press on a node opens. Double presses are detected in the pointerdown handler.
+function openOnDouble(n) {
+  if (!n) return;
   if (n.type === 'group') enterGroup(n); else if (n.type === 'viewport') open3D(n); else if (n.type === 'modelSource') ACTIONS.openModeller(n, currentGraph());
-});
+}
 canvasEl.addEventListener('contextmenu', e => {
   e.preventDefault();
   const nodeEl = e.target.closest('.node'), id = nodeEl ? nodeEl.dataset.id : ui._ctxNode; ui._ctxNode = null;
