@@ -12,7 +12,7 @@
   --ok: #2b9a62; --warn: #c98516; --danger: #cf3f3f; --stale: #b7bdc7;
   --check-a: #ffffff; --check-b: #e3e6ea; --shadow: 0 1px 2px rgba(15,25,45,.06), 0 8px 28px rgba(15,25,45,.10);
   --k-image: #d99a2b; --k-mask: #8f99a6; --k-camera: #8a64dc; --k-string: #22a093; --k-number: #4383e0;
-  --k-colour: #d9568f; --k-points: #dd6f2e; --k-field: #77ab2c; --k-perm: #cf4a4a; --k-any: #8b93a3;
+  --k-colour: #d9568f; --k-points: #dd6f2e; --k-field: #77ab2c; --k-perm: #cf4a4a; --k-any: #8b93a3; --k-model: #1f3fa8; --k-geoset: #2f9e8f;
   --font-ui: "Figtree", "Segoe UI", system-ui, -apple-system, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   --r: 12px; --pane-w: 300px; --viewer-w: 440px; --top-h: 52px;
@@ -44,6 +44,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 #canvas.panning { cursor: grabbing; }
 #world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
 #wires { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+.ctxmenu { position: absolute; z-index: 45; min-width: 220px; padding: 5px; }
 #wires path.w { fill: none; stroke-width: 2; pointer-events: stroke; cursor: pointer; }
 #wires path.w.sel { stroke-width: 3.5; }
 #wires path.hit { fill: none; stroke: transparent; stroke-width: 12; pointer-events: stroke; cursor: pointer; }
@@ -68,6 +69,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 @keyframes pulse { 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { .dot.rendering { animation: none; } }
 .nsub { padding: 3px 10px 0; color: var(--muted); font-size: 11px; font-family: var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.node.wide { width: 272px; }
+.node.wide .thumb { width: 252px; height: 160px; }
 .thumb { display: block; margin: 7px auto 2px; width: 164px; height: 123px; border-radius: 6px; border: 1px solid var(--line);
   background-color: var(--check-a); background-image: conic-gradient(var(--check-b) 25%, transparent 0 50%, var(--check-b) 0 75%, transparent 0); background-size: 12px 12px; }
 .nmsg { margin: 4px 9px 0; padding: 4px 6px; border-radius: 6px; font-size: 11px; line-height: 1.35; }
@@ -551,6 +554,15 @@ IMG.resample = (im, w, h) => {
   return out;
 };
 IMG.fit = (im, w, h) => im ? IMG.resample(im, w, h) : null;
+// Same shape: resample. Different shape (a 16:9 camera frame over a 4:3 sheet): place it centred at
+// its own pixel size, so a camera-frame render keeps its proportions and stays registered.
+IMG.conform = (im, w, h) => {
+  if (!im || (im.w === w && im.h === h)) return im;
+  if (Math.abs(im.w / im.h - w / h) < 0.01 * (w / h)) return IMG.resample(im, w, h);
+  const ch = im.kind === 'mask' ? 1 : 4, out = im.kind === 'mask' ? IMG.mask(w, h) : IMG.image(w, h), ox = Math.round((w - im.w) / 2), oy = Math.round((h - im.h) / 2);
+  for (let y = 0; y < im.h; y++) { const ty = y + oy; if (ty < 0 || ty >= h) continue; for (let x = 0; x < im.w; x++) { const tx = x + ox; if (tx < 0 || tx >= w) continue; const s = (y * im.w + x) * ch, d = (ty * w + tx) * ch; for (let k = 0; k < ch; k++) out.d[d + k] = im.d[s + k]; } }
+  return out;
+};
 
 // ---------- blend modes ----------
 const BLEND_MODES = ['normal', 'multiply', 'screen', 'overlay', 'soft-light', 'hard-light', 'add', 'subtract', 'difference', 'darken', 'lighten', 'colour', 'luminosity',
@@ -590,7 +602,7 @@ IMG.merge = (A, B, mode = 'normal', opacity = 1, M = null, w, h) => {
   if (!B) { B = IMG.image(A.w, A.h); }
   w = B.w; h = B.h;
   if (!A) return IMG.cloneImg(B);
-  A = IMG.resample(A, w, h); if (M) M = IMG.resample(M, w, h);
+  A = IMG.conform(A, w, h); if (M) M = IMG.conform(M, w, h);
   const out = IMG.image(w, h), a = A.d, b = B.d, o = out.d, m = M ? M.d : null, n = w * h;
   const nuke = NUKE_OPS.has(mode), cs = [0, 0, 0], cb = [0, 0, 0];
   for (let p = 0, i = 0; p < n; p++, i += 4) {
@@ -938,6 +950,12 @@ function getModel(key) {
   key = key || 'sample';
   const ref = doc.models[key];
   if (!ref) return null;
+  if (ref.kind === 'ocaf') {
+    const m = ocafModel(key);
+    if (!m) { ensureModel(key).catch(() => { }); return null; }
+    if (!m._index) { m._key = key; m._index = indexModel(m); }
+    return m;
+  }
   const sig = ref.kind === 'builtin' ? 'b:' + stableJSON(ref.params || {}) + stableJSON(ref.extraCameras || []) : 'j:' + (ref.hash || '');
   const c = modelCache.get(key);
   if (c && c.sig === sig) return c.model;
@@ -950,13 +968,14 @@ function getModel(key) {
   return model;
 }
 function indexModel(m) {
-  const geosets = new Set();
+  const geosets = new Set(m.sets || []);
   for (const e of [...m.elements, ...(m.points || [])]) { const parts = e.geoset.split('/'); for (let i = 1; i <= parts.length; i++) geosets.add(parts.slice(0, i).join('/')); }
   return { geosets: [...geosets].sort(), byId: new Map(m.elements.map(e => [e.id, e])) };
 }
 // Geoset pattern matching: exact path, any descendant, and "*" wildcards per segment.
 function geosetMatch(pattern, path) {
   pattern = pattern.trim(); if (!pattern) return false;
+  if (pattern[0] === '=') return path === pattern.slice(1);
   if (pattern === '*' || pattern === path) return true;
   if (!pattern.includes('*')) return path.startsWith(pattern + '/');
   const re = new RegExp('^' + pattern.split('/').map(s => s === '*' ? '[^/]+' : s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('/') + '(/.*)?$');
@@ -1005,6 +1024,149 @@ function sunDirection(a) {
 function dayOfYear(s) { const d = new Date(s + 'T12:00:00Z'); if (isNaN(d)) return 172; return Math.round((d - Date.UTC(d.getUTCFullYear(), 0, 0)) / 864e5); }
 function parseTime(s) { const m = String(s).match(/(\d+)(?::(\d+))?/); return m ? +m[1] + (+m[2] || 0) / 60 : 15; }
 // =====================================================================
+// ocaf-parametric-model support. The Feature Modeller's own OpenCascade
+// kernel (kernel/*.gz, copied byte for byte from the modeller) builds the
+// document and tessellates it; the result becomes the same model shape the
+// renderer draws: elements in geosets, named points and cameras.
+//   GeometricalSet / Body folders  -> geoset paths ("Columns/Column one")
+//   Camera features                -> cameras (eye, target, lens, roll, frame, safe)
+//   Point features                 -> named points (for Point Project)
+// Units: the modeller works in mm; everything here is converted to metres.
+// =====================================================================
+const KERNEL = { promise: null, k: null, state: 'idle', note: '' };
+async function kernelFetch(url, type) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error('could not load ' + url + ' (' + r.status + ')');
+  const bytes = new Uint8Array(await r.arrayBuffer());
+  const headers = type ? { headers: { 'Content-Type': type } } : undefined;
+  // Some hosts unpack a .gz on the way; look at the bytes rather than the name.
+  if (bytes[0] !== 0x1f || bytes[1] !== 0x8b) return new Response(bytes, headers);
+  if (typeof DecompressionStream !== 'function') throw new Error('this browser cannot unpack the kernel (no DecompressionStream)');
+  return new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip')), headers);
+}
+function startKernel() {
+  if (KERNEL.promise) return KERNEL.promise;
+  KERNEL.state = 'starting'; setKernelChip('Starting the modelling kernel…');
+  KERNEL.promise = (async () => {
+    const [wasm, source] = await Promise.all([
+      kernelFetch('kernel/replicad_single.wasm.gz', 'application/wasm').then(r => r.arrayBuffer()),
+      kernelFetch('kernel/kernel-worker.js.gz', 'text/javascript').then(r => r.text()),
+    ]);
+    // A module worker: the bundle keeps emscripten's import.meta.
+    const worker = new Worker(URL.createObjectURL(new Blob([source], { type: 'text/javascript' })), { type: 'module' });
+    const waiting = new Map(); let next = 1, broken = null;
+    worker.onmessage = ev => {
+      const { id, ok, value, error, progress, build } = ev.data || {};
+      if (progress !== undefined) { setKernelChip('Kernel: ' + progress); return; }
+      if (build !== undefined) { if (build.total) setKernelChip(`Building model ${build.done}/${build.total}`); return; }
+      const w = waiting.get(id); if (!w) return; waiting.delete(id);
+      ok ? w.resolve(value) : w.reject(new Error(error || 'the kernel refused'));
+    };
+    worker.onerror = ev => { broken = new Error((ev && ev.message) || 'the kernel stopped'); for (const [, w] of waiting) w.reject(broken); waiting.clear(); };
+    const call = (name, args, transfer) => new Promise((resolve, reject) => { if (broken) return reject(broken); const id = next++; waiting.set(id, { resolve, reject }); worker.postMessage({ id, call: name, args }, transfer || []); });
+    const started = await call('start', [{ wasmBinary: wasm }], [wasm]);
+    const k = {}; for (const name of started.calls) k[name] = (...a) => call(name, a);
+    KERNEL.k = k; KERNEL.state = 'ready'; setKernelChip('');
+    return k;
+  })().catch(e => { KERNEL.state = 'failed'; KERNEL.note = e.message; KERNEL.promise = null; setKernelChip(''); throw e; });
+  return KERNEL.promise;
+}
+function setKernelChip(t) { const el = document.getElementById('writeChip'); if (el && t) el.textContent = t; else if (el && !t && /^(Kernel|Starting|Building)/.test(el.textContent)) el.textContent = ''; }
+
+// One document lives in the kernel at a time, so builds queue.
+let kernelQueue = Promise.resolve();
+const ocafCache = new Map(); // key -> { hash, promise, model, error, ms }
+function ocafReady(key) { const ref = doc.models[key], c = ocafCache.get(key); return !!(ref && c && c.hash === ref.hash && c.model); }
+function ocafModel(key) { return ocafReady(key) ? ocafCache.get(key).model : null; }
+function ensureModel(key) {
+  const ref = doc.models[key];
+  if (!ref) return Promise.resolve(null);
+  if (ref.kind !== 'ocaf') return Promise.resolve(getModel(key));
+  let c = ocafCache.get(key);
+  if (c && c.hash === ref.hash) return c.promise;
+  c = { hash: ref.hash };
+  const json = ref.json, name = ref.name || key;
+  c.promise = kernelQueue = kernelQueue.catch(() => { }).then(async () => {
+    const t0 = performance.now(), k = await startKernel();
+    setKernelChip(`Building ${name}…`);
+    const r = await k.loadModel(json);
+    const m = await k.mesh();
+    const model = convertOcaf(json, m, r && r.report, key);
+    model._key = key; model._index = indexModel(model);
+    c.ms = performance.now() - t0; c.model = model; c.report = r && r.report;
+    setKernelChip(''); modelCache.delete(key);
+    // Dropdowns and every node downstream pick the new geometry up.
+    ui.statusDirty = true; render(); requestEval(); if (doc.settings.autosave !== false) scheduleAutoSave();
+    return model;
+  }).catch(e => { c.error = e.message; setKernelChip(''); render(); throw e; });
+  ocafCache.set(key, c);
+  return c.promise;
+}
+
+const OCAF_FRAMES = { '16:9': 16 / 9, '3:2': 3 / 2, '4:3': 4 / 3, '1:1': 1, '2:1': 2, '9:16': 9 / 16, '9:16 upright': 9 / 16, 'a4': 297 / 210, 'A4 landscape': 297 / 210, 'a3': 420 / 297, 'A3 landscape': 420 / 297 };
+const OCAF_FRAME_LIST = ['16:9', '3:2', '4:3', '1:1', '2:1', '9:16', 'a4', 'a3'];
+const OCAF_SAFE = ['Off', 'Action and title', 'Thirds', 'Both'];
+const fovFromLens = mm => Math.atan(12 / Math.max(1e-4, mm)) * 360 / Math.PI; // 24 mm tall full frame, as the modeller
+const NOT_GEOMETRY = new Set(['Point', 'Vector', 'Plane', 'Camera', 'AxisSystem', 'Sketch', 'Number', 'Expression', 'GeometricalSet', 'Body']);
+function frameRatio(v) {
+  if (typeof v === 'number') return OCAF_FRAMES[OCAF_FRAME_LIST[clampI(Math.round(v), 0, OCAF_FRAME_LIST.length - 1)]];
+  return OCAF_FRAMES[v] || OCAF_FRAMES[String(v || '').toLowerCase()] || 16 / 9;
+}
+function safeMode(v) { const s = typeof v === 'number' ? OCAF_SAFE[clampI(v, 0, 3)] : String(v || 'Both'); return { action: /action|both|safe/i.test(s), thirds: /thirds|both/i.test(s) }; }
+
+function convertOcaf(json, mesh, report, key) {
+  const k = String(json.units || 'mm') === 'm' ? 1 : String(json.units) === 'cm' ? 0.01 : 0.001;
+  const feats = json.features || [], byId = new Map(feats.map(f => [f.id, f]));
+  const parents = new Set(feats.map(f => f.parent).filter(Boolean));
+  const clean = s => String(s || '').replace(/\//g, '-').trim() || '?';
+  const pathOf = id => { const out = []; let f = byId.get(id), guard = 0; while (f && guard++ < 64) { out.unshift(clean(f.name || f.id)); f = f.parent ? byId.get(f.parent) : null; } return out.join('/'); };
+  const hidden = new Set(json.hidden || []);
+  const isHidden = id => { let f = byId.get(id), guard = 0; while (f && guard++ < 64) { if (hidden.has(f.id)) return true; f = f.parent ? byId.get(f.parent) : null; } return false; };
+  const meshBy = new Map((mesh && mesh.features || []).map(m => [m.id, m]));
+  const elements = [], points = [], cameras = [], warn = [];
+  for (const f of feats) {
+    const m = meshBy.get(f.id);
+    const geoset = f.parent ? pathOf(f.parent) : 'root';
+    if (f.type === 'Point' && m && m.point) { points.push({ id: f.id, geoset, at: m.point.map(v => v * k), dir: null, attrs: { name: f.name || f.id } }); continue; }
+    if (f.type === 'Camera') {
+      const a = f.args || {};
+      const at = a.at && a.at.ref && meshBy.get(a.at.ref) && meshBy.get(a.at.ref).point, look = a.look && a.look.ref && meshBy.get(a.look.ref) && meshBy.get(a.look.ref).point;
+      const num = (v, d) => typeof v === 'object' && v ? +(v.value ?? d) : (v == null ? d : +v);
+      const eye = at || [num(a.x, 6000), num(a.y, -9000), num(a.z, 1700)], tgt = look || [num(a.tx, 0), num(a.ty, 0), num(a.tz, 1700)];
+      const lens = num(a.lens, 35);
+      cameras.push({ name: f.name || f.id, id: f.id, type: 'persp', eye: eye.map(v => v * k), target: tgt.map(v => v * k), lens, fov: fovFromLens(lens), roll: num(a.roll, 0), frame: frameRatio(a.frame), frameLabel: String(a.frame ?? '16:9'), safe: safeMode(a.safe) });
+      continue;
+    }
+    if (parents.has(f.id) || NOT_GEOMETRY.has(f.type)) continue;
+    if (isHidden(f.id) || !m || m.visible === false) continue;
+    if (!m.triangles) {
+      // Curves and wires: no faces, but real edges - drawn by Hidden line renders.
+      if (m.edges && m.edges.length) elements.push({ id: f.id, geoset, shape: 'mesh', mesh: { pos: new Float32Array(0), nrm: null, idx: new Uint32Array(0) }, edges: Float32Array.from(m.edges, v => v * k), attrs: { name: f.name || f.id, type: f.type, curve: true }, _h: f.id + ':' + (m.revision ?? '') + ':c' });
+      continue;
+    }
+    if (m.meshError) warn.push(`${f.name || f.id}: ${m.meshError}`);
+    const pos = new Float32Array(m.positions.length); for (let i = 0; i < pos.length; i++) pos[i] = m.positions[i] * k;
+    const edges = m.edges ? Float32Array.from(m.edges, v => v * k) : null;
+    const ap = f.appearance || {};
+    elements.push({ id: f.id, geoset, shape: 'mesh', mesh: { pos, nrm: m.normals, idx: m.index }, edges,
+      attrs: { name: f.name || f.id, type: f.type, colour: ap.color ? colourHex([...ap.color, 1]) : null, opacity: ap.opacity == null ? 1 : ap.opacity },
+      _h: f.id + ':' + (m.revision ?? '') + ':' + m.triangles });
+  }
+  if (!cameras.length) {
+    // A model with no cameras still renders: a three-quarter view of its bounds.
+    let mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9];
+    for (const e of elements) for (let i = 0; i < e.mesh.pos.length; i += 3) for (let j = 0; j < 3; j++) { mn[j] = Math.min(mn[j], e.mesh.pos[i + j]); mx[j] = Math.max(mx[j], e.mesh.pos[i + j]); }
+    if (elements.length) { const c = scale3(add3(mn, mx), 0.5), r = Math.max(0.1, len3(sub3(mx, mn)) / 2); cameras.push({ name: 'Default view', type: 'persp', target: c, eye: add3(c, [r * 1.8, -r * 2.4, r * 1.5]), lens: 35, fov: fovFromLens(35), roll: 0, frame: 16 / 9, frameLabel: '16:9', safe: { action: true, thirds: false }, generated: true }); }
+  }
+  const sets = feats.filter(f => parents.has(f.id) || f.type === 'GeometricalSet' || f.type === 'Body').map(f => pathOf(f.id));
+  return { format: 'ocaf-parametric-model', name: json.name || key, units: 'm', options: [], elements, points, cameras, warn, sets,
+    stats: { features: feats.length, built: report ? (report.executed || []).length : null, failed: report ? (report.failed || []) : [], triangles: elements.reduce((s, e) => s + e.mesh.idx.length / 3, 0) } };
+}
+// Models bundled from the Feature Modeller's own samples, so the graph has an ocaf model on first open.
+// The Cap sample has two Camera features added (Aerial, Street) so its camera list is not empty.
+const OCAF_SAMPLES = {"samplecap":{"format":"ocaf-parametric-model","version":1,"name":"Cap","units":"mm","features":[{"id":"ORIGIN","type":"GeometricalSet","name":"Origin","args":{"inputs":"","shell":"Open"}},{"id":"PT1","type":"Point","name":"Origin","args":{"kind":"Coordinates","x":0,"y":0,"z":0,"at":0.5,"end":"Furthest along","way":"Nearest point"},"parent":"ORIGIN"},{"id":"VX","type":"Vector","name":"X Direction","args":{"kind":"Components","dx":1,"dy":0,"dz":0},"parent":"ORIGIN"},{"id":"VY","type":"Vector","name":"Y Direction","args":{"kind":"Components","dx":0,"dy":1,"dz":0},"parent":"ORIGIN"},{"id":"VZ","type":"Vector","name":"Z Direction","args":{"kind":"Components","dx":0,"dy":0,"dz":1},"parent":"ORIGIN"},{"id":"AX1","type":"AxisSystem","name":"Origin Axis System","args":{"kind":"Origin and directions","origin":{"ref":"PT1"},"xdir":{"ref":"VX"},"ydir":{"ref":"VY"},"size":200},"parent":"ORIGIN"},{"id":"PL1","type":"Plane","name":"XY Plane","args":{"kind":"Origin and normal","origin":{"ref":"PT1"},"normal":{"ref":"VZ"},"at":0.5,"offset":100,"angle":45,"size":200},"parent":"ORIGIN"},{"id":"PL2","type":"Plane","name":"YZ Plane","args":{"kind":"Origin and normal","origin":{"ref":"PT1"},"normal":{"ref":"VX"},"at":0.5,"offset":100,"angle":45,"size":200},"parent":"ORIGIN"},{"id":"PL3","type":"Plane","name":"ZX Plane","args":{"kind":"Origin and normal","origin":{"ref":"PT1"},"normal":{"ref":"VY"},"at":0.5,"offset":100,"angle":45,"size":200},"parent":"GE3"},{"id":"PARAMS","type":"GeometricalSet","name":"Parameters","args":{"inputs":"","shell":"Open"}},{"id":"RELS","type":"GeometricalSet","name":"Relations","args":{"inputs":"","shell":"Open"}},{"id":"PART","type":"Body","name":"Part","args":{"inputs":"","shell":"Open"}},{"id":"PO1","type":"Point","name":"Point.1","args":{"kind":"Coordinates","x":686.5,"y":19.5,"z":-159.5,"at":0.5,"end":"Furthest along","way":"Nearest point"}},{"id":"CI1","type":"Circle","name":"Circle.1","args":{"plane":{"ref":"PL4"},"radius":{"value":68.928,"from":"NU1"},"onPlane":"Only says which way it faces","kind":"A radius"},"parent":"GE3","shownAnyway":true},{"id":"PL4","type":"Plane","name":"Plane.1","args":{"kind":"Origin and normal","origin":{"ref":"PO1"},"normal":{"ref":"VZ"},"at":0.5,"offset":100,"angle":45,"size":160},"parent":"GE3"},{"id":"GE1","type":"GeometricalSet","name":"Cylinder","args":{"inputs":"","shell":"Open"},"parent":"GE3"},{"id":"NU1","type":"Number","name":"Radius","args":{"value":{"value":600,"from":"MA1"}},"parent":"GE3"},{"id":"NU1_2","type":"Number","name":"Height","args":{"value":{"value":400,"from":"MA1_2"}},"parent":"GE3"},{"id":"EX1","type":"Extrude","name":"Extrude.1","args":{"profile":{"ref":"CI1"},"direction":{"ref":"VZ"},"limit":"Distance","distance":{"value":264.377,"from":"NU1_2"},"cap":"Solid"},"parent":"GE3","shownAnyway":true},{"id":"FI1","type":"Fillet","name":"Fillet.1","args":{"body":{"ref":"EX1"},"radius":35.199,"edges":[{"of":"EX1","kind":"edge","at":2,"near":[156.4086,-1,225,0,-1,0,485.995]}]},"parent":"GE3","appearance":{"finish":"default","color":[0.58,0.63,0.67],"opacity":0.62},"shownAnyway":true},{"id":"GE1_2","type":"GeometricalSet","name":"Small","args":{"inputs":"","shell":"Open"},"parent":"GE2"},{"id":"CI1_2","type":"Circle","name":"Circle.1.2","args":{"plane":{"ref":"PL4_2"},"radius":{"value":68.928,"from":"NU1_3"},"onPlane":"Only says which way it faces","kind":"A radius"},"parent":"GE1_2","shownAnyway":true},{"id":"PL4_2","type":"Plane","name":"Plane.1.2","args":{"kind":"Origin and normal","origin":{"ref":"PO1"},"normal":{"ref":"VZ"},"at":0.5,"offset":100,"angle":45,"size":160},"parent":"GE1_2"},{"id":"NU1_3","type":"Number","name":"Radius.2","args":{"value":{"value":500,"from":"NU2_2"}},"parent":"GE1_2"},{"id":"NU1_2_2","type":"Number","name":"Height.2","args":{"value":300},"parent":"GE1_2"},{"id":"EX1_2","type":"Extrude","name":"Extrude.1.2","args":{"profile":{"ref":"CI1_2"},"direction":{"ref":"VZ"},"limit":"Distance","distance":{"value":264.377,"from":"NU1_2_2"},"cap":"Solid"},"parent":"GE1_2","shownAnyway":true},{"id":"FI1_2","type":"Fillet","name":"Fillet.1.2","args":{"body":{"ref":"EX1_2"},"radius":35.199,"edges":[{"of":"EX1","kind":"edge","at":2,"near":[156.4086,-1,225,0,-1,0,485.995]}]},"parent":"GE1_2","appearance":{"finish":"default","color":[0.58,0.63,0.67],"opacity":0.7},"shownAnyway":true},{"id":"GE2","type":"GeometricalSet","name":"cap","args":{"inputs":"","shell":"Open"}},{"id":"GE3","type":"GeometricalSet","name":"Big","args":{"inputs":"","shell":"Open"},"parent":"GE2"},{"id":"NU2","type":"Number","name":"offset","args":{"value":-119.7},"parent":"GE2"},{"id":"PO2","type":"Point","name":"Point.2","args":{"kind":"Coordinates","x":874.5,"y":-316.538,"z":555,"at":0.5,"end":"Furthest along","way":"Nearest point"}},{"id":"MA1","type":"Math","name":"Math.1","args":{"a":{"value":1,"from":"NU1_3"},"b":{"value":1,"from":"NU2"},"op":"A + B"},"parent":"GE2"},{"id":"MA1_2","type":"Math","name":"Math.1.2","args":{"a":{"value":1,"from":"NU1_2_2"},"b":{"value":1,"from":"NU2"},"op":"A + B"},"parent":"GE2"},{"id":"BO1","type":"Boolean","name":"Boolean.1","args":{"a":{"ref":"FI1_2"},"b":{"ref":"FI1"},"op":"Difference"},"parent":"GE2","appearance":{"finish":"paint","color":[0.16,0.42,0.66]}},{"id":"NU2_2","type":"Number","name":"Radius","args":{"value":{"value":557.8,"from":"NU3"}},"parent":"GE2"},{"id":"GE2_2","type":"GeometricalSet","name":"cap.2","args":{"inputs":"","shell":"Open"}},{"id":"GE1_2_2","type":"GeometricalSet","name":"Small.2","args":{"inputs":"","shell":"Open"},"parent":"GE2_2"},{"id":"CI1_2_2","type":"Circle","name":"Circle.1.2.2","args":{"plane":{"ref":"PL4_2_2"},"radius":{"value":68.928,"from":"NU1_3_2"},"onPlane":"Only says which way it faces","kind":"A radius"},"parent":"GE1_2_2","shownAnyway":true},{"id":"PL4_2_2","type":"Plane","name":"Plane.1.2.2","args":{"kind":"Origin and normal","origin":{"ref":"PO2"},"normal":{"ref":"VZ"},"at":0.5,"offset":100,"angle":45,"size":160},"parent":"GE1_2_2"},{"id":"NU1_3_2","type":"Number","name":"Radius.2.2","args":{"value":{"value":500,"from":"NU2_2_2"}},"parent":"GE1_2_2"},{"id":"NU1_2_2_2","type":"Number","name":"Height.2.2","args":{"value":300},"parent":"GE1_2_2"},{"id":"EX1_2_2","type":"Extrude","name":"Extrude.1.2.2","args":{"profile":{"ref":"CI1_2_2"},"direction":{"ref":"VZ"},"limit":"Distance","distance":{"value":264.377,"from":"NU1_2_2_2"},"cap":"Solid"},"parent":"GE1_2_2","shownAnyway":true},{"id":"FI1_2_2","type":"Fillet","name":"Fillet.1.2.2","args":{"body":{"ref":"EX1_2_2"},"radius":35.199,"edges":[{"of":"EX1","kind":"edge","at":2,"near":[156.4086,-1,225,0,-1,0,485.995]}]},"parent":"GE1_2_2","appearance":{"finish":"default","color":[0.58,0.63,0.67],"opacity":0.7},"shownAnyway":true},{"id":"GE3_2","type":"GeometricalSet","name":"Big.2","args":{"inputs":"","shell":"Open"},"parent":"GE2_2"},{"id":"PL3_2","type":"Plane","name":"ZX Plane.2","args":{"kind":"Origin and normal","origin":{"ref":"PT1"},"normal":{"ref":"VY"},"at":0.5,"offset":100,"angle":45,"size":200},"parent":"GE3_2"},{"id":"CI1_3","type":"Circle","name":"Circle.1.3","args":{"plane":{"ref":"PL4_3"},"radius":{"value":68.928,"from":"NU1_4"},"onPlane":"Only says which way it faces","kind":"A radius"},"parent":"GE3_2","shownAnyway":true},{"id":"PL4_3","type":"Plane","name":"Plane.1.3","args":{"kind":"Origin and normal","origin":{"ref":"PO2"},"normal":{"ref":"VZ"},"at":0.5,"offset":100,"angle":45,"size":160},"parent":"GE3_2"},{"id":"GE1_3","type":"GeometricalSet","name":"Cylinder.2","args":{"inputs":"","shell":"Open"},"parent":"GE3_2"},{"id":"NU1_4","type":"Number","name":"Radius.3","args":{"value":{"value":600,"from":"MA1_3"}},"parent":"GE3_2"},{"id":"NU1_2_3","type":"Number","name":"Height.3","args":{"value":{"value":400,"from":"MA1_2_2"}},"parent":"GE3_2"},{"id":"EX1_3","type":"Extrude","name":"Extrude.1.3","args":{"profile":{"ref":"CI1_3"},"direction":{"ref":"VZ"},"limit":"Distance","distance":{"value":264.377,"from":"NU1_2_3"},"cap":"Solid"},"parent":"GE3_2","shownAnyway":true},{"id":"FI1_3","type":"Fillet","name":"Fillet.1.3","args":{"body":{"ref":"EX1_3"},"radius":35.199,"edges":[{"of":"EX1","kind":"edge","at":2,"near":[156.4086,-1,225,0,-1,0,485.995]}]},"parent":"GE3_2","appearance":{"finish":"default","color":[0.58,0.63,0.67],"opacity":0.62},"shownAnyway":true},{"id":"NU2_3","type":"Number","name":"offset.2","args":{"value":-119.7},"parent":"GE2_2"},{"id":"MA1_3","type":"Math","name":"Math.1.3","args":{"a":{"value":1,"from":"NU1_3_2"},"b":{"value":1,"from":"NU2_3"},"op":"A + B"},"parent":"GE2_2"},{"id":"MA1_2_2","type":"Math","name":"Math.1.2.2","args":{"a":{"value":1,"from":"NU1_2_2_2"},"b":{"value":1,"from":"NU2_3"},"op":"A + B"},"parent":"GE2_2"},{"id":"BO1_2","type":"Boolean","name":"Boolean.1.2","args":{"a":{"ref":"FI1_2_2"},"b":{"ref":"FI1_3"},"op":"Difference"},"parent":"GE2_2","appearance":{"finish":"brass","color":[0.83,0.66,0.31]}},{"id":"NU2_2_2","type":"Number","name":"Radius.4","args":{"value":{"value":557.8,"from":"NU3_2"}},"parent":"GE2_2"},{"id":"NU3","type":"Number","name":"Radius 1","args":{"value":422.1},"parent":"PARAMS"},{"id":"NU3_2","type":"Number","name":"Radius 2","args":{"value":626.2},"parent":"PARAMS"},{"id":"CAM_A","type":"Camera","name":"Aerial","args":{"x":3100,"y":-2900,"z":2300,"tx":875,"ty":-250,"tz":330,"lens":35,"roll":0,"frame":"16:9","safe":"Both","size":600}},{"id":"CAM_B","type":"Camera","name":"Street","args":{"x":-1000,"y":-2700,"z":420,"tx":850,"ty":-250,"tz":380,"lens":28,"roll":0,"frame":"A3 landscape","safe":"Action and title","size":600}}],"layout":{"ORIGIN":[165,743],"PARAMS":[239,509],"RELS":[-121,659],"PART":[-115,793],"PO1":[-27,965],"GE2":[746,562],"PO2":[180,1277],"PT1":[30,187],"VX":[30,305],"VY":[30,423],"VZ":[30,541],"GE1":[30,1235],"GE1_2":[30,1353],"NU1_2_2":[30,1471],"GE3":[30,1815],"NU2":[30,1933],"NU2_2":[30,2309],"AX1":[338,30],"PL1":[338,148],"PL2":[338,266],"PL3":[338,384],"PL4":[338,502],"PL4_2":[338,620],"NU1_3":[338,738],"MA1_2":[338,856],"CI1":[1262,30],"FI1_2":[1262,148],"NU1":[954,30],"EX1_2":[954,148],"NU1_2":[646,30],"CI1_2":[646,148],"MA1":[646,266],"EX1":[1570,30],"FI1":[1878,30],"BO1":[2186,30],"GE2_2":[731,944],"GE1_2_2":[30,2419],"CI1_2_2":[30,2529],"PL4_2_2":[30,2739],"NU1_3_2":[30,2914],"NU1_2_2_2":[30,3048],"EX1_2_2":[30,3182],"FI1_2_2":[30,3395],"GE3_2":[30,3549],"PL3_2":[30,3659],"CI1_3":[30,3834],"PL4_3":[30,4044],"GE1_3":[30,4219],"NU1_4":[30,4329],"NU1_2_3":[30,4463],"EX1_3":[30,4597],"FI1_3":[30,4810],"NU2_3":[30,4964],"MA1_3":[30,5098],"MA1_2_2":[30,5306],"BO1_2":[30,5514],"NU2_2_2":[30,5655],"NU3":[30,1535],"NU3_2":[30,1535]},"hidden":["GE1_2","CI1_2","PL4_2","NU1_3","NU1_2_2","EX1_2","FI1_2","GE3","PL3","CI1","PL4","GE1","NU1","NU1_2","EX1","FI1","GE1_2_2","CI1_2_2","PL4_2_2","NU1_3_2","NU1_2_2_2","EX1_2_2","FI1_2_2","GE3_2","PL3_2","CI1_3","PL4_3","GE1_3","NU1_4","NU1_2_3","EX1_3","FI1_3","PO1","PO2"]},"wideflange":{"format":"ocaf-parametric-model","version":1,"name":"Part1","units":"mm","features":[{"id":"PT1","type":"Point","name":"Origin","args":{"kind":"Coordinates","x":342,"y":0,"z":0,"at":0.5,"end":"Furthest along","way":"Nearest point"}},{"id":"VZ","type":"Vector","name":"Z Direction","args":{"kind":"Components","dx":0,"dy":0,"dz":1}},{"id":"PL1","type":"Plane","name":"XY Plane","args":{"kind":"Origin and normal","origin":{"ref":"PT1"},"normal":{"ref":"VZ"},"at":0.5,"offset":100,"angle":45,"size":200}},{"id":"CA1","type":"Camera","name":"Camera.1","args":{"x":288.26,"y":-155.45,"z":126.88,"tx":345.5,"ty":0.85,"tz":59.72,"lens":18,"roll":0,"frame":"16:9","safe":"Both","size":1949}},{"id":"PO1","type":"Point","name":"Point.1","args":{"kind":"Coordinates","x":-29.064,"y":-338.93,"z":-107.154,"at":0.5,"end":"Furthest along","way":"Nearest point"}},{"id":"PO2","type":"Point","name":"Point.2","args":{"kind":"Coordinates","x":-288,"y":48.5,"z":156.5,"at":0.5,"end":"Furthest along","way":"Nearest point"}},{"id":"CA2","type":"Camera","name":"Camera.2","args":{"x":168.97,"y":90.65,"z":58.23,"tx":323.52,"ty":15.61,"tz":50.42,"lens":22,"roll":0,"frame":"16:9","safe":"Both","size":60}},{"id":"GS1","type":"GeometricalSet","name":"wideFlangeBeams","args":{}},{"id":"PORG","type":"Point","name":"Scene origin","args":{"kind":"Coordinates","x":0,"y":0,"z":0,"at":0.5,"end":"Furthest along","way":"Nearest point"},"parent":"GS1"},{"id":"PLO","type":"Plane","name":"Section plane","args":{"kind":"Origin and normal","origin":{"ref":"PORG"},"normal":{"ref":"VZ"},"at":0.5,"offset":100,"angle":45,"size":160},"parent":"GS1"},{"id":"SK_A","type":"Sketch","name":"4.06mm x 4.16mm","args":{"plane":{"ref":"PLO"},"origin":{"ref":"PORG"},"drawing":{"elements":[{"id":"e1","type":"line","a":[-2.03,2.08],"b":[2.03,2.08]},{"id":"e2","type":"line","a":[2.03,2.08],"b":[2.03,1.735]},{"id":"e3","type":"line","a":[2.03,1.735],"b":[0.14,1.735]},{"id":"e4","type":"line","a":[0.14,1.735],"b":[0.14,-1.735]},{"id":"e5","type":"line","a":[0.14,-1.735],"b":[2.03,-1.735]},{"id":"e6","type":"line","a":[2.03,-1.735],"b":[2.03,-2.08]},{"id":"e7","type":"line","a":[2.03,-2.08],"b":[-2.03,-2.08]},{"id":"e8","type":"line","a":[-2.03,-2.08],"b":[-2.03,-1.735]},{"id":"e9","type":"line","a":[-2.03,-1.735],"b":[-0.14,-1.735]},{"id":"e10","type":"line","a":[-0.14,-1.735],"b":[-0.14,1.735]},{"id":"e11","type":"line","a":[-0.14,1.735],"b":[-2.03,1.735]},{"id":"e12","type":"line","a":[-2.03,1.735],"b":[-2.03,2.08]}],"constraints":[{"type":"coincident","of":["e1.a","e12.b"]},{"type":"coincident","of":["e1.b","e2.a"]},{"type":"coincident","of":["e2.b","e3.a"]},{"type":"coincident","of":["e3.b","e4.a"]},{"type":"coincident","of":["e4.b","e5.a"]},{"type":"coincident","of":["e5.b","e6.a"]},{"type":"coincident","of":["e6.b","e7.a"]},{"type":"coincident","of":["e7.b","e8.a"]},{"type":"coincident","of":["e8.b","e9.a"]},{"type":"coincident","of":["e9.b","e10.a"]},{"type":"coincident","of":["e10.b","e11.a"]},{"type":"coincident","of":["e11.b","e12.a"]}]},"faces":"Make faces","solve":"Solve","passes":24},"parent":"GS1"},{"id":"SK_B","type":"Sketch","name":"5.99mm x 5.99mm","args":{"plane":{"ref":"PLO"},"origin":{"ref":"PORG"},"drawing":{"elements":[{"id":"e1","type":"line","a":[-2.995,2.995],"b":[2.995,2.995]},{"id":"e2","type":"line","a":[2.995,2.995],"b":[2.995,2.735]},{"id":"e3","type":"line","a":[2.995,2.735],"b":[0.115,2.735]},{"id":"e4","type":"line","a":[0.115,2.735],"b":[0.115,-2.735]},{"id":"e5","type":"line","a":[0.115,-2.735],"b":[2.995,-2.735]},{"id":"e6","type":"line","a":[2.995,-2.735],"b":[2.995,-2.995]},{"id":"e7","type":"line","a":[2.995,-2.995],"b":[-2.995,-2.995]},{"id":"e8","type":"line","a":[-2.995,-2.995],"b":[-2.995,-2.735]},{"id":"e9","type":"line","a":[-2.995,-2.735],"b":[-0.115,-2.735]},{"id":"e10","type":"line","a":[-0.115,-2.735],"b":[-0.115,2.735]},{"id":"e11","type":"line","a":[-0.115,2.735],"b":[-2.995,2.735]},{"id":"e12","type":"line","a":[-2.995,2.735],"b":[-2.995,2.995]}],"constraints":[{"type":"coincident","of":["e1.a","e12.b"]},{"type":"coincident","of":["e1.b","e2.a"]},{"type":"coincident","of":["e2.b","e3.a"]},{"type":"coincident","of":["e3.b","e4.a"]},{"type":"coincident","of":["e4.b","e5.a"]},{"type":"coincident","of":["e5.b","e6.a"]},{"type":"coincident","of":["e6.b","e7.a"]},{"type":"coincident","of":["e7.b","e8.a"]},{"type":"coincident","of":["e8.b","e9.a"]},{"type":"coincident","of":["e9.b","e10.a"]},{"type":"coincident","of":["e10.b","e11.a"]},{"type":"coincident","of":["e11.b","e12.a"]}]},"faces":"Make faces","solve":"Solve","passes":24},"parent":"GS1"},{"id":"SK_C","type":"Sketch","name":"6.495mm x 7.93mm","args":{"plane":{"ref":"PLO"},"origin":{"ref":"PORG"},"drawing":{"elements":[{"id":"e1","type":"line","a":[-3.2475,3.965],"b":[3.2475,3.965]},{"id":"e2","type":"line","a":[3.2475,3.965],"b":[3.2475,3.565]},{"id":"e3","type":"line","a":[3.2475,3.565],"b":[0.1225,3.565]},{"id":"e4","type":"line","a":[0.1225,3.565],"b":[0.1225,-3.565]},{"id":"e5","type":"line","a":[0.1225,-3.565],"b":[3.2475,-3.565]},{"id":"e6","type":"line","a":[3.2475,-3.565],"b":[3.2475,-3.965]},{"id":"e7","type":"line","a":[3.2475,-3.965],"b":[-3.2475,-3.965]},{"id":"e8","type":"line","a":[-3.2475,-3.965],"b":[-3.2475,-3.565]},{"id":"e9","type":"line","a":[-3.2475,-3.565],"b":[-0.1225,-3.565]},{"id":"e10","type":"line","a":[-0.1225,-3.565],"b":[-0.1225,3.565]},{"id":"e11","type":"line","a":[-0.1225,3.565],"b":[-3.2475,3.565]},{"id":"e12","type":"line","a":[-3.2475,3.565],"b":[-3.2475,3.965]}],"constraints":[{"type":"coincident","of":["e1.a","e12.b"]},{"type":"coincident","of":["e1.b","e2.a"]},{"type":"coincident","of":["e2.b","e3.a"]},{"type":"coincident","of":["e3.b","e4.a"]},{"type":"coincident","of":["e4.b","e5.a"]},{"type":"coincident","of":["e5.b","e6.a"]},{"type":"coincident","of":["e6.b","e7.a"]},{"type":"coincident","of":["e7.b","e8.a"]},{"type":"coincident","of":["e8.b","e9.a"]},{"type":"coincident","of":["e9.b","e10.a"]},{"type":"coincident","of":["e10.b","e11.a"]},{"type":"coincident","of":["e11.b","e12.a"]}]},"faces":"Make faces","solve":"Solve","passes":24},"parent":"GS1"},{"id":"SK_D","type":"Sketch","name":"5.81mm x 10.47mm","args":{"plane":{"ref":"PLO"},"origin":{"ref":"PORG"},"drawing":{"elements":[{"id":"e1","type":"line","a":[-2.905,5.235],"b":[2.905,5.235]},{"id":"e2","type":"line","a":[2.905,5.235],"b":[2.905,4.725]},{"id":"e3","type":"line","a":[2.905,4.725],"b":[0.15,4.725]},{"id":"e4","type":"line","a":[0.15,4.725],"b":[0.15,-4.725]},{"id":"e5","type":"line","a":[0.15,-4.725],"b":[2.905,-4.725]},{"id":"e6","type":"line","a":[2.905,-4.725],"b":[2.905,-5.235]},{"id":"e7","type":"line","a":[2.905,-5.235],"b":[-2.905,-5.235]},{"id":"e8","type":"line","a":[-2.905,-5.235],"b":[-2.905,-4.725]},{"id":"e9","type":"line","a":[-2.905,-4.725],"b":[-0.15,-4.725]},{"id":"e10","type":"line","a":[-0.15,-4.725],"b":[-0.15,4.725]},{"id":"e11","type":"line","a":[-0.15,4.725],"b":[-2.905,4.725]},{"id":"e12","type":"line","a":[-2.905,4.725],"b":[-2.905,5.235]}],"constraints":[{"type":"coincident","of":["e1.a","e12.b"]},{"type":"coincident","of":["e1.b","e2.a"]},{"type":"coincident","of":["e2.b","e3.a"]},{"type":"coincident","of":["e3.b","e4.a"]},{"type":"coincident","of":["e4.b","e5.a"]},{"type":"coincident","of":["e5.b","e6.a"]},{"type":"coincident","of":["e6.b","e7.a"]},{"type":"coincident","of":["e7.b","e8.a"]},{"type":"coincident","of":["e8.b","e9.a"]},{"type":"coincident","of":["e9.b","e10.a"]},{"type":"coincident","of":["e10.b","e11.a"]},{"type":"coincident","of":["e11.b","e12.a"]}]},"faces":"Make faces","solve":"Solve","passes":24},"parent":"GS1"},{"id":"SK_E","type":"Sketch","name":"8.08mm x 12.19mm","args":{"plane":{"ref":"PLO"},"origin":{"ref":"PORG"},"drawing":{"elements":[{"id":"e1","type":"line","a":[-4.04,6.095],"b":[4.04,6.095]},{"id":"e2","type":"line","a":[4.04,6.095],"b":[4.04,5.455]},{"id":"e3","type":"line","a":[4.04,5.455],"b":[0.185,5.455]},{"id":"e4","type":"line","a":[0.185,5.455],"b":[0.185,-5.455]},{"id":"e5","type":"line","a":[0.185,-5.455],"b":[4.04,-5.455]},{"id":"e6","type":"line","a":[4.04,-5.455],"b":[4.04,-6.095]},{"id":"e7","type":"line","a":[4.04,-6.095],"b":[-4.04,-6.095]},{"id":"e8","type":"line","a":[-4.04,-6.095],"b":[-4.04,-5.455]},{"id":"e9","type":"line","a":[-4.04,-5.455],"b":[-0.185,-5.455]},{"id":"e10","type":"line","a":[-0.185,-5.455],"b":[-0.185,5.455]},{"id":"e11","type":"line","a":[-0.185,5.455],"b":[-4.04,5.455]},{"id":"e12","type":"line","a":[-4.04,5.455],"b":[-4.04,6.095]}],"constraints":[{"type":"coincident","of":["e1.a","e12.b"]},{"type":"coincident","of":["e1.b","e2.a"]},{"type":"coincident","of":["e2.b","e3.a"]},{"type":"coincident","of":["e3.b","e4.a"]},{"type":"coincident","of":["e4.b","e5.a"]},{"type":"coincident","of":["e5.b","e6.a"]},{"type":"coincident","of":["e6.b","e7.a"]},{"type":"coincident","of":["e7.b","e8.a"]},{"type":"coincident","of":["e8.b","e9.a"]},{"type":"coincident","of":["e9.b","e10.a"]},{"type":"coincident","of":["e10.b","e11.a"]},{"type":"coincident","of":["e11.b","e12.a"]}]},"faces":"Make faces","solve":"Solve","passes":24},"parent":"GS1"},{"id":"SK_F","type":"Sketch","name":"14.52mm x 14.02mm","args":{"plane":{"ref":"PLO"},"origin":{"ref":"PORG"},"drawing":{"elements":[{"id":"e1","type":"line","a":[-7.26,7.01],"b":[7.26,7.01]},{"id":"e2","type":"line","a":[7.26,7.01],"b":[7.26,6.3]},{"id":"e3","type":"line","a":[7.26,6.3],"b":[0.22,6.3]},{"id":"e4","type":"line","a":[0.22,6.3],"b":[0.22,-6.3]},{"id":"e5","type":"line","a":[0.22,-6.3],"b":[7.26,-6.3]},{"id":"e6","type":"line","a":[7.26,-6.3],"b":[7.26,-7.01]},{"id":"e7","type":"line","a":[7.26,-7.01],"b":[-7.26,-7.01]},{"id":"e8","type":"line","a":[-7.26,-7.01],"b":[-7.26,-6.3]},{"id":"e9","type":"line","a":[-7.26,-6.3],"b":[-0.22,-6.3]},{"id":"e10","type":"line","a":[-0.22,-6.3],"b":[-0.22,6.3]},{"id":"e11","type":"line","a":[-0.22,6.3],"b":[-7.26,6.3]},{"id":"e12","type":"line","a":[-7.26,6.3],"b":[-7.26,7.01]}],"constraints":[{"type":"coincident","of":["e1.a","e12.b"]},{"type":"coincident","of":["e1.b","e2.a"]},{"type":"coincident","of":["e2.b","e3.a"]},{"type":"coincident","of":["e3.b","e4.a"]},{"type":"coincident","of":["e4.b","e5.a"]},{"type":"coincident","of":["e5.b","e6.a"]},{"type":"coincident","of":["e6.b","e7.a"]},{"type":"coincident","of":["e7.b","e8.a"]},{"type":"coincident","of":["e8.b","e9.a"]},{"type":"coincident","of":["e9.b","e10.a"]},{"type":"coincident","of":["e10.b","e11.a"]},{"type":"coincident","of":["e11.b","e12.a"]}]},"faces":"Make faces","solve":"Solve","passes":24},"parent":"GS1"},{"id":"SK_G","type":"Sketch","name":"7.07mm x 16.26mm","args":{"plane":{"ref":"PLO"},"origin":{"ref":"PORG"},"drawing":{"elements":[{"id":"e1","type":"line","a":[-3.535,8.13],"b":[3.535,8.13]},{"id":"e2","type":"line","a":[3.535,8.13],"b":[3.535,7.5]},{"id":"e3","type":"line","a":[3.535,7.5],"b":[0.19,7.5]},{"id":"e4","type":"line","a":[0.19,7.5],"b":[0.19,-7.5]},{"id":"e5","type":"line","a":[0.19,-7.5],"b":[3.535,-7.5]},{"id":"e6","type":"line","a":[3.535,-7.5],"b":[3.535,-8.13]},{"id":"e7","type":"line","a":[3.535,-8.13],"b":[-3.535,-8.13]},{"id":"e8","type":"line","a":[-3.535,-8.13],"b":[-3.535,-7.5]},{"id":"e9","type":"line","a":[-3.535,-7.5],"b":[-0.19,-7.5]},{"id":"e10","type":"line","a":[-0.19,-7.5],"b":[-0.19,7.5]},{"id":"e11","type":"line","a":[-0.19,7.5],"b":[-3.535,7.5]},{"id":"e12","type":"line","a":[-3.535,7.5],"b":[-3.535,8.13]}],"constraints":[{"type":"coincident","of":["e1.a","e12.b"]},{"type":"coincident","of":["e1.b","e2.a"]},{"type":"coincident","of":["e2.b","e3.a"]},{"type":"coincident","of":["e3.b","e4.a"]},{"type":"coincident","of":["e4.b","e5.a"]},{"type":"coincident","of":["e5.b","e6.a"]},{"type":"coincident","of":["e6.b","e7.a"]},{"type":"coincident","of":["e7.b","e8.a"]},{"type":"coincident","of":["e8.b","e9.a"]},{"type":"coincident","of":["e9.b","e10.a"]},{"type":"coincident","of":["e10.b","e11.a"]},{"type":"coincident","of":["e11.b","e12.a"]}]},"faces":"Make faces","solve":"Solve","passes":24},"parent":"GS1"},{"id":"SK_H","type":"Sketch","name":"7.495mm x 17.99mm","args":{"plane":{"ref":"PLO"},"origin":{"ref":"PORG"},"drawing":{"elements":[{"id":"e1","type":"line","a":[-3.7475,8.995],"b":[3.7475,8.995]},{"id":"e2","type":"line","a":[3.7475,8.995],"b":[3.7475,8.425]},{"id":"e3","type":"line","a":[3.7475,8.425],"b":[0.1775,8.425]},{"id":"e4","type":"line","a":[0.1775,8.425],"b":[0.1775,-8.425]},{"id":"e5","type":"line","a":[0.1775,-8.425],"b":[3.7475,-8.425]},{"id":"e6","type":"line","a":[3.7475,-8.425],"b":[3.7475,-8.995]},{"id":"e7","type":"line","a":[3.7475,-8.995],"b":[-3.7475,-8.995]},{"id":"e8","type":"line","a":[-3.7475,-8.995],"b":[-3.7475,-8.425]},{"id":"e9","type":"line","a":[-3.7475,-8.425],"b":[-0.1775,-8.425]},{"id":"e10","type":"line","a":[-0.1775,-8.425],"b":[-0.1775,8.425]},{"id":"e11","type":"line","a":[-0.1775,8.425],"b":[-3.7475,8.425]},{"id":"e12","type":"line","a":[-3.7475,8.425],"b":[-3.7475,8.995]}],"constraints":[{"type":"coincident","of":["e1.a","e12.b"]},{"type":"coincident","of":["e1.b","e2.a"]},{"type":"coincident","of":["e2.b","e3.a"]},{"type":"coincident","of":["e3.b","e4.a"]},{"type":"coincident","of":["e4.b","e5.a"]},{"type":"coincident","of":["e5.b","e6.a"]},{"type":"coincident","of":["e6.b","e7.a"]},{"type":"coincident","of":["e7.b","e8.a"]},{"type":"coincident","of":["e8.b","e9.a"]},{"type":"coincident","of":["e9.b","e10.a"]},{"type":"coincident","of":["e10.b","e11.a"]},{"type":"coincident","of":["e11.b","e12.a"]}]},"faces":"Make faces","solve":"Solve","passes":24},"parent":"GS1"},{"id":"SK_I","type":"Sketch","name":"8.99mm x 23.92mm","args":{"plane":{"ref":"PLO"},"origin":{"ref":"PORG"},"drawing":{"elements":[{"id":"e1","type":"line","a":[-4.495,11.96],"b":[4.495,11.96]},{"id":"e2","type":"line","a":[4.495,11.96],"b":[4.495,11.28]},{"id":"e3","type":"line","a":[4.495,11.28],"b":[0.22,11.28]},{"id":"e4","type":"line","a":[0.22,11.28],"b":[0.22,-11.28]},{"id":"e5","type":"line","a":[0.22,-11.28],"b":[4.495,-11.28]},{"id":"e6","type":"line","a":[4.495,-11.28],"b":[4.495,-11.96]},{"id":"e7","type":"line","a":[4.495,-11.96],"b":[-4.495,-11.96]},{"id":"e8","type":"line","a":[-4.495,-11.96],"b":[-4.495,-11.28]},{"id":"e9","type":"line","a":[-4.495,-11.28],"b":[-0.22,-11.28]},{"id":"e10","type":"line","a":[-0.22,-11.28],"b":[-0.22,11.28]},{"id":"e11","type":"line","a":[-0.22,11.28],"b":[-4.495,11.28]},{"id":"e12","type":"line","a":[-4.495,11.28],"b":[-4.495,11.96]}],"constraints":[{"type":"coincident","of":["e1.a","e12.b"]},{"type":"coincident","of":["e1.b","e2.a"]},{"type":"coincident","of":["e2.b","e3.a"]},{"type":"coincident","of":["e3.b","e4.a"]},{"type":"coincident","of":["e4.b","e5.a"]},{"type":"coincident","of":["e5.b","e6.a"]},{"type":"coincident","of":["e6.b","e7.a"]},{"type":"coincident","of":["e7.b","e8.a"]},{"type":"coincident","of":["e8.b","e9.a"]},{"type":"coincident","of":["e9.b","e10.a"]},{"type":"coincident","of":["e10.b","e11.a"]},{"type":"coincident","of":["e11.b","e12.a"]}]},"faces":"Make faces","solve":"Solve","passes":24},"parent":"GS1"},{"id":"GSCOL","type":"GeometricalSet","name":"Column one","args":{},"parent":"GE1"},{"id":"N_X","type":"Number","name":"Column X","args":{"value":0},"parent":"GSCOL"},{"id":"N_Y","type":"Number","name":"Column Y","args":{"value":0},"parent":"GSCOL"},{"id":"N_Z","type":"Number","name":"Column Z","args":{"value":0},"parent":"GSCOL"},{"id":"PT_COL","type":"Point","name":"Column base point","args":{"kind":"Coordinates","x":{"value":0,"from":"N_X"},"y":{"value":0,"from":"N_Y"},"z":{"value":0,"from":"N_Z"},"at":0.5,"end":"Furthest along","way":"Nearest point"},"parent":"GSCOL"},{"id":"V_UP","type":"Vector","name":"Extrusion direction","args":{"kind":"Components","dx":0,"dy":0,"dz":1},"parent":"GSCOL"},{"id":"PL_BASE","type":"Plane","name":"Column datum plane","args":{"kind":"Origin and normal","origin":{"ref":"PO2"},"normal":{"ref":"V_UP"},"at":0.5,"offset":100,"angle":45,"size":120},"parent":"GSCOL"},{"id":"N_BOT","type":"Number","name":"Bottom offset","args":{"value":0},"parent":"GSCOL"},{"id":"N_H","type":"Number","name":"Column height","args":{"value":300},"parent":"GSCOL"},{"id":"N_TOP","type":"Expression","name":"Top offset","args":{"a":{"value":1,"from":"N_BOT"},"b":{"value":1,"from":"N_H"},"c":0,"formula":"a + b"},"parent":"GSCOL"},{"id":"PL_BOT","type":"Plane","name":"Column bottom plane","args":{"kind":"Offset from a plane","at":0.5,"from":{"ref":"PL_BASE"},"offset":{"value":100,"from":"N_BOT"},"angle":45,"size":120},"parent":"GSCOL"},{"id":"PL_TOP","type":"Plane","name":"Column top plane","args":{"kind":"Offset from a plane","at":0.5,"from":{"ref":"PL_BASE"},"offset":{"value":100,"from":"N_TOP"},"angle":45,"size":120},"parent":"GSCOL"},{"id":"SK_COL","type":"Sketch","name":"Column section 14.52mm x 14.02mm","args":{"plane":{"ref":"PL_BOT"},"origin":{"ref":"PO2"},"drawing":{"elements":[{"id":"e1","type":"line","a":[-7.26,7.01],"b":[7.26,7.01]},{"id":"e2","type":"line","a":[7.26,7.01],"b":[7.26,6.3]},{"id":"e3","type":"line","a":[7.26,6.3],"b":[0.22,6.3]},{"id":"e4","type":"line","a":[0.22,6.3],"b":[0.22,-6.3]},{"id":"e5","type":"line","a":[0.22,-6.3],"b":[7.26,-6.3]},{"id":"e6","type":"line","a":[7.26,-6.3],"b":[7.26,-7.01]},{"id":"e7","type":"line","a":[7.26,-7.01],"b":[-7.26,-7.01]},{"id":"e8","type":"line","a":[-7.26,-7.01],"b":[-7.26,-6.3]},{"id":"e9","type":"line","a":[-7.26,-6.3],"b":[-0.22,-6.3]},{"id":"e10","type":"line","a":[-0.22,-6.3],"b":[-0.22,6.3]},{"id":"e11","type":"line","a":[-0.22,6.3],"b":[-7.26,6.3]},{"id":"e12","type":"line","a":[-7.26,6.3],"b":[-7.26,7.01]}],"constraints":[{"type":"coincident","of":["e1.a","e12.b"]},{"type":"coincident","of":["e1.b","e2.a"]},{"type":"coincident","of":["e2.b","e3.a"]},{"type":"coincident","of":["e3.b","e4.a"]},{"type":"coincident","of":["e4.b","e5.a"]},{"type":"coincident","of":["e5.b","e6.a"]},{"type":"coincident","of":["e6.b","e7.a"]},{"type":"coincident","of":["e7.b","e8.a"]},{"type":"coincident","of":["e8.b","e9.a"]},{"type":"coincident","of":["e9.b","e10.a"]},{"type":"coincident","of":["e10.b","e11.a"]},{"type":"coincident","of":["e11.b","e12.a"]}]},"faces":"Make faces","solve":"Solve","passes":24},"parent":"GSCOL"},{"id":"EXT_COL","type":"Extrude","name":"Column extrude","args":{"profile":{"ref":"SK_COL"},"direction":{"ref":"V_UP"},"limit":"Up to plane","distance":120,"until":{"ref":"PL_TOP"},"cap":"Solid"},"parent":"GSCOL"},{"id":"GE1","type":"GeometricalSet","name":"Columns","args":{}}],"layout":{"PT1":[30,30],"VZ":[30,273],"CA1":[30,514],"PO1":[30,1079],"PO2":[30,1337],"CA2":[30,1580],"GS1":[30,2145],"PORG":[30,2276],"GSCOL":[30,2519],"N_X":[30,2650],"N_Y":[30,2784],"N_Z":[30,2918],"V_UP":[30,3052],"N_BOT":[30,3293],"N_H":[30,3427],"PL1":[338,30],"PLO":[338,205],"PT_COL":[338,380],"N_TOP":[338,623],"SK_A":[646,30],"SK_B":[646,301],"SK_C":[646,572],"SK_D":[646,843],"SK_E":[646,1114],"SK_F":[646,1385],"SK_G":[646,1656],"SK_H":[646,1927],"SK_I":[646,2198],"PL_BASE":[646,2469],"PL_BOT":[954,30],"PL_TOP":[954,220],"SK_COL":[1262,30],"EXT_COL":[1570,30],"GE1":[30,3561]}}};
+function ocafSampleRef(key, name) { const json = OCAF_SAMPLES[key], txt = JSON.stringify(json); return { kind: 'ocaf', name: name || json.name, hash: hashStr(txt), json }; }
+// =====================================================================
 // Viewport renderer: a small WebGL2 bridge that draws model elements
 // offscreen at canvas resolution. Every render style is drawn from the
 // same camera matrices, so all outputs align to the pixel.
@@ -1037,8 +1199,17 @@ function buildCamera(def, w, h, overrides = {}) {
     return { def, ortho: true, V, P, VP: M4.mul(P, V), eye, target, near: 10, far: 3200, w, h, viewDir: norm3(sub3(target, eye)), mPerPx: (def.span || 200) / h };
   }
   eye = def.eye || add3(target, scale3(dirFrom, def.distance || 300));
-  const V = M4.lookAt(eye, target, [0, 0, 1]), P = M4.persp(def.fov || 40, asp, 0.5, 4000);
-  return { def, ortho: false, V, P, VP: M4.mul(P, V), eye, target, near: 0.5, far: 4000, w, h, viewDir: norm3(sub3(target, eye)), fov: def.fov || 40 };
+  // The modeller's camera: vertical fov from the lens (24 mm tall frame), then roll about the view axis.
+  const fov0 = def.fov || (def.lens ? fovFromLens(def.lens) : 40);
+  const fov = overrides.vScale ? Math.atan(Math.tan(fov0 * Math.PI / 360) * overrides.vScale) * 360 / Math.PI : fov0;
+  const fwd = norm3(sub3(target, eye)), world = Math.abs(fwd[2]) > 0.999 ? [0, 1, 0] : [0, 0, 1];
+  let right = norm3(cross3(fwd, world)), up = cross3(right, fwd);
+  if (def.roll) { const t = -def.roll * Math.PI / 180, c = Math.cos(t), s = Math.sin(t); up = add3(scale3(up, c), scale3(right, -s)); }
+  // Clip planes follow the model's size: a 0.9 m bracket and a 300 m site both keep depth precision.
+  let near = 0.5, far = 4000;
+  if (overrides.extent) { const d = len3(sub3(eye, overrides.extent.c)), r = overrides.extent.r; far = d + r * 2 + 1; near = clamp((d - r) * 0.5, Math.max(1e-4, far * 2e-6), 0.5); }
+  const V = M4.lookAt(eye, target, up), P = M4.persp(fov, asp, near, far);
+  return { def, ortho: false, V, P, VP: M4.mul(P, V), eye, target, near, far, w, h, viewDir: fwd, fov };
 }
 // World point -> pixel at the camera's w,h; depth is linear view distance.
 function projectPoint(cam, p) {
@@ -1060,6 +1231,16 @@ function tessellate(e) {
   const at = e.at || [0, 0, 0];
   const T = q => [at[0] + q[0] * cr - q[1] * sr, at[1] + q[0] * sr + q[1] * cr, at[2] + q[2]];
   const quad = (a, b, c, d, n) => { tris.push([a, b, c], [a, c, d]); nrm.push([n, n, n], [n, n, n]); };
+  if (e.shape === 'mesh') {
+    const P = e.mesh.pos, N = e.mesh.nrm, I = e.mesh.idx;
+    const v = i => [P[i * 3], P[i * 3 + 1], P[i * 3 + 2]], n = i => N ? [N[i * 3], N[i * 3 + 1], N[i * 3 + 2]] : null;
+    for (let t = 0; t + 2 < I.length; t += 3) {
+      const a = v(I[t]), b = v(I[t + 1]), c = v(I[t + 2]); tris.push([a, b, c]);
+      const fn = norm3(cross3(sub3(b, a), sub3(c, a)));
+      nrm.push([n(I[t]) || fn, n(I[t + 1]) || fn, n(I[t + 2]) || fn]);
+    }
+    return { tris, nrm };
+  }
   if (e.shape === 'box') {
     const [w, d, hh] = e.size, x = w / 2, y = d / 2;
     const v = [[-x, -y, 0], [x, -y, 0], [x, y, 0], [-x, y, 0], [-x, -y, hh], [x, -y, hh], [x, y, hh], [-x, y, hh]].map(T);
@@ -1092,7 +1273,7 @@ function tessellate(e) {
 }
 // Edges with their adjacent face normals: drawn when creased or on the silhouette.
 function buildEdges(tris) {
-  const key = p => p.map(v => Math.round(v * 1000)).join(',');
+  const key = p => p.map(v => Math.round(v * 1e5)).join(',');
   const map = new Map(), fn = tris.map(t => norm3(cross3(sub3(t[1], t[0]), sub3(t[2], t[0]))));
   tris.forEach((t, i) => { for (let k = 0; k < 3; k++) { const a = t[k], b = t[(k + 1) % 3], ka = key(a), kb = key(b), kk = ka < kb ? ka + '|' + kb : kb + '|' + ka; const e = map.get(kk); if (e) e.n2 = fn[i]; else map.set(kk, { a, b, n1: fn[i], n2: null, c: scale3(add3(a, b), 0.5) }); } });
   return [...map.values()];
@@ -1213,7 +1394,10 @@ function glModel(model) {
     for (let i = 0; i < tris.length; i++) for (let k = 0; k < 3; k++) data.push(...tris[i][k], ...nrm[i][k]);
     let mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9];
     for (const t of tris) for (const p of t) for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], p[k]); mx[k] = Math.max(mx[k], p[k]); }
-    parts.push({ e, first, count: tris.length * 3, tris, mn, mx, _edges: null });
+    let brep = null;
+    if (e.edges) { brep = []; for (let i = 0; i + 5 < e.edges.length; i += 6) brep.push([[e.edges[i], e.edges[i + 1], e.edges[i + 2]], [e.edges[i + 3], e.edges[i + 4], e.edges[i + 5]]]); }
+    if (brep) for (const seg of brep) for (const p of seg) for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], p[k]); mx[k] = Math.max(mx[k], p[k]); }
+    parts.push({ e, first, count: tris.length * 3, tris, mn, mx, brep, _edges: null });
     first += tris.length * 3;
   }
   const vbo = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, vbo); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(data), gl.STATIC_DRAW);
@@ -1223,7 +1407,10 @@ function glModel(model) {
   const svao = gl.createVertexArray(); gl.bindVertexArray(svao);
   gl.enableVertexAttribArray(GL.shadow.a.aPos); gl.vertexAttribPointer(GL.shadow.a.aPos, 3, gl.FLOAT, false, 24, 0);
   gl.bindVertexArray(null);
-  const rec = { sig, vbo, vao, svao, parts, byId: new Map(parts.map(p => [p.e.id, p])) };
+  let mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9];
+  for (const p of parts) if (p.mx[0] >= p.mn[0]) for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], p.mn[k]); mx[k] = Math.max(mx[k], p.mx[k]); }
+  const extent = parts.length ? { c: scale3(add3(mn, mx), 0.5), r: Math.max(0.01, len3(sub3(mx, mn)) / 2) } : { c: [0, 0, 0], r: 100 };
+  const rec = { sig, vbo, vao, svao, parts, extent, byId: new Map(parts.map(p => [p.e.id, p])) };
   meshCache.set(model._key, rec);
   return rec;
 }
@@ -1252,7 +1439,7 @@ function renderModel(opts, pass, w, h) {
   if (Math.max(W, H) > GL.maxRB) { const k = GL.maxRB / Math.max(W, H); W = Math.floor(W * k); H = Math.floor(H * k); warn.push(`Rendered at ${W}×${H} (GPU limit ${GL.maxRB}px) and upscaled.`); }
   glTargets(W, H);
   const rec = glModel(opts.model);
-  const cam = buildCamera(opts.camDef, W, H);
+  const cam = buildCamera(opts.camDef, W, H, { vScale: opts.vScale, extent: rec.extent });
   const iso = opts.isolate.length ? opts.isolate : ['*'];
   const S = [], O = [];
   for (const p of rec.parts) { if (optionExcluded(opts.model, opts.option, p.e.geoset)) continue; (matchAny(iso, p.e.geoset) ? S : O).push(p); }
@@ -1353,7 +1540,8 @@ function renderModel(opts, pass, w, h) {
     else if (style === 'objectid') { gl.uniform1i(M.u.uMode, 0); }
     else { gl.uniform1i(M.u.uMode, 1); gl.uniform1f(M.u.uAmb, +opts.ambient || 0.5); gl.uniform1f(M.u.uSunI, 0.75); }
     gl.uniform4fv(M.u.uColour, style === 'arctic' ? [1, 1, 1, 1] : col);
-    for (const p of S) draw(p, off);
+    const own = opts.colourBy === 'model' && style !== 'arctic' && style !== 'objectid';
+    for (const p of S) { if (own) gl.uniform4fv(M.u.uColour, p.e.attrs && p.e.attrs.colour ? lin(p.e.attrs.colour) : col); draw(p, off); }
   }
   gl.bindVertexArray(null);
   // resolve MSAA and read back
@@ -1374,7 +1562,7 @@ function renderModel(opts, pass, w, h) {
   flip((s, d) => { const o = d * 4; im.d[o] = buf[s] / 255; im.d[o + 1] = buf[s + 1] / 255; im.d[o + 2] = buf[s + 2] / 255; im.d[o + 3] = buf[s + 3] / 255; });
   if (pass === 'image' && style === 'arctic' && +opts.aoStrength > 0) {
     const dp = renderModel({ ...opts, others: opts.others === 'hide' ? 'hide' : 'holdout' }, 'depthAll', W, H);
-    applyAO(im, dp.depth, cam, +opts.aoRadius || 3, +opts.aoStrength);
+    applyAO(im, dp.depth, cam, +opts.aoRadius > 0 ? +opts.aoRadius : rec.extent.r * 0.04, +opts.aoStrength);
   }
   if (pass === 'image' && style === 'flat' && +opts.tones > 1) im = IMG.posterize(im, +opts.tones);
   if (W !== w || H !== h) im = IMG.resample(im, w, h);
@@ -1392,17 +1580,20 @@ function drawEdges(parts, off, cam, opts, W, H, hidden) {
     if (za < n && zb < n) return null; if (za >= n && zb >= n) return [a, b];
     const t = (n - za) / (zb - za), m = add3(a, scale3(sub3(b, a), t)); return za < n ? [m, b] : [a, m];
   };
-  for (const p of parts) for (const e of edgesOf(p)) {
+  for (const p of parts) {
+    if (p.brep) for (const [a, b] of p.brep) { const s = clipNear(add3(a, off), add3(b, off)); if (s) push(s[0], s[1]); }
+    for (const e of edgesOf(p)) {
     let show;
     if (!e.n2) show = true;
     else {
       const crease = dot3(e.n1, e.n2) < thr;
       const v = eyeDir(add3(e.c, off)), f1 = dot3(e.n1, v), f2 = dot3(e.n2, v);
-      show = crease || (f1 > 0) !== (f2 > 0);
+      // A part with B-rep edges already drew its creases; only silhouettes of smooth faces remain.
+      show = p.brep ? (!crease && (f1 > 0) !== (f2 > 0)) : (crease || (f1 > 0) !== (f2 > 0));
     }
     if (!show) continue;
     const s = clipNear(add3(e.a, off), add3(e.b, off)); if (s) push(s[0], s[1]);
-  }
+  } }
   if (!data.length) return;
   const L = GL.line; gl.useProgram(L.p); gl.bindVertexArray(GL.lineVAO);
   gl.bindBuffer(gl.ARRAY_BUFFER, GL.lineBuf); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(data), gl.STREAM_DRAW);
@@ -1449,8 +1640,8 @@ function applyAO(im, depth, cam, radiusM, strength) {
 // Arg types: number int string text select bool colour path image rows button
 // `px: true` marks a size in full-resolution pixels (scaled for previews).
 // =====================================================================
-const KINDS = ['image', 'mask', 'camera', 'string', 'number', 'colour', 'points', 'field', 'perm', 'any'];
-const KIND_LABEL = { image: 'Image', mask: 'Mask', camera: 'Camera', string: 'String', number: 'Number', colour: 'Colour', points: 'Points2D', field: 'Field', perm: 'Permutation', any: 'Any' };
+const KINDS = ['model', 'geoset', 'image', 'mask', 'camera', 'string', 'number', 'colour', 'points', 'field', 'perm', 'any'];
+const KIND_LABEL = { model: 'Model', geoset: 'Geoset', image: 'Image', mask: 'Mask', camera: 'Camera', string: 'String', number: 'Number', colour: 'Colour', points: 'Points2D', field: 'Field', perm: 'Permutation', any: 'Any' };
 const FAMILIES = {
   source: { label: '3D source', colour: '#3554d1' }, image: { label: 'Image operations', colour: '#d99a2b' }, mask: { label: 'Masks', colour: '#8f99a6' },
   gen: { label: 'Generate', colour: '#22a093' }, points: { label: 'Points, decals & gradients', colour: '#dd6f2e' }, ai: { label: 'AI', colour: '#8a64dc' },
@@ -1512,28 +1703,141 @@ defNode('viewport', {
     if (!camDef) { ctx.warn(`Camera "${camName || '(none)'}" not found. Known: ${model.cameras.map(c => c.name).join(', ')}.`); ctx.fail = true; return { image: IMG.image(w, h), mask: IMG.mask(w, h), shadow: IMG.mask(w, h), id: IMG.image(w, h), camera: null }; }
     const known = model._index.geosets;
     for (const g of lp.geosets) if (!known.some(k => geosetMatch(g, k))) ctx.warn(`Geoset "${g}" is not in the model.`);
-    const opts = { model, camDef, option: A.option, isolate: lp.geosets, others: A.others, ghostOpacity: A.ghostOpacity, colour: A.colour, offsetZ: A.offsetZ, style,
-      lineWeight: A.lineWeight * ctx.scale, lineColour: A.lineColour, crease: A.crease, hiddenDashed: A.hiddenDashed, hiddenColour: A.hiddenColour, fillFaces: A.fillFaces,
-      ambient: A.ambient, tones: A.tones, sun: sunDirection(A), shadowSoft: A.shadowSoft, aoRadius: A.aoRadius, aoStrength: A.aoStrength, arcticSun: A.arcticSun, idBy: A.idBy };
-    const out = {};
-    const pass = p => { const r = renderModel(opts, p, w, h); r.warn.forEach(x => ctx.warn(x)); return r; };
-    if (want === 'image') {
-      const r = pass(style === 'objectid' ? 'id' : 'image'); let img = r.img;
-      if (style === 'objectid') img.idMap = { map: r.idMap, model };
-      if (A.background !== 'transparent') img = IMG.merge(img, IMG.solid(w, h, A.background === 'white' ? '#ffffff' : A.bgColour), 'normal', 1);
-      out.image = img;
-    } else if (want === 'mask') out.mask = pass('mask').img;
-    else if (want === 'shadow') out.shadow = pass('shadow').img;
-    else if (want === 'id') { const r = pass('id'); r.img.idMap = { map: r.idMap, model }; out.id = r.img; }
-    else if (want === 'camera') {
-      const cam = buildCamera(camDef, w, h); let depth = null;
-      out.camera = { kind: 'camera', cam, model, isolate: lp.geosets, offsetZ: +A.offsetZ || 0, name: camName,
-        depth() { if (!depth) depth = renderModel({ ...opts, others: A.others === 'hide' ? 'hide' : 'holdout' }, 'depthAll', w, h).depth; return depth; } };
+    return renderLayer(ctx, { model, camDef, isolate: lp.geosets, option: A.option, style, w, h, name: camName }, A, want);
+  },
+});
+function viewportStyle(a) { if (a.style) return a.style; const p = parseLayerPath(a.path, null); return p.style || 'shaded'; }
+// One render path for the Viewport and the Render node: same camera, same passes, aligned outputs.
+function renderLayer(ctx, L, A, want) {
+  const { model, camDef, style, w, h } = L;
+  const opts = { model, camDef, option: L.option, isolate: L.isolate, others: A.others, ghostOpacity: A.ghostOpacity, colour: A.colour, colourBy: A.colourBy, offsetZ: A.offsetZ, style, vScale: L.vScale,
+    lineWeight: A.lineWeight * ctx.scale, lineColour: A.lineColour, crease: A.crease, hiddenDashed: A.hiddenDashed, hiddenColour: A.hiddenColour, fillFaces: A.fillFaces,
+    ambient: A.ambient, tones: A.tones, sun: sunDirection(A), shadowSoft: A.shadowSoft, aoRadius: A.aoRadius, aoStrength: A.aoStrength, arcticSun: A.arcticSun, idBy: A.idBy };
+  const out = {};
+  const pass = p => { const r = renderModel(opts, p, w, h); r.warn.forEach(x => ctx.warn(x)); return r; };
+  if (want === 'image') {
+    const r = pass(style === 'objectid' ? 'id' : 'image'); let img = r.img;
+    if (style === 'objectid') img.idMap = { map: r.idMap, model };
+    if (A.background && A.background !== 'transparent') img = IMG.merge(img, IMG.solid(w, h, A.background === 'white' ? '#ffffff' : A.bgColour), 'normal', 1);
+    if (A.guidesOnImage) img = IMG.merge(safeGuides(w, h, camDef, A, ctx), img, 'normal', 1);
+    out.image = img;
+  } else if (want === 'mask') out.mask = pass('mask').img;
+  else if (want === 'shadow') out.shadow = pass('shadow').img;
+  else if (want === 'id') { const r = pass('id'); r.img.idMap = { map: r.idMap, model }; out.id = r.img; }
+  else if (want === 'guides') out.guides = safeGuides(w, h, camDef, A, ctx);
+  else if (want === 'camera') out.camera = cameraValue(model, camDef, w, h, L.vScale, L.isolate, +A.offsetZ || 0, opts);
+  return out;
+}
+function cameraValue(model, camDef, w, h, vScale, isolate, offsetZ, opts) {
+  const ext = model ? glExtent(model) : null, cam = buildCamera(camDef, w, h, { vScale, extent: ext }); let depth = null;
+  return { kind: 'camera', cam, def: camDef, model, isolate: isolate || ['*'], offsetZ: offsetZ || 0, name: camDef.name, vScale,
+    depth() { if (!depth) depth = renderModel({ model, camDef, isolate: isolate || ['*'], others: opts && opts.others === 'hide' ? 'hide' : 'holdout', offsetZ, option: opts && opts.option, vScale, style: 'shaded' }, 'depthAll', w, h).depth; return depth; } };
+}
+function glExtent(model) { try { return glInit() ? glModel(model).extent : null; } catch { return null; } }
+// The camera's frame: border, action safe (90%), title safe (80%) and thirds, as the modeller draws them.
+function safeGuides(w, h, camDef, A, ctx) {
+  const safe = camDef && camDef.safe || { action: true, thirds: true }, box = A._box || { x: 0, y: 0, width: w, height: h };
+  return IMG.draw(w, h, g => {
+    const lw = Math.max(1, 2 * ctx.scale); g.strokeStyle = colourCss(A.guideColour || '#3554d1'); g.lineWidth = lw;
+    const rect = k => { const ww = box.width * k, hh = box.height * k; g.strokeRect(box.x + (box.width - ww) / 2, box.y + (box.height - hh) / 2, ww, hh); };
+    rect(1);
+    if (safe.action) { g.setLineDash([lw * 6, lw * 4]); rect(0.9); rect(0.8); g.setLineDash([]); }
+    if (safe.thirds) { g.globalAlpha = 0.6; for (const t of [1 / 3, 2 / 3]) { g.beginPath(); g.moveTo(box.x + box.width * t, box.y); g.lineTo(box.x + box.width * t, box.y + box.height); g.moveTo(box.x, box.y + box.height * t); g.lineTo(box.x + box.width, box.y + box.height * t); g.stroke(); } g.globalAlpha = 1; }
+    g.fillStyle = g.strokeStyle; g.font = `600 ${Math.max(10, 22 * ctx.scale)}px ${FONT_STACK.sans}`; g.textBaseline = 'top';
+    g.fillText(`${camDef ? camDef.name : ''}${camDef && camDef.lens ? ' · ' + camDef.lens + ' mm' : ''}${camDef && camDef.frameLabel ? ' · ' + camDef.frameLabel : ''}`, box.x + box.width * 0.1 + lw * 3, box.y + box.height * 0.1 + lw * 3);
+  });
+}
+
+// ---------------------------------------------------------------- Model → Extract → Render
+// The upstream model of a node, followed through Dots.
+function upstreamModelKey(g, node, port = 'model', depth = 0) {
+  const s = node && node.inputs && node.inputs[port]; if (!s || depth > 20) return null;
+  const up = g.nodes[s.node]; if (!up) return null;
+  if (up.type === 'modelSource') return up.args.model || null;
+  if (up.type === 'dot') return upstreamModelKey(g, up, 'in', depth + 1);
+  return null;
+}
+function upstreamModel(node) { const key = upstreamModelKey(currentGraph(), node); return key ? getModel(key) : null; }
+const modelOptions = () => Object.keys(doc.models).map(k => [k, `${doc.models[k].name || k}${doc.models[k].kind === 'ocaf' ? '' : ' (built-in format)'}`]);
+
+defNode('modelSource', {
+  label: 'Model', family: 'source', wide: true,
+  desc: 'Holds the ocaf parametric model: its geometry, its sets and its cameras. Right-click or double-click to open it in the parametric modeller.',
+  outputs: [{ n: 'model', k: 'model', l: 'Model' }, { n: 'preview', k: 'image', l: 'Preview' }],
+  args: [A_('model', 'Model', 'select', 'samplecap', { options: modelOptions }),
+    A_('open', 'Open parametric modeller', 'button', null, { action: 'openModeller' }),
+    A_('load', 'Load model file…', 'button', null, { action: 'loadModelInto' }),
+    A_('blank', 'New empty model', 'button', null, { action: 'newModelInto' })],
+  async run(ctx, I, A, node, want) {
+    const ref = doc.models[A.model]; if (!ref) throw new Error(`No model "${A.model}". Load a model file or start a new one.`);
+    const model = await ensureModel(A.model);
+    if (!model) throw new Error(ocafCache.get(A.model) && ocafCache.get(A.model).error || 'The model could not be built.');
+    if (model.warn) model.warn.slice(0, 3).forEach(w => ctx.warn(w));
+    if (model.stats && model.stats.failed && model.stats.failed.length) ctx.warn(`${model.stats.failed.length} feature(s) failed to build.`);
+    const out = { model: { kind: 'model', key: A.model, model } };
+    if (want === 'preview') {
+      const cam = model.cameras[0]; if (!cam) { ctx.warn('The model has no cameras.'); out.preview = IMG.image(ctx.w, ctx.h); }
+      else { const w = ctx.w, h = cam.frame ? Math.round(ctx.w / cam.frame) : ctx.h; out.preview = renderLayer(ctx, { model, camDef: cam, isolate: ['*'], style: 'shaded', w, h }, { others: 'hide', colourBy: 'model', colour: '#c9ced4', ambient: 0.55, lineWeight: 1, sunAzimuth: 205, sunAltitude: 40, background: 'white' }, 'image').image; }
     }
     return out;
   },
 });
-function viewportStyle(a) { if (a.style) return a.style; const p = parseLayerPath(a.path, null); return p.style || 'shaded'; }
+defNode('extractGeoset', {
+  label: 'Extract Geoset', family: 'source', desc: 'Picks one set from the model. The list is read from the model\'s Geometrical Sets and Bodies.',
+  inputs: [{ n: 'model', k: 'model', l: 'Model' }], outputs: [{ n: 'geoset', k: 'geoset', l: 'Geoset' }],
+  args: [A_('geoset', 'Geoset', 'select', '', { options: n => { const m = upstreamModel(n); return [['', m ? 'Everything' : 'Connect a Model first'], ...(m ? m._index.geosets.map(g => [g, g + '  (' + m.elements.filter(e => geosetMatch(g, e.geoset)).length + ')']) : [])]; } }),
+    A_('children', 'Include sub-sets', 'bool', true)],
+  async run(ctx, I, A) {
+    const mv = await I('model'); if (!mv) { ctx.warn('Connect a Model.'); return { geoset: null }; }
+    const m = mv.model, path = A.geoset;
+    if (path && !m._index.geosets.includes(path)) ctx.warn(`"${path}" is not a set in ${m.name}.`);
+    if (!path) ctx.warn('No set picked: passing everything.');
+    const patterns = path ? (A.children ? [path] : ['=' + path]) : ['*'];
+    return { geoset: { kind: 'geoset', key: mv.key, path: path || '*', patterns, count: m.elements.filter(e => matchAny(patterns, e.geoset)).length } };
+  },
+});
+defNode('extractCamera', {
+  label: 'Extract Camera', family: 'source', desc: 'Picks one of the model\'s cameras. Its lens, roll, frame and safe frames come with it.',
+  inputs: [{ n: 'model', k: 'model', l: 'Model' }], outputs: [{ n: 'camera', k: 'camera', l: 'Camera' }],
+  args: [A_('camera', 'Camera', 'select', '', { options: n => { const m = upstreamModel(n); return m ? m.cameras.map(c => [c.name, `${c.name}${c.lens ? ' · ' + c.lens + ' mm' : ''}${c.frameLabel ? ' · ' + c.frameLabel : ''}`]) : [['', 'Connect a Model first']]; } })],
+  async run(ctx, I, A) {
+    const mv = await I('model'); if (!mv) { ctx.warn('Connect a Model.'); return { camera: null }; }
+    const m = mv.model; if (!m.cameras.length) { ctx.warn('The model has no cameras. Add a Camera in the modeller.'); ctx.fail = true; return { camera: null }; }
+    let def = m.cameras.find(c => c.name === A.camera);
+    if (!def) { if (A.camera) ctx.warn(`Camera "${A.camera}" is not in the model; using ${m.cameras[0].name}.`); def = m.cameras[0]; }
+    const w = ctx.w, h = def.frame ? Math.round(ctx.w / def.frame) : ctx.h;
+    return { camera: cameraValue(m, def, w, h, null, ['*'], 0, null) };
+  },
+});
+const RENDER_SKIP = new Set(['path', 'model', 'option', 'camera', 'style', 'resW', 'resH', 'offsetZ']);
+defNode('render', {
+  label: 'Render', family: 'source', desc: 'Renders the geoset from the camera. Other geometry is a holdout, so the image and mask are just the object, correctly occluded. The size is the camera\'s own frame, so overlays line up.',
+  inputs: [{ n: 'model', k: 'model', l: 'Model' }, { n: 'camera', k: 'camera', l: 'Camera' }, { n: 'geoset', k: 'geoset', l: 'Geoset' }],
+  outputs: [{ n: 'image', k: 'image', l: 'Image' }, { n: 'mask', k: 'mask', l: 'Mask' }, { n: 'shadow', k: 'mask', l: 'Shadow' }, { n: 'id', k: 'image', l: 'Object ID' }, { n: 'guides', k: 'image', l: 'Safe frame' }, { n: 'camera', k: 'camera', l: 'Camera' }],
+  get args() { delete this.args; return (this.args = [
+    A_('style', 'Render style', 'select', 'shaded', { options: RENDER_STYLES.map(s => [s, STYLE_LABEL[s]]) }),
+    A_('colourBy', 'Colours', 'select', 'model', { options: [['model', 'From the model'], ['single', 'One colour']], show: a => !['arctic', 'objectid', 'hiddenline'].includes(a.style) }),
+    ...NODE_TYPES.viewport.args.filter(x => !RENDER_SKIP.has(x.n)).map(x => x.n === 'aoRadius' ? { ...x, d: 0, min: 0, hint: '0 sizes it from the model.' } : x.n === 'colour' ? { ...x, show: a => !['arctic', 'objectid', 'hiddenline'].includes(a.style) && a.colourBy === 'single' } : x),
+    A_('offsetZ', 'Offset Z', 'number', 0, { unit: 'm', section: 'Frame', hint: 'Moves the geoset in 3D (true explode).' }),
+    A_('sizeMode', 'Image size', 'select', 'frame', { options: [['frame', 'Camera frame at canvas width'], ['canvas', 'Graph canvas, frame letterboxed']] }),
+    A_('guidesOnImage', 'Draw safe frame on image', 'bool', false),
+    A_('guideColour', 'Guide colour', 'colour', '#3554d1'),
+  ]); },
+  async run(ctx, I, A, node, want) {
+    const [mv, cv, gv] = await Promise.all([I('model'), I('camera'), I('geoset')]);
+    const model = mv ? mv.model : cv ? cv.model : null;
+    if (!model) { ctx.warn('Connect a Model.'); ctx.fail = true; return { image: blank(ctx), mask: IMG.mask(ctx.w, ctx.h) }; }
+    let camDef = cv && cv.def;
+    if (!camDef) { camDef = model.cameras[0]; if (camDef) ctx.warn(`No camera connected; using ${camDef.name}.`); }
+    if (!camDef) { ctx.warn('The model has no cameras.'); ctx.fail = true; return { image: blank(ctx), mask: IMG.mask(ctx.w, ctx.h) }; }
+    if (gv && mv && gv.key !== mv.key) ctx.warn('The geoset comes from a different model.');
+    const isolate = gv ? gv.patterns : ['*'];
+    const ratio = camDef.frame || ctx.w / ctx.h;
+    let w = ctx.w, h = Math.round(ctx.w / ratio), vScale = null, box = null;
+    if (A.sizeMode === 'canvas') { w = ctx.w; h = ctx.h; const have = w / h, bw = have > ratio ? h * ratio : w, bh = have > ratio ? h : w / ratio; box = { x: (w - bw) / 2, y: (h - bh) / 2, width: bw, height: bh }; vScale = h / bh; }
+    return renderLayer(ctx, { model, camDef, isolate, style: A.style, w, h, vScale }, { ...A, _box: box }, want);
+  },
+});
 function cameraNames(node) { const m = getModel(node && node.args && node.args.model || 'sample'); return m ? m.cameras.map(c => c.name) : []; }
 
 defNode('pointProject', {
@@ -2081,6 +2385,7 @@ function hashNode(g, id, ctx, scope) {
     for (const p of nodeInputs(node)) { const s = node.inputs[p.n]; if (s) parts.i[p.n] = hashNode(g, s.node, ctx, scope) + ':' + s.port; }
     if (node.type === 'group') { const def = doc.defs[node.args.def]; parts.def = def ? hashObj(def.nodes) : 'nodef'; }
     if (node.type === 'viewport') parts.m = viewportModelHash(parts.a);
+    if (node.type === 'modelSource') { const r = doc.models[parts.a.model]; parts.m = !r ? 'none' : r.kind === 'ocaf' ? r.hash + (ocafReady(parts.a.model) ? ':ready' : ':pending') : stableJSON(r.params || {}) + stableJSON(r.extraCameras || []) + (r.hash || ''); }
     if (node.type === 'imageLoad') parts.asset = node.args.asset || '';
     if (node.type === 'nanoBanana') parts.r = [node.args.result || '', node.args.resultKey || ''];
     hsh = hashObj(parts);
@@ -2456,6 +2761,10 @@ function nodeSummary(n) {
     case 'permutation': { try { return permRows(resolveArgs(n, makeCtx(), [])).rows.length + ' rows'; } catch { return ''; } }
     case 'group': { const d = doc.defs[a.def]; return d ? `${Object.keys(d.nodes).length} nodes · shared ×${countDefUses(a.def)}` : 'missing definition'; }
     case 'pointProject': return a.geoset || '';
+    case 'modelSource': { const r = doc.models[a.model], m = r && (r.kind === 'ocaf' ? ocafModel(a.model) : getModel(a.model)); const c = ocafCache.get(a.model); if (!r) return 'no model'; if (r.kind === 'ocaf' && !m) return c && c.error ? 'failed: ' + c.error : 'building…'; return `${r.name || a.model} · ${m._index ? m._index.geosets.length : 0} sets · ${m.cameras.length} cameras`; }
+    case 'extractGeoset': return a.geoset || 'Everything';
+    case 'extractCamera': return a.camera || 'first camera';
+    case 'render': return (STYLE_LABEL[a.style] || 'Shaded') + (a.sizeMode === 'canvas' ? ' · canvas' : ' · camera frame');
     case 'text': return String(a.text || '').split('\n')[0];
     case 'stroke': return `${a.width == null ? 2 : a.width}px ${a.position || 'outside'}`;
     case 'value': return `${a.name || ''} = ${a.value == null ? 60 : a.value}`;
@@ -2477,13 +2786,13 @@ function renderGraph() {
   for (const n of Object.values(g.nodes)) {
     if (n.type === 'backdrop') { backdropsEl.append(renderBackdrop(n)); continue; }
     const t = T(n.type), fam = FAMILIES[t.family] || FAMILIES.org;
-    const el = h('div', { class: 'node' + (ui.sel.has(n.id) ? ' selected' : '') + (n.disabled ? ' disabled' : ''), 'data-id': n.id, style: { left: n.x + 'px', top: n.y + 'px', width: t.compact ? '90px' : null } });
+    const el = h('div', { class: 'node' + (t.wide ? ' wide' : '') + (ui.sel.has(n.id) ? ' selected' : '') + (n.disabled ? ' disabled' : ''), 'data-id': n.id, style: { left: n.x + 'px', top: n.y + 'px', width: t.compact ? '90px' : null } });
     const head = h('div', { class: 'nh' }, h('span', { class: 'chip', style: { background: fam.colour } }), h('span', { class: 'nt', title: t.label }, n.name || t.label));
     if (n.type === 'save' || n.type === 'permutation') { const r = n.type === 'save' ? rowsFor(n).length : (() => { try { return permRows(resolveArgs(n, makeCtx(), [])).rows.length; } catch { return 0; } })(); if (r > 1) head.append(h('span', { class: 'badge', title: 'Rows' }, '×' + r)); }
     head.append(h('span', { class: 'dot', title: 'Status' }));
     el.append(head);
     const sum = nodeSummary(n); if (sum && !t.compact) el.append(h('div', { class: 'nsub', title: sum }, sum));
-    if (thumbPort(n) && !t.compact) el.append(h('canvas', { class: 'thumb', width: 164, height: 123 }));
+    if (thumbPort(n) && !t.compact) el.append(t.wide ? h('canvas', { class: 'thumb', width: 504, height: 320 }) : h('canvas', { class: 'thumb', width: 164, height: 123 }));
     el.append(h('div', { class: 'nmsg', hidden: true }));
     const ins = nodeInputs(n), outs = nodeOutputs(n);
     const pIn = h('div', { class: 'pcol in' }), pOut = h('div', { class: 'pcol out' });
@@ -2616,8 +2925,10 @@ function drawViewer() {
   if (v && !isPix(v) && v.kind !== 'points') {
     vt.hidden = false; sizeEl.textContent = '';
     if (v.kind === 'perm') vt.textContent = `${v.rows.length} rows\n\n` + v.rows.map((r, i) => `${String(i + 1).padStart(3)}  ${Object.entries(r).map(([k, x]) => `${k}=${x}`).join('  ')}`).join('\n');
+    else if (v.kind === 'model') { const m = v.model; vt.textContent = `Model ${m.name}\n${m.elements.length} elements · ${m.cameras.length} cameras${m.stats ? ' · ' + m.stats.triangles + ' triangles' : ''}\n\nGeosets\n${m._index.geosets.map(g => '  ' + g).join('\n')}\n\nCameras\n${m.cameras.map(c => '  ' + c.name + (c.lens ? ` · ${c.lens} mm · ${c.frameLabel}` : '')).join('\n')}`; }
+    else if (v.kind === 'geoset') vt.textContent = `Geoset ${v.path}\n${v.count} element${v.count === 1 ? '' : 's'}`;
     else if (v.kind === 'field') vt.textContent = 'Field\n\n' + v.values.map((x, i) => `${(v.ids && v.ids[i]) || i}  ${(+x).toFixed(3)}`).join('\n');
-    else if (v.kind === 'camera') { const c = v.cam; vt.textContent = `Camera ${v.name}\n${c.ortho ? 'Orthographic' : 'Perspective'} · ${c.w}×${c.h}px\n${c.ortho ? `${(c.def.span / c.h * 1000).toFixed(1)} mm per px · span ${c.def.span} m` : `fov ${c.fov}°`}\neye ${c.eye.map(x => x.toFixed(1)).join(', ')}\ntarget ${c.target.map(x => x.toFixed(1)).join(', ')}`; }
+    else if (v.kind === 'camera') { const c = v.cam; vt.textContent = `Camera ${v.name}\n${c.ortho ? 'Orthographic' : 'Perspective'} · ${c.w}×${c.h}px\n${c.ortho ? `${(c.def.span / c.h * 1000).toFixed(1)} mm per px · span ${c.def.span} m` : `fov ${(+c.fov).toFixed(1)}°${c.def && c.def.lens ? ' · lens ' + c.def.lens + ' mm' : ''}${c.def && c.def.frameLabel ? ' · frame ' + c.def.frameLabel : ''}`}\neye ${c.eye.map(x => x.toFixed(1)).join(', ')}\ntarget ${c.target.map(x => x.toFixed(1)).join(', ')}`; }
     else vt.textContent = typeof v === 'object' ? JSON.stringify(v, null, 2) : String(v);
     return;
   }
@@ -2719,6 +3030,9 @@ canvasEl.addEventListener('pointerdown', e => {
   hideTabMenu(); closeMenus();
   const pin = e.target.closest('.pin'), nodeEl = e.target.closest('.node'), bd = e.target.closest('.backdrop'), wire = e.target.closest('path.hit,path.w');
   const g = currentGraph();
+  // Right button: remember what was pressed and leave the event alone; capturing it would
+  // retarget the context menu event to the canvas.
+  if (e.button === 2) { ui._ctxNode = nodeEl ? nodeEl.dataset.id : null; return; }
   canvasEl.setPointerCapture(e.pointerId);
   if (e.button === 1 || (e.button === 0 && (spaceDown || e.altKey)) || (e.pointerType === 'touch' && !nodeEl && !pin && !bd)) { drag = { type: 'pan', x: e.clientX, y: e.clientY, px: ui.pan.x, py: ui.pan.y }; canvasEl.classList.add('panning'); return; }
   if (e.button === 2) return;
@@ -2800,17 +3114,30 @@ canvasEl.addEventListener('pointerup', e => {
 canvasEl.addEventListener('dblclick', e => {
   const nodeEl = e.target.closest('.node'); if (!nodeEl) { showTabMenu(e.clientX, e.clientY); return; }
   const n = currentGraph().nodes[nodeEl.dataset.id];
-  if (n.type === 'group') enterGroup(n); else if (n.type === 'viewport') open3D(n);
+  if (n.type === 'group') enterGroup(n); else if (n.type === 'viewport') open3D(n); else if (n.type === 'modelSource') ACTIONS.openModeller(n, currentGraph());
 });
-canvasEl.addEventListener('contextmenu', e => { e.preventDefault(); showTabMenu(e.clientX, e.clientY); });
+canvasEl.addEventListener('contextmenu', e => {
+  e.preventDefault();
+  const nodeEl = e.target.closest('.node'), id = nodeEl ? nodeEl.dataset.id : ui._ctxNode; ui._ctxNode = null;
+  const g = currentGraph(), n = id && g.nodes[id]; if (!n || n.type === 'backdrop') { showTabMenu(e.clientX, e.clientY); return; }
+  if (!ui.sel.has(n.id)) { ui.sel = new Set([n.id]); renderSelectionClasses(); renderProps(); if (ui.slot === 0) updateViewer(); }
+  const items = [];
+  if (n.type === 'modelSource') items.push({ label: 'Open parametric modeller', kbd: 'dbl-click', fn: () => ACTIONS.openModeller(n, g) }, { label: 'Load model file…', fn: () => ACTIONS.loadModelInto(n, g) }, { label: 'New empty model', fn: () => ACTIONS.newModelInto(n, g) }, '-');
+  if (n.type === 'group') items.push({ label: 'Edit inside', kbd: 'dbl-click', fn: () => enterGroup(n) }, '-');
+  if (n.type === 'viewport') items.push({ label: 'Open viewport', kbd: 'dbl-click', fn: () => open3D(n) }, '-');
+  items.push({ label: 'View in slot 1', kbd: '1', fn: () => pinSlot(1) }, { label: n.disabled ? 'Enable' : 'Disable', kbd: 'D', fn: toggleDisable },
+    { label: 'Duplicate', kbd: 'Ctrl D', fn: () => { copySelection(false); pasteNodes(ui.clipboard, { x: n.x + 40, y: n.y + 40 }); } }, { label: 'Delete', kbd: 'Del', fn: deleteSelection });
+  popMenuAt(e.clientX, e.clientY, items);
+});
+// Middle button is pan, never the browser's autoscroll.
+for (const el of [canvasEl, vstage]) { el.addEventListener('mousedown', e => { if (e.button === 1) e.preventDefault(); }); el.addEventListener('auxclick', e => { if (e.button === 1) e.preventDefault(); }); }
 canvasEl.addEventListener('wheel', e => {
   e.preventDefault();
-  const mouseWheel = e.deltaMode === 1 || (Math.abs(e.deltaY) >= 40 && e.deltaX === 0 && Number.isInteger(e.deltaY));
-  if (e.ctrlKey || e.metaKey || mouseWheel) {
-    const r = canvasEl.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
-    const nz = clamp(ui.zoom * Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015)), 0.15, 2.5);
-    ui.pan.x = mx - (mx - ui.pan.x) * nz / ui.zoom; ui.pan.y = my - (my - ui.pan.y) * nz / ui.zoom; ui.zoom = nz;
-  } else { ui.pan.x -= e.deltaX; ui.pan.y -= e.deltaY; }
+  // The wheel always zooms about the cursor; pan is middle-drag. One hand on the mouse does both.
+  const dy = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaMode === 2 ? e.deltaY * 400 : e.deltaY;
+  const r = canvasEl.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+  const nz = clamp(ui.zoom * Math.exp(-clamp(dy, -200, 200) * (e.ctrlKey ? 0.01 : 0.0016)), 0.08, 3);
+  ui.pan.x = mx - (mx - ui.pan.x) * nz / ui.zoom; ui.pan.y = my - (my - ui.pan.y) * nz / ui.zoom; ui.zoom = nz;
   applyTransform();
 }, { passive: false });
 function renderSelectionClasses() {
@@ -3071,6 +3398,14 @@ document.addEventListener('paste', e => {
 
 // ---------------------------------------------------------------- toolbar, menus
 function closeMenus() { const m = $$('.menu'); m.forEach(x => x.remove()); return m.length > 0; }
+function popMenuAt(cx, cy, items) {
+  closeMenus(); const ar = $('#app').getBoundingClientRect();
+  const m = h('div', { class: 'menu pane' });
+  for (const it of items) { if (it === '-') { m.append(h('hr')); continue; } m.append(h('button', { onclick: () => { closeMenus(); it.fn(); } }, it.label, it.kbd ? h('kbd', null, it.kbd) : null)); }
+  $('#app').append(m);
+  m.style.left = clamp(cx - ar.left, 6, ar.width - m.offsetWidth - 6) + 'px'; m.style.top = clamp(cy - ar.top, 6, ar.height - m.offsetHeight - 6) + 'px';
+  setTimeout(() => document.addEventListener('pointerdown', function off(ev) { if (!m.contains(ev.target)) { m.remove(); document.removeEventListener('pointerdown', off); } }), 0);
+}
 function popMenu(anchor, items) {
   closeMenus(); const r = anchor.getBoundingClientRect(), ar = $('#app').getBoundingClientRect();
   const m = h('div', { class: 'menu pane', style: { left: (r.left - ar.left) + 'px', top: (r.bottom - ar.top + 6) + 'px' } });
@@ -3106,10 +3441,17 @@ $('#fileOpen').onchange = async e => {
 $('#fileModel').onchange = async e => {
   const f = e.target.files[0]; e.target.value = ''; if (!f) return;
   try {
-    const txt = await f.text(), j = JSON.parse(txt);
-    if (!Array.isArray(j.elements) || !Array.isArray(j.cameras)) throw new Error('Expected "elements" and "cameras" arrays (format diagram-model/1).');
+    const txt = await f.text(), j = JSON.parse(txt), target = ui._modelTarget; ui._modelTarget = null;
+    if (j.format === 'ocaf-parametric-model') {
+      let key = (j.name || f.name.replace(/\.json$/i, '')).replace(/[^\w-]+/g, '_').toLowerCase() || 'model';
+      if (doc.models[key] && doc.models[key].kind !== 'ocaf') key += '_ocaf';
+      mutate(() => { doc.models[key] = { kind: 'ocaf', name: j.name || f.name, path: f.name, hash: hashStr(txt), json: j }; const n = target && currentGraph().nodes[target]; if (n) n.args.model = key; });
+      toast(`Model “${j.name || f.name}” loaded. Building it with the kernel…`); ensureModel(key).catch(e => toast('Model failed to build: ' + e.message, 'error'));
+      return;
+    }
+    if (!Array.isArray(j.elements) || !Array.isArray(j.cameras)) throw new Error('Expected an ocaf-parametric-model, or "elements" and "cameras" arrays (format diagram-model/1).');
     const key = (j.name || f.name.replace(/\.json$/i, '')).replace(/[^\w-]+/g, '_').toLowerCase();
-    mutate(() => { doc.models[key] = { kind: 'json', name: j.name || f.name, path: f.name, hash: hashStr(txt), json: j }; });
+    mutate(() => { doc.models[key] = { kind: 'json', name: j.name || f.name, path: f.name, hash: hashStr(txt), json: j }; const n = target && currentGraph().nodes[target]; if (n) n.args.model = key; });
     toast(`Model “${j.name || f.name}” loaded as "${key}". Pick it in a Viewport's Model field.`);
   } catch (err) { toast('Model not loaded: ' + err.message, 'error'); }
 };
@@ -3158,6 +3500,7 @@ function renderProps() {
   if (st && st.msg && (st.state === 'warn' || st.state === 'error')) propsBody.append(h('div', { class: 'nmsg ' + st.state, style: { margin: '0 0 10px' } }, st.msg));
   // type-specific actions
   if (n.type === 'viewport') propsBody.append(viewportExtras(n));
+  if (n.type === 'modelSource') propsBody.append(modelExtras(n));
   if (n.type === 'group') propsBody.append(groupExtras(n));
   if (n.type === 'save') propsBody.append(saveExtras(n));
   if (n.type === 'nanoBanana') propsBody.append(nanoExtras(n));
@@ -3337,6 +3680,12 @@ function renderGraphProps() {
         box.append(h('div', { class: 'field', style: { gridTemplateColumns: '1fr' } }, h('label', { for: id }, p.label),
           h('div', { class: 'ctl' }, h('input', { type: 'range', id, min: p.min, max: p.max, step: p.step || 1, value: v, oninput: e => { beginEdit(); ref.params = { ...(ref.params || {}), [p.key]: +e.target.value }; out.textContent = e.target.value + (p.unit || ''); docChanged(); }, onchange: () => endEdit() }), out)));
       }
+    } else if (ref.kind === 'ocaf') {
+      const m = ocafModel(key), c = ocafCache.get(key);
+      box.append(h('dl', { class: 'kv' }, h('dt', null, 'Format'), h('dd', null, 'ocaf-parametric-model'), h('dt', null, 'Features'), h('dd', null, String((ref.json.features || []).length)),
+        h('dt', null, 'Status'), h('dd', null, m ? `built · ${m.elements.length} elements · ${m.stats.triangles.toLocaleString()} triangles` : c && c.error ? 'failed: ' + c.error : 'building…'),
+        h('dt', null, 'Sets'), h('dd', null, m ? String(m._index.geosets.length) : '—'), h('dt', null, 'Cameras'), h('dd', null, m ? m.cameras.map(x => x.name).join(', ') || 'none' : '—')),
+        h('p', { class: 'hint' }, 'Edit it from a Model node: right-click › Open parametric modeller.'));
     } else {
       box.append(h('dl', { class: 'kv' }, h('dt', null, 'File'), h('dd', null, ref.path || '—'), h('dt', null, 'Hash'), h('dd', null, ref.hash || '—'), h('dt', null, 'Elements'), h('dd', null, String((ref.json.elements || []).length)), h('dt', null, 'Cameras'), h('dd', null, (ref.json.cameras || []).map(c => c.name).join(', '))),
         h('div', { style: { display: 'flex', gap: '6px', marginTop: '6px' } }, h('button', { class: 'btn line small', onclick: () => $('#fileModel').click() }, 'Reload from file…'), h('button', { class: 'btn line small danger', onclick: () => mutate(() => { delete doc.models[key]; }) }, 'Remove')));
@@ -3348,7 +3697,7 @@ function renderGraphProps() {
 }
 function shortcutList() {
   const rows = [['Tab', 'Add node at cursor'], ['Drag pin → pin', 'Wire (refused if kinds differ)'], ['D', 'Disable (pass through)'], ['F', 'Frame selection'], ['1–4', 'Pin to viewer slot'], ['Ctrl Z / Shift Z', 'Undo / redo'],
-    ['Ctrl C / V / D', 'Copy, paste, duplicate'], ['Ctrl G', 'Group (Shift to ungroup)'], ['Delete', 'Delete node or wire'], ['Double-click', 'Enter group / open viewport'], ['Esc', 'Close, leave group'], ['Wheel / Alt-drag', 'Zoom / pan']];
+    ['Ctrl C / V / D', 'Copy, paste, duplicate'], ['Ctrl G', 'Group (Shift to ungroup)'], ['Delete', 'Delete node or wire'], ['Double-click', 'Enter group / open viewport'], ['Esc', 'Close, leave group'], ['Wheel', 'Zoom at cursor'], ['Middle-drag', 'Pan'], ['Right-click node', 'Node menu (Model: open modeller)']];
   return h('div', { class: 'kbd-list' }, rows.flatMap(([k, d]) => [h('kbd', null, k), h('span', null, d)]));
 }
 
@@ -3406,10 +3755,10 @@ function openModal(title, content, opts = {}) {
     h('div', { class: 'pane-head' }, h('h2', null, title), ...(opts.actions || []), h('button', { class: 'ibtn', title: 'Close (Esc)', onclick: closeModal, html: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>' })),
     opts.raw ? content : h('div', { class: 'pane-body' }, content));
   layer.append(m);
-  layer.onclick = e => { if (e.target === layer) closeModal(); };
+  layer.onclick = e => { if (e.target === layer && opts.id !== 'modellerModal') closeModal(); };
   return m;
 }
-function closeModal() { const l = $('#modal-layer'); l.hidden = true; l.innerHTML = ''; if (ui._v3d) { ui._v3d = null; } }
+function closeModal() { const l = $('#modal-layer'); l.hidden = true; l.innerHTML = ''; if (ui._v3d) { ui._v3d = null; } if (ui._onModalClose) ui._onModalClose(); }
 
 async function openMatrixModal() {
   const jobs = saveJobs(), body = h('div');
@@ -3486,6 +3835,10 @@ function openSettingsModal() {
 function applyTheme() { const t = LS.get('dc.theme', ''); if (t) document.documentElement.setAttribute('data-theme', t); else document.documentElement.removeAttribute('data-theme'); }
 function openHelpModal() {
   openModal('How it works', h('div', { style: { maxWidth: '760px' } },
+    h('div', { class: 'sect' }, 'Model → Extract → Render'),
+    h('p', { class: 'hint' }, 'The Model node holds an ocaf-parametric-model. Right-click it (or double-click) to open it in the Feature Modeller: import geometry, put it in a Geometrical Set, add Cameras, then Save to node. Extract Geoset and Extract Camera read their lists from the model. Render takes model, camera and geoset and returns the object only (other geometry held out), its mask, shadow, Object ID and the camera\'s safe frame, at the camera\'s own frame size.'),
+    h('div', { class: 'sect' }, 'Canvas'),
+    h('p', { class: 'hint' }, 'Scroll wheel zooms about the cursor. Hold the middle button and drag to pan. Right-click a node for its menu, or empty canvas to add a node.'),
     h('p', { class: 'empty-note' }, 'A diagram is a recipe, not a file: which geometry, from which camera, in which render style, layered in which order, saved under which name. Change the model or the recipe and every affected image re-renders and overwrites itself.'),
     h('div', { class: 'sect' }, 'Layer paths'),
     h('p', { class: 'hint', html: '<code>context/buildings @ camera1 : arctic</code> · <code>option1/tower @ aerial-NE : hiddenline</code> · <code>context/* @ plan : shadows</code> · short form <code>buildings/camera1/arctic</code>. Styles: shaded, flat, shadows, hiddenline, arctic, objectid.' }),
@@ -3577,17 +3930,105 @@ function open3D(n) {
   new ResizeObserver(() => draw()).observe(cv);
   void modal;
 }
+
+
+// ---------------------------------------------------------------- the Model node and the parametric modeller
+function modelExtras(n) {
+  const key = n.args.model, ref = doc.models[key], box = h('div');
+  if (!ref) return h('div', { class: 'nmsg warn' }, 'No model selected. Load a model file or start a new one.');
+  const c = ocafCache.get(key), m = ref.kind === 'ocaf' ? ocafModel(key) : getModel(key);
+  if (ref.kind === 'ocaf' && !m) box.append(h('div', { class: 'nmsg ' + (c && c.error ? 'error' : 'warn'), style: { margin: '0 0 8px' } }, c && c.error ? 'The kernel could not build this model: ' + c.error : 'Building the model with the OpenCascade kernel…'));
+  if (m) {
+    box.append(h('dl', { class: 'kv' },
+      h('dt', null, 'Format'), h('dd', null, ref.kind === 'ocaf' ? 'ocaf-parametric-model' : ref.kind === 'builtin' ? 'built-in sample (diagram-model)' : 'diagram-model/1'),
+      h('dt', null, 'Elements'), h('dd', null, String(m.elements.length) + (m.stats ? ` · ${m.stats.triangles.toLocaleString()} triangles` : '')),
+      c && c.ms ? h('dt', null, 'Kernel build') : null, c && c.ms ? h('dd', null, (c.ms / 1000).toFixed(1) + ' s' + (m.stats && m.stats.failed.length ? ` · ${m.stats.failed.length} failed` : '')) : null),
+      h('div', { class: 'sect' }, `Geosets (${m._index.geosets.length})`),
+      h('div', { class: 'tree' }, m._index.geosets.length ? m._index.geosets.map(g => h('label', { style: { paddingLeft: 4 + (g.split('/').length - 1) * 14 + 'px', cursor: 'default' } }, g.split('/').pop(), h('span', { class: 'hint', style: { margin: '0 0 0 auto' } }, String(m.elements.filter(e => geosetMatch(g, e.geoset)).length)))) : h('div', { class: 'hint' }, 'No sets yet. In the modeller, add a Geometrical Set and put geometry in it.')),
+      h('div', { class: 'sect' }, `Cameras (${m.cameras.length})`),
+      h('div', { class: 'tree' }, m.cameras.length ? m.cameras.map(cm => h('label', { style: { cursor: 'default' } }, cm.name, h('span', { class: 'hint', style: { margin: '0 0 0 auto' } }, cm.lens ? `${cm.lens} mm · ${cm.frameLabel}${cm.generated ? ' · generated' : ''}` : cm.type))) : h('div', { class: 'hint' }, 'No cameras. Add one in the modeller (Camera).')));
+  }
+  box.append(h('p', { class: 'hint' }, 'Wire this into Extract Geoset and Extract Camera; their lists come from this model. Right-click the node to open the modeller.'));
+  return box;
+}
+Object.assign(ACTIONS, {
+  loadModelInto(n) { ui._modelTarget = n.id; $('#fileModel').click(); },
+  newModelInto(n, g) {
+    let i = 1; while (doc.models['model-' + i]) i++;
+    const key = 'model-' + i, json = { format: 'ocaf-parametric-model', version: 1, name: 'Model ' + i, units: 'mm', features: [] };
+    mutate(() => { doc.models[key] = { kind: 'ocaf', name: json.name, hash: hashStr(JSON.stringify(json)), json }; n.args.model = key; });
+    ACTIONS.openModeller(n, g);
+  },
+  openModeller(n) { openModeller(n); },
+});
+// The Feature Modeller runs in a frame beside the graph. A small bridge inside it
+// (added when this page was built) answers two calls: load a model, hand back the model.
+function openModeller(n) {
+  let key = n.args.model, ref = doc.models[key];
+  if (!ref || ref.kind !== 'ocaf') {
+    toast(ref ? `“${ref.name || key}” is not an ocaf model, so it cannot be edited in the modeller. Starting a new model.` : 'Starting a new model.');
+    return ACTIONS.newModelInto(n, currentGraph());
+  }
+  const frame = h('iframe', { src: 'modeller.html', title: 'Feature Modeller', style: { width: '100%', height: '100%', border: '0', display: 'block', background: 'var(--canvas)' } });
+  const note = h('span', { class: 'hint', style: { margin: '0 8px 0 0' } }, 'Starting the modeller…');
+  const save = h('button', { class: 'btn primary small', disabled: true }, 'Save to node');
+  const saveClose = h('button', { class: 'btn line small', disabled: true }, 'Save and close');
+  const body = h('div', { style: { flex: 1, minHeight: 0, position: 'relative' } }, frame);
+  const modal = openModal(`Parametric modeller · ${ref.name || key}`, body, { raw: true, id: 'modellerModal', actions: [note, save, saveClose] });
+  modal.style.width = 'min(1500px, 100%)'; modal.style.height = 'min(940px, 100%)'; modal.style.maxHeight = 'none';
+  const waiting = new Map(); let next = 1, ready = false;
+  const call = (name, extra = {}) => new Promise((res, rej) => { const id = next++; waiting.set(id, { res, rej }); frame.contentWindow.postMessage({ dcBridge: 1, id, call: name, ...extra }, '*'); setTimeout(() => { if (waiting.has(id)) { waiting.delete(id); rej(new Error('the modeller did not answer')); } }, 120000); });
+  const onMsg = async e => {
+    if (e.source !== frame.contentWindow) return; const m = e.data; if (!m || m.dcBridge !== 1) return;
+    if (m.ready !== undefined) {
+      if (!m.ready) { note.textContent = 'The modeller could not start: ' + (m.error || ''); return; }
+      ready = true; note.textContent = 'Loading the model…';
+      try { await call('load', { model: doc.models[key].json }); note.textContent = 'Import geometry, put it in a Geometrical Set, add Cameras, then Save to node.'; save.disabled = saveClose.disabled = false; }
+      catch (err) { note.textContent = 'Could not load the model: ' + err.message; save.disabled = saveClose.disabled = false; }
+      return;
+    }
+    const w = waiting.get(m.id); if (!w) return; waiting.delete(m.id); m.ok ? w.res(m) : w.rej(new Error(m.error || 'refused'));
+  };
+  window.addEventListener('message', onMsg);
+  const doSave = async (close) => {
+    save.disabled = saveClose.disabled = true; note.textContent = 'Saving…';
+    try {
+      const r = await call('model'), json = r.model, txt = JSON.stringify(json);
+      if (!json || json.format !== 'ocaf-parametric-model') throw new Error('the modeller returned no model');
+      const changed = hashStr(txt) !== doc.models[key].hash;
+      mutate(() => { doc.models[key] = { ...doc.models[key], name: json.name || doc.models[key].name, json, hash: hashStr(txt), saved: new Date().toISOString() }; });
+      note.textContent = changed ? `Saved ${json.features.length} features. Rebuilding downstream…` : 'No changes since the last save.';
+      if (changed) ensureModel(key).catch(err => toast('Model failed to build: ' + err.message, 'error'));
+      if (close) closeModal();
+    } catch (err) { note.textContent = 'Save failed: ' + err.message; }
+    save.disabled = saveClose.disabled = false;
+  };
+  save.onclick = () => doSave(false); saveClose.onclick = () => doSave(true);
+  const prevClose = ui._onModalClose; ui._onModalClose = () => { window.removeEventListener('message', onMsg); ui._onModalClose = prevClose; };
+  setTimeout(() => { if (!ready && document.body.contains(frame)) note.textContent = 'Still starting… the modeller loads a 7 MB kernel the first time.'; }, 8000);
+}
 // =====================================================================
 // Worked example from the brief: a site plan built from Viewport layers,
 // graphic treatments, a layer stack, entrance decals and a Save that
 // writes one file per design option.
 // =====================================================================
 function sampleDoc() {
-  const d = newDoc(); d.name = 'Site plan'; d.models = { sample: { kind: 'builtin', name: 'Competition sample', params: {} } };
+  const d = newDoc(); d.name = 'Site plan'; d.models = { samplecap: ocafSampleRef('samplecap', 'Cap'), wideflange: ocafSampleRef('wideflange', 'Wide flange columns'), sample: { kind: 'builtin', name: 'Competition sample', params: {} } };
   d.settings.width = 2000; d.settings.height = 1500; d.settings.preview = 0.4;
   const prevDoc = doc; doc = d; // createNode reads catalogue defaults only; groupPorts reads doc
   const add = (type, x, y, name, args = {}, extra = {}) => { if (type === 'viewport') args = { option: '{option}', ...args }; const n = createNode(type, x, y, { args, ...extra }); n.name = name; d.nodes[n.id] = n; return n; };
   const wire = (from, port, to, inPort) => { to.inputs[inPort] = { node: from.id, port }; };
+  // Model -> Extract -> Render, from an ocaf parametric model
+  add('backdrop', -40, -1260, '', { label: 'Model → Render (ocaf parametric model)', colour: '#1f3fa8' }, { w: 1240, h: 1110 });
+  const mdl = add('modelSource', 0, -1180, 'Model', { model: 'samplecap' });
+  const exG = add('extractGeoset', 340, -1180, 'Geoset', { geoset: 'cap' }); wire(mdl, 'model', exG, 'model');
+  const exC = add('extractCamera', 340, -900, 'Camera', { camera: 'Aerial' }); wire(mdl, 'model', exC, 'model');
+  const rnd = add('render', 620, -1180, 'Render', { style: 'shaded', colourBy: 'model', ambient: 0.55 }); wire(mdl, 'model', rnd, 'model'); wire(exC, 'camera', rnd, 'camera'); wire(exG, 'geoset', rnd, 'geoset');
+  const rndL = add('render', 620, -700, 'Render · linework', { style: 'hiddenline', lineWeight: 1.6, crease: 40 }); wire(mdl, 'model', rndL, 'model'); wire(exC, 'camera', rndL, 'camera');
+  const bg = add('solid', 900, -1180, 'Paper', { colour: '#f6f4ef' });
+  const m1 = add('merge', 900, -940, 'Object over paper', {}); wire(rnd, 'image', m1, 'a'); wire(bg, 'image', m1, 'b');
+  const m2 = add('merge', 900, -700, 'Linework', { mode: 'multiply' }); wire(rndL, 'image', m2, 'a'); wire(m1, 'image', m2, 'b');
+  const m3 = add('merge', 900, -460, 'Safe frame', { opacity: 70 }); wire(rnd, 'guides', m3, 'a'); wire(m2, 'image', m3, 'b');
   // backdrops
   add('backdrop', -40, -70, '', { label: 'Context', colour: '#6b7280' }, { w: 560, h: 830 });
   add('backdrop', -40, 800, '', { label: 'Proposal · {option}', colour: '#cf3f3f' }, { w: 560, h: 830 });
@@ -3638,12 +4079,11 @@ function sampleDoc() {
   const save = add('save', 1590, 370, 'Save site plan', { diagram: 'site-plan', pattern: '{project}_{option}_{diagram}_{camera}_v{version:02}', version: 1 });
   wire(nb, 'image', save, 'image'); wire(perm, 'rows', save, 'rows');
   doc = prevDoc;
-  d._sample = { save: save.id, stack: stack.id };
+  d._sample = { save: save.id, stack: stack.id, render: m3.id, model: mdl.id };
   return d;
 }
 function setupSampleView() {
-  ui.pins = [null, { graph: 'root', id: doc._sample ? doc._sample.save : null }, null, null, null];
-  if (doc._sample) { ui.pins[2] = { graph: 'root', id: Object.values(doc.nodes).find(n => n.name === 'Proposal massing').id }; }
+  ui.pins = [null, { graph: 'root', id: doc._sample && doc._sample.render ? doc._sample.render : null }, { graph: 'root', id: doc._sample ? doc._sample.save : null }, null, null];
   ui.slot = 1; ui.sel.clear(); ui.previewRow = 0; ui.vview.fit = true;
   render(); requestAnimationFrame(() => frameNodes());
 }
