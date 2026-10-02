@@ -2350,7 +2350,7 @@ function groupPorts(n) {
 // ---------------------------------------------------------------- output
 defNode('save', { label: 'Save', family: 'output', desc: 'A live link to a file: whenever its image changes it is written again under the same name.',
   inputs: [IN_IMG, { n: 'rows', k: 'perm', l: 'Rows' }], outputs: [],
-  args: [A_('diagram', 'Diagram', 'string', 'site-plan', { noTokens: true }), A_('pattern', 'File name', 'string', '{project}_{option}_{diagram}_{camera}_{style}_v{version:02}', { noTokens: true, hint: 'Tokens: <code>{project} {diagram} {option} {geoset} {camera} {style} {version:02} {date} {row}</code> and any Permutation list name.' }),
+  args: [A_('diagram', 'Diagram', 'string', 'site-plan', { noTokens: true }), A_('pattern', 'File name', 'string', '{project}_{option}_{diagram}_{camera}_{style}_v{version:02}', { noTokens: true, hint: 'Tokens: <code>{project} {diagram} {camera} {geoset} {style} {model} {version:02} {date} {row}</code>, any Permutation list name, and any field of an upstream node by its name. <code>{camera}</code> is the camera picked in the Extract Camera feeding this image.' }),
     A_('version', 'Version', 'int', 1, { min: 0, max: 999 }), A_('format', 'Format', 'select', 'png', { options: [['png', 'PNG (alpha)'], ['jpg', 'JPG'], ['webp', 'WebP']] }),
     A_('quality', 'Quality', 'number', 0.92, { min: 0.3, max: 1, step: 0.01, show: a => a.format !== 'png' }), A_('auto', 'Write on change', 'bool', true),
     A_('folder', 'Also write to folder', 'bool', true, { hint: 'When a local folder is connected in Files.' })],
@@ -2546,20 +2546,42 @@ function upstreamViewport(g, id, seen = new Set()) {
   for (const p of nodeInputs(node)) { const s = node.inputs[p.n]; if (s) { const r = upstreamViewport(g, s.node, seen); if (r) return r; } }
   return null;
 }
+// Tokens a Save can use without a Permutation: walk upstream, nearest node first, and take what each
+// node picked - the camera of an Extract Camera, the set of an Extract Geoset, a Render's style, the
+// model's name - then every other plain field by its own name ({lens}, {opacity}...). Values already
+// set (Permutation rows, diagram, version) win, and so does the nearest node.
+const TOKEN_SKIP_T = new Set(['rows', 'text', 'button', 'asset', 'code']), TOKEN_SKIP_N = new Set(['def', 'pattern', 'diagram', 'version', 'format', 'folder', 'path']);
+function upstreamTokens(g, node, ctx) {
+  const vars = {}, put = (k, v) => { if (v == null || v === '' || typeof v === 'object' || k in vars) return; vars[k] = String(v); };
+  const seen = new Set([node.id]), queue = [];
+  const enqueue = n => { for (const p of nodeInputs(n)) { const s = n.inputs[p.n]; if (s && g.nodes[s.node] && !seen.has(s.node)) { seen.add(s.node); queue.push(g.nodes[s.node]); } } };
+  enqueue(node);
+  while (queue.length) {
+    const up = queue.shift(), A = resolveArgs(up, ctx, []);
+    const mkey = up.type === 'modelSource' ? A.model : upstreamModelKey(g, up), m = mkey ? getModel(mkey) : null;
+    if (up.type === 'extractCamera') put('camera', m && m.cameras.some(c => c.name === A.camera) ? A.camera : m && m.cameras[0] ? m.cameras[0].name : A.camera);
+    else if (up.type === 'extractGeoset') put('geoset', A.geoset ? A.geoset.replace(/\//g, '-') : 'all');
+    else if (up.type === 'render') { put('style', A.style); if (!up.inputs.camera && m && m.cameras[0]) put('camera', m.cameras[0].name); }
+    else if (up.type === 'modelSource') put('model', doc.models[A.model] ? doc.models[A.model].name || A.model : A.model);
+    else if (up.type === 'viewport') {
+      const vm = getModel(A.model), lp = parseLayerPath(A.path, vm);
+      put('camera', A.camera || lp.camera || 'cam'); put('style', A.style || lp.style || 'shaded');
+      put('geoset', (lp.geosets[0] || 'all').replace(/\//g, '-'));
+      put('option', (lp.geosets.find(gs => /^option/.test(gs)) || lp.geosets[0] || 'all').split('/')[0]);
+    }
+    for (const a of nodeArgs(up)) if (!TOKEN_SKIP_T.has(a.t) && !TOKEN_SKIP_N.has(a.n)) put(a.n, A[a.n]);
+    enqueue(up);
+  }
+  return vars;
+}
 function saveName(node, row, rowIndex) {
   const ctx = makeCtx({ vars: row, rowIndex }), warns = [], A = resolveArgs(node, ctx, warns);
   const vars = { ...ctx.vars, diagram: A.diagram, version: String(A.version) };
-  const vp = upstreamViewport(doc, node.id);
-  if (vp) {
-    const va = resolveArgs(vp, ctx, []), m = getModel(va.model), lp = parseLayerPath(va.path, m);
-    if (!('camera' in vars)) vars.camera = va.camera || lp.camera || 'cam';
-    if (!('style' in vars)) vars.style = va.style || lp.style || 'shaded';
-    if (!('geoset' in vars)) vars.geoset = (lp.geosets[0] || 'all').replace(/\//g, '-');
-    if (!('option' in vars)) vars.option = (lp.geosets.find(gs => /^option/.test(gs)) || lp.geosets[0] || 'all').split('/')[0];
-  }
+  const up = upstreamTokens(doc, node, ctx);
+  for (const k in up) if (!(k in vars)) vars[k] = up[k];
   const missing = new Set();
   let name = fillTokens(A.pattern, vars, missing).replace(/[\\:*?"<>|]+/g, '-').replace(/\s+/g, '_');
-  return { path: name + '.' + A.format, missing: [...missing], A };
+  return { path: name + '.' + A.format, missing: [...missing], A, tokens: up };
 }
 // All (save, row) jobs with their resolved paths; duplicates are an error on both nodes.
 function saveJobs() {
@@ -3733,6 +3755,14 @@ function saveExtras(n) {
     if (j.dup) { pill = 'error'; txt = 'duplicate name'; } else if (j.missing.length) { pill = 'error'; txt = 'missing token'; } else if (f) { pill = 'ok'; txt = `written ×${f.writes}`; }
     tbl.append(h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', padding: '5px 8px', borderBottom: '1px solid var(--line)' } }, h('span', { class: 'mono', style: { flex: 1, minWidth: 0, overflowWrap: 'anywhere' } }, j.path), h('span', { class: 'pill ' + pill }, txt)));
   }
+  const tok = jobs[0] && jobs[0].tokens || {}, keys = Object.keys(tok);
+  const pri = ['camera', 'geoset', 'style', 'model', 'option'], ordered = [...pri.filter(k => k in tok), ...keys.filter(k => !pri.includes(k)).sort()];
+  const chips = h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '4px', margin: '4px 0 8px' } });
+  const chip = k => h('button', { class: 'btn line small mono', title: `Add {${k}} to the file name`, onclick: () => mutate(() => { n.args.pattern = (n.args.pattern || '') + (n.args.pattern ? '_' : '') + '{' + k + '}'; }) }, `{${k}} = ${tok[k]}`);
+  const main = ordered.filter(k => pri.includes(k)), rest = ordered.filter(k => !pri.includes(k));
+  main.forEach(k => chips.append(chip(k)));
+  const more = rest.length ? h('details', null, h('summary', { class: 'hint', style: { cursor: 'pointer' } }, `${rest.length} more fields`), h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '4px', margin: '4px 0 8px' } }, ...rest.map(chip))) : null;
+  box.append(h('div', { class: 'sect' }, 'From upstream nodes'), keys.length ? chips : h('p', { class: 'hint' }, 'Connect an image to see the tokens it carries.'), more);
   box.append(h('div', { class: 'sect' }, `Writes ${jobs.length} file${jobs.length === 1 ? '' : 's'}`), tbl,
     h('div', { style: { display: 'flex', gap: '6px', marginTop: '8px' } },
       h('button', { class: 'btn primary small', onclick: async () => { writer.armed = true; let c = 0; for (const j of jobs) { const r = await writeJob(j, { force: true, yield: sleep0 }); j.node._lastWrite = r; if (r.status !== 'error') c++; } toast(`Wrote ${c} of ${jobs.length}`); renderProps(); ui.statusDirty = true; refreshStatusDom(); } }, 'Write now'),
