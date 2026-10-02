@@ -1583,9 +1583,11 @@ function renderModel(opts, pass, w, h) {
     else if (style === 'arctic') { gl.uniform1i(M.u.uMode, 1); gl.uniform1i(M.u.uShadow, opts.arcticSun ? 1 : 0); gl.uniform3fv(M.u.uGround, [0.8, 0.82, 0.86]); gl.uniform1f(M.u.uAmb, 0.92); gl.uniform1f(M.u.uSunI, opts.arcticSun ? 0.22 : 0.08); }
     else if (style === 'objectid') { gl.uniform1i(M.u.uMode, 0); }
     else { gl.uniform1i(M.u.uMode, 1); gl.uniform1f(M.u.uAmb, +opts.ambient || 0.5); gl.uniform1f(M.u.uSunI, 0.75); }
-    gl.uniform4fv(M.u.uColour, style === 'arctic' ? [1, 1, 1, 1] : col);
-    const own = opts.colourBy === 'model' && style !== 'arctic' && style !== 'objectid';
-    for (const p of S) { if (own) gl.uniform4fv(M.u.uColour, p.e.attrs && p.e.attrs.colour ? lin(p.e.attrs.colour) : col); draw(p, off); }
+    // "From the model": each element's own colour, and the neutral default where it has none (an
+    // imported STEP usually has none). The single colour applies only when "One colour" is chosen.
+    const own = opts.colourBy === 'model' && style !== 'arctic' && style !== 'objectid', neutral = lin('#d9dce1');
+    gl.uniform4fv(M.u.uColour, style === 'arctic' ? [1, 1, 1, 1] : own ? neutral : col);
+    for (const p of S) { if (own) gl.uniform4fv(M.u.uColour, p.e.attrs && p.e.attrs.colour ? lin(p.e.attrs.colour) : neutral); draw(p, off); }
   }
   gl.bindVertexArray(null);
   // resolve MSAA and read back
