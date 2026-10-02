@@ -464,7 +464,7 @@ let view = { path: [] }; // breadcrumb of group-instance ids we have stepped int
 function newDoc() {
   return {
     format: DOC_FORMAT, name: 'Untitled graph',
-    settings: { project: 'COMP', width: 2400, height: 1800, dpi: 300, preview: 0.34, autosave: true, debounce: 2 },
+    settings: { project: 'COMP', width: 2400, height: 1800, dpi: 300, preview: 0.34, mult: 1, autosave: true, debounce: 2 },
     nodes: {}, defs: {}, models: {}, previewRow: 0,
   };
 }
@@ -2352,6 +2352,7 @@ defNode('save', { label: 'Save', family: 'output', desc: 'A live link to a file:
   inputs: [IN_IMG, { n: 'rows', k: 'perm', l: 'Rows' }], outputs: [],
   args: [A_('diagram', 'Diagram', 'string', 'site-plan', { noTokens: true }), A_('pattern', 'File name', 'string', '{project}_{option}_{diagram}_{camera}_{style}_v{version:02}', { noTokens: true, hint: 'Tokens: <code>{project} {diagram} {camera} {geoset} {style} {model} {version:02} {date} {row}</code>, any Permutation list name, and any field of an upstream node by its name. <code>{camera}</code> is the camera picked in the Extract Camera feeding this image.' }),
     A_('version', 'Version', 'int', 1, { min: 0, max: 999 }), A_('format', 'Format', 'select', 'png', { options: [['png', 'PNG (alpha)'], ['jpg', 'JPG'], ['webp', 'WebP']] }),
+    A_('scale', 'Scale ×', 'number', 0, { min: 0, max: 16, step: 0.25, hint: 'Multiplier of the viewport resolution, like Rhino\'s capture scale. 0 uses the graph\'s Output scale.' }),
     A_('quality', 'Quality', 'number', 0.92, { min: 0.3, max: 1, step: 0.01, show: a => a.format !== 'png' }), A_('auto', 'Write on change', 'bool', true),
     A_('folder', 'Also write to folder', 'bool', true, { hint: 'When a local folder is connected in Files.' })],
   async run(ctx, I) { const im = await I('image'); if (!im) ctx.warn('Nothing to save: connect an image.'); return {}; } });
@@ -2470,8 +2471,12 @@ const getStatus = (g, id) => status.get(graphKey(g) + '|' + id);
 
 // ---------- evaluate one output port ----------
 const inflight = new Map();
+function outMult(m) { const v = +m > 0 ? +m : +doc.settings.mult > 0 ? +doc.settings.mult : 1; return Math.min(16, v); }
+function outSize(m) { const k = outMult(m); return [Math.round(doc.settings.width * k), Math.round(doc.settings.height * k)]; }
 function makeCtx(o = {}) {
-  const s = doc.settings, full = !!o.full, scale = full ? 1 : (o.scale || s.preview);
+  // Width/height are the viewport resolution. Full renders multiply it (like Rhino's capture scale):
+  // more pixels, same look, because line weights and radii follow ctx.scale.
+  const s = doc.settings, full = !!o.full, scale = full ? outMult(o.mult) : (o.scale || s.preview);
   const w = Math.max(8, Math.round(s.width * scale)), h = Math.max(8, Math.round(s.height * scale));
   const vars = { project: s.project, date: new Date().toISOString().slice(0, 10), row: String((o.rowIndex || 0) + 1), ...(o.vars || {}) };
   return { w, h, scale, full, vars, track: !!o.track, gen: o.gen };
@@ -2601,7 +2606,7 @@ async function writeJob(job, opts = {}) {
   if (job.dup) return { status: 'error', msg: `Same file name as ${job.dup.join(', ')}.` };
   if (job.missing.length) return { status: 'error', msg: `File name has no value for ${job.missing.map(k => '{' + k + '}').join(', ')}.` };
   const src = n.inputs.image; if (!src) return { status: 'skipped', msg: 'No image connected.' };
-  const ctx = makeCtx({ full: true, vars: job.row, rowIndex: job.rowIndex }); ctx.rowLog = []; ctx.yield = opts.yield;
+  const ctx = makeCtx({ full: true, mult: A.scale, vars: job.row, rowIndex: job.rowIndex }); ctx.rowLog = []; ctx.yield = opts.yield;
   const hsh = hashNode(doc, src.node, ctx, null) + ':' + src.port;
   const prev = files.get(job.path);
   if (!opts.force && prev && prev.hash === hsh) return { status: 'unchanged' };
@@ -2719,7 +2724,7 @@ function setWriteChip(t) { const el = $('#writeChip'); if (el) el.textContent = 
 async function renderAll() {
   writer.armed = true;
   const jobs = saveJobs(), body = h('div', null), bar = h('i'), log = h('div', { class: 'hint' });
-  openModal('Render all', [h('p', { class: 'empty-note' }, `Writing ${jobs.length} file${jobs.length === 1 ? '' : 's'} at full resolution (${doc.settings.width} × ${doc.settings.height} px).`), h('div', { class: 'progress' }, bar), log, body], { narrow: true });
+  openModal('Render all', [h('p', { class: 'empty-note' }, `Writing ${jobs.length} file${jobs.length === 1 ? '' : 's'} at full resolution (${outSize().join(' × ')} px, ${outMult()}× the viewport; Save nodes with their own scale use it).`), h('div', { class: 'progress' }, bar), log, body], { narrow: true });
   const res = { written: 0, overwritten: 0, skipped: 0, error: 0 }, rows = [];
   for (let i = 0; i < jobs.length; i++) {
     const j = jobs[i]; log.textContent = `${i + 1} / ${jobs.length} · ${j.path}`; await sleep0();
@@ -2739,7 +2744,7 @@ const ACTIONS = {
   async exportPoints(node) {
     const ctx = makeCtx({ track: false, ...previewVars() }), P = await evalPort(currentGraph(), node.id, 'points', ctx, scopeForView());
     if (!P || !P.pts.length) return toast('No points to export.', 'error');
-    const A = resolveArgs(node, ctx, []), full = doc.settings.width / P.w;
+    const A = resolveArgs(node, ctx, []), full = outSize()[0] / P.w;
     const pts = P.pts.map(p => ({ id: p.id, name: p.attrs && p.attrs.name || '', x: +(p.x * full).toFixed(2), y: +(p.y * full).toFixed(2), depth: +p.depth.toFixed(3), visible: p.visible, x3: p.p3[0], y3: p.p3[1], z3: p.p3[2] }));
     const name = A.filename + '.' + A.format;
     const data = A.format === 'json' ? JSON.stringify({ canvas: [doc.settings.width, doc.settings.height], points: pts }, null, 2)
@@ -3016,7 +3021,7 @@ function drawViewer() {
   else drawOne(v, 0, sw);
   g.strokeStyle = 'rgba(128,128,128,.5)'; g.lineWidth = 1; g.strokeRect(VV.ox - 0.5, VV.oy - 0.5, W * VV.zoom + 1, H * VV.zoom + 1);
   const full = Math.round(W / (ui.fullRes ? 1 : doc.settings.preview) ) ;
-  sizeEl.textContent = `${W}×${H}px${ui.fullRes ? '' : ` preview of ${doc.settings.width}×${doc.settings.height}`} · ${doc.settings.dpi} dpi · ${(VV.zoom * 100).toFixed(0)}%`;
+  sizeEl.textContent = `${W}×${H}px${ui.fullRes ? '' : ` preview of ${outSize().join('×')}`} · ${doc.settings.dpi} dpi · ${(VV.zoom * 100).toFixed(0)}%`;
   void full;
 }
 function drawPointsOverlay(g, P, VV) {
@@ -3763,7 +3768,7 @@ function saveExtras(n) {
   main.forEach(k => chips.append(chip(k)));
   const more = rest.length ? h('details', null, h('summary', { class: 'hint', style: { cursor: 'pointer' } }, `${rest.length} more fields`), h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '4px', margin: '4px 0 8px' } }, ...rest.map(chip))) : null;
   box.append(h('div', { class: 'sect' }, 'From upstream nodes'), keys.length ? chips : h('p', { class: 'hint' }, 'Connect an image to see the tokens it carries.'), more);
-  box.append(h('div', { class: 'sect' }, `Writes ${jobs.length} file${jobs.length === 1 ? '' : 's'}`), tbl,
+  box.append(h('div', { class: 'sect' }, `Writes ${jobs.length} file${jobs.length === 1 ? '' : 's'} · ${outSize(n.args.scale)[0]} px wide (${outMult(n.args.scale)}×)`), tbl,
     h('div', { style: { display: 'flex', gap: '6px', marginTop: '8px' } },
       h('button', { class: 'btn primary small', onclick: async () => { writer.armed = true; let c = 0; for (const j of jobs) { const r = await writeJob(j, { force: true, yield: sleep0 }); j.node._lastWrite = r; if (r.status !== 'error') c++; } toast(`Wrote ${c} of ${jobs.length}`); renderProps(); ui.statusDirty = true; refreshStatusDom(); } }, 'Write now'),
       h('button', { class: 'btn line small', onclick: openFilesModal }, 'Open Files')),
@@ -3785,10 +3790,13 @@ function renderGraphProps() {
   box.append(h('div', { class: 'ph' }, h('input', { class: 'name', id: 'g-name', value: doc.name, oninput: e => { beginEdit(); doc.name = e.target.value; renderCrumbs(); }, onchange: () => endEdit() })),
     h('div', { class: 'ptype' }, 'Graph settings. Select a node to edit it; press N over the canvas (or right-click) to add one.'),
     h('div', { class: 'field' }, h('label', { for: 'g-project' }, 'Project'), h('div', { class: 'ctl' }, h('input', { class: 'inp', id: 'g-project', value: s.project, oninput: e => { beginEdit(); s.project = e.target.value; docChanged(); }, onchange: () => endEdit() })), h('span')),
-    h('div', { class: 'sect' }, 'Canvas'), num('Width (px)', 'width', { min: 64, max: 8000 }), num('Height (px)', 'height', { min: 64, max: 8000 }), num('DPI', 'dpi', { min: 72, max: 1200 }),
-    h('div', { class: 'hint' }, `${(s.width / s.dpi * 25.4).toFixed(0)} × ${(s.height / s.dpi * 25.4).toFixed(0)} mm at ${s.dpi} dpi. Viewports render at this size so layers align pixel for pixel.`),
+    h('div', { class: 'sect' }, 'Viewport resolution'), num('Width (px)', 'width', { min: 64, max: 8000 }), num('Height (px)', 'height', { min: 64, max: 8000 }),
+    num('Output scale ×', 'mult', { min: 0.1, max: 16, step: 0.25 }),
+    h('div', { class: 'hint' }, `Saves and exports render at ${outSize().join(' × ')} px: ${outMult()}× the viewport, like Rhino's capture scale. Line weights scale with it, so a 2× file looks the same with twice the pixels. A Save node can set its own scale.`),
+    num('DPI', 'dpi', { min: 72, max: 1200 }),
+    h('div', { class: 'hint' }, `${(outSize()[0] / s.dpi * 25.4).toFixed(0)} × ${(outSize()[1] / s.dpi * 25.4).toFixed(0)} mm at ${s.dpi} dpi. Every node renders at the same size so layers align pixel for pixel.`),
     num('Preview scale', 'preview', { min: 0.1, max: 1, step: 0.02 }),
-    h('div', { class: 'hint' }, `Previews render at ${Math.round(s.width * s.preview)} × ${Math.round(s.height * s.preview)} px. Saves always render at full size.`),
+    h('div', { class: 'hint' }, `Previews render at ${Math.round(s.width * s.preview)} × ${Math.round(s.height * s.preview)} px. Saves render at ${outSize().join(' × ')} px.`),
     h('div', { class: 'sect' }, 'Saving'),
     h('div', { class: 'field' }, h('label', { for: 'g-auto' }, 'Write on change'), h('div', { class: 'ctl' }, h('input', { type: 'checkbox', id: 'g-auto', checked: s.autosave !== false, onchange: e => mutate(() => { s.autosave = e.target.checked; }) })), h('span')),
     num('Debounce (s)', 'debounce', { min: 0.5, max: 30, step: 0.5 }));
@@ -3887,7 +3895,7 @@ async function openMatrixModal() {
   const jobs = saveJobs(), body = h('div');
   const tbl = h('table', { class: 'grid' }, h('tr', null, h('th', null, 'Preview'), h('th', null, 'Row'), h('th', null, 'File name'), h('th', null, 'Destination'), h('th', null, 'Status')));
   const cvs = [];
-  const fullHash = j => { const s = j.node.inputs.image; if (!s) return null; const ctx = makeCtx({ full: true, vars: j.row, rowIndex: j.rowIndex }); return hashNode(doc, s.node, ctx, null) + ':' + s.port; };
+  const fullHash = j => { const s = j.node.inputs.image; if (!s) return null; const ctx = makeCtx({ full: true, mult: j.A.scale, vars: j.row, rowIndex: j.rowIndex }); return hashNode(doc, s.node, ctx, null) + ':' + s.port; };
   for (const j of jobs) {
     const f = files.get(j.path); let st = 'stale', label = 'not written';
     if (j.dup) { st = 'error'; label = 'duplicate name'; } else if (j.missing.length) { st = 'error'; label = 'missing ' + j.missing.join(', '); }
@@ -4174,9 +4182,9 @@ function exportPort(n) {
 async function exportNode(g, id, port, format = 'png', scope) {
   const n = g.nodes[id]; if (!n) return;
   const ep = port ? { port } : exportPort(n); if (!ep) return toast('This node has no image to export.', 'error');
-  const pv = previewVars(), ctx = makeCtx({ full: true, ...pv });
+  const pv = previewVars(), ctx = makeCtx({ full: true, mult: ui.exportMult, ...pv });
   if (scope === undefined) scope = g === currentGraph() ? scopeForView() : null;
-  toast(`Rendering ${n.name || T(n.type).label} at ${doc.settings.width} px…`);
+  toast(`Rendering ${n.name || T(n.type).label} at ${outSize(ui.exportMult)[0]} px wide (${outMult(ui.exportMult)}×)…`);
   let v;
   if (ep.input) { const s = n.inputs[ep.input]; v = s ? await evalPort(g, s.node, s.port, ctx, scope) : null; }
   else v = await evalPort(g, id, ep.port, ctx, scope);
@@ -4204,15 +4212,17 @@ function addSaveFor(n) {
   });
   toast(`Save node added: writes ${saveName(s, {}, 0).path} whenever the image changes.${perm ? ' Wire the Permutation into its Rows input for one file per row.' : ''}`);
 }
+function expHint() { const [w, h] = outSize(ui.exportMult); return `One file now, at ${w} × ${h} px canvas (${outMult(ui.exportMult)}× the ${doc.settings.width} × ${doc.settings.height} viewport; Renders keep their camera frame). A Save node instead rewrites its file every time this image changes.`; }
 function exportExtras(n) {
   const ep = exportPort(n); if (!ep) return null;
   const fmt = ui.exportFormat || 'png';
   return h('div', null, h('div', { class: 'sect' }, 'Export'),
     h('div', { class: 'export-row' },
       h('select', { class: 'inp', id: 'exp-format', style: { width: '86px' }, onchange: e => { ui.exportFormat = e.target.value; } }, [['png', 'PNG'], ['jpg', 'JPG'], ['webp', 'WebP']].map(([v, l]) => h('option', { value: v, selected: v === fmt }, l))),
-      h('button', { class: 'btn primary small', onclick: () => exportNode(currentGraph(), n.id, null, ui.exportFormat || 'png') }, 'Export full resolution'),
+      h('label', { class: 'hint', title: 'Multiplier of the viewport resolution', style: { display: 'flex', alignItems: 'center', gap: '4px' } }, '×', h('input', { class: 'inp', type: 'number', min: 0.1, max: 16, step: 0.25, value: outMult(ui.exportMult), style: { width: '58px' }, oninput: e => { const v = +e.target.value; if (v > 0) { ui.exportMult = v; const hn = $('#exp-size'); if (hn) hn.textContent = expHint(); } } })),
+      h('button', { class: 'btn primary small', onclick: () => exportNode(currentGraph(), n.id, null, ui.exportFormat || 'png') }, 'Export'),
       n.type !== 'save' ? h('button', { class: 'btn line small', onclick: () => addSaveFor(n) }, 'Add Save node') : null),
-    h('p', { class: 'hint' }, `One file now, at ${doc.settings.width} px wide. A Save node instead rewrites its file every time this image changes.`));
+    h('p', { class: 'hint', id: 'exp-size' }, expHint()));
 }
 // =====================================================================
 // Worked example from the brief: a site plan built from Viewport layers,
