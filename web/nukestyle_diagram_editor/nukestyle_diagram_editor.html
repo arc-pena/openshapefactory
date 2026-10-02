@@ -2733,7 +2733,7 @@ function docChanged(structural) {
   if (!_renderQueued) { _renderQueued = true; requestAnimationFrame(() => { _renderQueued = false; render(); }); }
   requestEval();
   if (doc.settings.autosave !== false) scheduleAutoSave();
-  clearTimeout(_lsTimer); _lsTimer = setTimeout(() => { if (!LS.set('dc.doc', doc)) LS.set('dc.doc', { ...doc, assets: {} }); }, 600);
+  clearTimeout(_lsTimer); _lsTimer = setTimeout(() => { if (!LS.set('dc.doc.v2', doc)) LS.set('dc.doc.v2', { ...doc, assets: {} }); }, 600);
 }
 function render() {
   renderGraph(); renderCrumbs(); renderRowPicker();
@@ -3464,6 +3464,7 @@ function migrateDoc(j) {
   const d = newDoc();
   const out = { ...d, ...j, settings: { ...d.settings, ...(j.settings || {}) }, nodes: j.nodes || {}, defs: j.defs || {}, models: j.models || {}, assets: j.assets || {} };
   if (!out.models.sample) out.models.sample = { kind: 'builtin', name: 'Competition sample', params: {} };
+  for (const [k, nm] of [['samplecap', 'Cap'], ['wideflange', 'Wide flange columns']]) if (!out.models[k]) out.models[k] = ocafSampleRef(k, nm);
   for (const g of [out, ...Object.values(out.defs)]) for (const n of Object.values(g.nodes)) { n.inputs = n.inputs || {}; n.args = n.args || {}; n.promoted = n.promoted || []; }
   return out;
 }
@@ -4092,7 +4093,7 @@ function setupSampleView() {
 (function boot() {
   applyTheme();
   const w = LS.get('dc.viewerW', 0); if (w) document.documentElement.style.setProperty('--viewer-w', w + 'px');
-  const saved = LS.get('dc.doc', null);
+  const saved = LS.get('dc.doc.v2', null);
   if (saved && saved.format === DOC_FORMAT && Object.keys(saved.nodes || {}).length) { doc = migrateDoc(saved); }
   else doc = sampleDoc();
   if (!doc.models.sample) doc.models.sample = { kind: 'builtin', name: 'Competition sample', params: {} };
