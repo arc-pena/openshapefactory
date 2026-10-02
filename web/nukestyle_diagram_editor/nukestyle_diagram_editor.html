@@ -2017,7 +2017,7 @@ defNode('modelSource', {
 defNode('extractGeoset', {
   label: 'Extract Geoset', family: 'source', desc: 'Picks one set from the model. The list is read from the model\'s Geometrical Sets and Bodies.',
   inputs: [{ n: 'model', k: 'model', l: 'Model' }], outputs: [{ n: 'geoset', k: 'geoset', l: 'Geoset' }],
-  args: [A_('geoset', 'Geoset', 'select', '', { options: n => { const m = upstreamModel(n); return [['', m ? 'Everything' : 'Connect a Model first'], ...(m ? m._index.geosets.map(g => [g, g + '  (' + m.elements.filter(e => geosetMatch(g, e.geoset)).length + ')']) : [])]; } }),
+  args: [A_('geoset', 'Geoset', 'select', '', { options: n => { const m = upstreamModel(n); return [['', m ? 'Everything' : 'Connect a Model first'], ...(m ? m._index.geosets.map(g => [g, g + '  (' + m.elements.filter(e => geosetMatch(g, e.geoset)).length + ')']) : []), ...(m ? [['{geoset}', '{geoset} · from the Permutation row']] : [])]; } }),
     A_('children', 'Include sub-sets', 'bool', true)],
   async run(ctx, I, A) {
     const mv = await I('model'); if (!mv) { ctx.warn('Connect a Model.'); return { geoset: null }; }
@@ -2031,7 +2031,7 @@ defNode('extractGeoset', {
 defNode('extractCamera', {
   label: 'Extract Camera', family: 'source', desc: 'Picks one of the model\'s cameras. Its lens, roll, frame and safe frames come with it.',
   inputs: [{ n: 'model', k: 'model', l: 'Model' }], outputs: [{ n: 'camera', k: 'camera', l: 'Camera' }],
-  args: [A_('camera', 'Camera', 'select', '', { options: n => { const m = upstreamModel(n); return m ? m.cameras.map(c => [c.name, `${c.name}${c.lens ? ' · ' + c.lens + ' mm' : ''}${c.frameLabel ? ' · ' + c.frameLabel : ''}`]) : [['', 'Connect a Model first']]; } }),
+  args: [A_('camera', 'Camera', 'select', '', { options: n => { const m = upstreamModel(n); return m ? [...m.cameras.map(c => [c.name, `${c.name}${c.lens ? ' · ' + c.lens + ' mm' : ''}${c.frameLabel ? ' · ' + c.frameLabel : ''}`]), ['{camera}', '{camera} · from the Permutation row']] : [['', 'Connect a Model first']]; } }),
     A_('lock', 'Lock proportion', 'bool', true, { section: 'Resolution', hint: 'Takes the proportion from the camera\'s Frame in the modeller (16:9, A3 landscape…), so only the width is set.' }),
     A_('resW', 'Width', 'int', 0, { min: 0, max: 16000, step: 10, unit: 'px', hint: 'The default resolution for everything downstream of this camera. 0 uses the graph viewport width.' }),
     A_('resH', 'Height', 'int', 0, { min: 0, max: 16000, step: 10, unit: 'px', show: a => !a.lock, hint: '0 uses the graph viewport height.' }),
@@ -2514,23 +2514,36 @@ const NANO_PRESETS = ['Turn this into a soft watercolour illustration, keep ever
 defNode('nanoBanana', { label: 'Nano Banana', family: 'ai', desc: 'Gemini image model: give it an image, type what you want done to it, press Run. The result is kept with the graph and only re-runs when you ask.',
   inputs: [{ n: 'image', k: 'image', l: 'Image' }, { n: 'ref', k: 'image', l: 'Style ref' }, { n: 'mask', k: 'mask', l: 'Mask' }, { n: 'prompt', k: 'string', l: 'Prompt' }], outputs: [OUT_IMG],
   args: [A_('prompt', 'Prompt', 'text', '', { hint: 'What to do with the image, in plain words. Type it here or on the node. A Text Value wired into the Prompt input is added in front.' }), A_('model', 'Model', 'string', 'gemini-2.5-flash-image'),
-    A_('seed', 'Seed', 'int', 1, { min: 0, max: 999999 }), A_('auto', 'Auto-run on change', 'bool', false, { hint: 'Off by default: each run costs money and is not deterministic.' }),
+    A_('seed', 'Seed', 'int', 1, { min: 0, max: 999999 }),
+    A_('batch', 'In Render all', 'select', 'new', { options: [['new', 'Generate for new inputs'], ['always', 'Regenerate every time'], ['off', 'Never: use the kept result']], hint: 'Render all (and Write now) call Gemini for each file\'s own image, so every camera or Permutation row gets its own result. "New inputs" reuses a result whose inputs have not changed; each call costs money.' }),
+    A_('auto', 'Auto-run on change', 'bool', false, { hint: 'Also generate in the preview whenever the inputs change. Off by default: each run costs money.' }),
     A_('run', 'Run', 'button', null, { action: 'runNanoBanana' })],
-  async run(ctx, I, A, node) {
+  async run(ctx, I, A, node, want, g) {
     const [im, m] = await Promise.all([I('image'), I('mask')]);
     const base = im ? IMG.fit(im, ctx.w, ctx.h) : blank(ctx);
-    const key = nanoKey(node, A, ctx);
-    if (node._runError) { ctx.warn(node._runError); ctx.fail = true; }
-    const res = node.args.result && doc.assets[node.args.result];
-    if (!res) { ctx.warn('Not run yet. Press Run in the properties to call Gemini; the input passes through until then.'); return { image: base }; }
-    if (node.args.resultKey !== key.k) ctx.warn('Inputs changed since the last run. Showing the kept result; press Run to regenerate.');
-    const el = await loadImageEl(res.data);
+    const key = nanoKeyFor(g, node, A, ctx, ctx._scope);
+    let hit = nanoHit(node, key);
+    if (nanoWantsRun(node, A, key, ctx)) {
+      const [ref, pin] = await Promise.all([I('ref'), I('prompt')]);
+      const prompt = [pin, A.prompt].map(x => (x == null ? '' : String(x)).trim()).filter(Boolean).join('\n');
+      if (!prompt) ctx.warn('No prompt: type what Gemini should do with the image.');
+      else {
+        try { hit = await nanoGenerateAndKeep(node, key, { prompt, im, ref, model: A.model, seed: A.seed }); }
+        catch (e) { const msg = nanoErrorText(e); node._runError = msg; ctx.warn(msg); ctx.fail = true; }
+      }
+    } else if (node._runError && !hit) { ctx.warn(node._runError); ctx.fail = true; }
+    let asset = hit ? hit.asset : null;
+    if (!asset) {
+      const last = node.args.result && doc.assets && doc.assets[node.args.result] ? node.args.result : null;
+      if (!last) { if (!ctx.fail) ctx.warn('Not run yet. Press Run, or Render all to generate one result per file; the input passes through until then.'); return { image: base }; }
+      ctx.warn('No result for these inputs yet: showing the last one. Render all (or Run) generates it.'); asset = last;
+    }
+    const el = await loadImageEl(doc.assets[asset].data);
     // Keep the result's own proportion: cover the frame rather than stretch it.
-    let out = IMG.draw(ctx.w, ctx.h, (g, w, h) => { const k = Math.max(w / el.naturalWidth, h / el.naturalHeight), dw = el.naturalWidth * k, dh = el.naturalHeight * k; g.drawImage(el, (w - dw) / 2, (h - dh) / 2, dw, dh); });
+    let out = IMG.draw(ctx.w, ctx.h, (gg, w, h) => { const k = Math.max(w / el.naturalWidth, h / el.naturalHeight), dw = el.naturalWidth * k, dh = el.naturalHeight * k; gg.drawImage(el, (w - dw) / 2, (h - dh) / 2, dw, dh); });
     if (m) out = IMG.merge(IMG.setAlpha(out, m), base, 'normal', 1);
     return { image: out };
   } });
-function nanoKey(node, A, ctx) { const src = node.inputs.image, ps = node.inputs.prompt; return { k: hashStr(A.prompt + '|' + A.seed + '|' + A.model + '|' + (src ? ctx.inputHash(node, 'image') : '') + '|' + (ps ? ctx.inputHash(node, 'prompt') : '')) }; }
 
 // ---------------------------------------------------------------- organisation
 defNode('switch', { label: 'Switch', family: 'org', desc: 'Chooses one input by index (0-based) or by the name of the upstream node.',
@@ -2638,6 +2651,7 @@ function resolveArgs(node, ctx, warnings) {
       if (typeof v === 'string') { try { v = evalExpr(v, names); } catch (e) { warnings.push(`${a.l}: ${e.message}`); v = a.d; } }
       v = +v; if (a.t === 'int') v = Math.round(v);
     } else if ((a.t === 'string' || a.t === 'text' || a.t === 'path') && !a.noTokens && typeof v === 'string') v = fillTokens(v, ctx.vars, missing);
+    else if (a.t === 'select' && typeof v === 'string' && v.includes('{')) v = fillTokens(v, ctx.vars, missing); // a choice taken from the Permutation row
     else if (a.t === 'bool') v = !!v;
     out[a.n] = v;
   }
@@ -2664,7 +2678,11 @@ function hashNode(g, id, ctx, scope) {
     if (node.type === 'viewport') parts.m = viewportModelHash(parts.a);
     if (node.type === 'modelSource') { const r = doc.models[parts.a.model]; parts.m = !r ? 'none' : r.kind === 'ocaf' ? r.hash + (ocafReady(parts.a.model) ? ':ready' : ':pending') : stableJSON(r.params || {}) + stableJSON(r.extraCameras || []) + (r.hash || ''); }
     if (node.type === 'imageLoad') parts.asset = node.args.asset || '';
-    if (node.type === 'nanoBanana') parts.r = [node.args.result || '', node.args.resultKey || ''];
+    if (node.type === 'nanoBanana') {
+      // This row's own kept result; a batch that will generate one hashes as pending so it runs.
+      const k = nanoKeyFor(g, node, parts.a, ctx, scope), hit = nanoHit(node, k);
+      parts.r = [hit ? hit.asset : 'last:' + (node.args.result || ''), nanoWantsRun(node, parts.a, k, ctx) ? 'run:' + (nanoBatch ? nanoBatch.id : 'auto') : '', node._runError ? 'err' : ''];
+    }
     hsh = hashObj(parts);
   }
   memo.set(key, hsh);
@@ -2748,7 +2766,7 @@ async function evalPort(g, id, port, ctx, scope = null) {
     const track = ctx.track && graphIsViewed(g);
     if (track) { setStatus(g, id, { state: 'rendering', msg: '' }); if (ctx.yield) await ctx.yield(); }
     const warns = [], t0 = performance.now();
-    const nctx = { ...ctx, warn: m => warns.push(m), fail: false, inputHash: (n, pn) => { const s = n.inputs[pn]; return s ? hashNode(g, s.node, ctx, scope) : ''; } };
+    const nctx = { ...ctx, warn: m => warns.push(m), fail: false, _scope: scope };
     let outs = {};
     try {
       const A = resolveArgs(node, nctx, warns);
@@ -2857,7 +2875,7 @@ async function writeJob(job, opts = {}) {
   if (job.dup) return { status: 'error', msg: `Same file name as ${job.dup.join(', ')}.` };
   if (job.missing.length) return { status: 'error', msg: `File name has no value for ${job.missing.map(k => '{' + k + '}').join(', ')}.` };
   const src = n.inputs.image; if (!src) return { status: 'skipped', msg: 'No image connected.' };
-  const ctx = fullCtx(doc, n.id, A.scale, { vars: job.row, rowIndex: job.rowIndex }); ctx.rowLog = []; ctx.yield = opts.yield;
+  const ctx = fullCtx(doc, n.id, A.scale, { vars: job.row, rowIndex: job.rowIndex }); ctx.rowLog = []; ctx.yield = opts.yield; ctx.batchAI = !!opts.batchAI;
   const hsh = hashNode(doc, src.node, ctx, null) + ':' + src.port;
   const prev = files.get(job.path);
   if (!opts.force && prev && prev.hash === hsh) return { status: 'unchanged' };
@@ -2977,13 +2995,17 @@ async function renderAll() {
   const jobs = saveJobs(), body = h('div', null), bar = h('i'), log = h('div', { class: 'hint' });
   openModal('Render all', [h('p', { class: 'empty-note' }, `Writing ${jobs.length} file${jobs.length === 1 ? '' : 's'} at full resolution (${outSize().join(' × ')} px, ${outMult()}× the viewport; Save nodes with their own scale use it).`), h('div', { class: 'progress' }, bar), log, body], { narrow: true });
   const res = { written: 0, overwritten: 0, skipped: 0, error: 0 }, rows = [];
+  const ai = Object.values(doc.nodes).some(n => n.type === 'nanoBanana' && !n.disabled);
+  beginEdit(); nanoBatch = { id: uid('b'), done: new Set() };
+  try {
   for (let i = 0; i < jobs.length; i++) {
-    const j = jobs[i]; log.textContent = `${i + 1} / ${jobs.length} · ${j.path}`; await sleep0();
-    let r; try { r = await writeJob(j, { force: true, yield: sleep0 }); } catch (e) { r = { status: 'error', msg: e.message }; }
+    const j = jobs[i]; log.textContent = `${i + 1} / ${jobs.length} · ${j.path}${ai ? ' · Nano Banana runs for this file\'s image' : ''}`; await sleep0();
+    let r; try { r = await writeJob(j, { force: true, yield: sleep0, batchAI: true }); } catch (e) { r = { status: 'error', msg: e.message }; }
     const st = r.status === 'unchanged' ? 'overwritten' : r.status; res[st] = (res[st] || 0) + 1; j.node._lastWrite = r;
     rows.push(h('tr', null, h('td', { class: 'mono' }, j.path), h('td', null, h('span', { class: 'pill ' + (st === 'error' ? 'error' : st === 'skipped' ? 'stale' : r.failed ? 'warn' : 'ok') }, st)), h('td', { class: 'hint' }, r.msg || '')));
     bar.style.width = ((i + 1) / jobs.length * 100) + '%';
   }
+  } finally { const made = nanoBatch.done.size; nanoBatch = null; endEdit(); if (made) { docChanged(); toast(`Nano Banana made ${made} image${made === 1 ? '' : 's'} in this batch.`); } }
   log.textContent = `Done: ${res.written} new, ${res.overwritten} overwritten, ${res.skipped} skipped, ${res.error} failed.`;
   body.append(h('div', { style: { maxHeight: '320px', overflow: 'auto' } }, h('table', { class: 'grid' }, h('tr', null, h('th', null, 'File'), h('th', null, 'Result'), h('th', null, 'Notes')), rows)),
     h('div', { style: { display: 'flex', gap: '8px', marginTop: '12px' } }, h('button', { class: 'btn primary', onclick: () => { closeModal(); openFilesModal(); } }, 'Open Files'), h('button', { class: 'btn line', onclick: closeModal }, 'Close')));
@@ -3003,48 +3025,26 @@ const ACTIONS = {
     offerDownload(name, data);
   },
   async runNanoBanana(node, g) {
-    const key = LS.get('dc.geminiKey', '');
-    if (!key) { ui.sel = new Set([node.id]); renderProps(); setTimeout(() => { const k = document.getElementById('nb-key'); if (k) k.focus(); }, 50); return toast('Paste your Gemini API key in the node\'s properties first. It stays in this browser only.', 'error'); }
+    if (!LS.get('dc.geminiKey', '')) { ui.sel = new Set([node.id]); renderProps(); setTimeout(() => { const k = document.getElementById('nb-key'); if (k) k.focus(); }, 50); return toast('Paste your Gemini API key in the node\'s properties first. It stays in this browser only.', 'error'); }
     const { ctx, scope, A } = nanoContext(node, g);
     const I = name => { const s = node.inputs[name]; return s ? evalPort(g, s.node, s.port, ctx, scope) : null; };
     const [im, ref, pin] = await Promise.all([I('image'), I('ref'), I('prompt')]);
     const prompt = [pin, A.prompt].map(x => (x == null ? '' : String(x)).trim()).filter(Boolean).join('\n');
     if (!prompt) return toast('Type a prompt first: what should Gemini do with the image?', 'error');
     if (!im) toast('No image connected: Gemini will make one from the prompt alone.');
-    const toB64 = async (img) => { if (!img) return null; const k = Math.min(1, 1024 / Math.max(img.w, img.h)); const cv = IMG.toCanvas(k < 1 ? IMG.resample(img, Math.round(img.w * k), Math.round(img.h * k)) : img); const b = await canvasBlob(cv, 'image/png'); const buf = new Uint8Array(await b.arrayBuffer()); let s = ''; for (let i = 0; i < buf.length; i += 32768) s += String.fromCharCode(...buf.subarray(i, i + 32768)); return btoa(s); };
-    const parts = [{ text: prompt }]; const b1 = await toB64(im), b2 = await toB64(ref);
-    if (b1) parts.push({ inline_data: { mime_type: 'image/png', data: b1 } }); if (b2) parts.push({ inline_data: { mime_type: 'image/png', data: b2 } });
     setStatus(g, node.id, { state: 'rendering', msg: 'Calling Gemini…' }); ui.statusDirty = true;
+    beginEdit();
     try {
-      // The page's security policy (the claude.ai viewer's, for instance) can refuse the request
-      // before it leaves; the browser reports that as a violation event, which tells it apart from
-      // being offline or a bad key.
-      let r, csp = false; const onCsp = ev => { if (/googleapis/.test(ev.blockedURI || '')) csp = true; };
-      document.addEventListener('securitypolicyviolation', onCsp);
-      try {
-        r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(A.model)}:generateContent`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
-          body: JSON.stringify({ contents: [{ parts }], generationConfig: { responseModalities: ['IMAGE', 'TEXT'], seed: A.seed } }) });
-      } catch (err) { await new Promise(res => setTimeout(res, 60)); err.blocked = csp ? 'csp' : 'network'; throw err; }
-      finally { setTimeout(() => document.removeEventListener('securitypolicyviolation', onCsp), 200); }
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error((j.error && j.error.message) || `HTTP ${r.status}`);
-      const part = (j.candidates || []).flatMap(c => (c.content && c.content.parts) || []).find(p => p.inlineData || p.inline_data);
-      if (!part) throw new Error('The response had no image (the model may have refused the prompt).');
-      const d = part.inlineData || part.inline_data, url = `data:${d.mimeType || d.mime_type || 'image/png'};base64,${d.data}`;
-      mutate(() => { node.args.result = addAsset(url, 'nano-banana-result'); node.args.resultKey = nanoKey(node, A, ctx).k; node.args.resultPrompt = prompt; node.args.resultSeed = A.seed; });
-      delete node._runError; toast('Gemini result kept with the graph.');
+      // Run always asks again for the image in view (this preview row), even if one is kept.
+      await nanoGenerateAndKeep(node, nanoKeyFor(g, node, A, ctx, scope), { prompt, im, ref, model: A.model, seed: A.seed });
+      toast('Gemini result kept with the graph.');
     } catch (e) {
-      const msg = e.blocked === 'csp' ? 'This page is not allowed to call Google here: the claude.ai viewer\'s security policy blocks outside requests. Open the compositor from its own address (a local server or GitHub Pages) and Run works.'
-        : e.blocked ? 'Could not reach Google (offline, or the request was refused before it left).' : 'Gemini: ' + e.message + (/api key|permission|unauthori[sz]ed|API_KEY/i.test(e.message) ? ' Change the key under Gemini API key in this node\'s properties.' : '');
-      node._runError = msg; setStatus(g, node.id, { state: 'error', msg });
-      ui.statusDirty = true; render();
-    }
+      const msg = nanoErrorText(e); node._runError = msg; setStatus(g, node.id, { state: 'error', msg }); ui.statusDirty = true; render();
+    } finally { endEdit(); }
   },
 };
 function nanoContext(node, g) {
   const ctx = makeCtx({ track: false, ...previewVars() }), scope = scopeForView();
-  ctx.inputHash = (n, pn) => { const s = n.inputs[pn]; return s ? hashNode(g, s.node, ctx, scope) : ''; };
   return { ctx, scope, A: resolveArgs(node, ctx, []) };
 }
 function addAsset(dataUrl, name) {
@@ -3052,6 +3052,99 @@ function addAsset(dataUrl, name) {
   const id = 'a' + hashStr(dataUrl);
   if (!doc.assets[id]) doc.assets[id] = { name, data: dataUrl };
   return id;
+}
+// =====================================================================
+// Nano Banana: one Gemini path for the Run button and for batches.
+// Results are kept per input: the key is the prompt, seed, model and the recipe of the image
+// feeding the node, so each Permutation row (each camera, option...) has its own result and
+// Render all can fill in the ones that are missing.
+// =====================================================================
+
+// The input recipe at one fixed size, so a row's key is the same in the preview and at full
+// resolution: the hash covers which nodes, which arguments, which row - not how many pixels.
+function canonCtx(ctx) {
+  if (!ctx._canon) { const c = makeCtx({ vars: ctx.vars }); ctx._canon = { ...ctx, w: c.w, h: c.h, scale: c.scale, full: false, _hm: new Map(), _canon: null }; ctx._canon._canon = ctx._canon; }
+  return ctx._canon;
+}
+function nanoInputHash(g, node, pn, ctx, scope) { const s = node.inputs[pn]; return s ? hashNode(g, s.node, canonCtx(ctx), scope) + ':' + s.port : ''; }
+function nanoKeyOf(A, imgH, promptH, refH) { return hashStr([A.prompt, A.seed, A.model, imgH, promptH, refH].join('|')); }
+function nanoKeyFor(g, node, A, ctx, scope) { return nanoKeyOf(A, nanoInputHash(g, node, 'image', ctx, scope), nanoInputHash(g, node, 'prompt', ctx, scope), nanoInputHash(g, node, 'ref', ctx, scope)); }
+// A kept result for this key, if its image is still in the graph (an over-full browser save can drop images).
+function nanoHit(node, key) { const r = node.args.results && node.args.results[key]; return r && doc.assets && doc.assets[r.asset] ? r : null; }
+
+// One run of a Render all: nodes set to "every time" regenerate once per key per run.
+let nanoBatch = null;
+function nanoWantsRun(node, A, key, ctx) {
+  const mode = A.batch || 'new';
+  if (ctx.batchAI && mode !== 'off') return mode === 'always' ? !(nanoBatch && nanoBatch.done.has(node.id + ':' + key)) : !nanoHit(node, key);
+  return !!A.auto && !nanoHit(node, key) && !ctx.full;
+}
+
+const nanoInflight = new Map();
+async function geminiGenerate({ prompt, im, ref, model, seed }) {
+  const key = LS.get('dc.geminiKey', '');
+  if (!key) { const e = new Error('No Gemini API key. Paste one under Gemini API key in the node\'s properties.'); e.noKey = true; throw e; }
+  const toB64 = async img => { if (!img) return null; const k = Math.min(1, 1024 / Math.max(img.w, img.h)); const cv = IMG.toCanvas(k < 1 ? IMG.resample(img, Math.round(img.w * k), Math.round(img.h * k)) : img); const b = await canvasBlob(cv, 'image/png'); const buf = new Uint8Array(await b.arrayBuffer()); let s = ''; for (let i = 0; i < buf.length; i += 32768) s += String.fromCharCode(...buf.subarray(i, i + 32768)); return btoa(s); };
+  const parts = [{ text: prompt }]; const b1 = await toB64(im), b2 = await toB64(ref);
+  if (b1) parts.push({ inline_data: { mime_type: 'image/png', data: b1 } }); if (b2) parts.push({ inline_data: { mime_type: 'image/png', data: b2 } });
+  // The page's security policy (the claude.ai viewer's, for instance) can refuse the request before
+  // it leaves; the browser reports that as a violation event, which tells it apart from being offline.
+  let r, csp = false; const onCsp = ev => { if (/googleapis/.test(ev.blockedURI || '')) csp = true; };
+  document.addEventListener('securitypolicyviolation', onCsp);
+  try {
+    r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+      body: JSON.stringify({ contents: [{ parts }], generationConfig: { responseModalities: ['IMAGE', 'TEXT'], seed } }) });
+  } catch (err) { await new Promise(res => setTimeout(res, 60)); err.blocked = csp ? 'csp' : 'network'; throw err; }
+  finally { setTimeout(() => document.removeEventListener('securitypolicyviolation', onCsp), 200); }
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error((j.error && j.error.message) || `HTTP ${r.status}`);
+  const part = (j.candidates || []).flatMap(c => (c.content && c.content.parts) || []).find(p => p.inlineData || p.inline_data);
+  if (!part) throw new Error('The response had no image (the model may have refused the prompt).');
+  const d = part.inlineData || part.inline_data;
+  return compactImageUrl(`data:${d.mimeType || d.mime_type || 'image/png'};base64,${d.data}`);
+}
+// Gemini sends PNG; WebP at high quality is several times smaller, so more results fit in the
+// browser's save of the graph.
+async function compactImageUrl(url) {
+  try {
+    const el = await loadImageEl(url), cv = IMG.canvasOf(el.naturalWidth, el.naturalHeight); cv.getContext('2d').drawImage(el, 0, 0);
+    const b = await canvasBlob(cv, 'image/webp', 0.92); if (!b || !/webp/.test(b.type) || b.size * 1.37 >= url.length) return url;
+    return await new Promise(res => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(b); });
+  } catch { return url; }
+}
+function nanoErrorText(e) {
+  return e.blocked === 'csp' ? 'This page is not allowed to call Google here: the claude.ai viewer\'s security policy blocks outside requests. Open the compositor from its own address (GitHub Pages) and it works.'
+    : e.blocked ? 'Could not reach Google (offline, or the request was refused before it left).'
+    : e.noKey ? e.message
+    : 'Gemini: ' + e.message + (/api key|permission|unauthori[sz]ed|API_KEY/i.test(e.message) ? ' Change the key under Gemini API key in this node\'s properties.' : '');
+}
+const NANO_KEEP = 64;
+function storeNanoResult(node, key, url, prompt, seed) {
+  const asset = addAsset(url, 'nano-banana-result'), res = node.args.results || (node.args.results = {});
+  res[key] = { asset, prompt, seed, at: Date.now() };
+  node.args.result = asset; node.args.resultKey = key; node.args.resultPrompt = prompt; node.args.resultSeed = seed;
+  // Keep the newest results; an image no node refers to any more leaves the graph with it.
+  const keys = Object.keys(res).sort((a, b) => res[b].at - res[a].at);
+  for (const k of keys.slice(NANO_KEEP)) { const a = res[k].asset; delete res[k]; if (!assetInUse(a)) delete doc.assets[a]; }
+  return asset;
+}
+function assetInUse(id) {
+  const scan = nodes => Object.values(nodes).some(n => n.args && (n.args.asset === id || n.args.result === id || (n.args.results && Object.values(n.args.results).some(r => r.asset === id))));
+  return scan(doc.nodes) || Object.values(doc.defs || {}).some(d => scan(d.nodes));
+}
+// Generate (once per key at a time, however many evaluations ask) and keep the result.
+async function nanoGenerateAndKeep(node, key, args) {
+  if (nanoInflight.has(key)) return nanoInflight.get(key);
+  const p = (async () => {
+    const url = await geminiGenerate(args);
+    storeNanoResult(node, key, url, args.prompt, args.seed);
+    if (nanoBatch) nanoBatch.done.add(node.id + ':' + key); else docChanged();
+    delete node._runError;
+    return node.args.results[key];
+  })();
+  nanoInflight.set(key, p);
+  try { return await p; } finally { nanoInflight.delete(key); }
 }
 // =====================================================================
 // Interface. Every pane is a view of the document; edits go through
@@ -4060,7 +4153,7 @@ function saveExtras(n) {
   box.append(h('div', { class: 'sect' }, 'From upstream nodes'), keys.length ? chips : h('p', { class: 'hint' }, 'Connect an image to see the tokens it carries.'), more);
   box.append(h('div', { class: 'sect' }, (() => { const c = fullCtx(doc, n.id, n.args.scale); return `Writes ${jobs.length} file${jobs.length === 1 ? '' : 's'} · ${c.w} × ${c.h} px`; })()), tbl,
     h('div', { style: { display: 'flex', gap: '6px', marginTop: '8px' } },
-      h('button', { class: 'btn primary small', onclick: async () => { writer.armed = true; let c = 0; for (const j of jobs) { const r = await writeJob(j, { force: true, yield: sleep0 }); j.node._lastWrite = r; if (r.status !== 'error') c++; } toast(`Wrote ${c} of ${jobs.length}`); renderProps(); ui.statusDirty = true; refreshStatusDom(); } }, 'Write now'),
+      h('button', { class: 'btn primary small', onclick: async () => { writer.armed = true; let c = 0; for (const j of jobs) { const r = await writeJob(j, { force: true, yield: sleep0, batchAI: true }); j.node._lastWrite = r; if (r.status !== 'error') c++; } toast(`Wrote ${c} of ${jobs.length}`); renderProps(); ui.statusDirty = true; refreshStatusDom(); } }, 'Write now'),
       h('button', { class: 'btn line small', onclick: openFilesModal }, 'Open Files')),
     h('p', { class: 'hint' }, 'Same name overwrites in place. A changed name writes a new file and leaves the old one; Files lists orphans for clean-up.'));
   return box;
@@ -4089,7 +4182,8 @@ function nanoExtras(n) {
     has ? h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center' } }, h('img', { src: doc.assets[n.args.result].data, alt: '', style: { width: '64px', height: '48px', objectFit: 'cover', borderRadius: '6px', border: '1px solid var(--line)' } }),
       h('div', { class: 'hint', style: { margin: 0 } }, `Kept result · seed ${n.args.resultSeed} · “${String(n.args.resultPrompt || '').slice(0, 60)}”`)) : null,
     geminiKeyField(),
-    has ? h('button', { class: 'btn line small', onclick: () => mutate(() => { delete n.args.result; delete n.args.resultKey; }) }, 'Clear result') : null);
+    (() => { const c = Object.keys(n.args.results || {}).length; return c ? h('p', { class: 'hint' }, `${c} result${c === 1 ? '' : 's'} kept, one per input (each camera or Permutation row). Render all generates the missing ones.`) : null; })(),
+    has ? h('button', { class: 'btn line small', onclick: () => mutate(() => { const ids = [n.args.result, ...Object.values(n.args.results || {}).map(r => r.asset)]; delete n.args.result; delete n.args.resultKey; delete n.args.results; delete n._runError; for (const a of ids) if (a && !assetInUse(a)) delete doc.assets[a]; }) }, 'Clear results') : null);
 }
 function renderGraphProps() {
   const s = doc.settings, box = propsBody;
