@@ -325,7 +325,7 @@ table.grid canvas, table.grid img { width: 72px; height: 54px; border-radius: 5p
   <div id="toast"></div>
   <input type="file" id="fileOpen" accept=".json,application/json" hidden>
   <input type="file" id="fileModel" accept=".json,application/json" hidden>
-  <input type="file" id="fileImage" accept="image/*" hidden>
+  <input type="file" id="fileImage" accept="image/*" multiple hidden>
 </div>
 <script>
 'use strict';
@@ -2516,7 +2516,6 @@ defNode('nanoBanana', { label: 'Nano Banana', family: 'ai', desc: 'Gemini image 
   inputs: [{ n: 'image', k: 'image', l: 'Image' }, { n: 'ref', k: 'image', l: 'Style ref' }, { n: 'mask', k: 'mask', l: 'Mask' }, { n: 'prompt', k: 'string', l: 'Prompt' }], outputs: [OUT_IMG],
   args: [A_('prompt', 'Prompt', 'text', '', { hint: 'What to do with the image, in plain words. Type it here or on the node. A Text Value wired into the Prompt input is added in front.' }), A_('model', 'Model', 'string', 'gemini-2.5-flash-image'),
     A_('seed', 'Seed', 'int', 1, { min: 0, max: 999999 }),
-    A_('batch', 'In Render all', 'select', 'new', { options: [['new', 'Generate for new inputs'], ['always', 'Regenerate every time'], ['off', 'Never: use the kept result']], hint: 'Render all (and Write now) call Gemini for each file\'s own image, so every camera or Permutation row gets its own result. "New inputs" reuses a result whose inputs have not changed; each call costs money.' }),
     A_('auto', 'Auto-run on change', 'bool', false, { hint: 'Also generate in the preview whenever the inputs change. Off by default: each run costs money.' }),
     A_('run', 'Run', 'button', null, { action: 'runNanoBanana' })],
   async run(ctx, I, A, node, want, g) {
@@ -2993,24 +2992,23 @@ function setWriteChip(t) { const el = $('#writeChip'); if (el) el.textContent = 
 
 async function renderAll() {
   writer.armed = true;
-  const jobs = saveJobs(), body = h('div', null), bar = h('i'), log = h('div', { class: 'hint' });
-  openModal('Render all', [h('p', { class: 'empty-note' }, `Writing ${jobs.length} file${jobs.length === 1 ? '' : 's'} at full resolution (${outSize().join(' × ')} px, ${outMult()}× the viewport; Save nodes with their own scale use it).`), h('div', { class: 'progress' }, bar), log, body], { narrow: true });
-  const res = { written: 0, overwritten: 0, skipped: 0, error: 0 }, rows = [];
-  const ai = Object.values(doc.nodes).some(n => n.type === 'nanoBanana' && !n.disabled);
-  beginEdit(); nanoBatch = { id: uid('b'), done: new Set() };
-  try {
-  for (let i = 0; i < jobs.length; i++) {
-    const j = jobs[i]; log.textContent = `${i + 1} / ${jobs.length} · ${j.path}${ai ? ' · Nano Banana runs for this file\'s image' : ''}`; await sleep0();
-    let r; try { r = await writeJob(j, { force: true, yield: sleep0, batchAI: true }); } catch (e) { r = { status: 'error', msg: e.message }; }
-    const st = r.status === 'unchanged' ? 'overwritten' : r.status; res[st] = (res[st] || 0) + 1; j.node._lastWrite = r;
-    rows.push(h('tr', null, h('td', { class: 'mono' }, j.path), h('td', null, h('span', { class: 'pill ' + (st === 'error' ? 'error' : st === 'skipped' ? 'stale' : r.failed ? 'warn' : 'ok') }, st)), h('td', { class: 'hint' }, r.msg || '')));
-    bar.style.width = ((i + 1) / jobs.length * 100) + '%';
-  }
-  } finally { const made = nanoBatch.done.size; nanoBatch = null; endEdit(); if (made) { docChanged(); toast(`Nano Banana made ${made} image${made === 1 ? '' : 's'} in this batch.`); } }
-  log.textContent = `Done: ${res.written} new, ${res.overwritten} overwritten, ${res.skipped} skipped, ${res.error} failed.`;
-  body.append(h('div', { style: { maxHeight: '320px', overflow: 'auto' } }, h('table', { class: 'grid' }, h('tr', null, h('th', null, 'File'), h('th', null, 'Result'), h('th', null, 'Notes')), rows)),
-    h('div', { style: { display: 'flex', gap: '8px', marginTop: '12px' } }, h('button', { class: 'btn primary', onclick: () => { closeModal(); openFilesModal(); } }, 'Open Files'), h('button', { class: 'btn line', onclick: closeModal }, 'Close')));
-  ui.filesDirty = true; ui.statusDirty = true; setWriteChip(`${files.size} files in Files`);
+  const jobs = saveJobs();
+  await withNanoBatch(jobs, async pick => {
+    const body = h('div', null), bar = h('i'), log = h('div', { class: 'hint' });
+    openModal('Render all', [h('p', { class: 'empty-note' }, `Writing ${jobs.length} file${jobs.length === 1 ? '' : 's'} at full resolution (${outSize().join(' × ')} px, ${outMult()}× the viewport; Extract Cameras and Save nodes with their own size use it).${pick.run.size ? ` Nano Banana runs for ${pick.run.size} node${pick.run.size === 1 ? '' : 's'}.` : ''}`), h('div', { class: 'progress' }, bar), log, body], { narrow: true });
+    const res = { written: 0, overwritten: 0, skipped: 0, error: 0 }, rows = [];
+    for (let i = 0; i < jobs.length; i++) {
+      const j = jobs[i]; log.textContent = `${i + 1} / ${jobs.length} · ${j.path}`; await sleep0();
+      let r; try { r = await writeJob(j, { force: true, yield: sleep0, batchAI: true }); } catch (e) { r = { status: 'error', msg: e.message }; }
+      const st = r.status === 'unchanged' ? 'overwritten' : r.status; res[st] = (res[st] || 0) + 1; j.node._lastWrite = r;
+      rows.push(h('tr', null, h('td', { class: 'mono' }, j.path), h('td', null, h('span', { class: 'pill ' + (st === 'error' ? 'error' : st === 'skipped' ? 'stale' : r.failed ? 'warn' : 'ok') }, st)), h('td', { class: 'hint' }, r.msg || '')));
+      bar.style.width = ((i + 1) / jobs.length * 100) + '%';
+    }
+    log.textContent = `Done: ${res.written} new, ${res.overwritten} overwritten, ${res.skipped} skipped, ${res.error} failed.`;
+    body.append(h('div', { style: { maxHeight: '320px', overflow: 'auto' } }, h('table', { class: 'grid' }, h('tr', null, h('th', null, 'File'), h('th', null, 'Result'), h('th', null, 'Notes')), rows)),
+      h('div', { style: { display: 'flex', gap: '8px', marginTop: '12px' } }, h('button', { class: 'btn primary', onclick: () => { closeModal(); openFilesModal(); } }, 'Open Files'), h('button', { class: 'btn line', onclick: closeModal }, 'Close')));
+    ui.filesDirty = true; ui.statusDirty = true; setWriteChip(`${files.size} files in Files`);
+  });
 }
 
 // ---------- node actions ----------
@@ -3073,12 +3071,75 @@ function nanoKeyFor(g, node, A, ctx, scope) { return nanoKeyOf(A, nanoInputHash(
 // A kept result for this key, if its image is still in the graph (an over-full browser save can drop images).
 function nanoHit(node, key) { const r = node.args.results && node.args.results[key]; return r && doc.assets && doc.assets[r.asset] ? r : null; }
 
-// One run of a Render all: nodes set to "every time" regenerate once per key per run.
+// One batch (Render all, or a Save's Write now): only the nodes ticked in the picker call Gemini -
+// once per input, either always or only where no image was made yet. Unticked nodes cost nothing
+// and show the images they already have.
 let nanoBatch = null;
 function nanoWantsRun(node, A, key, ctx) {
-  const mode = A.batch || 'new';
-  if (ctx.batchAI && mode !== 'off') return mode === 'always' ? !(nanoBatch && nanoBatch.done.has(node.id + ':' + key)) : !nanoHit(node, key);
+  if (ctx.batchAI) {
+    if (!nanoBatch || !nanoBatch.run.has(node.id)) return false;
+    return nanoBatch.onlyMissing ? !nanoHit(node, key) : !nanoBatch.done.has(node.id + ':' + key);
+  }
   return !!A.auto && !nanoHit(node, key) && !ctx.full;
+}
+// Nano Banana nodes feeding these jobs, with how many of the files each one feeds.
+function nanoNodesFor(jobs) {
+  const found = new Map();
+  for (const j of jobs) {
+    const seen = new Set(), stack = [[doc, j.node.id]];
+    while (stack.length) {
+      const [g, id] = stack.pop(), n = g.nodes[id], key = (g === doc ? '' : 'd:') + id; if (!n || seen.has(key)) continue; seen.add(key);
+      if (n.type === 'nanoBanana' && !n.disabled) { const f = found.get(n.id) || { node: n, files: 0, paths: [] }; f.files++; f.paths.push(j.path); found.set(n.id, f); }
+      if (n.type === 'group' && doc.defs[n.args.def]) for (const inner of Object.values(doc.defs[n.args.def].nodes)) stack.push([doc.defs[n.args.def], inner.id]);
+      for (const s of Object.values(n.inputs || {})) if (s && s.node) stack.push([g, s.node]);
+    }
+  }
+  return [...found.values()];
+}
+// The picker: which nodes run, remembered in the graph (and its saved file) for next time.
+function pickNanoForBatch(list) {
+  return new Promise(resolve => {
+    const pick = doc.settings.nanoPick || {}, boxes = [];
+    const only = h('input', { type: 'checkbox', checked: !!doc.settings.nanoOnlyMissing });
+    const est = h('p', { class: 'hint', style: { margin: '8px 0 0' } });
+    const update = () => { const n = list.reduce((s, it, i) => s + (boxes[i].checked ? it.files : 0), 0); est.textContent = n ? `Up to ${n} Gemini call${n === 1 ? '' : 's'}${only.checked ? ' (fewer: images already made are kept)' : ''}. Each call uses your Gemini credits.` : 'No Gemini calls: every Nano Banana node keeps the images it already has.'; };
+    const rows = list.map(({ node, files, paths }, i) => {
+      const cb = h('input', { type: 'checkbox', checked: !!pick[node.id], onchange: update }); boxes.push(cb);
+      const kept = Object.keys(node.args.results || {}).length;
+      return h('label', { style: { display: 'flex', gap: '10px', alignItems: 'flex-start', padding: '8px 10px', borderBottom: '1px solid var(--line)', cursor: 'pointer' } }, cb,
+        h('div', { style: { flex: 1, minWidth: 0 } },
+          h('div', { style: { fontWeight: 600 } }, node.name || 'Nano Banana'),
+          h('div', { class: 'hint', style: { margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, node.args.prompt ? '“' + String(node.args.prompt).slice(0, 90) + '”' : 'No prompt'),
+          h('div', { class: 'hint', style: { margin: '2px 0 0', overflowWrap: 'anywhere' } }, `Feeds ${files} file${files === 1 ? '' : 's'}: ${paths.slice(0, 4).join(', ')}${paths.length > 4 ? ` +${paths.length - 4} more` : ''} · ${kept} image${kept === 1 ? '' : 's'} already made`)));
+    });
+    const finish = ok => {
+      ui._onModalClose = null;
+      if (ok) { const p = { ...(doc.settings.nanoPick || {}) }; list.forEach(({ node }, i) => { p[node.id] = boxes[i].checked; }); doc.settings.nanoPick = p; doc.settings.nanoOnlyMissing = only.checked; if (doc.settings.autosave !== false) scheduleAutoSave(); }
+      closeModal(); resolve(ok ? { run: new Set(list.filter((_, i) => boxes[i].checked).map(it => it.node.id)), onlyMissing: only.checked } : null);
+    };
+    const all = v => { boxes.forEach(b => { b.checked = v; }); update(); };
+    openModal('Which Nano Banana images to make?', [
+      h('p', { class: 'hint', style: { marginTop: 0 } }, 'Ticked nodes call Gemini for each file they feed. Unticked nodes keep the images they already made, so they cost nothing. Your choice is remembered and saved with the graph.'),
+      h('div', { style: { display: 'flex', gap: '6px', margin: '0 0 8px' } }, h('button', { class: 'btn line small', onclick: () => all(true) }, 'All'), h('button', { class: 'btn line small', onclick: () => all(false) }, 'None')),
+      h('div', { style: { maxHeight: '320px', overflow: 'auto', border: '1px solid var(--line)', borderRadius: '9px', background: 'var(--pane-solid)' } }, rows),
+      h('label', { style: { display: 'flex', gap: '8px', alignItems: 'center', marginTop: '10px', cursor: 'pointer' } }, only, h('span', null, 'Only make missing images (keep any already made for the same inputs)')),
+      est,
+      h('div', { style: { display: 'flex', gap: '8px', marginTop: '14px' } }, h('button', { class: 'btn primary', id: 'nanoPickGo', onclick: () => finish(true) }, 'Render'), h('button', { class: 'btn line', onclick: () => finish(false) }, 'Cancel')),
+    ], { narrow: true });
+    only.onchange = update; update();
+    ui._onModalClose = () => { ui._onModalClose = null; resolve(null); };
+  });
+}
+// Run jobs as one batch: ask which nodes may call Gemini, then hold that choice for the whole run
+// and record any new images as a single undo step. Returns false if the picker was cancelled.
+async function withNanoBatch(jobs, fn) {
+  const list = nanoNodesFor(jobs);
+  const pick = list.length ? await pickNanoForBatch(list) : { run: new Set(), onlyMissing: true };
+  if (!pick) return false;
+  beginEdit(); nanoBatch = { id: uid('b'), done: new Set(), run: pick.run, onlyMissing: pick.onlyMissing };
+  try { await fn(pick); }
+  finally { const made = nanoBatch.done.size; nanoBatch = null; endEdit(); if (made) { docChanged(); toast(`Nano Banana made ${made} image${made === 1 ? '' : 's'} in this batch.`); } }
+  return true;
 }
 
 const nanoInflight = new Map();
@@ -3493,8 +3554,11 @@ $('#bFocus').onclick = toggleGraphOnly; $('#focusHint').onclick = toggleGraphOnl
 applyPanes();
 $('#vExportBtn').onclick = () => { const t = viewerTarget(); if (!t) return toast('Select a node to export what it shows.'); exportNode(t.g, t.id, null, ui.exportFormat || 'png', t.scope); };
 // Drop from the Nodes tab onto the canvas places the node there.
-canvasEl.addEventListener('dragover', e => { if (e.dataTransfer.types.includes('application/x-dc-node')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
-canvasEl.addEventListener('drop', e => { const type = e.dataTransfer.getData('application/x-dc-node'); if (!type) return; e.preventDefault(); const p = toWorld(e.clientX, e.clientY); addNodeAt(type, p.x - 90, p.y - 20, { noAuto: true }); });
+canvasEl.addEventListener('dragover', e => { if (e.dataTransfer.types.includes('application/x-dc-node') || e.dataTransfer.types.includes('Files')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
+canvasEl.addEventListener('drop', e => {
+  const files = [...(e.dataTransfer.files || [])].filter(f => /^image\//.test(f.type));
+  if (files.length) { e.preventDefault(); addImagesToGraph(files, toWorld(e.clientX, e.clientY), { fresh: true }); return; }
+  const type = e.dataTransfer.getData('application/x-dc-node'); if (!type) return; e.preventDefault(); const p = toWorld(e.clientX, e.clientY); addNodeAt(type, p.x - 90, p.y - 20, { noAuto: true }); });
 // Selecting a node shows it, Nuke-style. Pinned slots stay one click (or 1-4) away; wipe keeps its pins.
 function followSelection() {
   if (ui.wipe) return;
@@ -3707,7 +3771,7 @@ function toggleDisable() { const g = currentGraph(); if (!ui.sel.size) return; m
 function copySelection(cut) {
   const g = currentGraph(), ids = [...ui.sel].filter(i => g.nodes[i]); if (!ids.length) return;
   const nodes = ids.map(i => deepClone(g.nodes[i])), defs = {}, assets = {};
-  const collect = list => { for (const n of list) { if (n.type === 'group' && doc.defs[n.args.def] && !defs[n.args.def]) { defs[n.args.def] = deepClone(doc.defs[n.args.def]); collect(Object.values(defs[n.args.def].nodes)); } for (const k of ['asset', 'result']) if (n.args[k] && doc.assets && doc.assets[n.args[k]]) assets[n.args[k]] = doc.assets[n.args[k]]; } };
+  const collect = list => { for (const n of list) { if (n.type === 'group' && doc.defs[n.args.def] && !defs[n.args.def]) { defs[n.args.def] = deepClone(doc.defs[n.args.def]); collect(Object.values(defs[n.args.def].nodes)); } for (const a of [n.args.asset, n.args.result, ...Object.values(n.args.results || {}).map(r => r.asset)]) if (a && doc.assets && doc.assets[a]) assets[a] = doc.assets[a]; } };
   collect(nodes);
   ui.clipboard = { format: 'dc-nodes/1', nodes, defs, assets };
   try { navigator.clipboard && navigator.clipboard.writeText(JSON.stringify(ui.clipboard)).catch(() => { }); } catch { }
@@ -3889,6 +3953,9 @@ document.addEventListener('keyup', e => { if (e.key === ' ') spaceDown = false; 
 document.addEventListener('pointerdown', () => { writer.armed = true; }, { capture: true });
 document.addEventListener('paste', e => {
   if (typing()) return;
+  // An image on the clipboard (a screenshot, a copied picture) becomes an Image Load node.
+  const imgs = [...(e.clipboardData && e.clipboardData.items || [])].filter(it => it.kind === 'file' && /^image\//.test(it.type)).map(it => it.getAsFile()).filter(Boolean);
+  if (imgs.length) { e.preventDefault(); addImagesToGraph(imgs, ui.mouseWorld); return; }
   const txt = e.clipboardData && e.clipboardData.getData('text');
   let clip = null; try { clip = JSON.parse(txt); } catch { }
   e.preventDefault();
@@ -3915,6 +3982,8 @@ function popMenu(anchor, items) {
 $('#bFile').onclick = e => popMenu(e.currentTarget, [
   { label: 'New graph', fn: () => { mutate(() => { const keepModels = doc.models; doc = newDoc(); doc.models = keepModels; }); view.path = []; ui.sel.clear(); ui.pins = [null, null, null, null, null]; render(); } },
   { label: 'Open graph…', fn: () => $('#fileOpen').click() },
+  { label: 'Open image…', fn: () => { ui._imageTarget = null; $('#fileImage').click(); } },
+  { label: 'Paste image', kbd: 'Ctrl V', fn: pasteImageFromClipboard },
   { label: 'Save graph', kbd: 'Ctrl S', fn: saveGraphFile },
   { label: 'Copy graph JSON', fn: () => { const t = JSON.stringify(doc, null, 1); navigator.clipboard ? navigator.clipboard.writeText(t).then(() => toast('Graph JSON copied.'), () => toast('Clipboard refused here.', 'error')) : toast('Clipboard unavailable.', 'error'); } },
   { label: 'Load sample graph', fn: () => { mutate(() => { doc = sampleDoc(); }); view.path = []; ui.sel.clear(); setupSampleView(); } },
@@ -3955,10 +4024,41 @@ $('#fileModel').onchange = async e => {
   } catch (err) { toast('Model not loaded: ' + err.message, 'error'); }
 };
 $('#fileImage').onchange = async e => {
-  const f = e.target.files[0]; const target = ui._imageTarget; e.target.value = ''; if (!f || !target) return;
-  const url = await new Promise(res => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(f); });
+  const fs = [...e.target.files]; const target = ui._imageTarget; ui._imageTarget = null; e.target.value = ''; if (!fs.length) return;
+  if (!target) return addImagesToGraph(fs, viewCentreWorld(), { fresh: true });
+  const f = fs[0], url = await readDataUrl(f);
   mutate(() => { const n = currentGraph().nodes[target]; if (!n) return; const id = addAsset(url, f.name); n.args.asset = id; if (!n.name) n.name = f.name.replace(/\.\w+$/, ''); });
 };
+const readDataUrl = f => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); r.readAsDataURL(f); });
+function viewCentreWorld() { const r = canvasEl.getBoundingClientRect(); return toWorld(r.left + r.width / 2, r.top + r.height / 2); }
+// Images into the graph. The picture is stored in the graph's assets, so it travels with Save graph
+// (the JSON file) and with copy/paste between graphs. With one Image Load node selected (and not a
+// drop or an Open), the first image replaces that node's picture instead of adding a node.
+async function addImagesToGraph(files, at, opts = {}) {
+  const g = currentGraph(), sel = [...ui.sel].map(id => g.nodes[id]).filter(Boolean);
+  const urls = []; for (const f of files) { try { urls.push([await readDataUrl(f), f.name && f.name !== 'image.png' ? f.name : 'pasted-' + new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-') + '.' + ((f.type || 'image/png').split('/')[1] || 'png').replace('jpeg', 'jpg').replace('svg+xml', 'svg')]); } catch { } }
+  if (!urls.length) return toast('Could not read that image.', 'error');
+  const target = !opts.fresh && sel.length === 1 && sel[0].type === 'imageLoad' ? sel[0] : null;
+  const made = [];
+  mutate(() => {
+    urls.forEach(([url, name], i) => {
+      const id = addAsset(url, name);
+      if (i === 0 && target) { target.args.asset = id; return; }
+      const p = at || viewCentreWorld(), n = createNode('imageLoad', Math.round(p.x - 90 + i * 30), Math.round(p.y - 40 + i * 30));
+      n.args.asset = id; n.name = name.replace(/\.\w+$/, ''); g.nodes[n.id] = n; made.push(n.id);
+    });
+    if (made.length) ui.sel = new Set(made);
+  });
+  toast(target && !made.length ? `Image replaced in “${target.name || 'Image Load'}”. It is saved in the graph file.` : `${made.length} image${made.length === 1 ? '' : 's'} added as Image Load node${made.length === 1 ? '' : 's'}. Saved in the graph file.`);
+}
+async function pasteImageFromClipboard() {
+  try {
+    const items = await navigator.clipboard.read(), blobs = [];
+    for (const it of items) { const t = it.types.find(x => /^image\//.test(x)); if (t) blobs.push(new File([await it.getType(t)], 'image.' + t.split('/')[1], { type: t })); }
+    if (!blobs.length) return toast('No image on the clipboard. Copy a picture or take a screenshot first.', 'error');
+    addImagesToGraph(blobs, ui.mouseWorld || viewCentreWorld());
+  } catch { toast('The browser would not hand over the clipboard here: press Ctrl V (⌘ V on a Mac) over the graph instead.', 'error'); }
+}
 function migrateDoc(j) {
   const d = newDoc();
   const out = { ...d, ...j, settings: { ...d.settings, ...(j.settings || {}) }, nodes: j.nodes || {}, defs: j.defs || {}, models: j.models || {}, assets: j.assets || {} };
@@ -4079,6 +4179,7 @@ function field(n, a) {
       return wrap(label, h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', width: '100%' } },
         as ? h('img', { src: as.data, style: { width: '48px', height: '36px', objectFit: 'contain', borderRadius: '5px', border: '1px solid var(--line)' }, alt: '' }) : null,
         h('button', { class: 'btn line small', id, onclick: () => { ui._imageTarget = n.id; $('#fileImage').click(); } }, as ? 'Replace…' : 'Choose image…'),
+        h('button', { class: 'btn line small', title: 'Use the image on the clipboard (or press Ctrl V over the graph)', onclick: () => { ui.sel = new Set([n.id]); pasteImageFromClipboard(); } }, 'Paste'),
         as ? h('span', { class: 'hint', style: { margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, as.name) : null));
     }
     case 'button': return h('div', { class: 'field wide' }, h('button', { class: 'btn primary', id, onclick: async e => { e.target.disabled = true; try { await ACTIONS[a.action](n, currentGraph()); } finally { e.target.disabled = false; } } }, a.l));
@@ -4154,7 +4255,7 @@ function saveExtras(n) {
   box.append(h('div', { class: 'sect' }, 'From upstream nodes'), keys.length ? chips : h('p', { class: 'hint' }, 'Connect an image to see the tokens it carries.'), more);
   box.append(h('div', { class: 'sect' }, (() => { const c = fullCtx(doc, n.id, n.args.scale); return `Writes ${jobs.length} file${jobs.length === 1 ? '' : 's'} · ${c.w} × ${c.h} px`; })()), tbl,
     h('div', { style: { display: 'flex', gap: '6px', marginTop: '8px' } },
-      h('button', { class: 'btn primary small', onclick: async () => { writer.armed = true; let c = 0; for (const j of jobs) { const r = await writeJob(j, { force: true, yield: sleep0, batchAI: true }); j.node._lastWrite = r; if (r.status !== 'error') c++; } toast(`Wrote ${c} of ${jobs.length}`); renderProps(); ui.statusDirty = true; refreshStatusDom(); } }, 'Write now'),
+      h('button', { class: 'btn primary small', onclick: async () => { writer.armed = true; let c = 0; const ran = await withNanoBatch(jobs, async () => { for (const j of jobs) { const r = await writeJob(j, { force: true, yield: sleep0, batchAI: true }); j.node._lastWrite = r; if (r.status !== 'error') c++; } }); if (ran) toast(`Wrote ${c} of ${jobs.length}`); renderProps(); ui.statusDirty = true; refreshStatusDom(); } }, 'Write now'),
       h('button', { class: 'btn line small', onclick: openFilesModal }, 'Open Files')),
     h('p', { class: 'hint' }, 'Same name overwrites in place. A changed name writes a new file and leaves the old one; Files lists orphans for clean-up.'));
   return box;
@@ -4183,7 +4284,7 @@ function nanoExtras(n) {
     has ? h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center' } }, h('img', { src: doc.assets[n.args.result].data, alt: '', style: { width: '64px', height: '48px', objectFit: 'cover', borderRadius: '6px', border: '1px solid var(--line)' } }),
       h('div', { class: 'hint', style: { margin: 0 } }, `Kept result · seed ${n.args.resultSeed} · “${String(n.args.resultPrompt || '').slice(0, 60)}”`)) : null,
     geminiKeyField(),
-    (() => { const c = Object.keys(n.args.results || {}).length; return c ? h('p', { class: 'hint' }, `${c} result${c === 1 ? '' : 's'} kept, one per input (each camera or Permutation row). Render all generates the missing ones.`) : null; })(),
+    (() => { const c = Object.keys(n.args.results || {}).length; return c ? h('p', { class: 'hint' }, `${c} result${c === 1 ? '' : 's'} kept, one per input (each camera or Permutation row). Tick this node in the Render all picker to make new ones.`) : null; })(),
     has ? h('button', { class: 'btn line small', onclick: () => mutate(() => { const ids = [n.args.result, ...Object.values(n.args.results || {}).map(r => r.asset)]; delete n.args.result; delete n.args.resultKey; delete n.args.results; delete n._runError; for (const a of ids) if (a && !assetInUse(a)) delete doc.assets[a]; }) }, 'Clear results') : null);
 }
 function renderGraphProps() {
