@@ -3004,7 +3004,7 @@ const ACTIONS = {
   },
   async runNanoBanana(node, g) {
     const key = LS.get('dc.geminiKey', '');
-    if (!key) { openSettingsModal(); return toast('Enter your Gemini API key in Settings first. It stays in this browser only.', 'error'); }
+    if (!key) { ui.sel = new Set([node.id]); renderProps(); setTimeout(() => { const k = document.getElementById('nb-key'); if (k) k.focus(); }, 50); return toast('Paste your Gemini API key in the node\'s properties first. It stays in this browser only.', 'error'); }
     const { ctx, scope, A } = nanoContext(node, g);
     const I = name => { const s = node.inputs[name]; return s ? evalPort(g, s.node, s.port, ctx, scope) : null; };
     const [im, ref, pin] = await Promise.all([I('image'), I('ref'), I('prompt')]);
@@ -3036,7 +3036,7 @@ const ACTIONS = {
       delete node._runError; toast('Gemini result kept with the graph.');
     } catch (e) {
       const msg = e.blocked === 'csp' ? 'This page is not allowed to call Google here: the claude.ai viewer\'s security policy blocks outside requests. Open the compositor from its own address (a local server or GitHub Pages) and Run works.'
-        : e.blocked ? 'Could not reach Google (offline, or the request was refused before it left).' : 'Gemini: ' + e.message;
+        : e.blocked ? 'Could not reach Google (offline, or the request was refused before it left).' : 'Gemini: ' + e.message + (/api key|permission|unauthori[sz]ed|API_KEY/i.test(e.message) ? ' Change the key under Gemini API key in this node\'s properties.' : '');
       node._runError = msg; setStatus(g, node.id, { state: 'error', msg });
       ui.statusDirty = true; render();
     }
@@ -4065,6 +4065,21 @@ function saveExtras(n) {
     h('p', { class: 'hint' }, 'Same name overwrites in place. A changed name writes a new file and leaves the old one; Files lists orphans for clean-up.'));
   return box;
 }
+// The Gemini key lives in this browser's storage only - never in the graph, exports or images.
+function geminiKeyField() {
+  const cur = LS.get('dc.geminiKey', ''), masked = k => k ? k.slice(0, 4) + '…' + k.slice(-4) : '';
+  const inp = h('input', { class: 'inp', type: 'password', id: 'nb-key', value: cur, placeholder: 'Paste a Gemini API key (AIza…)', autocomplete: 'off', spellcheck: 'false', style: { flex: 1, minWidth: 0 } });
+  const status = h('p', { class: 'hint', id: 'nb-key-status', style: { margin: '4px 0 8px' } }, cur ? `Key in use: ${masked(cur)} · stored only in this browser, never in the graph or images.` : 'No key yet. Get one at aistudio.google.com/apikey and paste it here.');
+  const save = () => { const v = inp.value.trim(); if (!v) return toast('Paste a key first, or use Remove.', 'error'); LS.set('dc.geminiKey', v); status.textContent = `Key in use: ${masked(v)} · stored only in this browser, never in the graph or images.`; toast('Gemini key saved in this browser.'); };
+  inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); save(); } });
+  const show = h('button', { class: 'btn line small', type: 'button', title: 'Show or hide the key', onclick: e => { inp.type = inp.type === 'password' ? 'text' : 'password'; e.target.textContent = inp.type === 'password' ? 'Show' : 'Hide'; } }, 'Show');
+  return h('div', null, h('div', { class: 'sect' }, 'Gemini API key'),
+    h('div', { style: { display: 'flex', gap: '6px', alignItems: 'center' } }, inp, show),
+    h('div', { style: { display: 'flex', gap: '6px', marginTop: '6px' } },
+      h('button', { class: 'btn primary small', type: 'button', onclick: save }, cur ? 'Change key' : 'Save key'),
+      h('button', { class: 'btn line small', type: 'button', onclick: () => { LS.del('dc.geminiKey'); inp.value = ''; status.textContent = 'Key removed from this browser.'; toast('Gemini key removed.'); } }, 'Remove')),
+    status);
+}
 function nanoExtras(n) {
   const has = n.args.result && doc.assets[n.args.result];
   const presets = h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '4px', margin: '0 0 8px' } },
@@ -4073,7 +4088,7 @@ function nanoExtras(n) {
     h('div', { class: 'sect' }, 'Prompt ideas'), presets,
     has ? h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center' } }, h('img', { src: doc.assets[n.args.result].data, alt: '', style: { width: '64px', height: '48px', objectFit: 'cover', borderRadius: '6px', border: '1px solid var(--line)' } }),
       h('div', { class: 'hint', style: { margin: 0 } }, `Kept result · seed ${n.args.resultSeed} · “${String(n.args.resultPrompt || '').slice(0, 60)}”`)) : null,
-    h('p', { class: 'hint' }, LS.get('dc.geminiKey', '') ? 'Gemini key set in Settings (stored only in this browser, never in the graph or images).' : 'No Gemini key yet: add one in File › Settings.'),
+    geminiKeyField(),
     has ? h('button', { class: 'btn line small', onclick: () => mutate(() => { delete n.args.result; delete n.args.resultKey; }) }, 'Clear result') : null);
 }
 function renderGraphProps() {
