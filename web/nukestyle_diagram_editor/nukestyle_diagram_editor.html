@@ -195,6 +195,10 @@ input[type=checkbox] { accent-color: var(--accent); width: 15px; height: 15px; }
 .slot { min-width: 30px; max-width: 104px !important; height: 26px; border-radius: 7px; border: 1px solid var(--line-strong); background: transparent; cursor: pointer; font-family: var(--font-mono); font-size: 11px; padding: 0 6px; color: var(--muted); max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .slot.filled { color: var(--fg); }
 .slot.on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+#vCloseBtn { order: 99; }
+body.graph-only #topbar, body.graph-only #props, body.graph-only #viewer, body.graph-only #mobilebar { display: none !important; }
+#focusHint { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 20; padding: 6px 12px; border-radius: 99px; font-size: 12px; color: var(--muted); background: var(--pane); border: 1px solid var(--line); box-shadow: var(--shadow); cursor: pointer; }
+#focusHint kbd { font-family: var(--font-mono); font-size: 11px; background: var(--accent-soft); color: var(--accent); padding: 1px 6px; border-radius: 5px; }
 #vstage { position: relative; flex: 1; min-height: 0; overflow: hidden; cursor: crosshair; touch-action: none;
   background-color: var(--check-a); background-image: conic-gradient(var(--check-b) 25%, transparent 0 50%, var(--check-b) 0 75%, transparent 0); background-size: 16px 16px; }
 #vcanvas { position: absolute; left: 0; top: 0; }
@@ -268,7 +272,7 @@ table.grid canvas, table.grid img { width: 72px; height: 54px; border-radius: 5p
     <div class="brand"><b>Diagram Compositor</b><span id="graphName">Site plan</span></div>
     <div class="tb-group">
       <button class="btn small" id="bFile">File</button>
-      <button class="btn small" id="bAdd" title="Add node (Tab)">Add node</button>
+      <button class="btn small" id="bAdd" title="Add node (N)">Add node</button>
       <button class="ibtn" id="bUndo" title="Undo (Ctrl+Z)"><svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></svg></button>
       <button class="ibtn" id="bRedo" title="Redo (Ctrl+Shift+Z)"><svg viewBox="0 0 24 24"><path d="m15 14 5-5-5-5"/><path d="M20 9H9a5 5 0 0 0 0 10h3"/></svg></button>
     </div>
@@ -280,6 +284,9 @@ table.grid canvas, table.grid img { width: 72px; height: 54px; border-radius: 5p
       <button class="btn small" id="bMatrix">Matrix</button>
       <button class="btn small" id="bFiles">Files</button>
       <button class="btn small primary" id="bRenderAll">Render all</button>
+      <button class="ibtn" id="bPropsT" title="Show or hide Properties (P)"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg></button>
+      <button class="ibtn" id="bViewerT" title="Show or hide the Viewer (V)"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg></button>
+      <button class="ibtn" id="bFocus" title="Node graph only (Tab)"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
       <button class="ibtn" id="bHelp" title="Shortcuts and help"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6v.6"/><path d="M12 17.5v.01"/></svg></button>
     </div>
   </header>
@@ -299,6 +306,7 @@ table.grid canvas, table.grid img { width: 72px; height: 54px; border-radius: 5p
       <button class="ibtn" id="vAlphaBtn" title="Show alpha channel"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor"/></svg></button>
       <button class="ibtn" id="vFullBtn" title="Render the viewer at full resolution"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
       <button class="ibtn" id="vExportBtn" title="Export what the viewer shows, at full resolution"><svg viewBox="0 0 24 24"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 19h14"/></svg></button>
+      <button class="ibtn" id="vCloseBtn" title="Close the viewer (V brings it back)"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
       <button class="ibtn" id="vFitBtn" title="Fit (F over viewer)"><svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="1.5"/><path d="M9 12h6M12 9v6"/></svg></button>
     </div>
     <div id="vstage"><canvas id="vcanvas"></canvas><div id="vwipe" hidden></div><div id="vtext" hidden></div></div>
@@ -307,6 +315,7 @@ table.grid canvas, table.grid img { width: 72px; height: 54px; border-radius: 5p
 
   <nav id="mobilebar" class="pane"><button class="btn small" id="mProps">Properties</button><button class="btn small" id="mViewer">Viewer</button><button class="btn small" id="mAdd">Add node</button></nav>
 
+  <button id="focusHint" hidden title="Show the panels again">Node graph only · press <kbd>Tab</kbd> for panels</button>
   <div id="tabmenu" class="pane" hidden><input class="inp" id="tabSearch" placeholder="Search nodes…" autocomplete="off"><div class="list" id="tabList"></div></div>
   <div id="modal-layer" hidden></div>
   <div id="toast"></div>
@@ -2922,6 +2931,7 @@ async function valueFor(t, gen) {
 }
 let _vA = null, _vB = null;
 async function updateViewer(gen) {
+  if ($('#viewer').hidden || document.body.classList.contains('graph-only')) return; // closed: nothing to draw
   const t = viewerTarget();
   const name = t ? (t.g.nodes[t.id].name || T(t.g.nodes[t.id].type).label) : '—';
   $('#vName').textContent = name + (ui.fullRes ? ' · full res' : '');
@@ -3026,6 +3036,29 @@ $('#vWipeBtn').onclick = () => { ui.wipe = !ui.wipe; renderSlots(); updateViewer
 $('#vAlphaBtn').onclick = () => { ui.alpha = !ui.alpha; renderSlots(); drawViewer(); };
 $('#vFullBtn').onclick = () => { ui.fullRes = !ui.fullRes; renderSlots(); toast(ui.fullRes ? 'Viewer renders at full resolution.' : 'Viewer back to preview resolution.'); updateViewer(); };
 $('#vFitBtn').onclick = () => { ui.vview.fit = true; drawViewer(); };
+// Panels: the viewer and properties can be closed; Tab hides everything but the graph.
+const panes = LS.get('dc.panes', { viewer: true, props: true });
+function applyPanes() {
+  $('#viewer').hidden = !panes.viewer; $('#props').hidden = !panes.props;
+  $('#bViewerT').classList.toggle('on', panes.viewer); $('#bPropsT').classList.toggle('on', panes.props);
+  const only = document.body.classList.contains('graph-only'); $('#focusHint').hidden = !only; $('#bFocus').classList.toggle('on', only);
+  requestAnimationFrame(() => { layoutPorts(); drawWires(); });
+}
+function togglePane(which, on) {
+  if (document.body.classList.contains('graph-only')) document.body.classList.remove('graph-only');
+  panes[which] = on == null ? !panes[which] : on; LS.set('dc.panes', panes); applyPanes();
+  if (which === 'viewer' && panes.viewer) { ui.vview.fit = true; updateViewer(); }
+  if (which === 'props' && panes.props) renderProps();
+}
+function toggleGraphOnly() {
+  hideTabMenu(); closeMenus();
+  document.body.classList.toggle('graph-only'); applyPanes();
+  if (!document.body.classList.contains('graph-only')) { ui.vview.fit = true; updateViewer(); renderProps(); }
+}
+$('#vCloseBtn').onclick = () => togglePane('viewer', false);
+$('#bViewerT').onclick = () => togglePane('viewer'); $('#bPropsT').onclick = () => togglePane('props');
+$('#bFocus').onclick = toggleGraphOnly; $('#focusHint').onclick = toggleGraphOnly;
+applyPanes();
 $('#vExportBtn').onclick = () => { const t = viewerTarget(); if (!t) return toast('Select a node to export what it shows.'); exportNode(t.g, t.id, null, ui.exportFormat || 'png', t.scope); };
 // Drop from the Nodes tab onto the canvas places the node there.
 canvasEl.addEventListener('dragover', e => { if (e.dataTransfer.types.includes('application/x-dc-node')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
@@ -3192,7 +3225,8 @@ function frameNodes(ids) {
   let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
   for (const id of ids) { const n = g.nodes[id], el = nodeEls.get(id); const w = n.type === 'backdrop' ? n.w : el ? el.offsetWidth : 184, hh = n.type === 'backdrop' ? n.h : el ? el.offsetHeight : 200; x0 = Math.min(x0, n.x); y0 = Math.min(y0, n.y); x1 = Math.max(x1, n.x + w); y1 = Math.max(y1, n.y + hh); }
   const r = canvasEl.getBoundingClientRect(), narrow = window.innerWidth <= 860;
-  const left = narrow ? 16 : $('#props').offsetWidth + 30, right = narrow ? 16 : $('#viewer').offsetWidth + 30, top = $('#topbar').offsetHeight + 30, bottom = narrow ? 70 : 20;
+  const shown = id => { const el = $(id); return el.offsetParent !== null && !el.hidden; };
+  const left = narrow || !shown('#props') ? 16 : $('#props').offsetWidth + 30, right = narrow || !shown('#viewer') ? 16 : $('#viewer').offsetWidth + 30, top = shown('#topbar') ? $('#topbar').offsetHeight + 30 : 16, bottom = narrow ? 70 : 20;
   const aw = r.width - left - right, ah = r.height - top - bottom;
   ui.zoom = clamp(Math.min(aw / (x1 - x0), ah / (y1 - y0)), 0.15, 1.2);
   ui.pan.x = left + (aw - (x1 - x0) * ui.zoom) / 2 - x0 * ui.zoom; ui.pan.y = top + (ah - (y1 - y0) * ui.zoom) / 2 - y0 * ui.zoom;
@@ -3406,7 +3440,10 @@ document.addEventListener('keydown', e => {
   else if (mod && k === 'g' && e.shiftKey) { e.preventDefault(); const n = currentGraph().nodes[[...ui.sel][0]]; if (n && n.type === 'group') ungroup(n); }
   else if (mod && k === 'g') { e.preventDefault(); groupSelection(); }
   else if (mod && k === 's') { e.preventDefault(); saveGraphFile(); }
-  else if (e.key === 'Tab') { e.preventDefault(); const r = canvasEl.getBoundingClientRect(); const inside = ui.mouse.x > r.left && ui.mouse.y > r.top; showTabMenu(inside ? ui.mouse.x : r.width / 2, inside ? ui.mouse.y : r.height / 2); }
+  else if (e.key === 'Tab') { e.preventDefault(); toggleGraphOnly(); }
+  else if ((k === 'n' && !mod) || (e.key === 'A' && e.shiftKey && !mod)) { e.preventDefault(); const r = canvasEl.getBoundingClientRect(); const inside = ui.mouse.x > r.left && ui.mouse.y > r.top; showTabMenu(inside ? ui.mouse.x : r.left + r.width / 2, inside ? ui.mouse.y : r.top + r.height / 2); }
+  else if (k === 'v' && !mod) togglePane('viewer');
+  else if (k === 'p' && !mod) togglePane('props');
   else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteSelection(); }
   else if (k === 'd' && !mod) toggleDisable();
   else if (k === 'f' && !mod) { const vr = $('#viewer').getBoundingClientRect(); if (ui.mouse.x > vr.left && ui.mouse.x < vr.right && ui.mouse.y > vr.top && ui.mouse.y < vr.bottom) { ui.vview.fit = true; drawViewer(); } else frameNodes([...ui.sel]); }
@@ -3691,7 +3728,7 @@ function renderGraphProps() {
   const num = (label, key, opts = {}) => h('div', { class: 'field' }, h('label', { for: 'g-' + key }, label), h('div', { class: 'ctl' }, h('input', { class: 'inp', id: 'g-' + key, type: 'number', value: s[key], min: opts.min, max: opts.max, step: opts.step || 1,
     oninput: e => { const v = +e.target.value; if (!isFinite(v) || v < (opts.min ?? -Infinity)) return; beginEdit(); s[key] = v; docChanged(); }, onchange: () => endEdit() })), h('span'));
   box.append(h('div', { class: 'ph' }, h('input', { class: 'name', id: 'g-name', value: doc.name, oninput: e => { beginEdit(); doc.name = e.target.value; renderCrumbs(); }, onchange: () => endEdit() })),
-    h('div', { class: 'ptype' }, 'Graph settings. Select a node to edit it; press Tab over the canvas to add one.'),
+    h('div', { class: 'ptype' }, 'Graph settings. Select a node to edit it; press N over the canvas (or right-click) to add one.'),
     h('div', { class: 'field' }, h('label', { for: 'g-project' }, 'Project'), h('div', { class: 'ctl' }, h('input', { class: 'inp', id: 'g-project', value: s.project, oninput: e => { beginEdit(); s.project = e.target.value; docChanged(); }, onchange: () => endEdit() })), h('span')),
     h('div', { class: 'sect' }, 'Canvas'), num('Width (px)', 'width', { min: 64, max: 8000 }), num('Height (px)', 'height', { min: 64, max: 8000 }), num('DPI', 'dpi', { min: 72, max: 1200 }),
     h('div', { class: 'hint' }, `${(s.width / s.dpi * 25.4).toFixed(0)} × ${(s.height / s.dpi * 25.4).toFixed(0)} mm at ${s.dpi} dpi. Viewports render at this size so layers align pixel for pixel.`),
@@ -3727,7 +3764,7 @@ function renderGraphProps() {
     h('div', { class: 'sect' }, 'Shortcuts'), shortcutList());
 }
 function shortcutList() {
-  const rows = [['Tab', 'Add node at cursor'], ['Drag pin → pin', 'Wire (refused if kinds differ)'], ['D', 'Disable (pass through)'], ['F', 'Frame selection'], ['1–4', 'Pin to viewer slot'], ['Ctrl Z / Shift Z', 'Undo / redo'],
+  const rows = [['Tab', 'Node graph only / show panels'], ['N  or  Shift A', 'Add node at cursor'], ['V / P', 'Show or hide Viewer / Properties'], ['Drag pin → pin', 'Wire (refused if kinds differ)'], ['D', 'Disable (pass through)'], ['F', 'Frame selection'], ['1–4', 'Pin to viewer slot'], ['Ctrl Z / Shift Z', 'Undo / redo'],
     ['Ctrl C / V / D', 'Copy, paste, duplicate'], ['Ctrl G', 'Group (Shift to ungroup)'], ['Delete', 'Delete node or wire'], ['Double-click', 'Enter group / open viewport'], ['Esc', 'Close, leave group'], ['Wheel', 'Zoom at cursor'], ['Middle-drag', 'Pan'], ['Right-click node', 'Node menu (Model: open modeller)']];
   return h('div', { class: 'kbd-list' }, rows.flatMap(([k, d]) => [h('kbd', null, k), h('span', null, d)]));
 }
@@ -3742,7 +3779,7 @@ function layersTarget() {
 }
 function renderLayersView() {
   const n = layersTarget(), g = currentGraph();
-  if (!n) { propsBody.append(h('p', { class: 'empty-note' }, 'No Layer Stack in this graph. Add one with Tab › Layer Stack, or select a Merge to see its chain as layers.')); return; }
+  if (!n) { propsBody.append(h('p', { class: 'empty-note' }, 'No Layer Stack in this graph. Add one with N › Layer Stack, or select a Merge to see its chain as layers.')); return; }
   propsBody.append(h('div', { class: 'ph' }, h('b', { style: { fontSize: '15px' } }, n.name || T(n.type).label)), h('div', { class: 'ptype' }, 'Top layer first, as in Photoshop. Changes here edit the same graph: no separate state.'));
   if (n.type === 'merge') {
     const chain = []; let cur = n; while (cur && cur.type === 'merge' && chain.length < 30) { chain.push(cur); const b = cur.inputs.b; cur = b && g.nodes[b.node]; }
@@ -3869,7 +3906,7 @@ function openHelpModal() {
     h('div', { class: 'sect' }, 'Model → Extract → Render'),
     h('p', { class: 'hint' }, 'The Model node holds an ocaf-parametric-model. Right-click it (or double-click) to open it in the Feature Modeller: import geometry, put it in a Geometrical Set, add Cameras, then Save to node. Extract Geoset and Extract Camera read their lists from the model. Render takes model, camera and geoset and returns the object only (other geometry held out), its mask, shadow, Object ID and the camera\'s safe frame, at the camera\'s own frame size.'),
     h('div', { class: 'sect' }, 'Canvas'),
-    h('p', { class: 'hint' }, 'Scroll wheel zooms about the cursor. Hold the middle button and drag to pan. Right-click a node for its menu, or empty canvas to add a node.'),
+    h('p', { class: 'hint' }, 'Scroll wheel zooms about the cursor. Hold the middle button and drag to pan. Right-click a node for its menu, or empty canvas to add a node. Tab hides every panel so only the node graph shows; Tab again brings them back. The × on the viewer closes it; V reopens it.'),
     h('p', { class: 'empty-note' }, 'A diagram is a recipe, not a file: which geometry, from which camera, in which render style, layered in which order, saved under which name. Change the model or the recipe and every affected image re-renders and overwrites itself.'),
     h('div', { class: 'sect' }, 'Layer paths'),
     h('p', { class: 'hint', html: '<code>context/buildings @ camera1 : arctic</code> · <code>option1/tower @ aerial-NE : hiddenline</code> · <code>context/* @ plan : shadows</code> · short form <code>buildings/camera1/arctic</code>. Styles: shaded, flat, shadows, hiddenline, arctic, objectid.' }),
