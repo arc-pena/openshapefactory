@@ -56785,6 +56785,7 @@ function placeCamera() {
   // one pair of planes cannot hold both, and a fixed far plane meant the
   // building simply vanished when the view was pulled back far enough to see
   // it - which looked like "fit does not fit".
+  if (!Number.isFinite(view.span)) view.span = Math.max(view.distance, 1);
   const span = Math.max(view.span, 1);
   camera.near = Math.max(0.05, Math.min(view.distance * 0.02, span * 0.02));
   camera.far = view.distance + span * 6;
@@ -58820,6 +58821,14 @@ function reanchor() {
 //! the stream is kept as the kernel sent it, in the model's own coordinates,
 //! because everything else that reads a stream - the section cutter, the
 //! handles, what a measurement says - wants those and not these.
+function finiteSegments(flat) {
+  if (!flat || !flat.length) return flat;
+  let bad = false; for (let i = 0; i < flat.length; i++) if (!Number.isFinite(flat[i])) { bad = true; break; }
+  if (!bad) return flat;
+  const out = new Float32Array(flat.length - flat.length % 6); let n = 0;
+  for (let i = 0; i + 5 < flat.length; i += 6) { let ok = true; for (let j = 0; j < 6; j++) if (!Number.isFinite(flat[i + j])) { ok = false; break; } if (ok) for (let j = 0; j < 6; j++) out[n++] = flat[i + j]; }
+  return out.slice(0, n);
+}
 function againstAnchor(flat, anchor) {
   if (!anchor || !flat || !flat.length) return flat;
   const out = new Float32Array(flat.length);
@@ -58898,7 +58907,7 @@ function groupFromStream(mesh, entry) {
   if (mesh.edges && mesh.edges.length) {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position",
-      new THREE.Float32BufferAttribute(againstAnchor(mesh.edges, anchor), 3));
+      new THREE.Float32BufferAttribute(againstAnchor(finiteSegments(mesh.edges), anchor), 3));
     // A curve is the feature, not the outline of one, so it is drawn in its own
     // colour at full strength rather than as a solid's tangent edge.
     const lines = new THREE.LineSegments(geometry, edgeMaterial(entry, style));
@@ -72237,6 +72246,19 @@ addEventListener("keyup", event => {
         try { if (typeof loadNeeds === "function") model = await loadNeeds(model); } catch (err) {}
         await mdl.run({ op: "model", model });
         try { fitView(); } catch (err) {}
+        // The geometry lands after the build, so fit again once the model's extent stops changing -
+        // unless the hand has moved the view in the meantime.
+        (async () => {
+          const at = () => { try { return [view.distance, view.target.x, view.target.y, view.target.z].join(","); } catch (e) { return ""; } };
+          const size = () => { try { const f = framingBounds(); return f ? f.box.getBoundingSphere(new THREE.Sphere()).radius : 0; } catch (e) { return 0; } };
+          let last = -1, still = 0, mine = at();
+          for (let i = 0; i < 60; i++) {
+            await new Promise(r => setTimeout(r, 300));
+            if (at() !== mine) return;
+            const r = size(); still = Math.abs(r - last) < 1e-6 && r > 0 ? still + 1 : 0; last = r;
+            if (still >= 2) { try { fitView(); } catch (e) {} return; }
+          }
+        })();
         tell({ id: m.id, ok: true });
       } else if (m.call === "model") {
         const model = await kernel.model();
