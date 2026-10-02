@@ -2520,6 +2520,7 @@ defNode('nanoBanana', { label: 'Nano Banana', family: 'ai', desc: 'Gemini image 
     const [im, m] = await Promise.all([I('image'), I('mask')]);
     const base = im ? IMG.fit(im, ctx.w, ctx.h) : blank(ctx);
     const key = nanoKey(node, A, ctx);
+    if (node._runError) { ctx.warn(node._runError); ctx.fail = true; }
     const res = node.args.result && doc.assets[node.args.result];
     if (!res) { ctx.warn('Not run yet. Press Run in the properties to call Gemini; the input passes through until then.'); return { image: base }; }
     if (node.args.resultKey !== key.k) ctx.warn('Inputs changed since the last run. Showing the kept result; press Run to regenerate.');
@@ -3004,9 +3005,7 @@ const ACTIONS = {
   async runNanoBanana(node, g) {
     const key = LS.get('dc.geminiKey', '');
     if (!key) { openSettingsModal(); return toast('Enter your Gemini API key in Settings first. It stays in this browser only.', 'error'); }
-    const ctx = makeCtx({ track: false, ...previewVars() }), scope = scopeForView();
-    ctx.inputHash = (n, pn) => { const s = n.inputs[pn]; return s ? hashNode(g, s.node, ctx, scope) : ''; };
-    const A = resolveArgs(node, ctx, []);
+    const { ctx, scope, A } = nanoContext(node, g);
     const I = name => { const s = node.inputs[name]; return s ? evalPort(g, s.node, s.port, ctx, scope) : null; };
     const [im, ref, pin] = await Promise.all([I('image'), I('ref'), I('prompt')]);
     const prompt = [pin, A.prompt].map(x => (x == null ? '' : String(x)).trim()).filter(Boolean).join('\n');
@@ -3017,26 +3016,37 @@ const ACTIONS = {
     if (b1) parts.push({ inline_data: { mime_type: 'image/png', data: b1 } }); if (b2) parts.push({ inline_data: { mime_type: 'image/png', data: b2 } });
     setStatus(g, node.id, { state: 'rendering', msg: 'Calling Gemini…' }); ui.statusDirty = true;
     try {
-      let r;
+      // The page's security policy (the claude.ai viewer's, for instance) can refuse the request
+      // before it leaves; the browser reports that as a violation event, which tells it apart from
+      // being offline or a bad key.
+      let r, csp = false; const onCsp = ev => { if (/googleapis/.test(ev.blockedURI || '')) csp = true; };
+      document.addEventListener('securitypolicyviolation', onCsp);
       try {
         r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(A.model)}:generateContent`, {
           method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
           body: JSON.stringify({ contents: [{ parts }], generationConfig: { responseModalities: ['IMAGE', 'TEXT'], seed: A.seed } }) });
-      } catch (err) { err.blocked = true; throw err; }
+      } catch (err) { await new Promise(res => setTimeout(res, 60)); err.blocked = csp ? 'csp' : 'network'; throw err; }
+      finally { setTimeout(() => document.removeEventListener('securitypolicyviolation', onCsp), 200); }
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error((j.error && j.error.message) || `HTTP ${r.status}`);
       const part = (j.candidates || []).flatMap(c => (c.content && c.content.parts) || []).find(p => p.inlineData || p.inline_data);
       if (!part) throw new Error('The response had no image (the model may have refused the prompt).');
       const d = part.inlineData || part.inline_data, url = `data:${d.mimeType || d.mime_type || 'image/png'};base64,${d.data}`;
       mutate(() => { node.args.result = addAsset(url, 'nano-banana-result'); node.args.resultKey = nanoKey(node, A, ctx).k; node.args.resultPrompt = prompt; node.args.resultSeed = A.seed; });
-      toast('Gemini result kept with the graph.');
+      delete node._runError; toast('Gemini result kept with the graph.');
     } catch (e) {
-      const blocked = !!e.blocked;
-      setStatus(g, node.id, { state: 'error', msg: blocked ? 'Could not reach Google: this viewer blocks outside network calls. Use the served build to run Nano Banana.' : 'Gemini: ' + e.message });
+      const msg = e.blocked === 'csp' ? 'This page is not allowed to call Google here: the claude.ai viewer\'s security policy blocks outside requests. Open the compositor from its own address (a local server or GitHub Pages) and Run works.'
+        : e.blocked ? 'Could not reach Google (offline, or the request was refused before it left).' : 'Gemini: ' + e.message;
+      node._runError = msg; setStatus(g, node.id, { state: 'error', msg });
       ui.statusDirty = true; render();
     }
   },
 };
+function nanoContext(node, g) {
+  const ctx = makeCtx({ track: false, ...previewVars() }), scope = scopeForView();
+  ctx.inputHash = (n, pn) => { const s = n.inputs[pn]; return s ? hashNode(g, s.node, ctx, scope) : ''; };
+  return { ctx, scope, A: resolveArgs(node, ctx, []) };
+}
 function addAsset(dataUrl, name) {
   doc.assets = doc.assets || {};
   const id = 'a' + hashStr(dataUrl);
