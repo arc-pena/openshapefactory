@@ -1840,15 +1840,17 @@ defNode('extractCamera', {
   label: 'Extract Camera', family: 'source', desc: 'Picks one of the model\'s cameras. Its lens, roll, frame and safe frames come with it.',
   inputs: [{ n: 'model', k: 'model', l: 'Model' }], outputs: [{ n: 'camera', k: 'camera', l: 'Camera' }],
   args: [A_('camera', 'Camera', 'select', '', { options: n => { const m = upstreamModel(n); return m ? m.cameras.map(c => [c.name, `${c.name}${c.lens ? ' · ' + c.lens + ' mm' : ''}${c.frameLabel ? ' · ' + c.frameLabel : ''}`]) : [['', 'Connect a Model first']]; } }),
-    A_('resW', 'Resolution width', 'int', 0, { min: 0, max: 16000, step: 10, unit: 'px', section: 'Resolution', hint: 'Sets the size of every Save and export downstream of this camera. Height follows the camera frame. 0 uses the graph viewport.' }),
-    A_('scale', 'Scale ×', 'number', 0, { min: 0, max: 16, step: 0.25, hint: 'Multiplier, like Rhino\'s capture scale: 2 writes twice the pixels with the same look. 0 uses the graph\'s Output scale.' })],
+    A_('lock', 'Lock proportion', 'bool', true, { section: 'Resolution', hint: 'Takes the proportion from the camera\'s Frame in the modeller (16:9, A3 landscape…), so only the width is set.' }),
+    A_('resW', 'Width', 'int', 0, { min: 0, max: 16000, step: 10, unit: 'px', hint: 'The default resolution for everything downstream of this camera. 0 uses the graph viewport width.' }),
+    A_('resH', 'Height', 'int', 0, { min: 0, max: 16000, step: 10, unit: 'px', show: a => !a.lock, hint: '0 uses the graph viewport height.' }),
+    A_('scale', 'Scale ×', 'number', 0, { min: 0, max: 16, step: 0.25, hint: 'Multiple of the default resolution, like Rhino\'s capture scale: 2 or 3 writes 2× or 3× the pixels with the same look. 0 uses the graph\'s Output scale.' })],
   async run(ctx, I, A) {
     const mv = await I('model'); if (!mv) { ctx.warn('Connect a Model.'); return { camera: null }; }
     const m = mv.model; if (!m.cameras.length) { ctx.warn('The model has no cameras. Add a Camera in the modeller.'); ctx.fail = true; return { camera: null }; }
     let def = m.cameras.find(c => c.name === A.camera);
     if (!def) { if (A.camera) ctx.warn(`Camera "${A.camera}" is not in the model; using ${m.cameras[0].name}.`); def = m.cameras[0]; }
     const w = ctx.w, h = def.frame ? Math.round(ctx.w / def.frame) : ctx.h;
-    return { camera: cameraValue(m, def, w, h, null, ['*'], 0, null) };
+    const cam = cameraValue(m, def, w, h, null, ['*'], 0, null); cam.lock = A.lock !== false; return { camera: cam };
   },
 });
 const RENDER_SKIP = new Set(['path', 'model', 'option', 'camera', 'style', 'resW', 'resH', 'offsetZ']);
@@ -1876,7 +1878,7 @@ defNode('render', {
     const isolate = gv ? gv.patterns : ['*'];
     const ratio = camDef.frame || ctx.w / ctx.h;
     let w = ctx.w, h = Math.round(ctx.w / ratio), vScale = null, box = null;
-    if (A.sizeMode === 'canvas') { w = ctx.w; h = ctx.h; const have = w / h, bw = have > ratio ? h * ratio : w, bh = have > ratio ? h : w / ratio; box = { x: (w - bw) / 2, y: (h - bh) / 2, width: bw, height: bh }; vScale = h / bh; }
+    if (A.sizeMode === 'canvas' || (cv && cv.lock === false)) { w = ctx.w; h = ctx.h; const have = w / h, bw = have > ratio ? h * ratio : w, bh = have > ratio ? h : w / ratio; box = { x: (w - bw) / 2, y: (h - bh) / 2, width: bw, height: bh }; vScale = h / bh; }
     const out = renderLayer(ctx, { model, camDef, isolate, style: A.style, w, h, vScale }, { ...A, _box: box }, want);
     if (want === 'image' && out.image && out.image.d && A.background === 'transparent') {
       let any = false; const d = out.image.d; for (let i = 3; i < d.length; i += 4) if (d[i] > 0) { any = true; break; }
@@ -2481,11 +2483,12 @@ function cameraRes(g, id) {
   const seen = new Set(), queue = [id];
   while (queue.length) {
     const n = g.nodes[queue.shift()]; if (!n || seen.has(n.id)) continue; seen.add(n.id);
-    if (n.type === 'extractCamera' && +n.args.resW > 0) {
-      const A = resolveArgs(n, makeCtx(), []), key = upstreamModelKey(g, n), m = key ? getModel(key) : null;
+    if (n.type === 'extractCamera') {
+      const A = resolveArgs(n, makeCtx(), []), key = upstreamModelKey(g, n), m = key ? getModel(key) : null, s = doc.settings;
       const def = m && (m.cameras.find(c => c.name === A.camera) || m.cameras[0]);
-      const ratio = def && def.frame || doc.settings.width / doc.settings.height, w = Math.round(+A.resW);
-      return { w, h: Math.max(8, Math.round(w / ratio)), mult: +A.scale > 0 ? +A.scale : 0, node: n, camera: def ? def.name : A.camera };
+      const lock = A.lock !== false, ratio = def && def.frame || s.width / s.height, w = Math.round(+A.resW > 0 ? +A.resW : s.width);
+      const hh = lock ? w / ratio : +A.resH > 0 ? +A.resH : s.height;
+      return { w, h: Math.max(8, Math.round(hh)), mult: +A.scale > 0 ? +A.scale : 0, node: n, camera: def ? def.name : A.camera, lock, frameLabel: def && def.frameLabel };
     }
     for (const p of nodeInputs(n)) { const s = n.inputs[p.n]; if (s) queue.push(s.node); }
   }
@@ -3650,7 +3653,7 @@ function renderProps() {
   if (n.type === 'modelSource') propsBody.append(modelExtras(n));
   if (n.type === 'group') propsBody.append(groupExtras(n));
   if (n.type === 'save') propsBody.append(saveExtras(n));
-  if (n.type === 'extractCamera') { const r = cameraRes(currentGraph(), n.id), [w, h] = r ? outSize(r.mult, r) : outSize(); propsBody.append(h_res(r ? `Saves and exports downstream render at ${w} × ${h} px (${r.w} × ${r.h} × ${outMult(r.mult)}), unless a Save sets its own scale.` : `No resolution set: downstream files use the graph's ${w} × ${h} px.`)); }
+  if (n.type === 'extractCamera') { const r = cameraRes(currentGraph(), n.id), [w, h] = r ? outSize(r.mult, r) : outSize(); propsBody.append(h_res(r ? `Default ${r.w} × ${r.h} px${r.lock && r.frameLabel ? ' (' + r.frameLabel + ' from the modeller camera)' : ''} × ${outMult(r.mult)} = ${w} × ${h} px for every Save and export downstream, unless a Save sets its own scale.` : '')); }
   if (n.type === 'nanoBanana') propsBody.append(nanoExtras(n));
   const ex = exportExtras(n); if (ex) propsBody.append(ex);
   let section = null;
@@ -4244,7 +4247,7 @@ function addSaveFor(n) {
 }
 function expHint(n) { const r = n ? cameraRes(currentGraph(), n.id) : null, k = +ui.exportMult > 0 ? ui.exportMult : r && r.mult, [w, h] = outSize(k, r);
   return r ? `One file now, at ${w} × ${h} px: ${r.w} × ${r.h} from "${r.node.name || 'Extract Camera'}" (${r.camera}) × ${outMult(k)}. A Save node instead rewrites its file every time this image changes.`
-    : `One file now, at ${w} × ${h} px canvas (${outMult(k)}× the ${doc.settings.width} × ${doc.settings.height} viewport). Set a resolution on an Extract Camera upstream to size it from the camera. A Save node instead rewrites its file every time this image changes.`; }
+    : `One file now, at ${w} × ${h} px canvas (${outMult(k)}× the ${doc.settings.width} × ${doc.settings.height} viewport). An Extract Camera upstream sizes it from the camera instead. A Save node instead rewrites its file every time this image changes.`; }
 function exportExtras(n) {
   const ep = exportPort(n); if (!ep) return null;
   const fmt = ui.exportFormat || 'png';
