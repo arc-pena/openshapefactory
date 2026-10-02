@@ -263,6 +263,9 @@ table.grid canvas, table.grid img { width: 72px; height: 54px; border-radius: 5p
   #v3d .body3 { grid-template-columns: 1fr; grid-template-rows: 1fr 200px; }
   #v3d .side { border-left: 0; border-top: 1px solid var(--line); }
 }
+
+.nano-box{padding:6px 8px 8px;display:flex;flex-direction:column;gap:6px}
+.nano-prompt{width:100%;min-height:58px;resize:vertical;font-size:12px;line-height:1.35;box-sizing:border-box}
 </style>
 
 <div id="app">
@@ -2503,9 +2506,14 @@ defNode('pointsExport', { label: 'Points Export', family: 'points', desc: 'Write
   async run(ctx, I) { const P = await I('points'); if (!P) ctx.warn('Connect Points2D.'); return { points: P }; } });
 
 // ---------------------------------------------------------------- AI
-defNode('nanoBanana', { label: 'Nano Banana', family: 'ai', desc: 'Gemini image model as a controlled overlay. Runs only when you press Run (or auto-run is on); the result is kept with the graph.',
-  inputs: [{ n: 'image', k: 'image', l: 'Image' }, { n: 'ref', k: 'image', l: 'Style ref' }, { n: 'mask', k: 'mask', l: 'Mask' }], outputs: [OUT_IMG],
-  args: [A_('prompt', 'Prompt', 'text', 'soft watercolour wash on the ground plane only, keep all linework'), A_('model', 'Model', 'string', 'gemini-2.5-flash-image'),
+const NANO_PRESETS = ['Turn this into a soft watercolour illustration, keep every line and building outline exactly where it is',
+  'Add people walking and street trees, keep the buildings and linework unchanged',
+  'Make it a warm late-afternoon photoreal render with long shadows, same camera and composition',
+  'Redraw as a clean architectural ink drawing on white paper',
+  'Add lush planting and grass on the ground plane only'];
+defNode('nanoBanana', { label: 'Nano Banana', family: 'ai', desc: 'Gemini image model: give it an image, type what you want done to it, press Run. The result is kept with the graph and only re-runs when you ask.',
+  inputs: [{ n: 'image', k: 'image', l: 'Image' }, { n: 'ref', k: 'image', l: 'Style ref' }, { n: 'mask', k: 'mask', l: 'Mask' }, { n: 'prompt', k: 'string', l: 'Prompt' }], outputs: [OUT_IMG],
+  args: [A_('prompt', 'Prompt', 'text', '', { hint: 'What to do with the image, in plain words. Type it here or on the node. A Text Value wired into the Prompt input is added in front.' }), A_('model', 'Model', 'string', 'gemini-2.5-flash-image'),
     A_('seed', 'Seed', 'int', 1, { min: 0, max: 999999 }), A_('auto', 'Auto-run on change', 'bool', false, { hint: 'Off by default: each run costs money and is not deterministic.' }),
     A_('run', 'Run', 'button', null, { action: 'runNanoBanana' })],
   async run(ctx, I, A, node) {
@@ -2516,11 +2524,12 @@ defNode('nanoBanana', { label: 'Nano Banana', family: 'ai', desc: 'Gemini image 
     if (!res) { ctx.warn('Not run yet. Press Run in the properties to call Gemini; the input passes through until then.'); return { image: base }; }
     if (node.args.resultKey !== key.k) ctx.warn('Inputs changed since the last run. Showing the kept result; press Run to regenerate.');
     const el = await loadImageEl(res.data);
-    let out = IMG.draw(ctx.w, ctx.h, (g, w, h) => g.drawImage(el, 0, 0, w, h));
+    // Keep the result's own proportion: cover the frame rather than stretch it.
+    let out = IMG.draw(ctx.w, ctx.h, (g, w, h) => { const k = Math.max(w / el.naturalWidth, h / el.naturalHeight), dw = el.naturalWidth * k, dh = el.naturalHeight * k; g.drawImage(el, (w - dw) / 2, (h - dh) / 2, dw, dh); });
     if (m) out = IMG.merge(IMG.setAlpha(out, m), base, 'normal', 1);
     return { image: out };
   } });
-function nanoKey(node, A, ctx) { const src = node.inputs.image; return { k: hashStr(A.prompt + '|' + A.seed + '|' + A.model + '|' + (src ? ctx.inputHash(node, 'image') : '')) }; }
+function nanoKey(node, A, ctx) { const src = node.inputs.image, ps = node.inputs.prompt; return { k: hashStr(A.prompt + '|' + A.seed + '|' + A.model + '|' + (src ? ctx.inputHash(node, 'image') : '') + '|' + (ps ? ctx.inputHash(node, 'prompt') : '')) }; }
 
 // ---------------------------------------------------------------- organisation
 defNode('switch', { label: 'Switch', family: 'org', desc: 'Chooses one input by index (0-based) or by the name of the upstream node.',
@@ -2996,26 +3005,33 @@ const ACTIONS = {
     const key = LS.get('dc.geminiKey', '');
     if (!key) { openSettingsModal(); return toast('Enter your Gemini API key in Settings first. It stays in this browser only.', 'error'); }
     const ctx = makeCtx({ track: false, ...previewVars() }), scope = scopeForView();
+    ctx.inputHash = (n, pn) => { const s = n.inputs[pn]; return s ? hashNode(g, s.node, ctx, scope) : ''; };
     const A = resolveArgs(node, ctx, []);
     const I = name => { const s = node.inputs[name]; return s ? evalPort(g, s.node, s.port, ctx, scope) : null; };
-    const [im, ref] = await Promise.all([I('image'), I('ref')]);
+    const [im, ref, pin] = await Promise.all([I('image'), I('ref'), I('prompt')]);
+    const prompt = [pin, A.prompt].map(x => (x == null ? '' : String(x)).trim()).filter(Boolean).join('\n');
+    if (!prompt) return toast('Type a prompt first: what should Gemini do with the image?', 'error');
+    if (!im) toast('No image connected: Gemini will make one from the prompt alone.');
     const toB64 = async (img) => { if (!img) return null; const k = Math.min(1, 1024 / Math.max(img.w, img.h)); const cv = IMG.toCanvas(k < 1 ? IMG.resample(img, Math.round(img.w * k), Math.round(img.h * k)) : img); const b = await canvasBlob(cv, 'image/png'); const buf = new Uint8Array(await b.arrayBuffer()); let s = ''; for (let i = 0; i < buf.length; i += 32768) s += String.fromCharCode(...buf.subarray(i, i + 32768)); return btoa(s); };
-    const parts = [{ text: A.prompt }]; const b1 = await toB64(im), b2 = await toB64(ref);
+    const parts = [{ text: prompt }]; const b1 = await toB64(im), b2 = await toB64(ref);
     if (b1) parts.push({ inline_data: { mime_type: 'image/png', data: b1 } }); if (b2) parts.push({ inline_data: { mime_type: 'image/png', data: b2 } });
     setStatus(g, node.id, { state: 'rendering', msg: 'Calling Gemini…' }); ui.statusDirty = true;
     try {
-      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(A.model)}:generateContent`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
-        body: JSON.stringify({ contents: [{ parts }], generationConfig: { responseModalities: ['IMAGE', 'TEXT'], seed: A.seed } }) });
+      let r;
+      try {
+        r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(A.model)}:generateContent`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+          body: JSON.stringify({ contents: [{ parts }], generationConfig: { responseModalities: ['IMAGE', 'TEXT'], seed: A.seed } }) });
+      } catch (err) { err.blocked = true; throw err; }
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error((j.error && j.error.message) || `HTTP ${r.status}`);
       const part = (j.candidates || []).flatMap(c => (c.content && c.content.parts) || []).find(p => p.inlineData || p.inline_data);
       if (!part) throw new Error('The response had no image (the model may have refused the prompt).');
       const d = part.inlineData || part.inline_data, url = `data:${d.mimeType || d.mime_type || 'image/png'};base64,${d.data}`;
-      mutate(() => { node.args.result = addAsset(url, 'nano-banana-result'); node.args.resultKey = nanoKey(node, A, ctx).k; node.args.resultPrompt = A.prompt; node.args.resultSeed = A.seed; });
+      mutate(() => { node.args.result = addAsset(url, 'nano-banana-result'); node.args.resultKey = nanoKey(node, A, ctx).k; node.args.resultPrompt = prompt; node.args.resultSeed = A.seed; });
       toast('Gemini result kept with the graph.');
     } catch (e) {
-      const blocked = e instanceof TypeError;
+      const blocked = !!e.blocked;
       setStatus(g, node.id, { state: 'error', msg: blocked ? 'Could not reach Google: this viewer blocks outside network calls. Use the served build to run Nano Banana.' : 'Gemini: ' + e.message });
       ui.statusDirty = true; render();
     }
@@ -3093,8 +3109,21 @@ function thumbPort(n) {
   const any = nodeOutputs(n).find(p => p.k === 'any'); if (any) return { port: any.n };
   return null;
 }
+// Prompt and Run right on the Nano Banana node. Events stop here so typing, scrolling and clicking
+// in the box never drag the node, zoom the canvas or fire graph shortcuts.
+function nanoWidget(n) {
+  const stop = e => e.stopPropagation();
+  const ta = h('textarea', { class: 'inp nano-prompt', rows: 3, placeholder: 'What should it do with the image? e.g. add people and trees, keep the linework', value: n.args.prompt || '',
+    'data-nano': n.id, oninput: e => { beginEdit(); n.args.prompt = e.target.value; ui.statusDirty = true; requestEval(); if (doc.settings.autosave !== false) scheduleAutoSave(); }, onchange: () => { endEdit(); renderProps(); } });
+  ta.value = n.args.prompt || '';
+  const run = h('button', { class: 'btn primary small', onclick: async e => { e.target.disabled = true; try { await ACTIONS.runNanoBanana(n, currentGraph()); } finally { e.target.disabled = false; } } }, n.args.result ? 'Run again' : 'Run');
+  const box = h('div', { class: 'nano-box' }, ta, h('div', { style: { display: 'flex', gap: '6px', alignItems: 'center' } }, run, h('span', { class: 'hint', style: { margin: 0 } }, n.args.result ? 'result kept' : 'not run yet')));
+  for (const ev of ['pointerdown', 'mousedown', 'dblclick', 'wheel', 'keydown', 'contextmenu']) box.addEventListener(ev, stop);
+  return box;
+}
 function renderGraph() {
-  const g = currentGraph();
+  const g = currentGraph(), af = document.activeElement, keep = af && af.dataset && af.dataset.nano ? { id: af.dataset.nano, a: af.selectionStart, b: af.selectionEnd } : null;
+  queueMicrotask(() => { if (!keep) return; const t = nodesEl.querySelector(`textarea[data-nano="${keep.id}"]`); if (t && document.activeElement !== t) { t.focus(); try { t.setSelectionRange(keep.a, keep.b); } catch { } } });
   nodesEl.innerHTML = ''; backdropsEl.innerHTML = ''; nodeEls.clear();
   for (const n of Object.values(g.nodes)) {
     if (n.type === 'backdrop') { backdropsEl.append(renderBackdrop(n)); continue; }
@@ -3106,6 +3135,7 @@ function renderGraph() {
     el.append(head);
     const sum = nodeSummary(n); if (sum && !t.compact) el.append(h('div', { class: 'nsub', title: sum }, sum));
     if (thumbPort(n) && !t.compact) el.append(t.wide ? h('canvas', { class: 'thumb', width: 504, height: 320 }) : h('canvas', { class: 'thumb', width: 164, height: 123 }));
+    if (n.type === 'nanoBanana' && !t.compact) el.append(nanoWidget(n));
     el.append(h('div', { class: 'nmsg', hidden: true }));
     const ins = nodeInputs(n), outs = nodeOutputs(n);
     const pIn = h('div', { class: 'pcol in' }), pOut = h('div', { class: 'pcol out' });
@@ -4027,7 +4057,10 @@ function saveExtras(n) {
 }
 function nanoExtras(n) {
   const has = n.args.result && doc.assets[n.args.result];
+  const presets = h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '4px', margin: '0 0 8px' } },
+    ...NANO_PRESETS.map(p => h('button', { class: 'btn line small', title: p, onclick: () => mutate(() => { n.args.prompt = p; }) }, p.split(',')[0].slice(0, 34))));
   return h('div', { style: { marginBottom: '6px' } },
+    h('div', { class: 'sect' }, 'Prompt ideas'), presets,
     has ? h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center' } }, h('img', { src: doc.assets[n.args.result].data, alt: '', style: { width: '64px', height: '48px', objectFit: 'cover', borderRadius: '6px', border: '1px solid var(--line)' } }),
       h('div', { class: 'hint', style: { margin: 0 } }, `Kept result · seed ${n.args.resultSeed} · “${String(n.args.resultPrompt || '').slice(0, 60)}”`)) : null,
     h('p', { class: 'hint' }, LS.get('dc.geminiKey', '') ? 'Gemini key set in Settings (stored only in this browser, never in the graph or images).' : 'No Gemini key yet: add one in File › Settings.'),
@@ -4544,7 +4577,7 @@ function sampleDoc() {
   // output
   const nb = add('nanoBanana', 1330, 370, 'Watercolour wash (AI)', { prompt: 'soft watercolour wash on the ground plane only, keep all linework and buildings untouched' }); nb.disabled = true;
   wire(stack, 'image', nb, 'image'); wire(vpG, 'mask', nb, 'mask');
-  const perm = add('permutation', 1330, 700, 'Options', { lists: 'option = option1, option2, option3, option4\ncamera = camera1' });
+  const perm = add('permutation', 1330, 900, 'Options', { lists: 'option = option1, option2, option3, option4\ncamera = camera1' });
   const save = add('save', 1590, 370, 'Save site plan', { diagram: 'site-plan', pattern: '{project}_{option}_{diagram}_{camera}_v{version:02}', version: 1 });
   wire(nb, 'image', save, 'image'); wire(perm, 'rows', save, 'rows');
   doc = prevDoc;
