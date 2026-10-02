@@ -32,6 +32,7 @@
   --check-a: #2a2d33; --check-b: #222429; --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.35); color-scheme: dark;
 }
 [hidden] { display: none !important; }
+*, *::before, *::after { box-sizing: border-box; }
 html, body { height: 100%; }
 body { background: var(--canvas); color: var(--fg); font-family: var(--font-ui); font-size: 13px; overflow: hidden; -webkit-font-smoothing: antialiased; }
 button, input, select, textarea { font: inherit; color: inherit; }
@@ -83,10 +84,12 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .pcol.in .port { padding-left: 11px; }
 .pcol.out .port { padding-right: 11px; cursor: pointer; }
 .pcol.out .port.viewing { color: var(--fg); font-weight: 600; }
-.pin { position: absolute; width: 11px; height: 11px; border-radius: 50%; border: 2px solid var(--node); box-shadow: 0 0 0 1px var(--line-strong); cursor: crosshair; }
-.pcol.in .pin { left: -6px; }
-.pcol.out .pin { right: -6px; }
-.pin.hot { transform: scale(1.35); }
+.pin { position: absolute; width: 13px; height: 13px; border-radius: 50%; border: 2px solid var(--node); box-shadow: 0 0 0 1px var(--line-strong); cursor: crosshair; }
+.pcol.in .pin { left: -7px; }
+.pcol.out .pin { right: -7px; }
+.pin::after { content: ""; position: absolute; inset: -9px; border-radius: 50%; }
+.port { height: 21px; }
+.pin:hover, .pin.hot { transform: scale(1.35); }
 .port.promoted .lbl::before { content: "ƒ "; color: var(--accent); }
 
 .backdrop { position: absolute; border-radius: 14px; border: 1px solid; user-select: none; }
@@ -169,6 +172,15 @@ input[type=checkbox] { accent-color: var(--accent); width: 15px; height: 15px; }
 .kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-size: 12px; }
 .kv dt { color: var(--muted); } .kv dd { margin: 0; font-family: var(--font-mono); font-size: 11.5px; overflow-wrap: anywhere; }
 
+/* node palette */
+.palette-search { width: 100%; margin-bottom: 8px; }
+.pal-grp { font-size: 11px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--faint); margin: 12px 0 4px; display: flex; align-items: center; gap: 6px; }
+.pal-grp i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+.pal-it { display: grid; grid-template-columns: 1fr; gap: 1px; width: 100%; text-align: left; padding: 7px 9px; border-radius: 8px; border: 1px solid transparent; background: transparent; cursor: grab; }
+.pal-it:hover { background: var(--accent-soft); border-color: var(--line); }
+.pal-it b { font-weight: 600; font-size: 12.5px; }
+.pal-it span { color: var(--muted); font-size: 11.5px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.export-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 /* layers view */
 .layer { display: grid; grid-template-columns: 22px 44px 1fr; gap: 8px; align-items: center; padding: 6px; border: 1px solid var(--line); border-radius: 9px; background: var(--pane-solid); margin-bottom: 6px; cursor: grab; }
 .layer.drag-over { border-color: var(--accent); box-shadow: 0 -3px 0 var(--accent); }
@@ -273,7 +285,7 @@ table.grid canvas, table.grid img { width: 72px; height: 54px; border-radius: 5p
   </header>
 
   <aside id="props" class="pane">
-    <div class="pane-head"><div class="tabs"><button id="tProps" class="on">Properties</button><button id="tLayers">Layers</button></div></div>
+    <div class="pane-head"><div class="tabs"><button id="tProps" class="on">Properties</button><button id="tLayers">Layers</button><button id="tNodes">Nodes</button></div></div>
     <div class="pane-body" id="propsBody"></div>
   </aside>
 
@@ -286,6 +298,7 @@ table.grid canvas, table.grid img { width: 72px; height: 54px; border-radius: 5p
       <button class="ibtn" id="vWipeBtn" title="Wipe compare slot 1 against slot 2"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/></svg></button>
       <button class="ibtn" id="vAlphaBtn" title="Show alpha channel"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor"/></svg></button>
       <button class="ibtn" id="vFullBtn" title="Render the viewer at full resolution"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+      <button class="ibtn" id="vExportBtn" title="Export what the viewer shows, at full resolution"><svg viewBox="0 0 24 24"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 19h14"/></svg></button>
       <button class="ibtn" id="vFitBtn" title="Fit (F over viewer)"><svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="1.5"/><path d="M9 12h6M12 9v6"/></svg></button>
     </div>
     <div id="vstage"><canvas id="vcanvas"></canvas><div id="vwipe" hidden></div><div id="vtext" hidden></div></div>
@@ -2810,6 +2823,7 @@ function renderGraph() {
   }
   applyTransform();
   refreshStatusDom(true);
+  for (const [id] of nodeEls) if (thumbs.has(id)) drawThumb(id, thumbs.get(id));
   layoutPorts(); drawWires();
 }
 function renderBackdrop(n) {
@@ -2853,7 +2867,9 @@ function refreshStatusDom(force) {
     else msg.hidden = true;
   }
 }
+const thumbs = new Map(); // last value shown per node, so a redraw of the canvas keeps its thumbnails
 function drawThumb(id, v) {
+  thumbs.set(id, v);
   const el = nodeEls.get(id); if (!el) return; const cv = $('canvas.thumb', el); if (!cv) return;
   const g = cv.getContext('2d'); g.clearRect(0, 0, cv.width, cv.height);
   if (!v || !v.d) return;
@@ -3010,6 +3026,17 @@ $('#vWipeBtn').onclick = () => { ui.wipe = !ui.wipe; renderSlots(); updateViewer
 $('#vAlphaBtn').onclick = () => { ui.alpha = !ui.alpha; renderSlots(); drawViewer(); };
 $('#vFullBtn').onclick = () => { ui.fullRes = !ui.fullRes; renderSlots(); toast(ui.fullRes ? 'Viewer renders at full resolution.' : 'Viewer back to preview resolution.'); updateViewer(); };
 $('#vFitBtn').onclick = () => { ui.vview.fit = true; drawViewer(); };
+$('#vExportBtn').onclick = () => { const t = viewerTarget(); if (!t) return toast('Select a node to export what it shows.'); exportNode(t.g, t.id, null, ui.exportFormat || 'png', t.scope); };
+// Drop from the Nodes tab onto the canvas places the node there.
+canvasEl.addEventListener('dragover', e => { if (e.dataTransfer.types.includes('application/x-dc-node')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
+canvasEl.addEventListener('drop', e => { const type = e.dataTransfer.getData('application/x-dc-node'); if (!type) return; e.preventDefault(); const p = toWorld(e.clientX, e.clientY); addNodeAt(type, p.x - 90, p.y - 20, { noAuto: true }); });
+// Selecting a node shows it, Nuke-style. Pinned slots stay one click (or 1-4) away; wipe keeps its pins.
+function followSelection() {
+  if (ui.wipe) return;
+  const g = currentGraph(), id = [...ui.sel].find(i => g.nodes[i] && g.nodes[i].type !== 'backdrop');
+  if (!id) return;
+  ui.slot = 0; ui.vview.fit = true; renderSlots(); updateViewer();
+}
 function pinSlot(i) {
   const id = [...ui.sel].find(x => currentGraph().nodes[x] && currentGraph().nodes[x].type !== 'backdrop');
   if (id) { ui.pins[i] = { graph: graphKey(currentGraph()), id }; ui.slot = i; toast(`Pinned to slot ${i}`); }
@@ -3049,7 +3076,7 @@ canvasEl.addEventListener('pointerdown', e => {
   ui.selWire = null;
   if (nodeEl || (bd && (e.target.closest('.bl') || e.target.closest('.rs')))) {
     const id = (nodeEl || bd).dataset.id;
-    if (e.target.closest('.pcol.out .port') && !e.target.closest('.pin')) { const port = e.target.closest('.port').dataset.port; ui.viewPort[id] = port; if (!ui.sel.has(id)) { ui.sel.clear(); ui.sel.add(id); } renderGraph(); renderProps(); updateViewer(); requestEval(); return; }
+    if (e.target.closest('.pcol.out .port') && !e.target.closest('.pin')) { const port = e.target.closest('.port').dataset.port; ui.viewPort[id] = port; if (!ui.sel.has(id)) { ui.sel.clear(); ui.sel.add(id); } renderGraph(); renderProps(); followSelection(); requestEval(); return; }
     if (e.shiftKey || e.metaKey || e.ctrlKey) { ui.sel.has(id) ? ui.sel.delete(id) : ui.sel.add(id); }
     else if (!ui.sel.has(id)) { ui.sel.clear(); ui.sel.add(id); }
     beginEdit();
@@ -3057,7 +3084,7 @@ canvasEl.addEventListener('pointerdown', e => {
     const moving = new Set(ui.sel);
     for (const sid of ui.sel) { const s = g.nodes[sid]; if (s && s.type === 'backdrop') for (const n of Object.values(g.nodes)) if (n.type !== 'backdrop' && n.x >= s.x && n.y >= s.y && n.x + 150 <= s.x + s.w && n.y + 60 <= s.y + s.h) moving.add(n.id); }
     drag = { type: 'move', x: e.clientX, y: e.clientY, start: [...moving].map(i => [i, g.nodes[i].x, g.nodes[i].y]), moved: false };
-    renderSelectionClasses(); renderProps(); if (ui.slot === 0) { ui.vview.fit = true; updateViewer(); }
+    renderSelectionClasses(); renderProps(); followSelection();
     return;
   }
   // empty canvas: box select
@@ -3098,7 +3125,7 @@ canvasEl.addEventListener('pointerup', e => {
   const d = drag; drag = null; if (!d) return;
   const g = currentGraph();
   if (d.type === 'move' || d.type === 'resize') { endEdit(); if (d.type === 'move' && !d.moved) renderGraph(); return; }
-  if (d.type === 'box') { const b = $('#selbox'); if (b) b.remove(); renderProps(); if (ui.slot === 0) updateViewer(); return; }
+  if (d.type === 'box') { const b = $('#selbox'); if (b) b.remove(); renderProps(); if (ui.sel.size) followSelection(); return; }
   if (d.type === 'wire') {
     $$('.pin.hot').forEach(p => p.classList.remove('hot'));
     const over = document.elementFromPoint(e.clientX, e.clientY), pin = over && over.closest && over.closest('.pin');
@@ -3120,11 +3147,12 @@ canvasEl.addEventListener('contextmenu', e => {
   e.preventDefault();
   const nodeEl = e.target.closest('.node'), id = nodeEl ? nodeEl.dataset.id : ui._ctxNode; ui._ctxNode = null;
   const g = currentGraph(), n = id && g.nodes[id]; if (!n || n.type === 'backdrop') { showTabMenu(e.clientX, e.clientY); return; }
-  if (!ui.sel.has(n.id)) { ui.sel = new Set([n.id]); renderSelectionClasses(); renderProps(); if (ui.slot === 0) updateViewer(); }
+  if (!ui.sel.has(n.id)) { ui.sel = new Set([n.id]); renderSelectionClasses(); renderProps(); followSelection(); }
   const items = [];
   if (n.type === 'modelSource') items.push({ label: 'Open parametric modeller', kbd: 'dbl-click', fn: () => ACTIONS.openModeller(n, g) }, { label: 'Load model file…', fn: () => ACTIONS.loadModelInto(n, g) }, { label: 'New empty model', fn: () => ACTIONS.newModelInto(n, g) }, '-');
   if (n.type === 'group') items.push({ label: 'Edit inside', kbd: 'dbl-click', fn: () => enterGroup(n) }, '-');
   if (n.type === 'viewport') items.push({ label: 'Open viewport', kbd: 'dbl-click', fn: () => open3D(n) }, '-');
+  if (exportPort(n)) items.push({ label: 'Export PNG (full resolution)', fn: () => exportNode(g, n.id, null, 'png') }, { label: 'Export JPG', fn: () => exportNode(g, n.id, null, 'jpg') }, { label: 'Add Save node', fn: () => addSaveFor(n) }, '-');
   items.push({ label: 'View in slot 1', kbd: '1', fn: () => pinSlot(1) }, { label: n.disabled ? 'Enable' : 'Disable', kbd: 'D', fn: toggleDisable },
     { label: 'Duplicate', kbd: 'Ctrl D', fn: () => { copySelection(false); pasteNodes(ui.clipboard, { x: n.x + 40, y: n.y + 40 }); } }, { label: 'Delete', kbd: 'Del', fn: deleteSelection });
   popMenuAt(e.clientX, e.clientY, items);
@@ -3196,7 +3224,7 @@ function addNodeAt(type, wx, wy, opts = {}) {
     }
     ui.pendingWire = null; ui.sel = new Set([n.id]);
   });
-  if (ui.slot === 0) { ui.vview.fit = true; updateViewer(); }
+  followSelection();
   return n;
 }
 function deleteSelection() {
@@ -3429,7 +3457,7 @@ $('#bAdd').onclick = () => { const r = canvasEl.getBoundingClientRect(); showTab
 $('#mAdd').onclick = $('#bAdd').onclick;
 $('#bUndo').onclick = doUndo; $('#bRedo').onclick = doRedo;
 $('#bMatrix').onclick = openMatrixModal; $('#bFiles').onclick = openFilesModal; $('#bRenderAll').onclick = renderAll; $('#bHelp').onclick = openHelpModal;
-$('#tProps').onclick = () => { ui.propsTab = 'props'; renderProps(); }; $('#tLayers').onclick = () => { ui.propsTab = 'layers'; renderProps(); };
+$('#tProps').onclick = () => { ui.propsTab = 'props'; renderProps(); }; $('#tLayers').onclick = () => { ui.propsTab = 'layers'; renderProps(); }; $('#tNodes').onclick = () => { ui.propsTab = 'nodes'; renderProps(); };
 for (const [b, p] of [['#mProps', '#props'], ['#mViewer', '#viewer']]) $(b).onclick = () => { const on = !$(p).classList.contains('mshow'); $$('#props,#viewer').forEach(x => x.classList.remove('mshow')); if (on) $(p).classList.add('mshow'); drawViewer(); };
 function saveGraphFile() { offerDownload((doc.name || 'graph').replace(/[^\w-]+/g, '_') + '.json', JSON.stringify(doc, null, 1)); }
 $('#fileOpen').onchange = async e => {
@@ -3475,9 +3503,10 @@ function migrateDoc(j) {
 // =====================================================================
 const propsBody = $('#propsBody');
 function renderProps() {
-  $('#tProps').classList.toggle('on', ui.propsTab === 'props'); $('#tLayers').classList.toggle('on', ui.propsTab === 'layers');
+  $('#tProps').classList.toggle('on', ui.propsTab === 'props'); $('#tLayers').classList.toggle('on', ui.propsTab === 'layers'); $('#tNodes').classList.toggle('on', ui.propsTab === 'nodes');
   const scroll = propsBody.scrollTop; propsBody.innerHTML = '';
   if (ui.propsTab === 'layers') { renderLayersView(); return; }
+  if (ui.propsTab === 'nodes') { renderPalette(); return; }
   const g = currentGraph(), ids = [...ui.sel].filter(i => g.nodes[i]);
   if (ui.selWire) { const n = g.nodes[ui.selWire.node], s = n && n.inputs[ui.selWire.port];
     propsBody.append(h('div', { class: 'ph' }, h('b', null, 'Wire')), h('p', { class: 'hint' }, s ? `${(g.nodes[s.node] || {}).name || s.node} · ${s.port} → ${n.name || T(n.type).label} · ${ui.selWire.port}` : ''), h('button', { class: 'btn line small danger', onclick: deleteSelection }, 'Delete wire'));
@@ -3505,6 +3534,7 @@ function renderProps() {
   if (n.type === 'group') propsBody.append(groupExtras(n));
   if (n.type === 'save') propsBody.append(saveExtras(n));
   if (n.type === 'nanoBanana') propsBody.append(nanoExtras(n));
+  const ex = exportExtras(n); if (ex) propsBody.append(ex);
   let section = null;
   const A = { ...Object.fromEntries(t.args.map(a => [a.n, a.d])), ...n.args };
   for (const a of t.args) {
@@ -4008,6 +4038,90 @@ function openModeller(n) {
   const prevClose = ui._onModalClose; ui._onModalClose = () => { window.removeEventListener('message', onMsg); ui._onModalClose = prevClose; };
   setTimeout(() => { if (!ready && document.body.contains(frame)) note.textContent = 'Still starting… the modeller loads a 7 MB kernel the first time.'; }, 8000);
 }
+
+
+// ---------------------------------------------------------------- Nodes tab: every node, findable without knowing its name
+function renderPalette() {
+  const q = (ui.palQuery || '').toLowerCase();
+  const search = h('input', { class: 'inp palette-search', id: 'palSearch', placeholder: 'Search nodes…', value: ui.palQuery || '', autocomplete: 'off',
+    oninput: e => { ui.palQuery = e.target.value; const pos = e.target.selectionStart; renderProps(); const s = $('#palSearch'); s.focus(); s.setSelectionRange(pos, pos); } });
+  propsBody.append(search, h('p', { class: 'hint' }, 'Click to add next to the selected node (wired to it when the kinds match), or drag onto the canvas.'));
+  const order = ['source', 'image', 'mask', 'gen', 'points', 'ai', 'org', 'output'];
+  const inDef = view.path.length > 0;
+  for (const fam of order) {
+    const list = Object.values(NODE_TYPES).filter(t => t.family === fam && t.type !== 'group' && (inDef || (t.type !== 'groupInput' && t.type !== 'groupOutput')) && (!q || (t.label + ' ' + (t.desc || '')).toLowerCase().includes(q)));
+    if (!list.length) continue;
+    // The Model chain first: it is where a diagram starts.
+    const rank = t => { const i = ['modelSource', 'extractGeoset', 'extractCamera', 'render'].indexOf(t.type); return i < 0 ? 99 : i; };
+    if (fam === 'source') list.sort((a, b) => rank(a) - rank(b));
+    propsBody.append(h('div', { class: 'pal-grp' }, h('i', { style: { background: FAMILIES[fam].colour } }), FAMILIES[fam].label));
+    for (const t of list) {
+      const b = h('button', { class: 'pal-it', draggable: 'true', title: t.desc || t.label, onclick: () => paletteAdd(t.type) }, h('b', null, t.label), t.desc ? h('span', null, t.desc) : null);
+      b.addEventListener('dragstart', e => { e.dataTransfer.setData('application/x-dc-node', t.type); e.dataTransfer.effectAllowed = 'copy'; });
+      propsBody.append(b);
+    }
+  }
+}
+function paletteAdd(type) {
+  const g = currentGraph(), sel = [...ui.sel].map(i => g.nodes[i]).find(n => n && n.type !== 'backdrop');
+  let x, y;
+  if (sel) { const el = nodeEls.get(sel.id); x = sel.x + (el ? el.offsetWidth : 190) + 70; y = sel.y; }
+  else { const r = canvasEl.getBoundingClientRect(), p = toWorld(r.left + r.width / 2, r.top + r.height / 2); x = p.x - 90; y = p.y - 60; }
+  const n = addNodeAt(type, x, y);
+  ui.propsTab = 'props'; renderProps();
+  toast(`Added ${T(type).label}${sel && Object.keys(n.inputs).length ? ' and wired it to ' + (sel.name || T(sel.type).label) : ''}.`);
+}
+
+// ---------------------------------------------------------------- export any node's image to a file
+function exportPort(n) {
+  const outs = nodeOutputs(n);
+  if (!outs.length) return n.type === 'save' ? { input: 'image' } : null;
+  const want = ui.viewPort[n.id], o = outs.find(p => p.n === want && (p.k === 'image' || p.k === 'mask')) || outs.find(p => p.k === 'image') || outs.find(p => p.k === 'mask');
+  return o ? { port: o.n } : null;
+}
+async function exportNode(g, id, port, format = 'png', scope) {
+  const n = g.nodes[id]; if (!n) return;
+  const ep = port ? { port } : exportPort(n); if (!ep) return toast('This node has no image to export.', 'error');
+  const pv = previewVars(), ctx = makeCtx({ full: true, ...pv });
+  if (scope === undefined) scope = g === currentGraph() ? scopeForView() : null;
+  toast(`Rendering ${n.name || T(n.type).label} at ${doc.settings.width} px…`);
+  let v;
+  if (ep.input) { const s = n.inputs[ep.input]; v = s ? await evalPort(g, s.node, s.port, ctx, scope) : null; }
+  else v = await evalPort(g, id, ep.port, ctx, scope);
+  if (!v || !v.d) return toast('Nothing to export: the node produced no image. Check its warnings.', 'error');
+  if (v.kind === 'mask') v = IMG.merge(IMG.maskToImage(v, '#ffffff'), IMG.solid(v.w, v.h, '#000000'), 'normal', 1);
+  const slug = s => String(s).trim().replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, '_');
+  const rowBit = Object.values(pv.vars || {}).length ? '_' + Object.values(pv.vars).map(slug).join('_') : '';
+  const name = `${slug(doc.settings.project || 'export')}_${slug(n.name || T(n.type).label)}${rowBit}.${format}`;
+  const blob = await encodeImage(v, format, 0.92, { graph: doc.name, node: n.id, nodeName: n.name || T(n.type).label, row: pv.vars, exported: new Date().toISOString(), tool: 'Diagram Compositor' });
+  const prev = files.get(name);
+  if (prev && prev.url) URL.revokeObjectURL(prev.url);
+  files.set(name, { path: name, blob, size: blob.size, w: v.w, h: v.h, hash: '', nodeId: n.id, nodeName: (n.name || T(n.type).label) + ' (export)', row: pv.vars, rowIndex: pv.rowIndex, writes: (prev ? prev.writes : 0) + 1, at: new Date(), first: prev ? prev.first : new Date(), warn: [], url: null, exported: true });
+  ui.filesDirty = true;
+  await offerDownload(name, blob);
+}
+function addSaveFor(n) {
+  const g = currentGraph(), ep = exportPort(n); if (!ep || ep.input) return;
+  const el = nodeEls.get(n.id), slug = String(n.name || T(n.type).label).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'diagram';
+  const perm = Object.values(doc.nodes).find(x => x.type === 'permutation');
+  let s;
+  mutate(() => {
+    s = createNode('save', n.x + (el ? el.offsetWidth : 190) + 70, n.y); s.name = 'Save ' + (n.name || T(n.type).label);
+    s.args.diagram = slug; s.args.pattern = '{project}_{diagram}_v{version:02}';
+    s.inputs.image = { node: n.id, port: ep.port }; g.nodes[s.id] = s; ui.sel = new Set([s.id]);
+  });
+  toast(`Save node added: writes ${saveName(s, {}, 0).path} whenever the image changes.${perm ? ' Wire the Permutation into its Rows input for one file per row.' : ''}`);
+}
+function exportExtras(n) {
+  const ep = exportPort(n); if (!ep) return null;
+  const fmt = ui.exportFormat || 'png';
+  return h('div', null, h('div', { class: 'sect' }, 'Export'),
+    h('div', { class: 'export-row' },
+      h('select', { class: 'inp', id: 'exp-format', style: { width: '86px' }, onchange: e => { ui.exportFormat = e.target.value; } }, [['png', 'PNG'], ['jpg', 'JPG'], ['webp', 'WebP']].map(([v, l]) => h('option', { value: v, selected: v === fmt }, l))),
+      h('button', { class: 'btn primary small', onclick: () => exportNode(currentGraph(), n.id, null, ui.exportFormat || 'png') }, 'Export full resolution'),
+      n.type !== 'save' ? h('button', { class: 'btn line small', onclick: () => addSaveFor(n) }, 'Add Save node') : null),
+    h('p', { class: 'hint' }, `One file now, at ${doc.settings.width} px wide. A Save node instead rewrites its file every time this image changes.`));
+}
 // =====================================================================
 // Worked example from the brief: a site plan built from Viewport layers,
 // graphic treatments, a layer stack, entrance decals and a Save that
@@ -4085,7 +4199,7 @@ function sampleDoc() {
 }
 function setupSampleView() {
   ui.pins = [null, { graph: 'root', id: doc._sample && doc._sample.render ? doc._sample.render : null }, { graph: 'root', id: doc._sample ? doc._sample.save : null }, null, null];
-  ui.slot = 1; ui.sel.clear(); ui.previewRow = 0; ui.vview.fit = true;
+  ui.slot = 0; ui.sel = new Set(doc._sample && doc.nodes[doc._sample.render] ? [doc._sample.render] : []); ui.previewRow = 0; ui.vview.fit = true;
   render(); requestAnimationFrame(() => frameNodes());
 }
 
