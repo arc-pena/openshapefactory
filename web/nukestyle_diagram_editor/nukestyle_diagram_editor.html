@@ -1136,6 +1136,18 @@ function frameRatio(v) {
 }
 function safeMode(v) { const s = typeof v === 'number' ? OCAF_SAFE[clampI(v, 0, 3)] : String(v || 'Both'); return { action: /action|both|safe/i.test(s), thirds: /thirds|both/i.test(s) }; }
 
+// Edge polylines as segment pairs; the kernel can return NaN points for degenerate edges of
+// imported (STEP) shapes, so segments with any non-finite coordinate are dropped.
+function cleanEdges(src, k, f, warn) {
+  const out = new Float32Array(src.length - src.length % 6); let n = 0, bad = 0;
+  for (let i = 0; i + 5 < src.length; i += 6) {
+    let ok = true; for (let j = 0; j < 6; j++) if (!Number.isFinite(src[i + j])) { ok = false; break; }
+    if (!ok) { bad++; continue; }
+    for (let j = 0; j < 6; j++) out[n++] = src[i + j] * k;
+  }
+  if (bad) console.info(`${f.name || f.id}: dropped ${bad} degenerate edge segment(s).`);
+  return n === out.length ? out : out.slice(0, n);
+}
 function convertOcaf(json, mesh, report, key) {
   const k = String(json.units || 'mm') === 'm' ? 1 : String(json.units) === 'cm' ? 0.01 : 0.001;
   const feats = json.features || [], byId = new Map(feats.map(f => [f.id, f]));
@@ -1163,22 +1175,28 @@ function convertOcaf(json, mesh, report, key) {
     if (isHidden(f.id) || !m || m.visible === false) continue;
     if (!m.triangles) {
       // Curves and wires: no faces, but real edges - drawn by Hidden line renders.
-      if (m.edges && m.edges.length) elements.push({ id: f.id, geoset, shape: 'mesh', mesh: { pos: new Float32Array(0), nrm: null, idx: new Uint32Array(0) }, edges: Float32Array.from(m.edges, v => v * k), attrs: { name: f.name || f.id, type: f.type, curve: true }, _h: f.id + ':' + (m.revision ?? '') + ':c' });
+      if (m.edges && m.edges.length) elements.push({ id: f.id, geoset, shape: 'mesh', mesh: { pos: new Float32Array(0), nrm: null, idx: new Uint32Array(0) }, edges: cleanEdges(m.edges, k, f, warn), attrs: { name: f.name || f.id, type: f.type, curve: true }, _h: f.id + ':' + (m.revision ?? '') + ':c' });
       continue;
     }
     if (m.meshError) warn.push(`${f.name || f.id}: ${m.meshError}`);
     const pos = new Float32Array(m.positions.length); for (let i = 0; i < pos.length; i++) pos[i] = m.positions[i] * k;
-    const edges = m.edges ? Float32Array.from(m.edges, v => v * k) : null;
+    const edges = m.edges ? cleanEdges(m.edges, k, f, warn) : null;
     const ap = f.appearance || {};
     elements.push({ id: f.id, geoset, shape: 'mesh', mesh: { pos, nrm: m.normals, idx: m.index }, edges,
       attrs: { name: f.name || f.id, type: f.type, colour: ap.color ? colourHex([...ap.color, 1]) : null, opacity: ap.opacity == null ? 1 : ap.opacity },
       _h: f.id + ':' + (m.revision ?? '') + ':' + m.triangles });
   }
-  if (!cameras.length) {
-    // A model with no cameras still renders: a three-quarter view of its bounds.
-    let mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9];
-    for (const e of elements) for (let i = 0; i < e.mesh.pos.length; i += 3) for (let j = 0; j < 3; j++) { mn[j] = Math.min(mn[j], e.mesh.pos[i + j]); mx[j] = Math.max(mx[j], e.mesh.pos[i + j]); }
-    if (elements.length) { const c = scale3(add3(mn, mx), 0.5), r = Math.max(0.1, len3(sub3(mx, mn)) / 2); cameras.push({ name: 'Default view', type: 'persp', target: c, eye: add3(c, [r * 1.8, -r * 2.4, r * 1.5]), lens: 35, fov: fovFromLens(35), roll: 0, frame: 16 / 9, frameLabel: '16:9', safe: { action: true, thirds: false }, generated: true }); }
+  {
+    // A camera fitted to everything that was built, so geometry far from the model's own cameras
+    // (an imported STEP file in site coordinates, say) is always one pick away. Non-finite values
+    // are skipped so one bad vertex can't send the view to NaN.
+    let mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
+    const grow = (A, i) => { const x = A[i], y = A[i + 1], z = A[i + 2]; if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return; mn[0] = Math.min(mn[0], x); mn[1] = Math.min(mn[1], y); mn[2] = Math.min(mn[2], z); mx[0] = Math.max(mx[0], x); mx[1] = Math.max(mx[1], y); mx[2] = Math.max(mx[2], z); };
+    for (const e of elements) { for (let i = 0; i + 2 < e.mesh.pos.length; i += 3) grow(e.mesh.pos, i); if (e.edges) for (let i = 0; i + 2 < e.edges.length; i += 3) grow(e.edges, i); }
+    if (mx[0] >= mn[0]) {
+      const c = scale3(add3(mn, mx), 0.5), r = Math.max(0.1, len3(sub3(mx, mn)) / 2), fov = fovFromLens(35), d = r / Math.sin(fov * Math.PI / 360) * 1.05;
+      cameras.push({ name: cameras.length ? 'Fit all' : 'Default view', id: '__fit', type: 'persp', target: c, eye: add3(c, scale3(norm3([0.55, -0.72, 0.42]), d)), lens: 35, fov, roll: 0, frame: 16 / 9, frameLabel: '16:9', safe: { action: true, thirds: false }, generated: true });
+    }
   }
   const sets = feats.filter(f => parents.has(f.id) || f.type === 'GeometricalSet' || f.type === 'Body').map(f => pathOf(f.id));
   return { format: 'ocaf-parametric-model', name: json.name || key, units: 'm', options: [], elements, points, cameras, warn, sets,
@@ -1415,10 +1433,10 @@ function glModel(model) {
     const { tris, nrm } = tessellate(e);
     for (let i = 0; i < tris.length; i++) for (let k = 0; k < 3; k++) data.push(...tris[i][k], ...nrm[i][k]);
     let mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9];
-    for (const t of tris) for (const p of t) for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], p[k]); mx[k] = Math.max(mx[k], p[k]); }
+    for (const t of tris) for (const p of t) for (let k = 0; k < 3; k++) if (Number.isFinite(p[k])) { mn[k] = Math.min(mn[k], p[k]); mx[k] = Math.max(mx[k], p[k]); }
     let brep = null;
     if (e.edges) { brep = []; for (let i = 0; i + 5 < e.edges.length; i += 6) brep.push([[e.edges[i], e.edges[i + 1], e.edges[i + 2]], [e.edges[i + 3], e.edges[i + 4], e.edges[i + 5]]]); }
-    if (brep) for (const seg of brep) for (const p of seg) for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], p[k]); mx[k] = Math.max(mx[k], p[k]); }
+    if (brep) for (const seg of brep) for (const p of seg) for (let k = 0; k < 3; k++) if (Number.isFinite(p[k])) { mn[k] = Math.min(mn[k], p[k]); mx[k] = Math.max(mx[k], p[k]); }
     parts.push({ e, first, count: tris.length * 3, tris, mn, mx, brep, _edges: null });
     first += tris.length * 3;
   }
@@ -1798,7 +1816,7 @@ defNode('modelSource', {
     if (model.stats && model.stats.failed && model.stats.failed.length) ctx.warn(`${model.stats.failed.length} feature(s) failed to build.`);
     const out = { model: { kind: 'model', key: A.model, model } };
     if (want === 'preview') {
-      const cam = model.cameras[0]; if (!cam) { ctx.warn('The model has no cameras.'); out.preview = IMG.image(ctx.w, ctx.h); }
+      const cam = model.cameras.find(c => c.generated) || model.cameras[0]; if (!cam) { ctx.warn('The model has no geometry to show.'); out.preview = IMG.image(ctx.w, ctx.h); }
       else { const w = ctx.w, h = cam.frame ? Math.round(ctx.w / cam.frame) : ctx.h; out.preview = renderLayer(ctx, { model, camDef: cam, isolate: ['*'], style: 'shaded', w, h }, { others: 'hide', colourBy: 'model', colour: '#c9ced4', ambient: 0.55, lineWeight: 1, sunAzimuth: 205, sunAltitude: 40, background: 'white' }, 'image').image; }
     }
     return out;
@@ -1857,7 +1875,12 @@ defNode('render', {
     const ratio = camDef.frame || ctx.w / ctx.h;
     let w = ctx.w, h = Math.round(ctx.w / ratio), vScale = null, box = null;
     if (A.sizeMode === 'canvas') { w = ctx.w; h = ctx.h; const have = w / h, bw = have > ratio ? h * ratio : w, bh = have > ratio ? h : w / ratio; box = { x: (w - bw) / 2, y: (h - bh) / 2, width: bw, height: bh }; vScale = h / bh; }
-    return renderLayer(ctx, { model, camDef, isolate, style: A.style, w, h, vScale }, { ...A, _box: box }, want);
+    const out = renderLayer(ctx, { model, camDef, isolate, style: A.style, w, h, vScale }, { ...A, _box: box }, want);
+    if (want === 'image' && out.image && out.image.d && A.background === 'transparent') {
+      let any = false; const d = out.image.d; for (let i = 3; i < d.length; i += 4) if (d[i] > 0) { any = true; break; }
+      if (!any) ctx.warn(`Nothing${gv && gv.path !== '*' ? ' from "' + gv.path + '"' : ''} is in view of camera "${camDef.name}". Try the "${(model.cameras.find(c => c.generated) || {}).name || 'Fit all'}" camera to find it.`);
+    }
+    return out;
   },
 });
 function cameraNames(node) { const m = getModel(node && node.args && node.args.model || 'sample'); return m ? m.cameras.map(c => c.name) : []; }
