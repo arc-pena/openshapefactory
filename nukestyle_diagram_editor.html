@@ -3009,7 +3009,7 @@ async function renderAll() {
     body.append(h('div', { style: { maxHeight: '320px', overflow: 'auto' } }, h('table', { class: 'grid' }, h('tr', null, h('th', null, 'File'), h('th', null, 'Result'), h('th', null, 'Notes')), rows)),
       h('div', { style: { display: 'flex', gap: '8px', marginTop: '12px' } }, h('button', { class: 'btn primary', onclick: () => { closeModal(); openFilesModal(); } }, 'Open Files'), h('button', { class: 'btn line', onclick: closeModal }, 'Close')));
     ui.filesDirty = true; ui.statusDirty = true; setWriteChip(`${files.size} files in Files`);
-  });
+  }, true);
 }
 
 // ---------- node actions ----------
@@ -3083,8 +3083,9 @@ function nanoWantsRun(node, A, key, ctx) {
   }
   return !!A.auto && !nanoHit(node, key) && !ctx.full;
 }
-// Nano Banana nodes feeding these jobs, with how many of the files each one feeds.
-function nanoNodesFor(jobs) {
+// Nano Banana nodes feeding these jobs, with how many of the files each one feeds. With all, every
+// enabled Nano Banana in the graph is listed, including ones no Save is connected to yet.
+function nanoNodesFor(jobs, all = false) {
   const found = new Map();
   for (const j of jobs) {
     const seen = new Set(), stack = [[doc, j.node.id]];
@@ -3095,6 +3096,7 @@ function nanoNodesFor(jobs) {
       for (const s of Object.values(n.inputs || {})) if (s && s.node) stack.push([g, s.node]);
     }
   }
+  if (all) for (const n of Object.values(doc.nodes)) if (n.type === 'nanoBanana' && !n.disabled && !found.has(n.id)) found.set(n.id, { node: n, files: 0, paths: [] });
   return [...found.values()];
 }
 // The picker: which nodes run, remembered in the graph (and its saved file) for next time.
@@ -3103,7 +3105,7 @@ function pickNanoForBatch(list) {
     const pick = doc.settings.nanoPick || {}, boxes = [];
     const only = h('input', { type: 'checkbox', checked: !!doc.settings.nanoOnlyMissing });
     const est = h('p', { class: 'hint', style: { margin: '8px 0 0' } });
-    const update = () => { const n = list.reduce((s, it, i) => s + (boxes[i].checked ? it.files : 0), 0); est.textContent = n ? `Up to ${n} Gemini call${n === 1 ? '' : 's'}${only.checked ? ' (fewer: images already made are kept)' : ''}. Each call uses your Gemini credits.` : 'No Gemini calls: every Nano Banana node keeps the images it already has.'; };
+    const update = () => { const n = list.reduce((s, it, i) => s + (boxes[i].checked ? Math.max(1, it.files) : 0), 0); est.textContent = n ? `Up to ${n} Gemini call${n === 1 ? '' : 's'}${only.checked ? ' (fewer: images already made are kept)' : ''}. Each call uses your Gemini credits.` : 'No Gemini calls: every Nano Banana node keeps the images it already has.'; };
     const rows = list.map(({ node, files, paths }, i) => {
       const cb = h('input', { type: 'checkbox', checked: !!pick[node.id], onchange: update }); boxes.push(cb);
       const kept = Object.keys(node.args.results || {}).length;
@@ -3111,7 +3113,7 @@ function pickNanoForBatch(list) {
         h('div', { style: { flex: 1, minWidth: 0 } },
           h('div', { style: { fontWeight: 600 } }, node.name || 'Nano Banana'),
           h('div', { class: 'hint', style: { margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, node.args.prompt ? '“' + String(node.args.prompt).slice(0, 90) + '”' : 'No prompt'),
-          h('div', { class: 'hint', style: { margin: '2px 0 0', overflowWrap: 'anywhere' } }, `Feeds ${files} file${files === 1 ? '' : 's'}: ${paths.slice(0, 4).join(', ')}${paths.length > 4 ? ` +${paths.length - 4} more` : ''} · ${kept} image${kept === 1 ? '' : 's'} already made`)));
+          h('div', { class: 'hint', style: { margin: '2px 0 0', overflowWrap: 'anywhere' } }, `${files ? `Feeds ${files} file${files === 1 ? '' : 's'}: ${paths.slice(0, 4).join(', ')}${paths.length > 4 ? ` +${paths.length - 4} more` : ''}` : 'No Save connected: makes one image for the preview row'} · ${kept} image${kept === 1 ? '' : 's'} already made`)));
     });
     const finish = ok => {
       ui._onModalClose = null;
@@ -3133,12 +3135,19 @@ function pickNanoForBatch(list) {
 }
 // Run jobs as one batch: ask which nodes may call Gemini, then hold that choice for the whole run
 // and record any new images as a single undo step. Returns false if the picker was cancelled.
-async function withNanoBatch(jobs, fn) {
-  const list = nanoNodesFor(jobs);
+async function withNanoBatch(jobs, fn, all = false) {
+  const list = nanoNodesFor(jobs, all);
   const pick = list.length ? await pickNanoForBatch(list) : { run: new Set(), onlyMissing: true };
   if (!pick) return false;
   beginEdit(); nanoBatch = { id: uid('b'), done: new Set(), run: pick.run, onlyMissing: pick.onlyMissing };
-  try { await fn(pick); }
+  try {
+    await fn(pick);
+    // Ticked nodes no Save reaches still make their image, for the row in the preview.
+    for (const { node, files } of list) if (!files && pick.run.has(node.id)) {
+      const ctx = makeCtx({ track: false, ...previewVars() }); ctx.batchAI = true; ctx.rowLog = [];
+      try { await evalPort(doc, node.id, 'image', ctx, null); } catch (e) { node._runError = nanoErrorText(e); }
+    }
+  }
   finally { const made = nanoBatch.done.size; nanoBatch = null; endEdit(); if (made) { docChanged(); toast(`Nano Banana made ${made} image${made === 1 ? '' : 's'} in this batch.`); } }
   return true;
 }
