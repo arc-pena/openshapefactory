@@ -2553,6 +2553,21 @@ defNode('nanoBanana', { label: 'Nano Banana', family: 'ai', desc: 'Gemini image 
     return { image: out };
   } });
 
+defNode('reversePrompt', { label: 'Reverse Prompt', family: 'ai', desc: 'Gemini reads an image and writes the prompt for it. Wire the Prompt output into a Nano Banana\'s Prompt input to give another image that look. Runs when you press Run; the text is kept and you can edit it.',
+  inputs: [{ n: 'image', k: 'image', l: 'Image' }], outputs: [{ n: 'prompt', k: 'string', l: 'Prompt' }],
+  args: [A_('focus', 'Describe', 'select', 'style', { options: [['style', 'Style only (for restyling another image)'], ['styleContent', 'Style and how things are drawn'], ['full', 'Everything (to recreate this image)']] }),
+    A_('words', 'Length', 'int', 120, { min: 30, max: 400, step: 10, unit: 'words' }),
+    A_('extra', 'Also ask', 'text', '', { noTokens: true, hint: 'Optional, e.g. "mention it is an architectural axonometric".' }),
+    A_('model', 'Model', 'string', 'gemini-2.5-flash'),
+    A_('text', 'Prompt', 'text', '', { noTokens: true, hint: 'Written by Run. Edit it freely; Run again replaces it.' }),
+    A_('run', 'Run', 'button', null, { action: 'runReversePrompt' })],
+  run(ctx, I, A, node, want, g) {
+    if (node._runError) ctx.warn(node._runError);
+    if (!A.text) { ctx.warn('Press Run to have Gemini write a prompt from the image.'); return { prompt: '' }; }
+    if (node.inputs.image && node.args.textKey && node.args.textKey !== nanoInputHash(g, node, 'image', ctx, ctx._scope)) ctx.warn('The image changed since this prompt was written. Run again to update it.');
+    return { prompt: A.text };
+  } });
+
 // ---------------------------------------------------------------- organisation
 defNode('switch', { label: 'Switch', family: 'org', desc: 'Chooses one input by index (0-based) or by the name of the upstream node.',
   inputs: n => { const c = Math.max(2, Math.round(+n.args.count || 3)); const a = []; for (let i = 0; i < c; i++) a.push({ n: 'in' + i, k: 'image', l: 'Input ' + i }); return a; }, outputs: [OUT_IMG],
@@ -3031,6 +3046,18 @@ const ACTIONS = {
       : 'id,name,x,y,depth,visible,x3,y3,z3\n' + pts.map(p => [p.id, '"' + p.name.replace(/"/g, '""') + '"', p.x, p.y, p.depth, p.visible, p.x3, p.y3, p.z3].join(',')).join('\n');
     offerDownload(name, data);
   },
+  async runReversePrompt(node, g) {
+    const { ctx, scope, A } = nanoContext(node, g), s = node.inputs.image;
+    if (!s) return toast('Connect an image to the Reverse Prompt node first.', 'error');
+    setStatus(g, node.id, { state: 'rendering', msg: 'Gemini is reading the image…' }); ui.statusDirty = true; refreshStatusDom();
+    try {
+      const im = await evalPort(g, s.node, s.port, ctx, scope);
+      const text = await geminiDescribe(im, { focus: A.focus, extra: A.extra, model: A.model, words: A.words });
+      delete node._runError;
+      mutate(() => { node.args.text = text; node.args.textKey = nanoInputHash(g, node, 'image', ctx, scope); });
+      toast('Prompt written. Wire its Prompt output into a Nano Banana.');
+    } catch (e) { const msg = nanoErrorText(e); node._runError = msg; setStatus(g, node.id, { state: 'error', msg }); ui.statusDirty = true; render(); }
+  },
   async runNanoBanana(node, g) {
     if (!LS.get('dc.geminiKey', '')) { ui.sel = new Set([node.id]); renderProps(); setTimeout(() => { const k = document.getElementById('nb-key'); if (k) k.focus(); }, 50); return toast('Paste your Gemini API key in the node\'s properties first. It stays in this browser only.', 'error'); }
     const { ctx, scope, A } = nanoContext(node, g);
@@ -3180,32 +3207,61 @@ function nanoParts(prompt, negative, b1, refs, refMode) {
   return [{ text: 'IMAGE 1 is the diagram to transform.' }, img(b1), ...refs.flatMap((r, i) => [{ text: refLabel(i, n) }, img(r)]),
     { text: `${rule} ${keep} Output one image.${prompt ? ' Further instructions: ' + prompt : ''}${avoid}` }];
 }
-async function geminiGenerate({ prompt, negative, im, refs = [], model, seed, refMode }) {
+function geminiKey() {
   const key = LS.get('dc.geminiKey', '');
   if (!key) { const e = new Error('No Gemini API key. Paste one under Gemini API key in the node\'s properties.'); e.noKey = true; throw e; }
-  const toB64 = async img => { if (!img) return null; const k = Math.min(1, 1024 / Math.max(img.w, img.h)); const cv = IMG.toCanvas(k < 1 ? IMG.resample(img, Math.round(img.w * k), Math.round(img.h * k)) : img); const b = await canvasBlob(cv, 'image/png'); const buf = new Uint8Array(await b.arrayBuffer()); let s = ''; for (let i = 0; i < buf.length; i += 32768) s += String.fromCharCode(...buf.subarray(i, i + 32768)); return btoa(s); };
-  const b1 = await toB64(im), bRefs = []; for (const r of refs) bRefs.push(await toB64(r));
-  const parts = nanoParts(prompt, (negative || '').trim(), b1, bRefs.filter(Boolean), refMode || 'style');
-  const gen = { responseModalities: ['IMAGE', 'TEXT'], seed };
-  if (im) gen.imageConfig = { aspectRatio: nearestRatio(im.w, im.h) };
-  // The page's security policy (the claude.ai viewer's, for instance) can refuse the request before
-  // it leaves; the browser reports that as a violation event, which tells it apart from being offline.
+  return key;
+}
+async function imageB64(img, max = 1024) {
+  if (!img) return null; const k = Math.min(1, max / Math.max(img.w, img.h));
+  const cv = IMG.toCanvas(k < 1 ? IMG.resample(img, Math.round(img.w * k), Math.round(img.h * k)) : img);
+  const buf = new Uint8Array(await (await canvasBlob(cv, 'image/png')).arrayBuffer()); let s = '';
+  for (let i = 0; i < buf.length; i += 32768) s += String.fromCharCode(...buf.subarray(i, i + 32768));
+  return btoa(s);
+}
+// One request to Gemini. The page's security policy (the claude.ai viewer's, for instance) can refuse
+// it before it leaves; the browser reports that as a violation event, which tells it apart from being
+// offline. A model without the aspect-ratio option refuses that field, so it is asked again without it.
+async function geminiPost(model, parts, gen) {
+  const key = geminiKey();
   let r, csp = false; const onCsp = ev => { if (/googleapis/.test(ev.blockedURI || '')) csp = true; };
   document.addEventListener('securitypolicyviolation', onCsp);
   const call = g => fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify({ contents: [{ parts }], generationConfig: g }) });
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify({ contents: [{ parts }], ...(g ? { generationConfig: g } : {}) }) });
   try {
     r = await call(gen);
-    // A model without the aspect-ratio option refuses the field; ask again without it.
-    if (!r.ok && gen.imageConfig) { const t = await r.clone().text(); if (/imageConfig|aspect/i.test(t)) { delete gen.imageConfig; r = await call(gen); } }
+    if (!r.ok && gen && gen.imageConfig) { const t = await r.clone().text(); if (/imageConfig|aspect/i.test(t)) { gen = { ...gen }; delete gen.imageConfig; r = await call(gen); } }
   } catch (err) { await new Promise(res => setTimeout(res, 60)); err.blocked = csp ? 'csp' : 'network'; throw err; }
   finally { setTimeout(() => document.removeEventListener('securitypolicyviolation', onCsp), 200); }
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error((j.error && j.error.message) || `HTTP ${r.status}`);
-  const part = (j.candidates || []).flatMap(c => (c.content && c.content.parts) || []).find(p => p.inlineData || p.inline_data);
+  return (j.candidates || []).flatMap(c => (c.content && c.content.parts) || []);
+}
+async function geminiGenerate({ prompt, negative, im, refs = [], model, seed, refMode }) {
+  geminiKey();
+  const b1 = await imageB64(im), bRefs = []; for (const r of refs) bRefs.push(await imageB64(r));
+  const parts = nanoParts(prompt, (negative || '').trim(), b1, bRefs.filter(Boolean), refMode || 'style');
+  const gen = { responseModalities: ['IMAGE', 'TEXT'], seed };
+  if (im) gen.imageConfig = { aspectRatio: nearestRatio(im.w, im.h) };
+  const part = (await geminiPost(model, parts, gen)).find(p => p.inlineData || p.inline_data);
   if (!part) throw new Error('The response had no image (the model may have refused the prompt).');
   const d = part.inlineData || part.inline_data;
   return compactImageUrl(`data:${d.mimeType || d.mime_type || 'image/png'};base64,${d.data}`);
+}
+// Reverse prompt: Gemini reads an image and writes the prompt an image model would need to get that look.
+const REVERSE_FOCUS = {
+  style: 'Write a prompt that tells an image model to redraw ANOTHER image in the visual style of this one. Describe only the style: medium and technique, line quality and weight, colour palette (name the colours, with hex values for the main ones), lighting and shadow, shading, texture, level of detail, background treatment and mood. Do not describe the subject, objects or layout of this image.',
+  styleContent: 'Write a prompt that tells an image model to redraw ANOTHER image in the style of this one and with the same kind of content treatment: describe the style (medium, line quality, palette with hex values, lighting, texture, detail) and how people, planting, materials and context are drawn, without asking it to copy this image\'s layout.',
+  full: 'Write a detailed prompt that would let an image model recreate this image: subject, composition, viewpoint, materials, lighting, colour palette with hex values, rendering style and mood.',
+};
+async function geminiDescribe(im, { focus = 'style', extra = '', model = 'gemini-2.5-flash', words = 120 }) {
+  geminiKey();
+  if (!im) throw new Error('Connect an image to read.');
+  const ask = `${REVERSE_FOCUS[focus] || REVERSE_FOCUS.style} Write it as direct instructions in one paragraph, at most ${words} words.${extra ? ' Also: ' + extra : ''} Output only the prompt, with no heading, quotes or commentary.`;
+  const parts = await geminiPost(model, [{ inline_data: { mime_type: 'image/png', data: await imageB64(im) } }, { text: ask }], null);
+  const text = parts.map(p => p.text || '').join('').trim().replace(/^["“]|["”]$/g, '');
+  if (!text) throw new Error('Gemini returned no text for this image.');
+  return text;
 }
 // Gemini sends PNG; WebP at high quality is several times smaller, so more results fit in the
 // browser's save of the graph.
@@ -3330,6 +3386,17 @@ function nanoWidget(n) {
   for (const ev of ['pointerdown', 'mousedown', 'dblclick', 'wheel', 'keydown', 'contextmenu']) box.addEventListener(ev, stop);
   return box;
 }
+function reverseWidget(n) {
+  const stop = e => e.stopPropagation();
+  const ta = h('textarea', { class: 'inp nano-prompt', rows: 5, placeholder: 'Press Run: Gemini reads the image and writes the prompt here. You can edit it.', 'data-nano': n.id + ':rev',
+    oninput: e => { beginEdit(); n.args.text = e.target.value; ui.statusDirty = true; requestEval(); if (doc.settings.autosave !== false) scheduleAutoSave(); }, onchange: () => { endEdit(); renderProps(); } });
+  ta.value = n.args.text || '';
+  const run = h('button', { class: 'btn primary small', onclick: async e => { e.target.disabled = true; try { await ACTIONS.runReversePrompt(n, currentGraph()); } finally { e.target.disabled = false; } } }, n.args.text ? 'Run again' : 'Run');
+  const copy = h('button', { class: 'btn line small', onclick: async () => { try { await navigator.clipboard.writeText(n.args.text || ''); toast('Prompt copied.'); } catch { toast('Could not copy here.', 'error'); } } }, 'Copy');
+  const box = h('div', { class: 'nano-box' }, ta, h('div', { style: { display: 'flex', gap: '6px', alignItems: 'center' } }, run, copy));
+  for (const ev of ['pointerdown', 'mousedown', 'dblclick', 'wheel', 'keydown', 'contextmenu']) box.addEventListener(ev, stop);
+  return box;
+}
 function renderGraph() {
   const g = currentGraph(), af = document.activeElement, keep = af && af.dataset && af.dataset.nano ? { id: af.dataset.nano, a: af.selectionStart, b: af.selectionEnd } : null;
   queueMicrotask(() => { if (!keep) return; const t = nodesEl.querySelector(`textarea[data-nano="${keep.id}"]`); if (t && document.activeElement !== t) { t.focus(); try { t.setSelectionRange(keep.a, keep.b); } catch { } } });
@@ -3345,6 +3412,7 @@ function renderGraph() {
     const sum = nodeSummary(n); if (sum && !t.compact) el.append(h('div', { class: 'nsub', title: sum }, sum));
     if (thumbPort(n) && !t.compact) el.append(t.wide ? h('canvas', { class: 'thumb', width: 504, height: 320 }) : h('canvas', { class: 'thumb', width: 164, height: 123 }));
     if (n.type === 'nanoBanana' && !t.compact) el.append(nanoWidget(n));
+    if (n.type === 'reversePrompt' && !t.compact) el.append(reverseWidget(n));
     el.append(h('div', { class: 'nmsg', hidden: true }));
     const ins = nodeInputs(n), outs = nodeOutputs(n);
     const pIn = h('div', { class: 'pcol in' }), pOut = h('div', { class: 'pcol out' });
@@ -4150,6 +4218,7 @@ function renderProps() {
   if (n.type === 'save') propsBody.append(saveExtras(n));
   if (n.type === 'extractCamera') { const r = cameraRes(currentGraph(), n.id), [w, h] = r ? outSize(r.mult, r) : outSize(); propsBody.append(h_res(r ? `Default ${r.w} × ${r.h} px${r.lock && r.frameLabel ? ' (' + r.frameLabel + ' from the modeller camera)' : ''} × ${outMult(r.mult)} = ${w} × ${h} px for every Save and export downstream, unless a Save sets its own scale.` : '')); }
   if (n.type === 'nanoBanana') propsBody.append(nanoExtras(n));
+  if (n.type === 'reversePrompt') propsBody.append(geminiKeyField());
   const ex = exportExtras(n); if (ex) propsBody.append(ex);
   let section = null;
   const A = { ...Object.fromEntries(t.args.map(a => [a.n, a.d])), ...n.args };
