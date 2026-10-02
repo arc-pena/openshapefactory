@@ -3293,7 +3293,9 @@ function pasteNodes(clip, at) {
     ui.sel.clear();
     for (const src of clip.nodes) {
       const n = deepClone(src); n.id = map[src.id]; n.x = Math.round(at.x + src.x - x0); n.y = Math.round(at.y + src.y - y0);
-      for (const p in n.inputs) { const m = map[n.inputs[p].node]; if (m) n.inputs[p].node = m; else delete n.inputs[p]; }
+      // Inputs between copied nodes go to the copies; inputs from parents that were not copied
+      // stay wired to those same parents, so a copy is fed exactly like its original.
+      for (const p in n.inputs) { const src = n.inputs[p], m = map[src.node]; if (m) src.node = m; else if (!g.nodes[src.node] || g.nodes[src.node].type === 'backdrop') delete n.inputs[p]; }
       g.nodes[n.id] = n; ui.sel.add(n.id);
     }
   });
