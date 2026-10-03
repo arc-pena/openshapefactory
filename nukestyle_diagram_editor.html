@@ -995,7 +995,7 @@ function getModel(key) {
 }
 function indexModel(m) {
   const geosets = new Set(m.sets || []);
-  for (const e of [...m.elements, ...(m.points || [])]) { const parts = e.geoset.split('/'); for (let i = 1; i <= parts.length; i++) geosets.add(parts.slice(0, i).join('/')); }
+  for (const e of [...m.elements, ...(m.points || []), ...(m.vectors || [])]) { const parts = e.geoset.split('/'); for (let i = 1; i <= parts.length; i++) geosets.add(parts.slice(0, i).join('/')); }
   return { geosets: [...geosets].sort(), byId: new Map(m.elements.map(e => [e.id, e])) };
 }
 // Geoset pattern matching: exact path, any descendant, and "*" wildcards per segment.
@@ -1161,11 +1161,23 @@ function convertOcaf(json, mesh, report, key) {
   const hidden = new Set(json.hidden || []);
   const isHidden = id => { let f = byId.get(id), guard = 0; while (f && guard++ < 64) { if (hidden.has(f.id)) return true; f = f.parent ? byId.get(f.parent) : null; } return false; };
   const meshBy = new Map((mesh && mesh.features || []).map(m => [m.id, m]));
-  const elements = [], points = [], cameras = [], warn = [];
+  const elements = [], points = [], vectors = [], cameras = [], warn = [];
   for (const f of feats) {
     const m = meshBy.get(f.id);
     const geoset = f.parent ? pathOf(f.parent) : 'root';
-    if (f.type === 'Point' && m && m.point) { points.push({ id: f.id, geoset, at: m.point.map(v => v * k), dir: null, attrs: { name: f.name || f.id } }); continue; }
+    // Points and vectors are kept whether or not they are shown in the modeller: they are usually
+    // hidden scaffolding, and still exactly what decals are placed on and turned by.
+    if (f.type === 'Point' && m && m.point) {
+      const P = m.points && m.points.length > 3 ? m.points : m.point, n = Math.floor(P.length / 3);
+      for (let i = 0; i < n; i++) { const at = [P[i * 3] * k, P[i * 3 + 1] * k, P[i * 3 + 2] * k]; if (at.every(Number.isFinite)) points.push({ id: n > 1 ? f.id + '#' + (i + 1) : f.id, feature: f.id, geoset, at, dir: null, attrs: { name: n > 1 ? `${f.name || f.id} ${i + 1}` : f.name || f.id } }); }
+      continue;
+    }
+    // A vector is drawn as a segment from where it starts along its direction.
+    if (f.type === 'Vector' && m && m.edges && m.edges.length >= 6) {
+      const E = m.edges, a = [E[0] * k, E[1] * k, E[2] * k], b = [E[3] * k, E[4] * k, E[5] * k], d = sub3(b, a), l = len3(d);
+      if (l > 0 && a.every(Number.isFinite) && b.every(Number.isFinite)) vectors.push({ id: f.id, geoset, at: a, dir: scale3(d, 1 / l), len: l, located: /tangent/i.test(String((f.args || {}).kind)) || (f.args || {}).kind === 1, attrs: { name: f.name || f.id } });
+      continue;
+    }
     if (f.type === 'Camera') {
       const a = f.args || {};
       const at = a.at && a.at.ref && meshBy.get(a.at.ref) && meshBy.get(a.at.ref).point, look = a.look && a.look.ref && meshBy.get(a.look.ref) && meshBy.get(a.look.ref).point;
@@ -1203,7 +1215,7 @@ function convertOcaf(json, mesh, report, key) {
     }
   }
   const sets = feats.filter(f => parents.has(f.id) || f.type === 'GeometricalSet' || f.type === 'Body').map(f => pathOf(f.id));
-  return { format: 'ocaf-parametric-model', name: json.name || key, units: 'm', options: [], elements, points, cameras, warn, sets,
+  return { format: 'ocaf-parametric-model', name: json.name || key, units: 'm', options: [], elements, points, vectors, cameras, warn, sets,
     stats: { features: feats.length, built: report ? (report.executed || []).length : null, failed: report ? (report.failed || []) : [], triangles: elements.reduce((s, e) => s + e.mesh.idx.length / 3, 0) } };
 }
 // Models bundled from the Feature Modeller's own samples, so the graph has an ocaf model on first open.
@@ -2065,6 +2077,56 @@ const CURVE_ARGS = [
   A_('occlude', 'Behind geometry', 'select', 'hidden', { show: isCurves, options: [['hidden', 'Hidden'], ['over', 'Drawn over']] }),
   A_('minLength', 'Skip shorter than', 'number', 0, { min: 0, max: 500, unit: 'px', show: isCurves }),
 ];
+// Model -> Extract Points (pick a set) -> Decal Scatter. Points and vectors of a set, projected
+// through the camera into Points2D; a vector turns the decal on it (or the point nearest it).
+defNode('extractPoints', {
+  label: 'Extract Points', family: 'source', desc: 'Takes the Points and Vectors of one set of the model and places them in the camera\'s picture, ready for Decal Scatter. A vector gives its decal a direction.',
+  inputs: [{ n: 'model', k: 'model', l: 'Model' }, { n: 'camera', k: 'camera', l: 'Camera' }, { n: 'geoset', k: 'geoset', l: 'Geoset' }], outputs: [{ n: 'points', k: 'points', l: 'Points2D' }],
+  args: [
+    A_('geoset', 'Set', 'select', '', { options: n => { const m = upstreamModel(n); if (!m) return [['', 'Connect a Model first']]; const cnt = g => (m.points || []).filter(p => geosetMatch(g, p.geoset)).length + ' pts, ' + (m.vectors || []).filter(v => geosetMatch(g, v.geoset)).length + ' vec';
+      return [['', 'Everything  (' + (m.points || []).length + ' pts, ' + (m.vectors || []).length + ' vec)'], ...m._index.geosets.map(g => [g, g + '  (' + cnt(g) + ')']), ['{geoset}', '{geoset} · from the Permutation row']]; }, hint: 'A Geoset wired in takes over from this list.' }),
+    A_('children', 'Include sub-sets', 'bool', true),
+    A_('source', 'Use', 'select', 'auto', { options: [['auto', 'Points, aimed by the set\'s vectors'], ['points', 'Points only'], ['vectors', 'Vectors, at their start'], ['vectorTips', 'Vectors, at their tip'], ['both', 'Points and vectors'], ['elements', 'Centres of the set\'s objects']] }),
+    A_('lift', 'Lift', 'number', 0, { unit: 'm', hint: 'Raises the points before the hidden test, so a point on a surface is not hidden by it.' }),
+    A_('hideOccluded', 'Drop hidden points', 'bool', false),
+  ],
+  async run(ctx, I, A, node) {
+    const [mv, cv0, gv] = await Promise.all([I('model'), I('camera'), I('geoset')]);
+    const m = mv ? mv.model : cv0 ? cv0.model : null, none = { points: { kind: 'points', w: ctx.w, h: ctx.h, pts: [] } };
+    if (!m) { ctx.warn('Connect a Model.'); return none; }
+    let cv = cv0;
+    if (!cv) { const def = m.cameras[0]; if (!def) { ctx.warn('The model has no cameras.'); return none; } ctx.warn(`No camera connected; using ${def.name}.`); cv = cameraValue(m, def, ctx.w, def.frame ? Math.round(ctx.w / def.frame) : ctx.h, null, ['*'], 0, null); }
+    const path = gv ? null : A.geoset, pat = gv ? gv.patterns : !path ? ['*'] : A.children ? [path] : ['=' + path];
+    if (path && path !== '*' && !m._index.geosets.includes(path)) ctx.warn(`"${path}" is not a set in ${m.name}.`);
+    const P = (m.points || []).filter(p => matchAny(pat, p.geoset)), V = (m.vectors || []).filter(v => matchAny(pat, v.geoset));
+    // Which vector turns which point: a vector that has a place (a tangent at a point) turns the point
+    // nearest it; a typed direction has no place, so one turns every point and several pair up with
+    // the points in the order they sit in the tree.
+    const located = V.filter(v => v.located), typed = V.filter(v => !v.located);
+    const aimFor = (at, i) => { if (located.length) { let best = null, bd = Infinity; for (const v of located) { const d = len3(sub3(v.at, at)); if (d < bd) { bd = d; best = v; } } return best.dir; } return typed.length ? typed[typed.length === 1 ? 0 : i % typed.length].dir : null; };
+    const src = [];
+    if (A.source === 'auto' || A.source === 'points' || A.source === 'both') P.forEach((p, i) => src.push({ id: p.id, p3: p.at, dir: A.source === 'auto' ? aimFor(p.at, i) : null, attrs: p.attrs, geoset: p.geoset }));
+    if ((A.source === 'vectors' || A.source === 'vectorTips') && V.length && !located.length) ctx.warn('These vectors are typed directions with no position of their own (they start at the origin). Use "Points, aimed by the set\'s vectors", or make them tangents at a point.');
+    if (A.source === 'vectors' || A.source === 'vectorTips' || A.source === 'both') for (const v of (A.source === 'both' ? located : V)) src.push({ id: v.id, p3: A.source === 'vectorTips' ? add3(v.at, scale3(v.dir, v.len)) : v.at, dir: v.dir, attrs: v.attrs, geoset: v.geoset });
+    if (A.source === 'elements') for (const e of m.elements) if (matchAny(pat, e.geoset)) { const b = elementBounds(e); if (b && b.mn.every(Number.isFinite)) src.push({ id: e.id, p3: scale3(add3(b.mn, b.mx), 0.5), dir: null, attrs: e.attrs || {}, geoset: e.geoset }); }
+    if (!src.length) { ctx.warn(`No ${A.source === 'elements' ? 'objects' : A.source.startsWith('vector') ? 'vectors' : 'points'} in "${path || (gv && gv.path) || 'the model'}". Add Points or Vectors to that set in the modeller.`); return { points: { kind: 'points', w: cv.cam.w, h: cv.cam.h, pts: [], cam: cv.cam } }; }
+    const depth = cv.depth(), cam = cv.cam, pts = [];
+    for (const s of src) {
+      let p3 = s.p3; if (matchAny(cv.isolate, s.geoset)) p3 = add3(p3, [0, 0, cv.offsetZ]);
+      const pr = projectPoint(cam, p3), pt = projectPoint(cam, add3(p3, [0, 0, +A.lift || 0])); if (!pr || !pt) continue;
+      let vis = true; const bx = Math.round(pt.x), by = Math.round(pt.y);
+      if (bx >= 0 && by >= 0 && bx < cam.w && by < cam.h) { let mn = Infinity; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) mn = Math.min(mn, depth[clampI(by + dy, 0, cam.h - 1) * cam.w + clampI(bx + dx, 0, cam.w - 1)]); vis = pt.depth <= mn + 0.6 + pt.depth * 0.004; }
+      else vis = false;
+      if (A.hideOccluded && !vis) continue;
+      let angle = null, dir2 = null;
+      // The direction on screen: a short step along the vector, sized to the scene so it projects cleanly.
+      if (s.dir) { const step = Math.max(0.5, pr.depth * 0.02), q = projectPoint(cam, add3(p3, scale3(s.dir, step))); if (q) { dir2 = [q.x - pr.x, q.y - pr.y]; angle = Math.atan2(dir2[1], dir2[0]) * 180 / Math.PI; } }
+      pts.push({ id: s.id, x: pr.x, y: pr.y, depth: pr.depth, visible: vis, p3, dir: dir2, angle, attrs: s.attrs });
+    }
+    if (!pts.length) ctx.warn('Every point is behind the camera.');
+    return { points: { kind: 'points', w: cam.w, h: cam.h, pts, cam } };
+  },
+});
 const RENDER_SKIP = new Set(['path', 'model', 'option', 'camera', 'style', 'resW', 'resH', 'offsetZ']);
 defNode('render', {
   label: 'Render', family: 'source', desc: 'Renders the geoset from the camera. Other geometry is a holdout, so the image and mask are just the object, correctly occluded. The size is the camera\'s own frame, so overlays line up.',
@@ -2152,6 +2214,13 @@ defNode('pointProject', {
   },
 });
 function elementBounds(e) {
+  if (e.shape === 'mesh') {
+    // Model meshes (and curves): the box of their finite vertices, worked out once.
+    if (!e._bb) { const mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
+      for (const A of [e.mesh && e.mesh.pos, e.edges]) if (A) for (let i = 0; i + 2 < A.length; i += 3) { if (!Number.isFinite(A[i]) || !Number.isFinite(A[i + 1]) || !Number.isFinite(A[i + 2])) continue; for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], A[i + k]); mx[k] = Math.max(mx[k], A[i + k]); } }
+      e._bb = mx[0] >= mn[0] ? { mn, mx } : { mn: [NaN, NaN, NaN], mx: [NaN, NaN, NaN] }; }
+    return e._bb;
+  }
   if (e.shape === 'sphere') return { mn: sub3(e.at, [e.r, e.r, e.r]), mx: add3(e.at, [e.r, e.r, e.r]) };
   if (e.shape === 'cyl') { const hh = e.size ? e.size[2] : e.h; return { mn: [e.at[0] - e.r, e.at[1] - e.r, e.at[2]], mx: [e.at[0] + e.r, e.at[1] + e.r, e.at[2] + hh] }; }
   const [w, d, hh] = e.size, r = Math.hypot(w, d) / 2, rot = e.rot || 0, x = rot ? r : w / 2, y = rot ? r : d / 2;
@@ -3354,6 +3423,7 @@ function nodeSummary(n) {
     case 'modelSource': { const r = doc.models[a.model], m = r && (r.kind === 'ocaf' ? ocafModel(a.model) : getModel(a.model)); const c = ocafCache.get(a.model); if (!r) return 'no model'; if (r.kind === 'ocaf' && !m) return c && c.error ? 'failed: ' + c.error : 'building…'; return `${r.name || a.model} · ${m._index ? m._index.geosets.length : 0} sets · ${m.cameras.length} cameras`; }
     case 'extractGeoset': return a.geoset || 'Everything';
     case 'extractCamera': return a.camera || 'first camera';
+    case 'extractPoints': return (a.geoset || 'Everything') + ' · ' + ({ auto: 'points + vectors', points: 'points', vectors: 'vectors', vectorTips: 'vector tips', both: 'points and vectors', elements: 'object centres' }[a.source || 'auto'] || '');
     case 'render': return (STYLE_LABEL[a.style] || 'Shaded') + (a.sizeMode === 'canvas' ? ' · canvas' : ' · camera frame');
     case 'text': return String(a.text || '').split('\n')[0];
     case 'stroke': return `${a.width == null ? 2 : a.width}px ${a.position || 'outside'}`;
