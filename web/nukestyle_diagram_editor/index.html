@@ -1259,8 +1259,12 @@ function buildCamera(def, w, h, overrides = {}) {
   // The modeller's camera: vertical fov from the lens (24 mm tall frame), then roll about the view axis.
   const fov0 = def.fov || (def.lens ? fovFromLens(def.lens) : 40);
   const fov = overrides.vScale ? Math.atan(Math.tan(fov0 * Math.PI / 360) * overrides.vScale) * 360 / Math.PI : fov0;
-  const fwd = norm3(sub3(target, eye)), world = Math.abs(fwd[2]) > 0.999 ? [0, 1, 0] : [0, 0, 1];
-  let right = norm3(cross3(fwd, world)), up = cross3(right, fwd);
+  // Oriented exactly as the modeller's camera (three.js lookAt with Z up): world Z stays up however
+  // steeply it looks down, so a near-vertical plan camera keeps the orientation it has there. Only a
+  // camera looking exactly straight up or down is nudged, the same 1e-4 along X three.js uses.
+  const fwd = norm3(sub3(target, eye)), world = [0, 0, 1];
+  let back = scale3(fwd, -1); if (len3(cross3(world, back)) < 1e-9) back = norm3(add3(back, [1e-4, 0, 0]));
+  let right = norm3(cross3(world, back)), up = cross3(back, right);
   if (def.roll) { const t = -def.roll * Math.PI / 180, c = Math.cos(t), s = Math.sin(t); up = add3(scale3(up, c), scale3(right, -s)); }
   // Clip planes follow the model's size: a 0.9 m bracket and a 300 m site both keep depth precision.
   let near = 0.5, far = 4000;
