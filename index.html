@@ -2005,6 +2005,14 @@ function upstreamModelKey(g, node, port = 'model', depth = 0) {
   if (up.type === 'dot') return upstreamModelKey(g, up, 'in', depth + 1);
   return null;
 }
+// The model behind a Camera input: through an Extract Camera, Render or Extract Points (their Model
+// input) or a Viewport (its Model field).
+function cameraInputModel(node, g = currentGraph(), depth = 0) {
+  const s = node && node.inputs && node.inputs.camera, up = s && g.nodes[s.node]; if (!up || depth > 20) return null;
+  if (up.type === 'dot') return cameraInputModel({ inputs: { camera: up.inputs.in } }, g, depth + 1);
+  if (up.type === 'viewport') return getModel(up.args.model || 'sample');
+  const key = upstreamModelKey(g, up, 'model'); return key ? getModel(key) : null;
+}
 function upstreamModel(node) { const key = upstreamModelKey(currentGraph(), node); return key ? getModel(key) : null; }
 const modelOptions = () => Object.keys(doc.models).map(k => [k, `${doc.models[k].name || k}${doc.models[k].kind === 'ocaf' ? '' : ' (built-in format)'}`]);
 
@@ -2180,7 +2188,10 @@ defNode('pointProject', {
   label: 'Point Project', family: 'points', desc: 'Projects 3D points of a geoset through a Viewport camera into pixel space, with an occlusion test.',
   inputs: [{ n: 'camera', k: 'camera', l: 'Camera' }], outputs: [{ n: 'points', k: 'points', l: 'Points2D' }],
   args: [
-    A_('geoset', 'Geoset', 'path', '{option}/entrances'),
+    A_('geoset', 'Set', 'select', '', { options: n => { const m = cameraInputModel(n), v = n.args.geoset;
+      const list = m ? [['', 'Everything'], ...m._index.geosets.map(g => [g, g])] : [['', 'Connect a camera first']];
+      // A value typed in an older graph (a pattern or a token) stays selectable rather than vanishing.
+      if (v && !list.some(o => o[0] === v)) list.push([v, v]); return list; } }),
     A_('source', 'Point source', 'select', 'auto', { options: [['auto', 'Named points, else element tops'], ['named', 'Named points'], ['top', 'Element top centre'], ['centroid', 'Element centroid'], ['base', 'Element base centre']] }),
     A_('lift', 'Lift', 'number', 1.2, { unit: 'm', hint: 'Raises points off the ground before the occlusion test.' }),
     A_('hideOccluded', 'Drop hidden points', 'bool', false),
@@ -2188,7 +2199,7 @@ defNode('pointProject', {
   run(ctx, I, A) {
     return I('camera').then(cv => {
       if (!cv) { ctx.warn('Connect a Viewport camera output.'); return { points: { kind: 'points', w: ctx.w, h: ctx.h, pts: [] } }; }
-      const m = cv.model, pat = A.geoset.split(',').map(s => s.trim()).filter(Boolean);
+      const m = cv.model, pat = A.geoset ? A.geoset.split(',').map(s => s.trim()).filter(Boolean) : ['*'];
       const src = [];
       const named = (m.points || []).filter(p => matchAny(pat, p.geoset));
       if ((A.source === 'auto' && named.length) || A.source === 'named') for (const p of named) src.push({ id: p.id, p3: p.at, dir: p.dir || null, attrs: p.attrs || {}, geoset: p.geoset });
@@ -2197,7 +2208,7 @@ defNode('pointProject', {
         const p3 = A.source === 'centroid' ? c : A.source === 'base' ? [c[0], c[1], b.mn[2]] : [c[0], c[1], b.mx[2]];
         src.push({ id: e.id, p3, dir: null, attrs: e.attrs || {}, geoset: e.geoset });
       }
-      if (!src.length) ctx.warn(`No points found for "${A.geoset}".`);
+      if (!src.length) ctx.warn(`No points found in "${A.geoset || 'the model'}".`);
       const depth = cv.depth(), cam = cv.cam, pts = [];
       for (const s of src) {
         let p3 = s.p3; if (matchAny(cv.isolate, s.geoset)) p3 = add3(p3, [0, 0, cv.offsetZ]);
