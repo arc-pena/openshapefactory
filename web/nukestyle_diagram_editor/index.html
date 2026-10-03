@@ -2033,7 +2033,7 @@ defNode('modelSource', {
 defNode('extractGeoset', {
   label: 'Extract Geoset', family: 'source', desc: 'Picks one set from the model. The list is read from the model\'s Geometrical Sets and Bodies.',
   inputs: [{ n: 'model', k: 'model', l: 'Model' }], outputs: [{ n: 'geoset', k: 'geoset', l: 'Geoset' }],
-  args: [A_('geoset', 'Geoset', 'select', '', { options: n => { const m = upstreamModel(n); return [['', m ? 'Everything' : 'Connect a Model first'], ...(m ? m._index.geosets.map(g => [g, g + '  (' + m.elements.filter(e => geosetMatch(g, e.geoset)).length + ')']) : []), ...(m ? [['{geoset}', '{geoset} · from the Permutation row']] : [])]; } }),
+  args: [A_('geoset', 'Geoset', 'select', '', { options: n => { const m = upstreamModel(n); return [['', m ? 'Everything' : 'Connect a Model first'], ...(m ? m._index.geosets.map(g => [g, g]) : [])]; } }),
     A_('children', 'Include sub-sets', 'bool', true)],
   async run(ctx, I, A) {
     const mv = await I('model'); if (!mv) { ctx.warn('Connect a Model.'); return { geoset: null }; }
@@ -2084,12 +2084,11 @@ defNode('extractPoints', {
   label: 'Extract Points', family: 'source', desc: 'Takes the Points and Vectors of one set of the model and places them in the camera\'s picture, ready for Decal Scatter. A vector gives its decal a direction.',
   inputs: [{ n: 'model', k: 'model', l: 'Model' }, { n: 'camera', k: 'camera', l: 'Camera' }, { n: 'geoset', k: 'geoset', l: 'Geoset' }], outputs: [{ n: 'points', k: 'points', l: 'Points2D' }],
   args: [
-    A_('geoset', 'Set', 'select', '', { options: n => { const m = upstreamModel(n); if (!m) return [['', 'Connect a Model first']]; const cnt = g => (m.points || []).filter(p => geosetMatch(g, p.geoset)).length + ' pts, ' + (m.vectors || []).filter(v => geosetMatch(g, v.geoset)).length + ' vec';
-      return [['', 'Everything  (' + (m.points || []).length + ' pts, ' + (m.vectors || []).length + ' vec)'], ...m._index.geosets.map(g => [g, g + '  (' + cnt(g) + ')']), ['{geoset}', '{geoset} · from the Permutation row']]; }, hint: 'A Geoset wired in takes over from this list.' }),
+    A_('geoset', 'Set', 'select', '', { options: n => { const m = upstreamModel(n); return m ? [['', 'Everything'], ...m._index.geosets.map(g => [g, g])] : [['', 'Connect a Model first']]; }, hint: 'A Geoset wired in takes over from this list.' }),
     A_('children', 'Include sub-sets', 'bool', true),
     A_('source', 'Use', 'select', 'auto', { options: [['auto', 'Points, aimed by the set\'s vectors'], ['points', 'Points only'], ['vectors', 'Vectors, at their start'], ['vectorTips', 'Vectors, at their tip'], ['both', 'Points and vectors'], ['elements', 'Centres of the set\'s objects']] }),
     A_('lift', 'Lift', 'number', 0, { unit: 'm', hint: 'Raises the points before the hidden test, so a point on a surface is not hidden by it.' }),
-    A_('hideOccluded', 'Drop hidden points', 'bool', false),
+    A_('hideOccluded', 'Drop points hidden behind geometry', 'bool', true, { hint: 'Points outside the camera\'s frame or behind it are always left out.' }),
   ],
   async run(ctx, I, A, node) {
     const [mv, cv0, gv] = await Promise.all([I('model'), I('camera'), I('geoset')]);
@@ -2111,20 +2110,22 @@ defNode('extractPoints', {
     if (A.source === 'vectors' || A.source === 'vectorTips' || A.source === 'both') for (const v of (A.source === 'both' ? located : V)) src.push({ id: v.id, p3: A.source === 'vectorTips' ? add3(v.at, scale3(v.dir, v.len)) : v.at, dir: v.dir, attrs: v.attrs, geoset: v.geoset });
     if (A.source === 'elements') for (const e of m.elements) if (matchAny(pat, e.geoset)) { const b = elementBounds(e); if (b && b.mn.every(Number.isFinite)) src.push({ id: e.id, p3: scale3(add3(b.mn, b.mx), 0.5), dir: null, attrs: e.attrs || {}, geoset: e.geoset }); }
     if (!src.length) { ctx.warn(`No ${A.source === 'elements' ? 'objects' : A.source.startsWith('vector') ? 'vectors' : 'points'} in "${path || (gv && gv.path) || 'the model'}". Add Points or Vectors to that set in the modeller.`); return { points: { kind: 'points', w: cv.cam.w, h: cv.cam.h, pts: [], cam: cv.cam } }; }
-    const depth = cv.depth(), cam = cv.cam, pts = [];
+    const depth = cv.depth(), cam = cv.cam, pts = []; let offFrame = 0, hidden = 0;
     for (const s of src) {
       let p3 = s.p3; if (matchAny(cv.isolate, s.geoset)) p3 = add3(p3, [0, 0, cv.offsetZ]);
-      const pr = projectPoint(cam, p3), pt = projectPoint(cam, add3(p3, [0, 0, +A.lift || 0])); if (!pr || !pt) continue;
+      const pr = projectPoint(cam, p3), pt = projectPoint(cam, add3(p3, [0, 0, +A.lift || 0])); if (!pr || !pt) { offFrame++; continue; }
+      // Only what the camera sees is listed: in front of it and inside its frame, and (by default)
+      // not hidden behind geometry.
+      if (pr.depth <= cam.near || pr.x < 0 || pr.y < 0 || pr.x >= cam.w || pr.y >= cam.h) { offFrame++; continue; }
       let vis = true; const bx = Math.round(pt.x), by = Math.round(pt.y);
       if (bx >= 0 && by >= 0 && bx < cam.w && by < cam.h) { let mn = Infinity; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) mn = Math.min(mn, depth[clampI(by + dy, 0, cam.h - 1) * cam.w + clampI(bx + dx, 0, cam.w - 1)]); vis = pt.depth <= mn + 0.6 + pt.depth * 0.004; }
-      else vis = false;
-      if (A.hideOccluded && !vis) continue;
+      if (A.hideOccluded && !vis) { hidden++; continue; }
       let angle = null, dir2 = null;
       // The direction on screen: a short step along the vector, sized to the scene so it projects cleanly.
       if (s.dir) { const step = Math.max(0.5, pr.depth * 0.02), q = projectPoint(cam, add3(p3, scale3(s.dir, step))); if (q) { dir2 = [q.x - pr.x, q.y - pr.y]; angle = Math.atan2(dir2[1], dir2[0]) * 180 / Math.PI; } }
       pts.push({ id: s.id, x: pr.x, y: pr.y, depth: pr.depth, visible: vis, p3, dir: dir2, angle, attrs: s.attrs });
     }
-    if (!pts.length) ctx.warn('Every point is behind the camera.');
+    if (offFrame || hidden) ctx.warn(`${pts.length} of ${src.length} listed: ${[offFrame ? offFrame + ' outside the camera\'s view' : '', hidden ? hidden + ' hidden behind geometry' : ''].filter(Boolean).join(', ')}.`);
     return { points: { kind: 'points', w: cam.w, h: cam.h, pts, cam } };
   },
 });
