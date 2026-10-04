@@ -53,102 +53,132 @@ BRIDGE = r'''
     }
     return table;
   }
-  async function traceForParent(m, progress) {
-    await settled();
+  // What the renderer currently holds, so a trace only rebuilds what changed: the BVH is the expensive
+  // part (every triangle) and the modeller's own export rebuilt it twice per picture.
+  let loads = 0, built = -1, fresh = false;
+  async function prepare(m) {
+    if (fresh) { await settled(); fresh = false; }
     await showroom.start();
-    const PT = showroom.PT, THREE = PT.THREE, R = showroom.renderer, cam = showroom.camera;
-    showroom.setScene(state.tree.features, streams);
+    if (built !== loads) { showroom.setScene(state.tree.features, streams); built = loads; }
     if (!showroom.parts.size) throw new Error("the model has no bodies to render");
-    if (m.environment) showroom.applyEnvironment(m.environment);
-    showroom.applyQuality(m.quality || "good");
+    if (m.environment && m.environment !== showroom.environment) showroom.applyEnvironment(m.environment);
+    if (showroom.quality !== (m.quality || "good")) showroom.applyQuality(m.quality || "good");
     showroom.setExposure(m.exposure == null ? 1 : +m.exposure);
-    if (m.ground === false) showroom.setGroundVisible(false);
-    const w = Math.max(8, Math.round(m.width)), h = Math.max(8, Math.round(m.height));
-    // The compositor's camera, in the renderer's Y-up frame: Z up all the way (as the modelling view
-    // and the compositor do), then the roll about the view axis.
-    const toY = ([x, y, z]) => [x, z, -y];
-    const placeCam = () => {
-      const e = toY(m.camera.eye), t = toY(m.camera.target);
-      cam.position.set(e[0], e[1], e[2]); cam.up.set(0, 1, 0); cam.lookAt(t[0], t[1], t[2]);
-      if (m.camera.roll) cam.rotateZ(-m.camera.roll * Math.PI / 180);
-      cam.fov = m.camera.fov; cam.aspect = w / h; cam.updateProjectionMatrix(); cam.updateMatrixWorld();
-    };
-    placeCam();
-    const samples = Math.max(1, Math.round(m.samples || 64));
-    const traceOnce = async (what, share) => {
-      placeCam();
-      return showroom.toImage({ width: w, height: h, samples, onProgress: (got, of) => progress({ what, done: share[0] + share[1] * got / of }) });
-    };
-    const wantClay = m.passes && m.passes.includes("clay");
-    const out = { width: w, height: h, samples };
-    out.beauty = await traceOnce("beauty", [0, wantClay ? 0.5 : 0.9]);
-    // Clay: the same light on white bodies - light and shadow without the materials.
-    if (wantClay) {
-      const keep = new Map(), white = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 1, metalness: 0 });
-      for (const [id, part] of showroom.parts) { keep.set(id, part.mesh.material); part.mesh.material = white; }
-      showroom.tracer.updateMaterials();
-      try { out.clay = await traceOnce("clay", [0.5, 0.4]); }
-      finally { for (const [id, part] of showroom.parts) part.mesh.material = keep.get(id); showroom.tracer.updateMaterials(); white.dispose(); }
+    const ground = m.ground !== false;
+    if (showroom.ground && showroom.ground.visible !== ground) showroom.setGroundVisible(ground);
+    const T = showroom.tracer;
+    // An export's settings: full resolution, no raster stand-in, no fade, nothing waiting.
+    Object.assign(T, { renderScale: 1, renderDelay: 0, fadeDuration: 0, minSamples: 1, dynamicLowRes: false, rasterizeScene: false, pausePathTracing: false });
+    showroom.exporting = true; // keeps the page's own frame loop off the renderer while we use it
+    return { THREE: showroom.PT.THREE, R: showroom.renderer, cam: showroom.camera, w: Math.max(8, Math.round(m.width)), h: Math.max(8, Math.round(m.height)) };
+  }
+  // The compositor's camera, in the renderer's Y-up frame: Z up all the way (as the modelling view and
+  // the compositor do), then the roll about the view axis.
+  function placeCam(m, ctx) {
+    const toY = ([x, y, z]) => [x, z, -y], e = toY(m.camera.eye), t = toY(m.camera.target), cam = ctx.cam;
+    ctx.R.setSize(ctx.w, ctx.h, false);
+    cam.position.set(e[0], e[1], e[2]); cam.up.set(0, 1, 0); cam.lookAt(t[0], t[1], t[2]);
+    if (m.camera.roll) cam.rotateZ(-m.camera.roll * Math.PI / 180);
+    cam.fov = m.camera.fov; cam.aspect = ctx.w / ctx.h; cam.updateProjectionMatrix(); cam.updateMatrixWorld();
+  }
+  // Samples until there are enough: several per frame (this copy of the modeller is not on screen, so
+  // nobody is waiting for its frames), yielding often enough to stay responsive.
+  async function traceLoop(m, ctx, what, share, progress) {
+    const T = showroom.tracer, want = Math.max(1, Math.round(m.samples || 32));
+    placeCam(m, ctx); T.updateCamera();
+    let stuck = 0, had = -1;
+    while (T.samples < want) {
+      const began = performance.now();
+      do T.renderSample(); while (T.samples < want && performance.now() - began < 45);
+      const got = Math.floor(T.samples); stuck = got > had ? 0 : stuck + 1; had = got;
+      if (stuck > 240) throw new Error("the renderer stopped collecting samples at " + got + " of " + want);
+      progress({ what, done: share[0] + share[1] * Math.min(1, got / want) });
+      await sleepFrame();
     }
-    progress({ what: "passes", done: 0.92 });
-    // The passes: rasterised, same scene, same camera, no ground, no backdrop, no tone mapping.
-    const table = materialTable();
-    const was = { bg: showroom.scene.background, ground: showroom.ground ? showroom.ground.visible : false, tone: R.toneMapping, size: R.getSize(new THREE.Vector2()) };
-    const mats = new Map(); for (const [id, part] of showroom.parts) mats.set(id, part.mesh.material);
-    const flat = rgb => new THREE.ShaderMaterial({ uniforms: { c: { value: new THREE.Vector3(rgb[0] / 255, rgb[1] / 255, rgb[2] / 255) } },
-      vertexShader: "void main(){ gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }",
-      fragmentShader: "uniform vec3 c; void main(){ gl_FragColor = vec4(c,1.0); }", side: THREE.DoubleSide });
-    const made = [];
-    const pass = async (name, materialFor, scale = 1) => {
-      for (const [id, part] of showroom.parts) { const mm = materialFor(id, part); part.mesh.material = mm; if (mm && !made.includes(mm)) made.push(mm); }
-      R.setSize(w * scale, h * scale, false); placeCam();
-      R.setClearColor(0x000000, 1); R.render(showroom.scene, cam);
-      return canvasBlob(showroom.canvas);
-    };
+    return canvasBlob(showroom.canvas);
+  }
+  async function traceForParent(m, progress) {
+    const ctx = await prepare(m), THREE = ctx.THREE;
     try {
-      showroom.scene.background = new THREE.Color(0, 0, 0); if (showroom.ground) showroom.ground.visible = false; R.toneMapping = THREE.NoToneMapping;
-      // Depth: straight-line distance from the eye, packed into 24 bits across the model's own range.
-      showroom.scene.updateMatrixWorld(true);
-      const box = new THREE.Box3(); for (const [, part] of showroom.parts) box.expandByObject(part.mesh);
-      let dmin = Infinity, dmax = 0;
-      for (const x of [box.min.x, box.max.x]) for (const y of [box.min.y, box.max.y]) for (const z of [box.min.z, box.max.z]) { const d = cam.position.distanceTo(new THREE.Vector3(x, y, z)); dmin = Math.min(dmin, d); dmax = Math.max(dmax, d); }
-      // The nearest point of the box, not its nearest corner: a camera over the middle of a site is far
-      // closer to the roof below it than to any corner.
-      dmin = Math.max(cam.near, box.distanceToPoint(cam.position) * 0.98); dmax = dmax * 1.02;
-      const depthMat = new THREE.ShaderMaterial({ uniforms: { lo: { value: dmin }, hi: { value: dmax } }, side: THREE.DoubleSide,
-        vertexShader: "varying vec3 vv; void main(){ vec4 p = modelViewMatrix * vec4(position,1.0); vv = p.xyz; gl_Position = projectionMatrix * p; }",
-        fragmentShader: "uniform float lo, hi; varying vec3 vv; void main(){ float t = clamp((length(vv) - lo) / (hi - lo), 0.0, 0.99999); vec3 e = fract(t * vec3(1.0, 255.0, 65025.0)); e -= e.yzz * vec3(1.0/255.0, 1.0/255.0, 0.0); gl_FragColor = vec4(e, 1.0); }" });
-      out.depth = await pass("depth", () => depthMat); out.depthRange = [dmin, dmax];
-      // Normals in the model's own Z-up frame, as colour (x, y, z) * 0.5 + 0.5.
-      const normalMat = new THREE.ShaderMaterial({ side: THREE.DoubleSide,
-        vertexShader: "varying vec3 vn; void main(){ vn = normal; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }",
-        fragmentShader: "varying vec3 vn; void main(){ vec3 n = normalize(vn); if (!gl_FrontFacing) n = -n; gl_FragColor = vec4(n * 0.5 + 0.5, 1.0); }" });
-      out.normal = await pass("normal", () => normalMat);
-      // Albedo: each body's own colour (and colour map), unlit.
-      out.albedo = await pass("albedo", (id, part) => new THREE.MeshBasicMaterial({ color: mats.get(id).color, map: mats.get(id).map || null, toneMapped: false, side: THREE.DoubleSide }));
-      const objects = [], materials = new Map();
-      for (const entry of state.tree.features) if (showroom.parts.has(entry.id)) {
-        objects.push({ id: entry.id, name: entry.name || entry.id, colour: idColour(entry.id) });
-        const mt = table.get(entry.id); if (!materials.has(mt.key)) materials.set(mt.key, { key: mt.key, name: mt.name, colour: idColour(mt.key), parts: [] }); materials.get(mt.key).parts.push(entry.id);
+      const wantClay = m.passes && m.passes.includes("clay");
+      const out = { width: ctx.w, height: ctx.h, samples: Math.max(1, Math.round(m.samples || 32)) };
+      out.beauty = await traceLoop(m, ctx, "beauty", [0, wantClay ? 0.5 : 1], progress);
+      // Clay: the same light on white bodies - light and shadow without the materials.
+      if (wantClay) {
+        const keep = new Map(), white = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 1, metalness: 0 });
+        for (const [id, part] of showroom.parts) { keep.set(id, part.mesh.material); part.mesh.material = white; }
+        showroom.tracer.updateMaterials();
+        try { out.clay = await traceLoop(m, ctx, "clay", [0.5, 0.5], progress); }
+        finally { for (const [id, part] of showroom.parts) part.mesh.material = keep.get(id); showroom.tracer.updateMaterials(); white.dispose(); }
       }
-      const objFlat = new Map(objects.map(o => [o.id, flat(o.colour)])), matFlat = new Map([...materials.values()].map(x => [x.key, flat(x.colour)]));
-      out.objectId = await pass("objectId", id => objFlat.get(id));
-      out.materialId = await pass("materialId", id => matFlat.get(table.get(id).key));
-      // Coverage, and one coverage per material, at twice the size so edges come back soft.
-      const white = flat([255, 255, 255]), black = flat([0, 0, 0]);
-      out.coverage = await pass("coverage", () => white, 2);
-      out.materialMasks = {};
-      for (const mt of [...materials.values()].slice(0, 32)) out.materialMasks[mt.key] = await pass("mask", id => table.get(id).key === mt.key ? white : black, 2);
-      out.legend = { objects, materials: [...materials.values()] };
-      made.push(depthMat, normalMat, white, black, ...objFlat.values(), ...matFlat.values());
-    } finally {
-      for (const [id, part] of showroom.parts) part.mesh.material = mats.get(id);
-      showroom.scene.background = was.bg; if (showroom.ground) showroom.ground.visible = was.ground; R.toneMapping = was.tone;
-      R.setSize(was.size.x, was.size.y, false);
-      for (const mm of made) try { mm.dispose(); } catch (e) {}
-    }
-    progress({ what: "done", done: 1 });
-    return out;
+      return out;
+    } finally { showroom.exporting = false; }
+  }
+  // The passes, rasterised from the same scene and camera (no tracing): asked for only when a node
+  // downstream reads one, so a plain export is the trace and nothing else.
+  async function passesForParent(m, progress) {
+    const ctx = await prepare(m), THREE = ctx.THREE, R = ctx.R, cam = ctx.cam, w = ctx.w, h = ctx.h, out = {};
+    try {
+      progress({ what: "passes", done: 0.1 });
+      const table = materialTable();
+      const was = { bg: showroom.scene.background, ground: showroom.ground ? showroom.ground.visible : false, tone: R.toneMapping };
+      const mats = new Map(); for (const [id, part] of showroom.parts) mats.set(id, part.mesh.material);
+      const flat = rgb => new THREE.ShaderMaterial({ uniforms: { c: { value: new THREE.Vector3(rgb[0] / 255, rgb[1] / 255, rgb[2] / 255) } },
+        vertexShader: "void main(){ gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }",
+        fragmentShader: "uniform vec3 c; void main(){ gl_FragColor = vec4(c,1.0); }", side: THREE.DoubleSide });
+      const made = [];
+      const pass = async (materialFor, scale = 1) => {
+        for (const [id, part] of showroom.parts) { const mm = materialFor(id, part); part.mesh.material = mm; if (mm && !made.includes(mm)) made.push(mm); }
+        placeCam(m, { ...ctx, w: w * scale, h: h * scale }); cam.aspect = w / h; cam.updateProjectionMatrix();
+        R.setClearColor(0x000000, 1); R.render(showroom.scene, cam);
+        return canvasBlob(showroom.canvas);
+      };
+      try {
+        showroom.scene.background = new THREE.Color(0, 0, 0); if (showroom.ground) showroom.ground.visible = false; R.toneMapping = THREE.NoToneMapping;
+        placeCam(m, ctx); showroom.scene.updateMatrixWorld(true);
+        // Depth: straight-line distance from the eye, packed into 24 bits across the model's own range.
+        // The nearest point of the box, not its nearest corner: a camera over the middle of a site is far
+        // closer to the roof below it than to any corner.
+        const box = new THREE.Box3(); for (const [, part] of showroom.parts) box.expandByObject(part.mesh);
+        let dmax = 0;
+        for (const x of [box.min.x, box.max.x]) for (const y of [box.min.y, box.max.y]) for (const z of [box.min.z, box.max.z]) dmax = Math.max(dmax, cam.position.distanceTo(new THREE.Vector3(x, y, z)));
+        const dmin = Math.max(cam.near, box.distanceToPoint(cam.position) * 0.98); dmax *= 1.02;
+        const depthMat = new THREE.ShaderMaterial({ uniforms: { lo: { value: dmin }, hi: { value: dmax } }, side: THREE.DoubleSide,
+          vertexShader: "varying vec3 vv; void main(){ vec4 p = modelViewMatrix * vec4(position,1.0); vv = p.xyz; gl_Position = projectionMatrix * p; }",
+          fragmentShader: "uniform float lo, hi; varying vec3 vv; void main(){ float t = clamp((length(vv) - lo) / (hi - lo), 0.0, 0.99999); vec3 e = fract(t * vec3(1.0, 255.0, 65025.0)); e -= e.yzz * vec3(1.0/255.0, 1.0/255.0, 0.0); gl_FragColor = vec4(e, 1.0); }" });
+        out.depth = await pass(() => depthMat); out.depthRange = [dmin, dmax];
+        // Normals in the model's own Z-up frame, as colour (x, y, z) * 0.5 + 0.5.
+        const normalMat = new THREE.ShaderMaterial({ side: THREE.DoubleSide,
+          vertexShader: "varying vec3 vn; void main(){ vn = normal; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }",
+          fragmentShader: "varying vec3 vn; void main(){ vec3 n = normalize(vn); if (!gl_FrontFacing) n = -n; gl_FragColor = vec4(n * 0.5 + 0.5, 1.0); }" });
+        out.normal = await pass(() => normalMat);
+        progress({ what: "passes", done: 0.4 });
+        // Albedo: each body's own colour (and colour map), unlit.
+        out.albedo = await pass(id => new THREE.MeshBasicMaterial({ color: mats.get(id).color, map: mats.get(id).map || null, toneMapped: false, side: THREE.DoubleSide }));
+        const objects = [], materials = new Map();
+        for (const entry of state.tree.features) if (showroom.parts.has(entry.id)) {
+          objects.push({ id: entry.id, name: entry.name || entry.id, colour: idColour(entry.id) });
+          const mt = table.get(entry.id); if (!materials.has(mt.key)) materials.set(mt.key, { key: mt.key, name: mt.name, colour: idColour(mt.key), parts: [] }); materials.get(mt.key).parts.push(entry.id);
+        }
+        const objFlat = new Map(objects.map(o => [o.id, flat(o.colour)])), matFlat = new Map([...materials.values()].map(x => [x.key, flat(x.colour)]));
+        out.objectId = await pass(id => objFlat.get(id));
+        out.materialId = await pass(id => matFlat.get(table.get(id).key));
+        progress({ what: "passes", done: 0.7 });
+        // Coverage, and one coverage per material, at twice the size so edges come back soft.
+        const white = flat([255, 255, 255]), black = flat([0, 0, 0]);
+        out.coverage = await pass(() => white, 2);
+        out.materialMasks = {};
+        for (const mt of [...materials.values()].slice(0, 32)) out.materialMasks[mt.key] = await pass(id => table.get(id).key === mt.key ? white : black, 2);
+        out.legend = { objects, materials: [...materials.values()] };
+        made.push(depthMat, normalMat, white, black, ...objFlat.values(), ...matFlat.values());
+      } finally {
+        for (const [id, part] of showroom.parts) part.mesh.material = mats.get(id);
+        showroom.scene.background = was.bg; if (showroom.ground) showroom.ground.visible = was.ground; R.toneMapping = was.tone;
+        for (const mm of made) try { mm.dispose(); } catch (e) {}
+      }
+      progress({ what: "passes", done: 1 });
+      return out;
+    } finally { showroom.exporting = false; }
   }
   window.addEventListener("message", async e => {
     const m = e.data;
@@ -160,6 +190,7 @@ BRIDGE = r'''
         // The same path as opening a model file: switch on any packages it needs first.
         try { if (typeof loadNeeds === "function") model = await loadNeeds(model); } catch (err) {}
         await mdl.run({ op: "model", model });
+        loads++; fresh = true;
         try { fitView(); } catch (err) {}
         // The geometry lands after the build, so fit again once the model's extent stops changing -
         // unless the hand has moved the view in the meantime.
@@ -182,6 +213,8 @@ BRIDGE = r'''
         tell({ id: m.id, ok: true, model });
       } else if (m.call === "trace") {
         tell(Object.assign({ id: m.id, ok: true }, await traceForParent(m, done => tell({ id: m.id, progress: done }))));
+      } else if (m.call === "passes") {
+        tell(Object.assign({ id: m.id, ok: true }, await passesForParent(m, done => tell({ id: m.id, progress: done }))));
       } else tell({ id: m.id, ok: false, error: "unknown call " + m.call });
     } catch (err) { tell({ id: m.id, ok: false, error: String(err && err.message || err) }); }
   });

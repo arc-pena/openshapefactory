@@ -257,12 +257,12 @@ const isTraced = a => a.style === 'pathtraced';
 const PT_ARGS = [
   A_('ptEnv', 'Environment', 'select', 'warm', { section: 'Path tracing', show: isTraced, options: PT_ENVIRONMENTS, hint: 'The Feature Modeller\'s own lighting presets. Materials come from the model (Material features and finishes).' }),
   A_('ptQuality', 'Quality', 'select', 'good', { show: isTraced, options: PT_QUALITIES }),
-  A_('ptPreview', 'Preview samples', 'int', 16, { min: 1, max: 2000, show: isTraced, hint: 'Samples traced for the preview in this window.' }),
-  A_('ptSamples', 'Final samples', 'int', 256, { min: 1, max: 5000, show: isTraced, hint: 'Samples traced for saves, exports and Render all. More is cleaner and slower.' }),
+  A_('ptPreview', 'Preview samples', 'int', 8, { min: 1, max: 2000, show: isTraced, hint: 'Samples traced for the preview in this window.' }),
+  A_('ptSamples', 'Final samples', 'int', 32, { min: 1, max: 5000, show: isTraced, hint: 'Samples traced for saves, exports and Render all. 32 is about what the modeller\'s viewport shows after a second; raise it (128, 512…) for a cleaner final picture.' }),
   A_('ptExposure', 'Exposure', 'number', 1, { min: 0.05, max: 8, step: 0.05, show: isTraced }),
   A_('ptGround', 'Ground', 'bool', true, { show: isTraced, hint: 'The floor that catches the shadows and reflections.' }),
   A_('ptKeepBack', 'Keep the traced backdrop', 'bool', true, { show: isTraced, hint: 'Off: the image is just the model, cut out by its coverage (use the Shadow output for the ground shadows).' }),
-  A_('ptClay', 'Trace a light pass', 'bool', true, { show: isTraced, hint: 'A second trace with every surface white: light and shadow without the materials (the Light output and the Shadow pass). Doubles the time.' }),
+  A_('ptClay', 'Trace a light pass', 'bool', false, { show: isTraced, hint: 'A second trace with every surface white: light and shadow without the materials (the Light output and the Shadow pass). Doubles the time.' }),
 ];
 const RENDER_SKIP = new Set(['path', 'model', 'option', 'camera', 'style', 'resW', 'resH', 'offsetZ']);
 defNode('render', {

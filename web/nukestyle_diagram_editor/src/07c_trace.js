@@ -45,7 +45,7 @@ function ptTrace(modelKey, params, onProgress) {
   const key = hashStr(modelKey + '|' + ref.hash + '|' + stableJSON(params));
   let ent = ptCache.get(key);
   if (ent && ent.status !== 'error') { if (onProgress) ent.listeners.push(onProgress); return ent.promise; }
-  ent = { key, status: 'running', progress: 0, decoded: new Map(), listeners: onProgress ? [onProgress] : [], params };
+  ent = { key, status: 'running', progress: 0, decoded: new Map(), listeners: onProgress ? [onProgress] : [], params, model: modelKey + ':' + ref.hash };
   ptCache.set(key, ent);
   ent.promise = (tracer.queue = tracer.queue.catch(() => { }).then(async () => {
     const model = modelKey + ':' + ref.hash;
@@ -65,6 +65,23 @@ function ptPeek(modelKey, params) {
   return ptCache.get(hashStr(modelKey + '|' + ref.hash + '|' + stableJSON(params))) || null;
 }
 
+// The passes beside a trace are rasterised by the modeller only when something reads one, so a plain
+// export is the trace alone. Same camera, size and scene; no samples.
+function ptNeedAux(ent) {
+  if (ent.result.coverage) return Promise.resolve(ent);
+  if (!ent.auxPromise) {
+    const { samples, passes, ...p } = ent.params;
+    ent.auxPromise = (tracer.queue = tracer.queue.catch(() => { }).then(async () => {
+      const model = ent.model;
+      if (tracer.loaded !== model) { const [key] = model.split(':'); await tracerCall({ call: 'load', model: doc.models[key].json }); tracer.loaded = model; }
+      const aux = await tracerCall({ call: 'passes', ...p }, pr => { for (const l of ent.listeners) l(pr); });
+      delete aux.ok; delete aux.id; delete aux.dcBridge; Object.assign(ent.result, aux, { width: ent.result.width, height: ent.result.height });
+      return ent;
+    }));
+    ent.auxPromise.catch(() => { ent.auxPromise = null; });
+  }
+  return ent.auxPromise;
+}
 // ---- decoding the passes (each decoded once per trace, on demand)
 function ptDecoded(ent, name, make) { if (!ent.decoded.has(name)) ent.decoded.set(name, make()); return ent.decoded.get(name); }
 async function ptPixels(blob) {
@@ -82,16 +99,18 @@ function ptHalve(px, w, h) {
   }
   return m;
 }
-const ptCoverage = ent => ptDecoded(ent, 'coverage', async () => ptHalve(await ptPixels(ent.result.coverage), ent.result.width, ent.result.height));
-const ptMaterialMask = (ent, key) => ptDecoded(ent, 'mask:' + key, async () => { const b = ent.result.materialMasks && ent.result.materialMasks[key]; return b ? ptHalve(await ptPixels(b), ent.result.width, ent.result.height) : IMG.mask(ent.result.width, ent.result.height); });
+const ptCoverage = ent => ptDecoded(ent, 'coverage', async () => { await ptNeedAux(ent); return ptHalve(await ptPixels(ent.result.coverage), ent.result.width, ent.result.height); });
+const ptMaterialMask = (ent, key) => ptDecoded(ent, 'mask:' + key, async () => { await ptNeedAux(ent); const b = ent.result.materialMasks && ent.result.materialMasks[key]; return b ? ptHalve(await ptPixels(b), ent.result.width, ent.result.height) : IMG.mask(ent.result.width, ent.result.height); });
 // An opaque pass, with the coverage as its alpha so it sits on nothing outside the model.
 const ptOpaque = (ent, name) => ptDecoded(ent, name, async () => {
+  if (name !== 'beauty' && name !== 'clay') await ptNeedAux(ent);
   const blob = ent.result[name]; if (!blob) return null;
   const im = IMG.fromCanvas((await ptPixels(blob)).c); if (name === 'beauty' || name === 'clay') return im;
   return IMG.setAlpha(im, await ptCoverage(ent));
 });
 // Straight-line distance from the eye, in metres; Infinity where there is no model.
 const ptDepth = (ent, unitScale) => ptDecoded(ent, 'depthM', async () => {
+  await ptNeedAux(ent);
   const px = await ptPixels(ent.result.depth), cov = await ptCoverage(ent), [lo, hi] = ent.result.depthRange, out = new Float32Array(px.w * px.h);
   for (let i = 0; i < out.length; i++) {
     if (cov.d[i] < 0.02) { out[i] = Infinity; continue; }
@@ -180,11 +199,13 @@ async function ptRender(ctx, L, A, node, want) {
       return { [want]: want === 'passes' ? null : IMG.image(w, h) };
     }
   }
-  node._ptLegend = ent.result.legend;
+  if (want === 'passes' || want === 'materialId') { await ptNeedAux(ent); }
+  if (ent.result.legend) node._ptLegend = ent.result.legend;
   const pv = ptPassesValue(ent, model, w, h);
   // Isolating a geoset cuts every pass to that geoset's objects.
   const cut = async im => {
     if (!im || isolate.includes('*')) return im;
+    await ptNeedAux(ent);
     const ids = new Set(model.elements.filter(e => matchAny(isolate, e.geoset)).map(e => e.id)), objs = ent.result.legend.objects.filter(o => ids.has(o.id));
     const px = await ptPixels(ent.result.objectId), cov = await ptCoverage(ent), m = IMG.mask(w, h), cols = new Set(objs.map(o => (o.colour[0] << 16) | (o.colour[1] << 8) | o.colour[2]));
     for (let i = 0; i < m.d.length; i++) if (cols.has((px.d[i * 4] << 16) | (px.d[i * 4 + 1] << 8) | px.d[i * 4 + 2])) m.d[i] = cov.d[i];
