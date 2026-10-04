@@ -13,7 +13,7 @@
   --ok: #2b9a62; --warn: #c98516; --danger: #cf3f3f; --stale: #b7bdc7;
   --check-a: #ffffff; --check-b: #e3e6ea; --shadow: 0 1px 2px rgba(15,25,45,.06), 0 8px 28px rgba(15,25,45,.10);
   --k-image: #d99a2b; --k-mask: #8f99a6; --k-camera: #8a64dc; --k-string: #22a093; --k-number: #4383e0;
-  --k-colour: #d9568f; --k-points: #dd6f2e; --k-field: #77ab2c; --k-perm: #cf4a4a; --k-any: #8b93a3; --k-model: #1f3fa8; --k-geoset: #2f9e8f;
+  --k-colour: #d9568f; --k-points: #dd6f2e; --k-field: #77ab2c; --k-perm: #cf4a4a; --k-passes: #b5651d; --k-any: #8b93a3; --k-model: #1f3fa8; --k-geoset: #2f9e8f;
   --font-ui: "Figtree", "Segoe UI", system-ui, -apple-system, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   --r: 12px; --pane-w: 300px; --viewer-w: 440px; --top-h: 52px;
@@ -329,6 +329,7 @@ table.grid canvas, table.grid img { width: 72px; height: 54px; border-radius: 5p
   <input type="file" id="fileImage" accept="image/*" multiple hidden>
 </div>
 <script>
+const MODELLER_VERSION = '1791080967-2d76';
 'use strict';
 /* =====================================================================
    Diagram Compositor — node-based image graph over a parametric model.
@@ -1216,7 +1217,7 @@ function convertOcaf(json, mesh, report, key) {
     }
   }
   const sets = feats.filter(f => parents.has(f.id) || f.type === 'GeometricalSet' || f.type === 'Body').map(f => pathOf(f.id));
-  return { format: 'ocaf-parametric-model', name: json.name || key, units: 'm', options: [], elements, points, vectors, cameras, warn, sets,
+  return { format: 'ocaf-parametric-model', name: json.name || key, units: 'm', unitScale: k, options: [], elements, points, vectors, cameras, warn, sets,
     stats: { features: feats.length, built: report ? (report.executed || []).length : null, failed: report ? (report.failed || []) : [], triangles: elements.reduce((s, e) => s + e.mesh.idx.length / 3, 0) } };
 }
 // Models bundled from the Feature Modeller's own samples, so the graph has an ocaf model on first open.
@@ -1887,13 +1888,224 @@ function drawArrow(g, kind, x, y, dx, dy, len, lw) {
   }
 }
 // =====================================================================
+// Path tracing, through the Feature Modeller's own renderer.
+// A hidden copy of the modeller (modeller.html, the same file the Model node opens) traces the picture
+// with its RenderEngine and rasterises the passes from the same scene and camera, so the compositor
+// renders exactly what the modeller renders - materials, environments, bounces - and every pass
+// lines up with the traced picture pixel for pixel. Traces are kept by what they were asked for.
+// =====================================================================
+const PT_ENVIRONMENTS = [['warm', 'Warm'], ['studio', 'Studio'], ['noir', 'Noir']];
+const PT_QUALITIES = [['draft', 'Draft · 3 bounces'], ['good', 'Good · 5 bounces'], ['final', 'Final · 10 bounces']];
+const PT_PASSES = [['beauty', 'Beauty (path traced)'], ['light', 'Light (clay: light and shadow, no materials)'], ['shadow', 'Shadows on the ground'],
+  ['lighting', 'Lighting (beauty ÷ albedo)'], ['depth', 'Depth from the camera'], ['normal', 'Normals'], ['albedo', 'Albedo (unlit colour)'],
+  ['objectId', 'Object ID'], ['materialId', 'Material ID'], ['coverage', 'Coverage (alpha)'], ['layer', 'Material layer'], ['layerMask', 'Material mask']];
+let ptGeneration = 0; // bumped whenever a trace lands, so nodes showing a placeholder re-evaluate
+
+const tracer = { ready: null, frame: null, loaded: '', queue: Promise.resolve(), pending: new Map() };
+function tracerFrame() {
+  if (tracer.ready) return tracer.ready;
+  tracer.ready = new Promise((resolve, reject) => {
+    const f = document.createElement('iframe');
+    f.src = 'modeller.html'; f.title = 'Path tracer'; f.setAttribute('aria-hidden', 'true'); f.tabIndex = -1;
+    // Kept in the window (a frame that is not rendered may not get animation frames), but invisible.
+    Object.assign(f.style, { position: 'fixed', left: '0', top: '0', width: '8px', height: '8px', opacity: '0', pointerEvents: 'none', border: '0', zIndex: '-1' });
+    const timer = setTimeout(() => reject(new Error('the renderer page did not start')), 240000);
+    addEventListener('message', e => {
+      if (e.source !== f.contentWindow || !e.data || !e.data.dcBridge) return;
+      if (e.data.id === undefined && e.data.ready !== undefined) { clearTimeout(timer); e.data.ready ? resolve(f) : reject(new Error(e.data.error || 'the renderer page failed')); return; }
+      const p = tracer.pending.get(e.data.id); if (!p) return;
+      if (e.data.progress) { if (p.onProgress) p.onProgress(e.data.progress); return; }
+      tracer.pending.delete(e.data.id); e.data.ok ? p.resolve(e.data) : p.reject(new Error(e.data.error || 'the renderer failed'));
+    });
+    document.body.append(f); tracer.frame = f;
+  });
+  tracer.ready.catch(() => { tracer.ready = null; if (tracer.frame) tracer.frame.remove(); tracer.frame = null; });
+  return tracer.ready;
+}
+function tracerCall(msg, onProgress) {
+  return tracerFrame().then(f => new Promise((resolve, reject) => { const id = uid('t'); tracer.pending.set(id, { resolve, reject, onProgress }); f.contentWindow.postMessage({ dcBridge: 1, id, ...msg }, '*'); }));
+}
+
+// ---- the kept traces
+const ptCache = new Map(); // key -> { status, progress, result, error, promise, decoded }
+const PT_KEEP = 8;
+function ptTrace(modelKey, params, onProgress) {
+  const ref = doc.models[modelKey]; if (!ref || ref.kind !== 'ocaf') return Promise.reject(new Error('Path tracing needs an ocaf parametric model.'));
+  const key = hashStr(modelKey + '|' + ref.hash + '|' + stableJSON(params));
+  let ent = ptCache.get(key);
+  if (ent && ent.status !== 'error') { if (onProgress) ent.listeners.push(onProgress); return ent.promise; }
+  ent = { key, status: 'running', progress: 0, decoded: new Map(), listeners: onProgress ? [onProgress] : [], params };
+  ptCache.set(key, ent);
+  ent.promise = (tracer.queue = tracer.queue.catch(() => { }).then(async () => {
+    const model = modelKey + ':' + ref.hash;
+    if (tracer.loaded !== model) { await tracerCall({ call: 'load', model: ref.json }); tracer.loaded = model; }
+    const r = await tracerCall({ call: 'trace', ...params }, p => { ent.progress = p.done; ent.what = p.what; for (const l of ent.listeners) l(p); });
+    ent.result = r; ent.status = 'done'; ptGeneration++;
+    // Keep the newest few; a full-size trace with its passes is tens of megabytes once decoded.
+    const done = [...ptCache.values()].filter(x => x.status === 'done');
+    for (const old of done.slice(0, Math.max(0, done.length - PT_KEEP))) ptCache.delete(old.key);
+    ui.statusDirty = true; requestEval();
+    return ent;
+  })).catch(e => { ent.status = 'error'; ent.error = e.message; ptGeneration++; ui.statusDirty = true; requestEval(); throw e; });
+  return ent.promise;
+}
+function ptPeek(modelKey, params) {
+  const ref = doc.models[modelKey]; if (!ref) return null;
+  return ptCache.get(hashStr(modelKey + '|' + ref.hash + '|' + stableJSON(params))) || null;
+}
+
+// ---- decoding the passes (each decoded once per trace, on demand)
+function ptDecoded(ent, name, make) { if (!ent.decoded.has(name)) ent.decoded.set(name, make()); return ent.decoded.get(name); }
+async function ptPixels(blob) {
+  const bm = await createImageBitmap(blob), c = IMG.canvasOf(bm.width, bm.height), g = c.getContext('2d');
+  g.drawImage(bm, 0, 0); if (bm.close) bm.close();
+  return { c, w: c.width, h: c.height, d: g.getImageData(0, 0, c.width, c.height).data };
+}
+// A pass rendered at twice the size, box-filtered back down: a mask with soft edges.
+function ptHalve(px, w, h) {
+  const m = IMG.mask(w, h), sw = px.w, sx = sw / w, sy = px.h / h;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    let s = 0, n = 0;
+    for (let yy = Math.floor(y * sy); yy < Math.floor((y + 1) * sy); yy++) for (let xx = Math.floor(x * sx); xx < Math.floor((x + 1) * sx); xx++) { s += px.d[(yy * sw + xx) * 4]; n++; }
+    m.d[y * w + x] = n ? s / n / 255 : 0;
+  }
+  return m;
+}
+const ptCoverage = ent => ptDecoded(ent, 'coverage', async () => ptHalve(await ptPixels(ent.result.coverage), ent.result.width, ent.result.height));
+const ptMaterialMask = (ent, key) => ptDecoded(ent, 'mask:' + key, async () => { const b = ent.result.materialMasks && ent.result.materialMasks[key]; return b ? ptHalve(await ptPixels(b), ent.result.width, ent.result.height) : IMG.mask(ent.result.width, ent.result.height); });
+// An opaque pass, with the coverage as its alpha so it sits on nothing outside the model.
+const ptOpaque = (ent, name) => ptDecoded(ent, name, async () => {
+  const blob = ent.result[name]; if (!blob) return null;
+  const im = IMG.fromCanvas((await ptPixels(blob)).c); if (name === 'beauty' || name === 'clay') return im;
+  return IMG.setAlpha(im, await ptCoverage(ent));
+});
+// Straight-line distance from the eye, in metres; Infinity where there is no model.
+const ptDepth = (ent, unitScale) => ptDecoded(ent, 'depthM', async () => {
+  const px = await ptPixels(ent.result.depth), cov = await ptCoverage(ent), [lo, hi] = ent.result.depthRange, out = new Float32Array(px.w * px.h);
+  for (let i = 0; i < out.length; i++) {
+    if (cov.d[i] < 0.02) { out[i] = Infinity; continue; }
+    const t = px.d[i * 4] / 255 + px.d[i * 4 + 1] / 65025 + px.d[i * 4 + 2] / 16581375;
+    out[i] = (lo + t * (hi - lo)) * unitScale;
+  }
+  return out;
+});
+// Shadows on the ground, from the clay pass: how much darker each bit of ground is than open ground.
+const ptShadow = ent => ptDecoded(ent, 'shadow', async () => {
+  const clay = await ptOpaque(ent, 'clay') || await ptOpaque(ent, 'beauty'), cov = await ptCoverage(ent), m = IMG.mask(clay.w, clay.h), lum = new Float32Array(m.d.length), ground = [];
+  for (let i = 0; i < lum.length; i++) { lum[i] = 0.2126 * clay.d[i * 4] + 0.7152 * clay.d[i * 4 + 1] + 0.0722 * clay.d[i * 4 + 2]; if (cov.d[i] < 0.01) ground.push(lum[i]); }
+  ground.sort((a, b) => a - b); const open = ground.length ? ground[Math.floor(ground.length * 0.95)] : 1;
+  for (let i = 0; i < lum.length; i++) m.d[i] = clamp(1 - lum[i] / Math.max(1e-4, open)) * (1 - cov.d[i]);
+  return m;
+});
+// Lighting: the beauty divided by the albedo - how much light each surface received.
+const ptLighting = ent => ptDecoded(ent, 'lighting', async () => {
+  const b = await ptOpaque(ent, 'beauty'), a = await ptOpaque(ent, 'albedo'), cov = await ptCoverage(ent), out = IMG.image(b.w, b.h);
+  for (let p = 0, i = 0; p < cov.d.length; p++, i += 4) {
+    const al = a.d[i + 3] > 0 ? 1 / a.d[i + 3] : 0;
+    for (let c = 0; c < 3; c++) out.d[i + c] = clamp(b.d[i + c] / Math.max(0.03, a.d[i + c] * al)) * cov.d[p];
+    out.d[i + 3] = cov.d[p];
+  }
+  return out;
+});
+function ptDepthImage(depth, w, h, opts = {}) {
+  let lo = opts.near, hi = opts.far;
+  if (!(hi > lo)) { lo = Infinity; hi = -Infinity; for (const d of depth) if (d !== Infinity) { if (d < lo) lo = d; if (d > hi) hi = d; } if (!(hi > lo)) { lo = 0; hi = 1; } }
+  const im = IMG.image(w, h);
+  for (let i = 0; i < depth.length; i++) {
+    if (depth[i] === Infinity) continue;
+    let v = clamp((depth[i] - lo) / (hi - lo)); if (!opts.farWhite) v = 1 - v;
+    im.d[i * 4] = im.d[i * 4 + 1] = im.d[i * 4 + 2] = v; im.d[i * 4 + 3] = 1;
+  }
+  return im;
+}
+// A material's layer: a pass (the beauty by default) cut to where that material shows.
+async function ptLayer(ent, key, from = 'beauty') {
+  const src = from === 'lighting' ? await ptLighting(ent) : from === 'light' ? (await ptOpaque(ent, 'clay') || await ptOpaque(ent, 'beauty')) : await ptOpaque(ent, from);
+  return IMG.setAlpha(src, await ptMaterialMask(ent, key));
+}
+// What a passes port carries: the trace, and how to read it.
+function ptPassesValue(ent, model, w, h) {
+  return { kind: 'passes', key: ent.key, w, h, legend: ent.result.legend, unitScale: model.unitScale || 0.001, ent };
+}
+async function ptPass(pv, pass, o = {}) {
+  const ent = pv.ent, W = ent.result.width, H = ent.result.height;
+  switch (pass) {
+    case 'beauty': return { image: await ptOpaque(ent, 'beauty'), mask: await ptCoverage(ent) };
+    case 'light': return { image: await ptOpaque(ent, 'clay') || await ptOpaque(ent, 'beauty'), mask: await ptCoverage(ent) };
+    case 'shadow': { const m = await ptShadow(ent); return { image: IMG.maskToImage(m, o.colour || '#000000'), mask: m }; }
+    case 'lighting': return { image: await ptLighting(ent), mask: await ptCoverage(ent) };
+    case 'depth': { const d = await ptDepth(ent, pv.unitScale); return { image: ptDepthImage(d, W, H, o), mask: await ptCoverage(ent), depth: d }; }
+    case 'normal': case 'albedo': case 'objectId': case 'materialId': return { image: await ptOpaque(ent, pass), mask: await ptCoverage(ent) };
+    case 'coverage': { const m = await ptCoverage(ent); return { image: IMG.maskToImage(m, '#ffffff'), mask: m }; }
+    case 'layer': case 'layerMask': {
+      const m = await ptMaterialMask(ent, o.material);
+      return pass === 'layerMask' ? { image: IMG.maskToImage(m, '#ffffff'), mask: m } : { image: await ptLayer(ent, o.material, o.from), mask: m };
+    }
+  }
+  return { image: IMG.image(W, H), mask: IMG.mask(W, H) };
+}
+
+// ---- the Render node's Path traced style
+async function ptRender(ctx, L, A, node, want) {
+  const { model, camDef, isolate, w, h, vScale } = L, k = model.unitScale || 0.001, key = model._key;
+  if (!key || !doc.models[key] || doc.models[key].kind !== 'ocaf') { ctx.warn('Path tracing needs an ocaf parametric model.'); ctx.fail = true; return { [want]: want === 'mask' || want === 'shadow' ? IMG.mask(w, h) : IMG.image(w, h) }; }
+  const cam = buildCamera(camDef, w, h, { vScale });
+  const params = { width: w, height: h, samples: ctx.full ? A.ptSamples : A.ptPreview, environment: A.ptEnv, quality: A.ptQuality, exposure: A.ptExposure, ground: !!A.ptGround,
+    passes: A.ptClay ? ['clay'] : [], camera: { eye: camDef.eye.map(v => v / k), target: camDef.target.map(v => v / k), fov: cam.fov, roll: camDef.roll || 0 } };
+  let ent = ptPeek(key, params);
+  const g = currentGraph(), show = p => { if (ctx.track) { setStatus(g, node.id, { state: 'rendering', msg: `Path tracing ${p.what === 'clay' ? 'the light pass ' : p.what === 'passes' ? 'the passes ' : ''}${Math.round(p.done * 100)}%` }); refreshStatusDom(); } };
+  if (!ent || ent.status !== 'done') {
+    const job = ptTrace(key, params, show);
+    if (ctx.full) { try { ent = await job; } catch (e) { ctx.warn('Path tracing failed: ' + e.message); ctx.fail = true; } }
+    else {
+      job.catch(() => { });
+      ent = ptPeek(key, params);
+      if (ent && ent.status === 'error') { ctx.warn('Path tracing failed: ' + ent.error); ctx.fail = true; }
+      else ctx.warn(`Path tracing at ${w} × ${h}, ${params.samples} samples… showing the shaded render meanwhile.`);
+      ent = null;
+    }
+    if (!ent) { // the shaded render stands in until the trace lands
+      if (['image', 'mask', 'shadow', 'id'].includes(want)) return renderLayer(ctx, { model, camDef, isolate, style: 'shaded', w, h, vScale }, { ...A, others: 'holdout', colourBy: 'model', background: 'transparent', _box: L.box }, want);
+      return { [want]: want === 'passes' ? null : IMG.image(w, h) };
+    }
+  }
+  node._ptLegend = ent.result.legend;
+  const pv = ptPassesValue(ent, model, w, h);
+  // Isolating a geoset cuts every pass to that geoset's objects.
+  const cut = async im => {
+    if (!im || isolate.includes('*')) return im;
+    const ids = new Set(model.elements.filter(e => matchAny(isolate, e.geoset)).map(e => e.id)), objs = ent.result.legend.objects.filter(o => ids.has(o.id));
+    const px = await ptPixels(ent.result.objectId), cov = await ptCoverage(ent), m = IMG.mask(w, h), cols = new Set(objs.map(o => (o.colour[0] << 16) | (o.colour[1] << 8) | o.colour[2]));
+    for (let i = 0; i < m.d.length; i++) if (cols.has((px.d[i * 4] << 16) | (px.d[i * 4 + 1] << 8) | px.d[i * 4 + 2])) m.d[i] = cov.d[i];
+    return im.kind === 'mask' ? { ...m, d: m.d.map((v, i) => Math.min(v, im.d[i])) } : IMG.setAlpha(im, m);
+  };
+  const guides = img => A.guidesOnImage ? IMG.merge(safeGuides(w, h, camDef, { ...A, _box: L.box }, ctx), img, 'normal', 1) : img;
+  switch (want) {
+    case 'image': {
+      let img = await ptOpaque(ent, 'beauty');
+      if (!A.ptKeepBack || !isolate.includes('*')) img = await cut(IMG.setAlpha(img, await ptCoverage(ent)));
+      return { image: guides(img) };
+    }
+    case 'mask': return { mask: await cut(await ptCoverage(ent)) };
+    case 'shadow': return { shadow: await ptShadow(ent) };
+    case 'id': return { id: await cut(await ptOpaque(ent, 'objectId')) };
+    case 'depth': return { depth: await cut((await ptPass(pv, 'depth')).image) };
+    case 'normal': return { normal: await cut(await ptOpaque(ent, 'normal')) };
+    case 'albedo': return { albedo: await cut(await ptOpaque(ent, 'albedo')) };
+    case 'light': return { light: await ptOpaque(ent, 'clay') || await ptOpaque(ent, 'beauty') };
+    case 'materialId': return { materialId: await cut(await ptOpaque(ent, 'materialId')) };
+    case 'passes': return { passes: pv };
+  }
+  return {};
+}
+// =====================================================================
 // Node catalogue. Each type declares its ports and arguments as data.
 // The properties panel, node ports, saving and undo all read these.
 // Arg types: number int string text select bool colour path image rows button
 // `px: true` marks a size in full-resolution pixels (scaled for previews).
 // =====================================================================
-const KINDS = ['model', 'geoset', 'image', 'mask', 'camera', 'string', 'number', 'colour', 'points', 'field', 'perm', 'any'];
-const KIND_LABEL = { model: 'Model', geoset: 'Geoset', image: 'Image', mask: 'Mask', camera: 'Camera', string: 'String', number: 'Number', colour: 'Colour', points: 'Points2D', field: 'Field', perm: 'Permutation', any: 'Any' };
+const KINDS = ['model', 'geoset', 'image', 'mask', 'camera', 'passes', 'string', 'number', 'colour', 'points', 'field', 'perm', 'any'];
+const KIND_LABEL = { model: 'Model', geoset: 'Geoset', image: 'Image', mask: 'Mask', camera: 'Camera', passes: 'Render passes', string: 'String', number: 'Number', colour: 'Colour', points: 'Points2D', field: 'Field', perm: 'Permutation', any: 'Any' };
 const FAMILIES = {
   source: { label: '3D source', colour: '#3554d1' }, image: { label: 'Image operations', colour: '#d99a2b' }, mask: { label: 'Masks', colour: '#8f99a6' },
   gen: { label: 'Generate', colour: '#22a093' }, points: { label: 'Points, decals & gradients', colour: '#dd6f2e' }, ai: { label: 'AI', colour: '#8a64dc' },
@@ -2141,16 +2353,30 @@ defNode('extractPoints', {
     return { points: { kind: 'points', w: cam.w, h: cam.h, pts, cam } };
   },
 });
+const isTraced = a => a.style === 'pathtraced';
+const PT_ARGS = [
+  A_('ptEnv', 'Environment', 'select', 'warm', { section: 'Path tracing', show: isTraced, options: PT_ENVIRONMENTS, hint: 'The Feature Modeller\'s own lighting presets. Materials come from the model (Material features and finishes).' }),
+  A_('ptQuality', 'Quality', 'select', 'good', { show: isTraced, options: PT_QUALITIES }),
+  A_('ptPreview', 'Preview samples', 'int', 16, { min: 1, max: 2000, show: isTraced, hint: 'Samples traced for the preview in this window.' }),
+  A_('ptSamples', 'Final samples', 'int', 256, { min: 1, max: 5000, show: isTraced, hint: 'Samples traced for saves, exports and Render all. More is cleaner and slower.' }),
+  A_('ptExposure', 'Exposure', 'number', 1, { min: 0.05, max: 8, step: 0.05, show: isTraced }),
+  A_('ptGround', 'Ground', 'bool', true, { show: isTraced, hint: 'The floor that catches the shadows and reflections.' }),
+  A_('ptKeepBack', 'Keep the traced backdrop', 'bool', true, { show: isTraced, hint: 'Off: the image is just the model, cut out by its coverage (use the Shadow output for the ground shadows).' }),
+  A_('ptClay', 'Trace a light pass', 'bool', true, { show: isTraced, hint: 'A second trace with every surface white: light and shadow without the materials (the Light output and the Shadow pass). Doubles the time.' }),
+];
 const RENDER_SKIP = new Set(['path', 'model', 'option', 'camera', 'style', 'resW', 'resH', 'offsetZ']);
 defNode('render', {
   label: 'Render', family: 'source', desc: 'Renders the geoset from the camera. Other geometry is a holdout, so the image and mask are just the object, correctly occluded. The size is the camera\'s own frame, so overlays line up.',
   inputs: [{ n: 'model', k: 'model', l: 'Model' }, { n: 'camera', k: 'camera', l: 'Camera' }, { n: 'geoset', k: 'geoset', l: 'Geoset' }],
-  outputs: [{ n: 'image', k: 'image', l: 'Image' }, { n: 'mask', k: 'mask', l: 'Mask' }, { n: 'shadow', k: 'mask', l: 'Shadow' }, { n: 'id', k: 'image', l: 'Object ID' }, { n: 'guides', k: 'image', l: 'Safe frame' }, { n: 'camera', k: 'camera', l: 'Camera' }],
+  // Path traced adds the passes a renderer hands a compositor: depth, normals, albedo, light, material ID,
+  // and the passes bundle the Render Pass node reads (material layers among them).
+  outputs: n => [...[{ n: 'image', k: 'image', l: 'Image' }, { n: 'mask', k: 'mask', l: 'Mask' }, { n: 'shadow', k: 'mask', l: 'Shadow' }, { n: 'id', k: 'image', l: 'Object ID' }, { n: 'guides', k: 'image', l: 'Safe frame' }, { n: 'camera', k: 'camera', l: 'Camera' }], ...(n.args.style === 'pathtraced' ? [{ n: 'depth', k: 'image', l: 'Depth' }, { n: 'normal', k: 'image', l: 'Normals' }, { n: 'albedo', k: 'image', l: 'Albedo' }, { n: 'light', k: 'image', l: 'Light' }, { n: 'materialId', k: 'image', l: 'Material ID' }, { n: 'passes', k: 'passes', l: 'Passes' }] : [])],
   get args() { delete this.args; return (this.args = [
-    A_('style', 'Render style', 'select', 'shaded', { options: [...RENDER_STYLES.map(s => [s, STYLE_LABEL[s]]), ['curves', 'Curves (strokes)']] }),
+    A_('style', 'Render style', 'select', 'shaded', { options: [...RENDER_STYLES.map(s => [s, STYLE_LABEL[s]]), ['curves', 'Curves (strokes)'], ['pathtraced', 'Path traced (Feature Modeller renderer)']] }),
     ...CURVE_ARGS,
-    A_('colourBy', 'Colours', 'select', 'model', { options: [['model', 'From the model'], ['single', 'One colour']], show: a => !['arctic', 'objectid', 'hiddenline', 'curves'].includes(a.style) }),
-    ...NODE_TYPES.viewport.args.filter(x => !RENDER_SKIP.has(x.n)).map(x => x.n === 'aoRadius' ? { ...x, d: 0, min: 0, hint: '0 sizes it from the model.' } : x.n === 'colour' ? { ...x, show: a => !['arctic', 'objectid', 'hiddenline'].includes(a.style) && a.colourBy === 'single' } : x).map(x => ({ ...x, show: a => !isCurves(a) && (!x.show || x.show(a)) })),
+    ...PT_ARGS,
+    A_('colourBy', 'Colours', 'select', 'model', { options: [['model', 'From the model'], ['single', 'One colour']], show: a => !['arctic', 'objectid', 'hiddenline', 'curves', 'pathtraced'].includes(a.style) }),
+    ...NODE_TYPES.viewport.args.filter(x => !RENDER_SKIP.has(x.n)).map(x => x.n === 'aoRadius' ? { ...x, d: 0, min: 0, hint: '0 sizes it from the model.' } : x.n === 'colour' ? { ...x, show: a => !['arctic', 'objectid', 'hiddenline'].includes(a.style) && a.colourBy === 'single' } : x).map(x => ({ ...x, show: a => !isCurves(a) && a.style !== 'pathtraced' && (!x.show || x.show(a)) })),
     A_('offsetZ', 'Offset Z', 'number', 0, { unit: 'm', section: 'Frame', hint: 'Moves the geoset in 3D (true explode).' }),
     A_('sizeMode', 'Image size', 'select', 'frame', { options: [['frame', 'Camera frame at canvas width'], ['canvas', 'Graph canvas, frame letterboxed']] }),
     A_('guidesOnImage', 'Draw safe frame on image', 'bool', false),
@@ -2169,6 +2395,7 @@ defNode('render', {
     let w = ctx.w, h = Math.round(ctx.w / ratio), vScale = null, box = null;
     if (A.sizeMode === 'canvas' || (cv && cv.lock === false)) { w = ctx.w; h = ctx.h; const have = w / h, bw = have > ratio ? h * ratio : w, bh = have > ratio ? h : w / ratio; box = { x: (w - bw) / 2, y: (h - bh) / 2, width: bw, height: bh }; vScale = h / bh; }
     let out;
+    if (A.style === 'pathtraced' && want !== 'guides' && want !== 'camera') return ptRender(ctx, { model, camDef, isolate, w, h, vScale, box, gv }, A, node, want);
     if (A.style === 'curves' && ['image', 'mask', 'shadow', 'id'].includes(want)) {
       if (want === 'shadow' || want === 'id') return { [want]: want === 'id' ? IMG.image(w, h) : IMG.mask(w, h) };
       const r = renderCurves(ctx, { model, camDef, isolate, option: null, w, h, vScale }, A);
@@ -2186,6 +2413,30 @@ defNode('render', {
     return out;
   },
 });
+// Render passes, one at a time: Render (Path traced) -> Passes -> Render Pass.
+function upstreamLegend(n) { const s = n.inputs && n.inputs.passes, up = s && currentGraph().nodes[s.node]; return up && up._ptLegend || null; }
+defNode('renderPass', {
+  label: 'Render Pass', family: 'source', desc: 'One pass of a path traced Render: beauty, light, shadows, depth, normals, albedo, object or material ID - or one material isolated as its own layer, for post work.',
+  inputs: [{ n: 'passes', k: 'passes', l: 'Passes' }], outputs: [{ n: 'image', k: 'image', l: 'Image' }, { n: 'mask', k: 'mask', l: 'Mask' }],
+  args: [
+    A_('pass', 'Pass', 'select', 'beauty', { options: PT_PASSES }),
+    A_('material', 'Material', 'select', '', { show: a => a.pass === 'layer' || a.pass === 'layerMask', options: n => { const L = upstreamLegend(n); return L ? L.materials.map(m => [m.key, m.name + '  (' + m.parts.length + ' bod' + (m.parts.length === 1 ? 'y)' : 'ies)')]) : [['', 'Trace the Render first']]; } }),
+    A_('from', 'Layer of', 'select', 'beauty', { show: a => a.pass === 'layer', options: [['beauty', 'Beauty'], ['light', 'Light (clay)'], ['lighting', 'Lighting'], ['albedo', 'Albedo']] }),
+    A_('depthMode', 'Depth range', 'select', 'auto', { show: a => a.pass === 'depth', options: [['auto', 'The model\'s own (near to far)'], ['metres', 'Set in metres']] }),
+    A_('near', 'Near', 'number', 0, { unit: 'm', show: a => a.pass === 'depth' && a.depthMode === 'metres' }),
+    A_('far', 'Far', 'number', 1000, { unit: 'm', show: a => a.pass === 'depth' && a.depthMode === 'metres' }),
+    A_('farWhite', 'Far is white', 'bool', false, { show: a => a.pass === 'depth' }),
+    A_('colour', 'Shadow colour', 'colour', '#000000', { show: a => a.pass === 'shadow' }),
+  ],
+  async run(ctx, I, A) {
+    const pv = await I('passes');
+    if (!pv) { ctx.warn('Connect the Passes output of a Render set to Path traced.'); return { image: blank(ctx), mask: IMG.mask(ctx.w, ctx.h) }; }
+    if ((A.pass === 'layer' || A.pass === 'layerMask') && !pv.legend.materials.some(m => m.key === A.material)) { ctx.warn('Pick a material.'); return { image: IMG.image(pv.w, pv.h), mask: IMG.mask(pv.w, pv.h) }; }
+    if (A.pass === 'light' && !pv.ent.result.clay) ctx.warn('The Render has no light pass: tick "Trace a light pass" on it. Showing the beauty.');
+    if (A.pass === 'shadow' && !pv.ent.result.clay) ctx.warn('Shadows are read from the light pass, which is off on the Render; reading the beauty instead.');
+    const r = await ptPass(pv, A.pass, { material: A.material, from: A.from, colour: A.colour, farWhite: A.farWhite, ...(A.depthMode === 'metres' ? { near: A.near, far: A.far } : {}) });
+    return { image: r.image, mask: r.mask };
+  } });
 function cameraNames(node) { const m = getModel(node && node.args && node.args.model || 'sample'); return m ? m.cameras.map(c => c.name) : []; }
 
 defNode('pointProject', {
@@ -2806,6 +3057,7 @@ function hashNode(g, id, ctx, scope) {
     if (node.type === 'viewport') parts.m = viewportModelHash(parts.a);
     if (node.type === 'modelSource') { const r = doc.models[parts.a.model]; parts.m = !r ? 'none' : r.kind === 'ocaf' ? r.hash + (ocafReady(parts.a.model) ? ':ready' : ':pending') : stableJSON(r.params || {}) + stableJSON(r.extraCameras || []) + (r.hash || ''); }
     if (node.type === 'imageLoad') parts.asset = node.args.asset || '';
+    if (node.type === 'render' && parts.a.style === 'pathtraced') parts.ptg = ptGeneration; // a trace landing re-evaluates it
     if (node.type === 'nanoBanana') {
       // This row's own kept result; a batch that will generate one hashes as pending so it runs.
       const k = nanoKeyFor(g, node, parts.a, ctx, scope), hit = nanoHit(node, k);
@@ -4803,6 +5055,7 @@ function modelExtras(n) {
   const key = n.args.model, ref = doc.models[key], box = h('div');
   if (!ref) return h('div', { class: 'nmsg warn' }, 'No model selected. Load a model file or start a new one.');
   const c = ocafCache.get(key), m = ref.kind === 'ocaf' ? ocafModel(key) : getModel(key);
+  box.append(h('p', { class: 'hint', style: { margin: '0 0 8px' } }, `Built and path traced by the Feature Modeller, version ${typeof MODELLER_VERSION === 'string' ? MODELLER_VERSION : 'unknown'}.`));
   if (ref.kind === 'ocaf' && !m) box.append(h('div', { class: 'nmsg ' + (c && c.error ? 'error' : 'warn'), style: { margin: '0 0 8px' } }, c && c.error ? 'The kernel could not build this model: ' + c.error : 'Building the model with the OpenCascade kernel…'));
   if (m) {
     box.append(h('dl', { class: 'kv' },
