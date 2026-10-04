@@ -504,6 +504,7 @@ function modelExtras(n) {
   const key = n.args.model, ref = doc.models[key], box = h('div');
   if (!ref) return h('div', { class: 'nmsg warn' }, 'No model selected. Load a model file or start a new one.');
   const c = ocafCache.get(key), m = ref.kind === 'ocaf' ? ocafModel(key) : getModel(key);
+  box.append(h('p', { class: 'hint', style: { margin: '0 0 8px' } }, `Built and path traced by the Feature Modeller, version ${typeof MODELLER_VERSION === 'string' ? MODELLER_VERSION : 'unknown'}.`));
   if (ref.kind === 'ocaf' && !m) box.append(h('div', { class: 'nmsg ' + (c && c.error ? 'error' : 'warn'), style: { margin: '0 0 8px' } }, c && c.error ? 'The kernel could not build this model: ' + c.error : 'Building the model with the OpenCascade kernel…'));
   if (m) {
     box.append(h('dl', { class: 'kv' },

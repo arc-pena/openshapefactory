@@ -13,7 +13,7 @@ MODELLER="${1:-$(ls -t /root/.claude/projects/*/*/tool-results/artifact-2bf933ac
 [ -f "$MODELLER" ] || { echo "No Feature Modeller snapshot found. Read the artifact first, or pass its saved .html." >&2; exit 1; }
 VERSION="$(basename "$MODELLER" .html | sed 's/^artifact-2bf933ac-//')"
 echo "Feature Modeller: $MODELLER (version $VERSION)"
-JS="02_core.js 03_img.js 04_model.js 04b_ocaf.js 04c_samples.js 05_gl.js 06b_curves.js 06_nodes.js 07_engine.js 07b_nano.js 08_ui.js 09_props.js 10_boot.js"
+JS="02_core.js 03_img.js 04_model.js 04b_ocaf.js 04c_samples.js 05_gl.js 06b_curves.js 07c_trace.js 06_nodes.js 07_engine.js 07b_nano.js 08_ui.js 09_props.js 10_boot.js"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 ( cd "$SRC"; echo "const MODELLER_VERSION = '$VERSION';" > "$TMP/00_version.js"; cat "$TMP/00_version.js" $JS > "$TMP/all.js" )
 node --check "$TMP/all.js" && echo SYNTAX_OK

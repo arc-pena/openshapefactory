@@ -164,6 +164,6 @@ function convertOcaf(json, mesh, report, key) {
     }
   }
   const sets = feats.filter(f => parents.has(f.id) || f.type === 'GeometricalSet' || f.type === 'Body').map(f => pathOf(f.id));
-  return { format: 'ocaf-parametric-model', name: json.name || key, units: 'm', options: [], elements, points, vectors, cameras, warn, sets,
+  return { format: 'ocaf-parametric-model', name: json.name || key, units: 'm', unitScale: k, options: [], elements, points, vectors, cameras, warn, sets,
     stats: { features: feats.length, built: report ? (report.executed || []).length : null, failed: report ? (report.failed || []) : [], triangles: elements.reduce((s, e) => s + e.mesh.idx.length / 3, 0) } };
 }

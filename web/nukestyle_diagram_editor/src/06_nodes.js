@@ -4,8 +4,8 @@
 // Arg types: number int string text select bool colour path image rows button
 // `px: true` marks a size in full-resolution pixels (scaled for previews).
 // =====================================================================
-const KINDS = ['model', 'geoset', 'image', 'mask', 'camera', 'string', 'number', 'colour', 'points', 'field', 'perm', 'any'];
-const KIND_LABEL = { model: 'Model', geoset: 'Geoset', image: 'Image', mask: 'Mask', camera: 'Camera', string: 'String', number: 'Number', colour: 'Colour', points: 'Points2D', field: 'Field', perm: 'Permutation', any: 'Any' };
+const KINDS = ['model', 'geoset', 'image', 'mask', 'camera', 'passes', 'string', 'number', 'colour', 'points', 'field', 'perm', 'any'];
+const KIND_LABEL = { model: 'Model', geoset: 'Geoset', image: 'Image', mask: 'Mask', camera: 'Camera', passes: 'Render passes', string: 'String', number: 'Number', colour: 'Colour', points: 'Points2D', field: 'Field', perm: 'Permutation', any: 'Any' };
 const FAMILIES = {
   source: { label: '3D source', colour: '#3554d1' }, image: { label: 'Image operations', colour: '#d99a2b' }, mask: { label: 'Masks', colour: '#8f99a6' },
   gen: { label: 'Generate', colour: '#22a093' }, points: { label: 'Points, decals & gradients', colour: '#dd6f2e' }, ai: { label: 'AI', colour: '#8a64dc' },
@@ -253,16 +253,30 @@ defNode('extractPoints', {
     return { points: { kind: 'points', w: cam.w, h: cam.h, pts, cam } };
   },
 });
+const isTraced = a => a.style === 'pathtraced';
+const PT_ARGS = [
+  A_('ptEnv', 'Environment', 'select', 'warm', { section: 'Path tracing', show: isTraced, options: PT_ENVIRONMENTS, hint: 'The Feature Modeller\'s own lighting presets. Materials come from the model (Material features and finishes).' }),
+  A_('ptQuality', 'Quality', 'select', 'good', { show: isTraced, options: PT_QUALITIES }),
+  A_('ptPreview', 'Preview samples', 'int', 16, { min: 1, max: 2000, show: isTraced, hint: 'Samples traced for the preview in this window.' }),
+  A_('ptSamples', 'Final samples', 'int', 256, { min: 1, max: 5000, show: isTraced, hint: 'Samples traced for saves, exports and Render all. More is cleaner and slower.' }),
+  A_('ptExposure', 'Exposure', 'number', 1, { min: 0.05, max: 8, step: 0.05, show: isTraced }),
+  A_('ptGround', 'Ground', 'bool', true, { show: isTraced, hint: 'The floor that catches the shadows and reflections.' }),
+  A_('ptKeepBack', 'Keep the traced backdrop', 'bool', true, { show: isTraced, hint: 'Off: the image is just the model, cut out by its coverage (use the Shadow output for the ground shadows).' }),
+  A_('ptClay', 'Trace a light pass', 'bool', true, { show: isTraced, hint: 'A second trace with every surface white: light and shadow without the materials (the Light output and the Shadow pass). Doubles the time.' }),
+];
 const RENDER_SKIP = new Set(['path', 'model', 'option', 'camera', 'style', 'resW', 'resH', 'offsetZ']);
 defNode('render', {
   label: 'Render', family: 'source', desc: 'Renders the geoset from the camera. Other geometry is a holdout, so the image and mask are just the object, correctly occluded. The size is the camera\'s own frame, so overlays line up.',
   inputs: [{ n: 'model', k: 'model', l: 'Model' }, { n: 'camera', k: 'camera', l: 'Camera' }, { n: 'geoset', k: 'geoset', l: 'Geoset' }],
-  outputs: [{ n: 'image', k: 'image', l: 'Image' }, { n: 'mask', k: 'mask', l: 'Mask' }, { n: 'shadow', k: 'mask', l: 'Shadow' }, { n: 'id', k: 'image', l: 'Object ID' }, { n: 'guides', k: 'image', l: 'Safe frame' }, { n: 'camera', k: 'camera', l: 'Camera' }],
+  // Path traced adds the passes a renderer hands a compositor: depth, normals, albedo, light, material ID,
+  // and the passes bundle the Render Pass node reads (material layers among them).
+  outputs: n => [...[{ n: 'image', k: 'image', l: 'Image' }, { n: 'mask', k: 'mask', l: 'Mask' }, { n: 'shadow', k: 'mask', l: 'Shadow' }, { n: 'id', k: 'image', l: 'Object ID' }, { n: 'guides', k: 'image', l: 'Safe frame' }, { n: 'camera', k: 'camera', l: 'Camera' }], ...(n.args.style === 'pathtraced' ? [{ n: 'depth', k: 'image', l: 'Depth' }, { n: 'normal', k: 'image', l: 'Normals' }, { n: 'albedo', k: 'image', l: 'Albedo' }, { n: 'light', k: 'image', l: 'Light' }, { n: 'materialId', k: 'image', l: 'Material ID' }, { n: 'passes', k: 'passes', l: 'Passes' }] : [])],
   get args() { delete this.args; return (this.args = [
-    A_('style', 'Render style', 'select', 'shaded', { options: [...RENDER_STYLES.map(s => [s, STYLE_LABEL[s]]), ['curves', 'Curves (strokes)']] }),
+    A_('style', 'Render style', 'select', 'shaded', { options: [...RENDER_STYLES.map(s => [s, STYLE_LABEL[s]]), ['curves', 'Curves (strokes)'], ['pathtraced', 'Path traced (Feature Modeller renderer)']] }),
     ...CURVE_ARGS,
-    A_('colourBy', 'Colours', 'select', 'model', { options: [['model', 'From the model'], ['single', 'One colour']], show: a => !['arctic', 'objectid', 'hiddenline', 'curves'].includes(a.style) }),
-    ...NODE_TYPES.viewport.args.filter(x => !RENDER_SKIP.has(x.n)).map(x => x.n === 'aoRadius' ? { ...x, d: 0, min: 0, hint: '0 sizes it from the model.' } : x.n === 'colour' ? { ...x, show: a => !['arctic', 'objectid', 'hiddenline'].includes(a.style) && a.colourBy === 'single' } : x).map(x => ({ ...x, show: a => !isCurves(a) && (!x.show || x.show(a)) })),
+    ...PT_ARGS,
+    A_('colourBy', 'Colours', 'select', 'model', { options: [['model', 'From the model'], ['single', 'One colour']], show: a => !['arctic', 'objectid', 'hiddenline', 'curves', 'pathtraced'].includes(a.style) }),
+    ...NODE_TYPES.viewport.args.filter(x => !RENDER_SKIP.has(x.n)).map(x => x.n === 'aoRadius' ? { ...x, d: 0, min: 0, hint: '0 sizes it from the model.' } : x.n === 'colour' ? { ...x, show: a => !['arctic', 'objectid', 'hiddenline'].includes(a.style) && a.colourBy === 'single' } : x).map(x => ({ ...x, show: a => !isCurves(a) && a.style !== 'pathtraced' && (!x.show || x.show(a)) })),
     A_('offsetZ', 'Offset Z', 'number', 0, { unit: 'm', section: 'Frame', hint: 'Moves the geoset in 3D (true explode).' }),
     A_('sizeMode', 'Image size', 'select', 'frame', { options: [['frame', 'Camera frame at canvas width'], ['canvas', 'Graph canvas, frame letterboxed']] }),
     A_('guidesOnImage', 'Draw safe frame on image', 'bool', false),
@@ -281,6 +295,7 @@ defNode('render', {
     let w = ctx.w, h = Math.round(ctx.w / ratio), vScale = null, box = null;
     if (A.sizeMode === 'canvas' || (cv && cv.lock === false)) { w = ctx.w; h = ctx.h; const have = w / h, bw = have > ratio ? h * ratio : w, bh = have > ratio ? h : w / ratio; box = { x: (w - bw) / 2, y: (h - bh) / 2, width: bw, height: bh }; vScale = h / bh; }
     let out;
+    if (A.style === 'pathtraced' && want !== 'guides' && want !== 'camera') return ptRender(ctx, { model, camDef, isolate, w, h, vScale, box, gv }, A, node, want);
     if (A.style === 'curves' && ['image', 'mask', 'shadow', 'id'].includes(want)) {
       if (want === 'shadow' || want === 'id') return { [want]: want === 'id' ? IMG.image(w, h) : IMG.mask(w, h) };
       const r = renderCurves(ctx, { model, camDef, isolate, option: null, w, h, vScale }, A);
@@ -298,6 +313,30 @@ defNode('render', {
     return out;
   },
 });
+// Render passes, one at a time: Render (Path traced) -> Passes -> Render Pass.
+function upstreamLegend(n) { const s = n.inputs && n.inputs.passes, up = s && currentGraph().nodes[s.node]; return up && up._ptLegend || null; }
+defNode('renderPass', {
+  label: 'Render Pass', family: 'source', desc: 'One pass of a path traced Render: beauty, light, shadows, depth, normals, albedo, object or material ID - or one material isolated as its own layer, for post work.',
+  inputs: [{ n: 'passes', k: 'passes', l: 'Passes' }], outputs: [{ n: 'image', k: 'image', l: 'Image' }, { n: 'mask', k: 'mask', l: 'Mask' }],
+  args: [
+    A_('pass', 'Pass', 'select', 'beauty', { options: PT_PASSES }),
+    A_('material', 'Material', 'select', '', { show: a => a.pass === 'layer' || a.pass === 'layerMask', options: n => { const L = upstreamLegend(n); return L ? L.materials.map(m => [m.key, m.name + '  (' + m.parts.length + ' bod' + (m.parts.length === 1 ? 'y)' : 'ies)')]) : [['', 'Trace the Render first']]; } }),
+    A_('from', 'Layer of', 'select', 'beauty', { show: a => a.pass === 'layer', options: [['beauty', 'Beauty'], ['light', 'Light (clay)'], ['lighting', 'Lighting'], ['albedo', 'Albedo']] }),
+    A_('depthMode', 'Depth range', 'select', 'auto', { show: a => a.pass === 'depth', options: [['auto', 'The model\'s own (near to far)'], ['metres', 'Set in metres']] }),
+    A_('near', 'Near', 'number', 0, { unit: 'm', show: a => a.pass === 'depth' && a.depthMode === 'metres' }),
+    A_('far', 'Far', 'number', 1000, { unit: 'm', show: a => a.pass === 'depth' && a.depthMode === 'metres' }),
+    A_('farWhite', 'Far is white', 'bool', false, { show: a => a.pass === 'depth' }),
+    A_('colour', 'Shadow colour', 'colour', '#000000', { show: a => a.pass === 'shadow' }),
+  ],
+  async run(ctx, I, A) {
+    const pv = await I('passes');
+    if (!pv) { ctx.warn('Connect the Passes output of a Render set to Path traced.'); return { image: blank(ctx), mask: IMG.mask(ctx.w, ctx.h) }; }
+    if ((A.pass === 'layer' || A.pass === 'layerMask') && !pv.legend.materials.some(m => m.key === A.material)) { ctx.warn('Pick a material.'); return { image: IMG.image(pv.w, pv.h), mask: IMG.mask(pv.w, pv.h) }; }
+    if (A.pass === 'light' && !pv.ent.result.clay) ctx.warn('The Render has no light pass: tick "Trace a light pass" on it. Showing the beauty.');
+    if (A.pass === 'shadow' && !pv.ent.result.clay) ctx.warn('Shadows are read from the light pass, which is off on the Render; reading the beauty instead.');
+    const r = await ptPass(pv, A.pass, { material: A.material, from: A.from, colour: A.colour, farWhite: A.farWhite, ...(A.depthMode === 'metres' ? { near: A.near, far: A.far } : {}) });
+    return { image: r.image, mask: r.mask };
+  } });
 function cameraNames(node) { const m = getModel(node && node.args && node.args.model || 'sample'); return m ? m.cameras.map(c => c.name) : []; }
 
 defNode('pointProject', {

@@ -76,6 +76,7 @@ function hashNode(g, id, ctx, scope) {
     if (node.type === 'viewport') parts.m = viewportModelHash(parts.a);
     if (node.type === 'modelSource') { const r = doc.models[parts.a.model]; parts.m = !r ? 'none' : r.kind === 'ocaf' ? r.hash + (ocafReady(parts.a.model) ? ':ready' : ':pending') : stableJSON(r.params || {}) + stableJSON(r.extraCameras || []) + (r.hash || ''); }
     if (node.type === 'imageLoad') parts.asset = node.args.asset || '';
+    if (node.type === 'render' && parts.a.style === 'pathtraced') parts.ptg = ptGeneration; // a trace landing re-evaluates it
     if (node.type === 'nanoBanana') {
       // This row's own kept result; a batch that will generate one hashes as pending so it runs.
       const k = nanoKeyFor(g, node, parts.a, ctx, scope), hit = nanoHit(node, k);

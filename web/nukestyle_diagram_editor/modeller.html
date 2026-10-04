@@ -75436,6 +75436,141 @@ addEventListener("keyup", event => {
     }
     throw new Error("the modelling kernel did not start");
   };
+  /* ---- Path trace and render passes for the compositor ----
+     The modeller's own RenderEngine traces the picture, so the compositor gets exactly the renderer
+     the modeller has, materials and all. The passes are rasterised from the same scene and the same
+     camera, so every one of them lines up with the traced picture pixel for pixel. */
+  const sleepFrame = () => new Promise(r => requestAnimationFrame(() => r()));
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+  // The model is built when its triangles have stopped arriving.
+  async function settled() {
+    let last = "", still = 0;
+    for (let i = 0; i < 400 && still < 3; i++) {
+      await wait(250);
+      let n = 0, sum = 0; try { for (const [, v] of streams) { n++; sum += (v && v.positions ? v.positions.length : 0); } } catch (e) {}
+      const now = n + ":" + sum; still = now === last && n > 0 ? still + 1 : 0; last = now;
+    }
+  }
+  const fnv = s => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };
+  const idColour = key => { const x = fnv("id:" + key); let r = x & 255, g = (x >> 8) & 255, b = (x >> 16) & 255; if (r + g + b < 60) r = 200; return [r, g, b]; };
+  const canvasBlob = c => new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new Error("the browser would not read the pass back")), "image/png"));
+  // What each body is made of: a Material feature naming it (last one wins, as in the renderer), else its finish.
+  function materialTable() {
+    const owned = new Map();
+    for (const entry of state.tree.features) {
+      if (entry.type !== "Material" || !entry.data || entry.data.kind !== "material") continue;
+      for (const id of entry.data.of || []) owned.set(id, { key: "material:" + entry.id, name: entry.name || entry.id });
+    }
+    const table = new Map();
+    for (const entry of state.tree.features) {
+      if (!showroom.parts.has(entry.id)) continue;
+      let mat = owned.get(entry.id);
+      if (!mat) {
+        const made = materialOf(entry.appearance), own = entry.appearance || {};
+        const hex = Array.isArray(own.color) ? "#" + own.color.map(v => Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16).padStart(2, "0")).join("") : "";
+        mat = { key: "finish:" + made.finish + hex, name: made.label + (hex ? " " + hex : "") };
+      }
+      table.set(entry.id, mat);
+    }
+    return table;
+  }
+  async function traceForParent(m, progress) {
+    await settled();
+    await showroom.start();
+    const PT = showroom.PT, THREE = PT.THREE, R = showroom.renderer, cam = showroom.camera;
+    showroom.setScene(state.tree.features, streams);
+    if (!showroom.parts.size) throw new Error("the model has no bodies to render");
+    if (m.environment) showroom.applyEnvironment(m.environment);
+    showroom.applyQuality(m.quality || "good");
+    showroom.setExposure(m.exposure == null ? 1 : +m.exposure);
+    if (m.ground === false) showroom.setGroundVisible(false);
+    const w = Math.max(8, Math.round(m.width)), h = Math.max(8, Math.round(m.height));
+    // The compositor's camera, in the renderer's Y-up frame: Z up all the way (as the modelling view
+    // and the compositor do), then the roll about the view axis.
+    const toY = ([x, y, z]) => [x, z, -y];
+    const placeCam = () => {
+      const e = toY(m.camera.eye), t = toY(m.camera.target);
+      cam.position.set(e[0], e[1], e[2]); cam.up.set(0, 1, 0); cam.lookAt(t[0], t[1], t[2]);
+      if (m.camera.roll) cam.rotateZ(-m.camera.roll * Math.PI / 180);
+      cam.fov = m.camera.fov; cam.aspect = w / h; cam.updateProjectionMatrix(); cam.updateMatrixWorld();
+    };
+    placeCam();
+    const samples = Math.max(1, Math.round(m.samples || 64));
+    const traceOnce = async (what, share) => {
+      placeCam();
+      return showroom.toImage({ width: w, height: h, samples, onProgress: (got, of) => progress({ what, done: share[0] + share[1] * got / of }) });
+    };
+    const wantClay = m.passes && m.passes.includes("clay");
+    const out = { width: w, height: h, samples };
+    out.beauty = await traceOnce("beauty", [0, wantClay ? 0.5 : 0.9]);
+    // Clay: the same light on white bodies - light and shadow without the materials.
+    if (wantClay) {
+      const keep = new Map(), white = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 1, metalness: 0 });
+      for (const [id, part] of showroom.parts) { keep.set(id, part.mesh.material); part.mesh.material = white; }
+      showroom.tracer.updateMaterials();
+      try { out.clay = await traceOnce("clay", [0.5, 0.4]); }
+      finally { for (const [id, part] of showroom.parts) part.mesh.material = keep.get(id); showroom.tracer.updateMaterials(); white.dispose(); }
+    }
+    progress({ what: "passes", done: 0.92 });
+    // The passes: rasterised, same scene, same camera, no ground, no backdrop, no tone mapping.
+    const table = materialTable();
+    const was = { bg: showroom.scene.background, ground: showroom.ground ? showroom.ground.visible : false, tone: R.toneMapping, size: R.getSize(new THREE.Vector2()) };
+    const mats = new Map(); for (const [id, part] of showroom.parts) mats.set(id, part.mesh.material);
+    const flat = rgb => new THREE.ShaderMaterial({ uniforms: { c: { value: new THREE.Vector3(rgb[0] / 255, rgb[1] / 255, rgb[2] / 255) } },
+      vertexShader: "void main(){ gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }",
+      fragmentShader: "uniform vec3 c; void main(){ gl_FragColor = vec4(c,1.0); }", side: THREE.DoubleSide });
+    const made = [];
+    const pass = async (name, materialFor, scale = 1) => {
+      for (const [id, part] of showroom.parts) { const mm = materialFor(id, part); part.mesh.material = mm; if (mm && !made.includes(mm)) made.push(mm); }
+      R.setSize(w * scale, h * scale, false); placeCam();
+      R.setClearColor(0x000000, 1); R.render(showroom.scene, cam);
+      return canvasBlob(showroom.canvas);
+    };
+    try {
+      showroom.scene.background = new THREE.Color(0, 0, 0); if (showroom.ground) showroom.ground.visible = false; R.toneMapping = THREE.NoToneMapping;
+      // Depth: straight-line distance from the eye, packed into 24 bits across the model's own range.
+      showroom.scene.updateMatrixWorld(true);
+      const box = new THREE.Box3(); for (const [, part] of showroom.parts) box.expandByObject(part.mesh);
+      let dmin = Infinity, dmax = 0;
+      for (const x of [box.min.x, box.max.x]) for (const y of [box.min.y, box.max.y]) for (const z of [box.min.z, box.max.z]) { const d = cam.position.distanceTo(new THREE.Vector3(x, y, z)); dmin = Math.min(dmin, d); dmax = Math.max(dmax, d); }
+      // The nearest point of the box, not its nearest corner: a camera over the middle of a site is far
+      // closer to the roof below it than to any corner.
+      dmin = Math.max(cam.near, box.distanceToPoint(cam.position) * 0.98); dmax = dmax * 1.02;
+      const depthMat = new THREE.ShaderMaterial({ uniforms: { lo: { value: dmin }, hi: { value: dmax } }, side: THREE.DoubleSide,
+        vertexShader: "varying vec3 vv; void main(){ vec4 p = modelViewMatrix * vec4(position,1.0); vv = p.xyz; gl_Position = projectionMatrix * p; }",
+        fragmentShader: "uniform float lo, hi; varying vec3 vv; void main(){ float t = clamp((length(vv) - lo) / (hi - lo), 0.0, 0.99999); vec3 e = fract(t * vec3(1.0, 255.0, 65025.0)); e -= e.yzz * vec3(1.0/255.0, 1.0/255.0, 0.0); gl_FragColor = vec4(e, 1.0); }" });
+      out.depth = await pass("depth", () => depthMat); out.depthRange = [dmin, dmax];
+      // Normals in the model's own Z-up frame, as colour (x, y, z) * 0.5 + 0.5.
+      const normalMat = new THREE.ShaderMaterial({ side: THREE.DoubleSide,
+        vertexShader: "varying vec3 vn; void main(){ vn = normal; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }",
+        fragmentShader: "varying vec3 vn; void main(){ vec3 n = normalize(vn); if (!gl_FrontFacing) n = -n; gl_FragColor = vec4(n * 0.5 + 0.5, 1.0); }" });
+      out.normal = await pass("normal", () => normalMat);
+      // Albedo: each body's own colour (and colour map), unlit.
+      out.albedo = await pass("albedo", (id, part) => new THREE.MeshBasicMaterial({ color: mats.get(id).color, map: mats.get(id).map || null, toneMapped: false, side: THREE.DoubleSide }));
+      const objects = [], materials = new Map();
+      for (const entry of state.tree.features) if (showroom.parts.has(entry.id)) {
+        objects.push({ id: entry.id, name: entry.name || entry.id, colour: idColour(entry.id) });
+        const mt = table.get(entry.id); if (!materials.has(mt.key)) materials.set(mt.key, { key: mt.key, name: mt.name, colour: idColour(mt.key), parts: [] }); materials.get(mt.key).parts.push(entry.id);
+      }
+      const objFlat = new Map(objects.map(o => [o.id, flat(o.colour)])), matFlat = new Map([...materials.values()].map(x => [x.key, flat(x.colour)]));
+      out.objectId = await pass("objectId", id => objFlat.get(id));
+      out.materialId = await pass("materialId", id => matFlat.get(table.get(id).key));
+      // Coverage, and one coverage per material, at twice the size so edges come back soft.
+      const white = flat([255, 255, 255]), black = flat([0, 0, 0]);
+      out.coverage = await pass("coverage", () => white, 2);
+      out.materialMasks = {};
+      for (const mt of [...materials.values()].slice(0, 32)) out.materialMasks[mt.key] = await pass("mask", id => table.get(id).key === mt.key ? white : black, 2);
+      out.legend = { objects, materials: [...materials.values()] };
+      made.push(depthMat, normalMat, white, black, ...objFlat.values(), ...matFlat.values());
+    } finally {
+      for (const [id, part] of showroom.parts) part.mesh.material = mats.get(id);
+      showroom.scene.background = was.bg; if (showroom.ground) showroom.ground.visible = was.ground; R.toneMapping = was.tone;
+      R.setSize(was.size.x, was.size.y, false);
+      for (const mm of made) try { mm.dispose(); } catch (e) {}
+    }
+    progress({ what: "done", done: 1 });
+    return out;
+  }
   window.addEventListener("message", async e => {
     const m = e.data;
     if (e.source !== window.parent || !m || m.dcBridge !== 1 || !m.call) return;
@@ -75466,6 +75601,8 @@ addEventListener("keyup", event => {
         try { const layout = graph.layoutJson(); if (layout && Object.keys(layout).length) model.layout = layout; } catch (err) {}
         try { const hid = [...state.hidden]; if (hid.length) model.hidden = hid; } catch (err) {}
         tell({ id: m.id, ok: true, model });
+      } else if (m.call === "trace") {
+        tell(Object.assign({ id: m.id, ok: true }, await traceForParent(m, done => tell({ id: m.id, progress: done }))));
       } else tell({ id: m.id, ok: false, error: "unknown call " + m.call });
     } catch (err) { tell({ id: m.id, ok: false, error: String(err && err.message || err) }); }
   });
