@@ -2447,11 +2447,13 @@ testCase("M85", "The project's conversation lives in its file: the architect's p
   return { pass: shape && answered && image && briefOk && standard && refused && gone, detail: { ids, answered, image, briefOk, standard, refused, gone } };
 });
 
-testCase("M86", "Hotels test fit: three plates build without an error, every room encloses, and the key counts come out as worked by hand - H1 6+6 bays + 2+2 end keys + 4 suites = 20, H2 5+5 + 2+2 + 4 = 18, H3 7+7 + 4 suites = 18 (its ends hold the cores); GIA 936 / 800 / 1055 m² (H3 less its 10 × 23.5 m atrium); doors carry no ADA clearance unless asked", () => {
+testCase("M86", "Hotels and office test fit on the site drawing: four plates build without an error, every room encloses, no opening falls off its wall, and the counts come out as worked by hand - H1 4+4 bays + 4 suites + 2 end keys (a stair takes the other end room each end) = 14, H2 3+3 + 4 + 2 = 12, H3 (4+2)+(4+2) + 4 suites = 16 (its end rooms are stairs); office 44 banks of 4 desk pairs = 352 desks; doors carry no ADA clearance unless asked", () => {
   const doc = buildHotelsSample(), errs = doc.elements().filter(f => doc.error(f)).map(f => doc.idOf(f));
   const spaces = doc.elements().filter(f => doc.typeOf(f) === "Space"), open = spaces.filter(f => { const p = doc.plan(f); return !p || p.status !== "ok"; });
+  const off = doc.elements().filter(f => doc.typeOf(f) === "Opening").filter(f => { const d = doc.data(f); return d && d.frame && d.frame.flagged; });
   const s = doc.meta.hotelSummary, doors = doc.elements().filter(f => doc.typeOf(f) === "Door");
   const withClearance = doors.filter(f => (doc.plan(f) || []).some(p => p.role === "clearance")).length;
-  const ok = errs.length === 0 && open.length === 0 && s.map(x => x.keys).join() === "20,18,18" && s.map(x => x.gia).join() === "936,800,1055" && withClearance === 0;
-  return R(ok, "no errors, all rooms enclosed, keys 20/18/18, GIA 936/800/1055, no clearance zones", `errors ${errs.length}; open rooms ${open.length}; keys ${s.map(x => x.keys)}; gia ${s.map(x => x.gia)}; doors with clearance ${withClearance} of ${doors.length}`);
+  const keys = s.filter(x => x.keys !== undefined).map(x => x.keys).join(), desks = (s.find(x => x.name === "Office") || {}).desks;
+  const ok = errs.length === 0 && open.length === 0 && off.length === 0 && keys === "14,12,16" && desks === 352 && withClearance === 0;
+  return R(ok, "no errors, all rooms enclosed, no stray openings, keys 14/12/16, 352 desks, no clearance zones", `errors ${errs.length}; open rooms ${open.length}; stray openings ${off.length}; keys ${keys}; desks ${desks}; doors with clearance ${withClearance} of ${doors.length}`);
 });

@@ -1084,7 +1084,7 @@ async function saveModel() { const r = await saveFile(`${app.doc.meta.name || "m
 // ---------------------------------------------------------------- samples, and new projects from them
 /** The drawing sets the tool carries. Each is also a template: a new project can take its standards. */
 const SAMPLES = [
-  { id: "hotels", name: "Hotels Test Fit (work in progress)", build: () => buildHotelsSample(), open: "V-SITE" },
+  { id: "hotels", name: "Hotels and Office Test Fit (work in progress)", build: () => buildHotelsSample(), open: "V-SITE" },
   { id: "mazatlan", name: "Casa Mazatlan (INAH drawing set)", build: () => buildMazatlanSample(), open: "SH-A101" },
   { id: "schaeffer", name: "Schaeffer Residence (Frank Harmon Architect)", build: () => buildSchaefferSample(), open: "SH-A202" },
   { id: "walnut", name: "Walnut Creek Environmental Education Center (Frank Harmon Architect)", build: () => buildWalnutSample(), open: "SH-A201" },
@@ -1551,7 +1551,7 @@ async function boot() {
   const fresh = !doc;
   if (!doc) doc = buildHotelsSample();
   installPromptPanel(app);
-  setDocument(doc, note || { msg: "Hotels Test Fit (work in progress): three plates, typical guest floor. File lists the other samples.", kind: "ok" });
+  setDocument(doc, note || { msg: "Hotels and Office Test Fit (work in progress): typical floors on the site drawing. File lists the other samples.", kind: "ok" });
   if (fresh) app.openView("V-SITE");
 }
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();

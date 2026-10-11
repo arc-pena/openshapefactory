@@ -2462,7 +2462,8 @@ export function sheetScene(doc, sh, opts = {}) {
     txt([tx0 + 11, ty - 4], doc.typeOf(view) === "Schedule" ? "" : "1:" + (F.int(view, "scale") || 100), 2.2, { colour: "#333" });
     put([lineSeg([tx0 + 10, ty - 1.2], [tx0 + 11 + Math.max(40, textWidth(view.get("Name"), 3.5) + 2), ty - 1.2])], 0.5);
     if (sc.stale) txt([tx0 + 11, ty - 8], `⚠ stale: ${sc.stale}`, 2.2, { colour: "#b3261e" });
-    if (doc.typeOf(view) === "PlanView" && doc.lib.symbols["SY-NORTH"]) {
+    // the north arrow beside a plan's title is opt-in per viewport (northArrow: true); sheets carry none by default
+    if (vp.northArrow === true && doc.typeOf(view) === "PlanView" && doc.lib.symbols["SY-NORTH"]) {
       const B2 = new SceneBuilder(1);
       const right = clip ? clip[2] : bb[2] + off[0];
       drawSymbol(doc, B2, doc.lib.symbols["SY-NORTH"], [right - 10, ty + 2], 0, "Annotation");
