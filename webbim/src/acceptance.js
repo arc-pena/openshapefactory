@@ -2447,7 +2447,7 @@ testCase("M85", "The project's conversation lives in its file: the architect's p
   return { pass: shape && answered && image && briefOk && standard && refused && gone, detail: { ids, answered, image, briefOk, standard, refused, gone } };
 });
 
-testCase("M86", "Hotels and office test fit on the site drawing: four plates build without an error, every room encloses, no opening falls off its wall, and the counts come out as worked by hand - H1 4+4 bays + 4 suites + 2 end keys (a stair takes the other end room each end) = 14, H2 3+3 + 4 + 2 = 12, H3 (4+2)+(4+2) + 4 suites = 16 (its end rooms are stairs); office 44 banks of 4 desk pairs = 352 desks; doors carry no ADA clearance unless asked", () => {
+testCase("M86", "Hotels and office test fit on the site drawing: four plates build without an error, every room encloses, no opening falls off its wall, and the counts come out as worked by hand - H1 4+4 bays + 4 suites + 2 + 2 end keys either side of the stair under the lifts = 16, H2 3+3 + 4 + 4 = 14, H3 (4+2)+(4+2) + 4 suites + 4 = 20; office 228 benched desks on the tenancy floor, 44 private offices on the coworking floor; the office middle is corridor, two compact cores and rooms, with no more than 260 m² of common circulation; doors carry no ADA clearance unless asked", () => {
   const doc = buildHotelsSample(), errs = doc.elements().filter(f => doc.error(f)).map(f => doc.idOf(f));
   const spaces = doc.elements().filter(f => doc.typeOf(f) === "Space"), open = spaces.filter(f => { const p = doc.plan(f); return !p || p.status !== "ok"; });
   const off = doc.elements().filter(f => doc.typeOf(f) === "Opening").filter(f => { const d = doc.data(f); return d && d.frame && d.frame.flagged; });
@@ -2457,9 +2457,10 @@ testCase("M86", "Hotels and office test fit on the site drawing: four plates bui
   // stairs are compact cores: a 2.8 × 5.6 m enclosure to wall centres is 2.585 × 5.385 m clear inside 215 block = 13.9 m², give or take the plate's taper
   const area = q => Math.abs(q.reduce((a, p, i) => { const r = q[(i + 1) % q.length]; return a + p[0] * r[1] - r[0] * p[1]; }, 0)) / 2e6;
   const stairs = spaces.filter(f => f.get("Name") === "Stair").map(f => area(doc.plan(f).loop.pts));
-  const stairsOk = stairs.length === 8 && stairs.every(a => a > 9.5 && a < 15.5);
-  const ok = errs.length === 0 && open.length === 0 && off.length === 0 && keys === "14,12,16" && desks === 352 && withClearance === 0 && stairsOk;
-  return R(ok, "no errors, all rooms enclosed, no stray openings, keys 14/12/16, 352 desks, no clearance zones, 8 stairs of 9.5-15.5 m² (hotel stairs side-on: 4.4-5.3 × 2.6 m clear)", `errors ${errs.length}; open rooms ${open.length}; stray openings ${off.length}; keys ${keys}; desks ${desks}; doors with clearance ${withClearance} of ${doors.length}; stairs ${stairs.map(a => a.toFixed(1)).join("/")}`);
+  const stairsOk = stairs.length === 10 && stairs.every(a => a > 9.5 && a < 15.5);
+  const circ = spaces.filter(f => doc.idOf(f).startsWith("OFFICE-SP") && doc.getParam(f, "Department") === "Circulation").reduce((a, f) => a + area(doc.plan(f).loop.pts), 0);
+  const ok = errs.length === 0 && open.length === 0 && off.length === 0 && keys === "16,14,20" && desks === 228 && circ > 150 && circ < 260 && (s.find(x => x.name === "Office") || {}).privateOffices === 44 && withClearance === 0 && stairsOk;
+  return R(ok, "no errors, all rooms enclosed, no stray openings, keys 16/14/20, 228 desks, 44 private offices, office common circulation 150-260 m², no clearance zones, 10 stairs of 9.5-15.5 m²", `errors ${errs.length}; open rooms ${open.length}; stray openings ${off.length}; keys ${keys}; desks ${desks}; office circulation ${circ.toFixed(0)} m²; doors with clearance ${withClearance} of ${doors.length}; stairs ${stairs.map(a => a.toFixed(1)).join("/")}`);
 });
 
 testCase("M87", "Room text per view: Room text None in a plan's control bar leaves every room in that view without text, while another plan of the same level keeps its names", () => {
