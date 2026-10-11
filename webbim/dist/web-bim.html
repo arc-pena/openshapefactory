@@ -18623,7 +18623,7 @@ function buildHotelsSample() {
     const rect = (name, u0, u1, v0, v1, type, extra) => [wall(name, [u0, v0], [u1, v0], type, extra), wall(name, [u1, v0], [u1, v1], type, extra), wall(name, [u1, v1], [u0, v1], type, extra), wall(name, [u0, v1], [u0, v0], type, extra)];
     const stair = (u0, u1, v0, v1, alongV) => {
       const ln = (a, b) => add({ id: `${key}-DLS${++n}`, type: "DetailLine", args: { curve: line(P(...a), P(...b)), pen: "thin", lineStyle: "Solid", view: { ref: view }, layer: "Stair", colour: "#000000" } });
-      const land = 1500;
+      const land = 1200;
       if (alongV) { const lo = Math.min(v0, v1) + land, hi = Math.max(v0, v1) - land, m = (u0 + u1) / 2; ln([m, lo], [m, hi]); for (let y = lo; y <= hi + 1; y += 280) ln([u0 + 150, y], [u1 - 150, y]); }
       else { const lo = Math.min(u0, u1) + land, hi = Math.max(u0, u1) - land, m = (v0 + v1) / 2; ln([lo, m], [hi, m]); for (let x = lo; x <= hi + 1; x += 280) ln([x, v0 + 150], [x, v1 - 150]); }
     };
@@ -18664,7 +18664,10 @@ function buildHotelsSample() {
     for (const t of [-1, 1]) {
       const Dend = L / 2 - H.vE;
       if (endOuter > uc) for (const s of [-1, 1]) wall("Corridor wall", [s * uc, t * H.vE], [s * endOuter, t * H.vE], "T-BLOCK215");
-      for (const u of H.ends) wall("Demising", [u, t * H.vE], [u, t * L / 2], "T-PART100");
+      // the stair turns side-on along the corridor: it keeps 2.8 m off the corridor and gives the facade behind it to the
+      // neighbouring room (the key next to it in a three-bay end, else the corner suite), so no facade is lost to a stair
+      const uJoin = H.ends.length > 2 ? H.ends[1] : H.ends[0], sDepth = t * (H.vE + HOTEL_STAIR_W);
+      for (const u of H.ends) wall("Demising", [u, t * H.vE], [u, u === uJoin ? sDepth : t * L / 2], u === uJoin ? "T-BLOCK215" : "T-PART100");
       for (const s of [-1, 1]) {
         // the corner suite: entered off the corridor's side (an L-shaped suite) or its end
         const anchorU = s * (endOuter + (W / 2 - endOuter) / 2), anchorV = t * (H.vE + Dend * 0.55);
@@ -18678,15 +18681,13 @@ function buildHotelsSample() {
       for (let i = 0; i + 1 < H.ends.length; i++) {
         const a = H.ends[i], b = H.ends[i + 1];
         if (i === 0) {
-          // the stair takes 2.8 m of the bay on the side nearest the lifts (across the corridor); the rest is linen and riser
-          const nearB = Math.abs(b) < Math.abs(a), s0 = nearB ? b - Math.sign(b - a) * HOTEL_STAIR_W : a, s1 = nearB ? b : a + Math.sign(b - a) * HOTEL_STAIR_W;
-          const sv1 = t * Math.min(H.vE + HOTEL_STAIR_L, L / 2 - 300), su = (s0 + s1) / 2, other = nearB ? a : b, cut = nearB ? s0 : s1;
-          wall("Stair", [cut, t * H.vE], [cut, sv1], "T-BLOCK215");          // stops at the stair: the strip behind it is part of the linen room
-          wall("Stair", [s0, sv1], [s1, sv1], "T-BLOCK215");
-          stair(Math.min(s0, s1), Math.max(s0, s1), t * H.vE, sv1, true); space("Stair", [su, (t * H.vE + sv1) / 2], "Core");
-          door(ringEnd(t), [su, t * H.vE], t > 0, 1015);
-          space("Linen and riser", [(cut + other) / 2, t * (H.vE + Dend / 2)], "Core");
-          door(ringEnd(t), [(cut + other) / 2, t * H.vE], t < 0);
+          // flights run along the corridor (8 goings of 280 and two 1,200 landings fit 4.64 m); a strip left over is a closet
+          const dir = uJoin === b ? -1 : 1, Ls = Math.min(Math.abs(b - a), HOTEL_STAIR_L), far = uJoin + dir * Ls, other = uJoin === b ? a : b;
+          wall("Stair", [a, sDepth], [b, sDepth], "T-BLOCK215");
+          if (Math.abs(other - far) > 300) wall("Stair", [far, t * H.vE], [far, sDepth], "T-BLOCK215");
+          stair(Math.min(uJoin, far), Math.max(uJoin, far), t * H.vE, sDepth, false); space("Stair", [(uJoin + far) / 2, (t * H.vE + sDepth) / 2], "Core");
+          door(ringEnd(t), [far - dir * 700, t * H.vE], dir * t > 0, 1015);           // a side approach, at the landing
+          if (Math.abs(other - far) >= 900) { space("Closet", [(far + other) / 2, (t * H.vE + sDepth) / 2], "Core"); door(ringEnd(t), [(far + other) / 2, t * H.vE], false, Math.min(800, Math.abs(other - far) - 200)); }
         } else keyRoom((d, x) => [x, t * (H.vE + d)], a, b, Dend, (i % 2) === 1, ringEnd(t), false);
       }
     }
@@ -24715,9 +24716,9 @@ testCase("M86", "Hotels and office test fit on the site drawing: four plates bui
   // stairs are compact cores: a 2.8 × 5.6 m enclosure to wall centres is 2.585 × 5.385 m clear inside 215 block = 13.9 m², give or take the plate's taper
   const area = q => Math.abs(q.reduce((a, p, i) => { const r = q[(i + 1) % q.length]; return a + p[0] * r[1] - r[0] * p[1]; }, 0)) / 2e6;
   const stairs = spaces.filter(f => f.get("Name") === "Stair").map(f => area(doc.plan(f).loop.pts));
-  const stairsOk = stairs.length === 8 && stairs.every(a => a > 12.5 && a < 15.5);
+  const stairsOk = stairs.length === 8 && stairs.every(a => a > 9.5 && a < 15.5);
   const ok = errs.length === 0 && open.length === 0 && off.length === 0 && keys === "14,12,16" && desks === 352 && withClearance === 0 && stairsOk;
-  return R(ok, "no errors, all rooms enclosed, no stray openings, keys 14/12/16, 352 desks, no clearance zones, 8 stairs of 12.5-15.5 m²", `errors ${errs.length}; open rooms ${open.length}; stray openings ${off.length}; keys ${keys}; desks ${desks}; doors with clearance ${withClearance} of ${doors.length}; stairs ${stairs.map(a => a.toFixed(1)).join("/")}`);
+  return R(ok, "no errors, all rooms enclosed, no stray openings, keys 14/12/16, 352 desks, no clearance zones, 8 stairs of 9.5-15.5 m² (hotel stairs side-on: 4.4-5.3 × 2.6 m clear)", `errors ${errs.length}; open rooms ${open.length}; stray openings ${off.length}; keys ${keys}; desks ${desks}; doors with clearance ${withClearance} of ${doors.length}; stairs ${stairs.map(a => a.toFixed(1)).join("/")}`);
 });
 
 testCase("M87", "Room text per view: Room text None in a plan's control bar leaves every room in that view without text, while another plan of the same level keeps its names", () => {
