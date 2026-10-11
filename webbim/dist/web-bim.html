@@ -13409,7 +13409,10 @@ function drawSpace(doc, ctx, B, f) {
   }
   const label = cs.label || { height: 2.5, colour: "#000000", content: "{Name}\n{Area}" };
   // a room's own tag format (a tenant space's number over its name) over the category's
-  const fmt = paramText(doc, f, "LabelFormat") || label.content, ls = label.lineSpacing || 1.6;
+  // the view can set the text of every room in it (view control bar: Room text), over the style and the room's own format
+  const roomText = ctx.view && (doc.argValue(ctx.view, "overrides") || {}).__roomText;
+  const viewFmt = ({ None: " ", Name: "{Name}", "Name and area": "{Name}\n{Area}", Number: "{Number}" })[roomText];
+  const fmt = viewFmt || paramText(doc, f, "LabelFormat") || label.content, ls = label.lineSpacing || 1.6;
   const lines = fmt.split("\\n").join("\n").split("\n").map(line => line.replace(/\{(\w+)\}/g, (_, k) => paramText(doc, f, k)));
   const at = B.P(anchor), nFramed = label.frame ? Math.min(2, lines.length) : 0;
   lines.forEach((ln, i) => B.later.push(Object.assign({ t: "text", at: [at[0], at[1] - i * label.height * ls], text: label.upper ? String(ln).toUpperCase() : String(ln), height: i >= nFramed && label.extraHeight ? label.extraHeight : label.height, rot: 0, align: "centre", valign: "baseline", colour: label.colour || "#000", layer: "IfcSpace-Label", id }, label.font ? { font: label.font } : {})));
@@ -24699,6 +24702,15 @@ testCase("M86", "Hotels and office test fit on the site drawing: four plates bui
   return R(ok, "no errors, all rooms enclosed, no stray openings, keys 14/12/16, 352 desks, no clearance zones", `errors ${errs.length}; open rooms ${open.length}; stray openings ${off.length}; keys ${keys}; desks ${desks}; doors with clearance ${withClearance} of ${doors.length}`);
 });
 
+testCase("M87", "Room text per view: Room text None in a plan's control bar leaves every room in that view without text, while another plan of the same level keeps its names", () => {
+  const doc = buildPavilionSample(), ed = new Editor(doc);
+  const texts = id => planScene(doc, doc.element(id)).prims.filter(p => p.t === "text" && p.layer === "IfcSpace-Label" && String(p.text).trim()).length;
+  const before = texts("V-PLAN"), other = texts("V-PRES");
+  ed.apply({ op: "set", id: "V-PLAN", key: "overrides", value: Object.assign({}, doc.argValue(doc.element("V-PLAN"), "overrides") || {}, { __roomText: "None" }) });
+  const after = texts("V-PLAN"), otherAfter = texts("V-PRES");
+  return R(before > 0 && after === 0 && otherAfter === other && other > 0, "room text in V-PLAN > 0 → 0; V-PRES unchanged", `V-PLAN ${before} → ${after}; V-PRES ${other} → ${otherAfter}`);
+});
+
 // ===== ui_util.js =====
 //! Small DOM vocabulary shared by the interface modules. The interface only
 //! mirrors the document: nothing here owns model state.
@@ -31491,6 +31503,9 @@ function renderViewControl() {
       if (clip.shape) bar.append(h("button", { class: "btn small", title: "Back to a rectangle", onclick: () => app.apply({ op: "set", id, key: "clip", value: Object.assign({}, clip, { shape: null }) }) }, "Reset Crop"));
       bar.append(h("select", { class: "vsel", "aria-label": "Colour fill", title: "Colour-fill plan", onchange: e => { const ov = Object.assign({}, doc.argValue(v, "overrides") || {}); if (e.target.value) ov.__colourFill = e.target.value; else delete ov.__colourFill; app.apply({ op: "set", id, key: "overrides", value: ov }); } },
         h("option", { value: "" }, "No colour fill"), ["Department", "Number", "Name"].map(k => h("option", { value: k, selected: (doc.argValue(v, "overrides") || {}).__colourFill === k }, "Fill by " + k))));
+      // room text for every room in this view: the style's own, or name / name and area / number / none
+      bar.append(h("select", { class: "vsel", "aria-label": "Room text", title: "Room text in this view", onchange: e => { const ov = Object.assign({}, doc.argValue(v, "overrides") || {}); if (e.target.value) ov.__roomText = e.target.value; else delete ov.__roomText; app.apply({ op: "set", id, key: "overrides", value: ov }); } },
+        h("option", { value: "" }, "Room text: style"), ["None", "Name", "Name and area", "Number"].map(k => h("option", { value: k, selected: (doc.argValue(v, "overrides") || {}).__roomText === k }, "Room text: " + k.toLowerCase()))));
     }
   }
   if (t === "View3D") {

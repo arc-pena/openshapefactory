@@ -879,6 +879,9 @@ function renderViewControl() {
       if (clip.shape) bar.append(h("button", { class: "btn small", title: "Back to a rectangle", onclick: () => app.apply({ op: "set", id, key: "clip", value: Object.assign({}, clip, { shape: null }) }) }, "Reset Crop"));
       bar.append(h("select", { class: "vsel", "aria-label": "Colour fill", title: "Colour-fill plan", onchange: e => { const ov = Object.assign({}, doc.argValue(v, "overrides") || {}); if (e.target.value) ov.__colourFill = e.target.value; else delete ov.__colourFill; app.apply({ op: "set", id, key: "overrides", value: ov }); } },
         h("option", { value: "" }, "No colour fill"), ["Department", "Number", "Name"].map(k => h("option", { value: k, selected: (doc.argValue(v, "overrides") || {}).__colourFill === k }, "Fill by " + k))));
+      // room text for every room in this view: the style's own, or name / name and area / number / none
+      bar.append(h("select", { class: "vsel", "aria-label": "Room text", title: "Room text in this view", onchange: e => { const ov = Object.assign({}, doc.argValue(v, "overrides") || {}); if (e.target.value) ov.__roomText = e.target.value; else delete ov.__roomText; app.apply({ op: "set", id, key: "overrides", value: ov }); } },
+        h("option", { value: "" }, "Room text: style"), ["None", "Name", "Name and area", "Number"].map(k => h("option", { value: k, selected: (doc.argValue(v, "overrides") || {}).__roomText === k }, "Room text: " + k.toLowerCase()))));
     }
   }
   if (t === "View3D") {

@@ -590,7 +590,10 @@ function drawSpace(doc, ctx, B, f) {
   }
   const label = cs.label || { height: 2.5, colour: "#000000", content: "{Name}\n{Area}" };
   // a room's own tag format (a tenant space's number over its name) over the category's
-  const fmt = paramText(doc, f, "LabelFormat") || label.content, ls = label.lineSpacing || 1.6;
+  // the view can set the text of every room in it (view control bar: Room text), over the style and the room's own format
+  const roomText = ctx.view && (doc.argValue(ctx.view, "overrides") || {}).__roomText;
+  const viewFmt = ({ None: " ", Name: "{Name}", "Name and area": "{Name}\n{Area}", Number: "{Number}" })[roomText];
+  const fmt = viewFmt || paramText(doc, f, "LabelFormat") || label.content, ls = label.lineSpacing || 1.6;
   const lines = fmt.split("\\n").join("\n").split("\n").map(line => line.replace(/\{(\w+)\}/g, (_, k) => paramText(doc, f, k)));
   const at = B.P(anchor), nFramed = label.frame ? Math.min(2, lines.length) : 0;
   lines.forEach((ln, i) => B.later.push(Object.assign({ t: "text", at: [at[0], at[1] - i * label.height * ls], text: label.upper ? String(ln).toUpperCase() : String(ln), height: i >= nFramed && label.extraHeight ? label.extraHeight : label.height, rot: 0, align: "centre", valign: "baseline", colour: label.colour || "#000", layer: "IfcSpace-Label", id }, label.font ? { font: label.font } : {})));

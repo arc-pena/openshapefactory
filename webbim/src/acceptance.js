@@ -2457,3 +2457,12 @@ testCase("M86", "Hotels and office test fit on the site drawing: four plates bui
   const ok = errs.length === 0 && open.length === 0 && off.length === 0 && keys === "14,12,16" && desks === 352 && withClearance === 0;
   return R(ok, "no errors, all rooms enclosed, no stray openings, keys 14/12/16, 352 desks, no clearance zones", `errors ${errs.length}; open rooms ${open.length}; stray openings ${off.length}; keys ${keys}; desks ${desks}; doors with clearance ${withClearance} of ${doors.length}`);
 });
+
+testCase("M87", "Room text per view: Room text None in a plan's control bar leaves every room in that view without text, while another plan of the same level keeps its names", () => {
+  const doc = buildPavilionSample(), ed = new Editor(doc);
+  const texts = id => planScene(doc, doc.element(id)).prims.filter(p => p.t === "text" && p.layer === "IfcSpace-Label" && String(p.text).trim()).length;
+  const before = texts("V-PLAN"), other = texts("V-PRES");
+  ed.apply({ op: "set", id: "V-PLAN", key: "overrides", value: Object.assign({}, doc.argValue(doc.element("V-PLAN"), "overrides") || {}, { __roomText: "None" }) });
+  const after = texts("V-PLAN"), otherAfter = texts("V-PRES");
+  return R(before > 0 && after === 0 && otherAfter === other && other > 0, "room text in V-PLAN > 0 → 0; V-PRES unchanged", `V-PLAN ${before} → ${after}; V-PRES ${other} → ${otherAfter}`);
+});
