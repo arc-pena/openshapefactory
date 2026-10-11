@@ -17,6 +17,7 @@ import { buildWalnutSample } from "./sample_walnut.js";
 import { buildFpcSample } from "./sample_fpc.js";
 import { buildAiaSample } from "./sample_aia.js";
 import { buildHotelsSample } from "./sample_hotels.js";
+import { buildOrbitSample } from "./sample_orbit.js";
 import { cadLibraryIndex, cadLibraryCategories, cadLibrarySymbol, cadLibraryPreview } from "./cadlib.js";
 import { contoursFromDXF } from "./archelements.js";
 import { inflateBase64 } from "./inflate.js";
@@ -1088,6 +1089,7 @@ async function saveModel() { const r = await saveFile(`${app.doc.meta.name || "m
 /** The drawing sets the tool carries. Each is also a template: a new project can take its standards. */
 const SAMPLES = [
   { id: "hotels", name: "Hotels and Office Test Fit (work in progress)", build: () => buildHotelsSample(), open: "V-SITE" },
+  { id: "orbit", name: "Orbit — Hotels and Office Test Fit (work in progress)", build: () => buildOrbitSample(), open: "V-SITE" },
   { id: "mazatlan", name: "Casa Mazatlan (INAH drawing set)", build: () => buildMazatlanSample(), open: "SH-A101" },
   { id: "schaeffer", name: "Schaeffer Residence (Frank Harmon Architect)", build: () => buildSchaefferSample(), open: "SH-A202" },
   { id: "walnut", name: "Walnut Creek Environmental Education Center (Frank Harmon Architect)", build: () => buildWalnutSample(), open: "SH-A201" },
@@ -1095,6 +1097,8 @@ const SAMPLES = [
   { id: "aia", name: "AIA North Carolina Headquarters (Frank Harmon Architect)", build: () => buildAiaSample(), open: "SH-A301" },
 ];
 app.samples = SAMPLES;
+/** Load a sample by id, as the File menu does (also how a browser test opens one). */
+app.loadSample = id => { const x = SAMPLES.find(s => s.id === id); if (!x) return false; forget("draft-v6"); forget("tabs"); setDocument(x.build(), { msg: `${x.name}: loaded`, kind: "ok" }); if (x.open) app.openView(x.open); return true; };
 /** A new project with a sample's standards and none of its building: its materials, wall/floor/door types,
  *  text and dimension types, fill patterns, view styles, title block and annotation style; its levels (named and
  *  at their heights, if asked) each with a plan in the sample's plan style; a first sheet in its title block. */
