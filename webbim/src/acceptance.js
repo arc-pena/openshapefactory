@@ -36,6 +36,7 @@ import { cadSketchOutline } from "./cadsketch.js";
 import { programFromBrief, planSpaceGraph, relaxBubbles, gfaOf, activeLegend, legendColour, groupKey } from "./spacegraph.js";
 import { buildRmuhSample, RMUH_BRIEF } from "./sample_rmuh.js";
 import { buildPavilionSample } from "./sample_pavilion.js";
+import { buildHotelsSample } from "./sample_hotels.js";
 import { buildMazatlanSample } from "./sample_mazatlan.js";
 import { buildSchaefferSample } from "./sample_schaeffer.js";
 import { buildWalnutSample } from "./sample_walnut.js";
@@ -2444,4 +2445,13 @@ testCase("M85", "The project's conversation lives in its file: the architect's p
   const gone = removePrompt(back, "P1") === 3 && back.meta.prompts.entries.length === 1;
   void f;
   return { pass: shape && answered && image && briefOk && standard && refused && gone, detail: { ids, answered, image, briefOk, standard, refused, gone } };
+});
+
+testCase("M86", "Hotels test fit: three plates build without an error, every room encloses, and the key counts come out as worked by hand - H1 6+6 bays + 2+2 end keys + 4 suites = 20, H2 5+5 + 2+2 + 4 = 18, H3 7+7 + 4 suites = 18 (its ends hold the cores); GIA 936 / 800 / 1055 m² (H3 less its 10 × 23.5 m atrium); doors carry no ADA clearance unless asked", () => {
+  const doc = buildHotelsSample(), errs = doc.elements().filter(f => doc.error(f)).map(f => doc.idOf(f));
+  const spaces = doc.elements().filter(f => doc.typeOf(f) === "Space"), open = spaces.filter(f => { const p = doc.plan(f); return !p || p.status !== "ok"; });
+  const s = doc.meta.hotelSummary, doors = doc.elements().filter(f => doc.typeOf(f) === "Door");
+  const withClearance = doors.filter(f => (doc.plan(f) || []).some(p => p.role === "clearance")).length;
+  const ok = errs.length === 0 && open.length === 0 && s.map(x => x.keys).join() === "20,18,18" && s.map(x => x.gia).join() === "936,800,1055" && withClearance === 0;
+  return R(ok, "no errors, all rooms enclosed, keys 20/18/18, GIA 936/800/1055, no clearance zones", `errors ${errs.length}; open rooms ${open.length}; keys ${s.map(x => x.keys)}; gia ${s.map(x => x.gia)}; doors with clearance ${withClearance} of ${doors.length}`);
 });

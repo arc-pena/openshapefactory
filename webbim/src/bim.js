@@ -242,7 +242,7 @@ function fillerDecl(type, guid, typeKind, extraArgs, summary, idPrefix, category
 }
 fillerDecl("Door", "wb-0202", "doorType", [bool("flipHand", "Flip hand", false), bool("flipFacing", "Flip facing", false),
     choice("operation", "Operation", ["Single", "Double", "Sliding"], 0), real("swingAngle", "Swing angle", 90, 0, 180, 1, "°"),
-    real("openAngle", "Open angle (3D)", 0, 0, 180, 1, "°"), choice("clearance", "ADA clearance", ["Front approach", "Hinge approach", "Latch approach", "None"], 0)],
+    real("openAngle", "Open angle (3D)", 0, 0, 180, 1, "°"), choice("clearance", "ADA clearance", ["Front approach", "Hinge approach", "Latch approach", "None"], 3)],
   "A filler with a symbol: panel, frame and swing, drawn in its opening's host frame.", "D", "IfcDoor");
 fillerDecl("Window", "wb-0203", "windowType", [bool("flipFacing", "Flip facing", false)],
   "A filler with glazing and frame, drawn in its opening's host frame.", "WN", "IfcWindow");
@@ -384,7 +384,7 @@ BUILDERS.Door = {
     parts.push(hostBox(w, fr.u0, fr.u0 + fw, sMin, sMax, fr.sill, fr.sill + fr.h, "Frame"), hostBox(w, fr.u1 - fw, fr.u1, sMin, sMax, fr.sill, fr.sill + fr.h, "Frame"),
       hostBox(w, fr.u0, fr.u1, sMin, sMax, fr.sill + fr.h - fw, fr.sill + fr.h, "Frame"));
     // ADA maneuvering clearances: red dashed, on the pull (swing) side and the push side
-    const scenario = F.choice(f, "clearance") || "Front approach";
+    const scenario = F.choice(f, "clearance") || "None";   // off unless the user turns it on for a door
     const C = ADA_CLEARANCE[scenario];
     if (C) {
       const uHinge = pair ? fr.u0 : (hingeAtU0 ? fr.u0 : fr.u1), uLatch = pair ? fr.u1 : (hingeAtU0 ? fr.u1 : fr.u0), sg = Math.sign(uLatch - uHinge) || 1;

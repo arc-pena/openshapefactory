@@ -16,6 +16,7 @@ import { buildSchaefferSample } from "./sample_schaeffer.js";
 import { buildWalnutSample } from "./sample_walnut.js";
 import { buildFpcSample } from "./sample_fpc.js";
 import { buildAiaSample } from "./sample_aia.js";
+import { buildHotelsSample } from "./sample_hotels.js";
 import { cadLibraryIndex, cadLibraryCategories, cadLibrarySymbol, cadLibraryPreview } from "./cadlib.js";
 import { contoursFromDXF } from "./archelements.js";
 import { inflateBase64 } from "./inflate.js";
@@ -1083,6 +1084,7 @@ async function saveModel() { const r = await saveFile(`${app.doc.meta.name || "m
 // ---------------------------------------------------------------- samples, and new projects from them
 /** The drawing sets the tool carries. Each is also a template: a new project can take its standards. */
 const SAMPLES = [
+  { id: "hotels", name: "Hotels Test Fit (work in progress)", build: () => buildHotelsSample(), open: "V-SITE" },
   { id: "mazatlan", name: "Casa Mazatlan (INAH drawing set)", build: () => buildMazatlanSample(), open: "SH-A101" },
   { id: "schaeffer", name: "Schaeffer Residence (Frank Harmon Architect)", build: () => buildSchaefferSample(), open: "SH-A202" },
   { id: "walnut", name: "Walnut Creek Environmental Education Center (Frank Harmon Architect)", build: () => buildWalnutSample(), open: "SH-A201" },
@@ -1547,10 +1549,10 @@ async function boot() {
   if (draft) { try { doc = openDocument(draft); doc.regenerate(); note = { msg: "Restored your draft from this browser. File › New to start empty.", kind: "note" }; } catch (e) { doc = null; } }
   // the one sample the tool carries: Casa Mazatlan, opened on its ground floor sheet
   const fresh = !doc;
-  if (!doc) doc = buildMazatlanSample();
+  if (!doc) doc = buildHotelsSample();
   installPromptPanel(app);
-  setDocument(doc, note || { msg: "Casa Mazatlan: the INAH set rebuilt as a model - 17 A3 sheets A001-A904 in the set's title band", kind: "ok" });
-  if (fresh) app.openView("SH-A101");
+  setDocument(doc, note || { msg: "Hotels Test Fit (work in progress): three plates, typical guest floor. File lists the other samples.", kind: "ok" });
+  if (fresh) app.openView("V-SITE");
 }
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();
 /** Blocks of a massing study moved by hand (plan or 3D): the graph that built them re-packs around where they now are. */
