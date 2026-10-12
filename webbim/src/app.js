@@ -279,6 +279,8 @@ const COMMANDS = {
   viewstyles: { label: "View Styles", icon: "vv", key: "VT", run: () => { const v = app.doc.element(app.activeView); const isV = v && ["PlanView", "ElevationView", "SectionView", "View3D"].includes(app.doc.typeOf(v)); viewStyleEditor(app, isV ? F.refId(v, "style") : null, isV ? app.activeView : null); } },
   pens: { label: "Object Styles & Pens", icon: "pens", run: () => { const v = app.activeView && app.doc.element(app.activeView); vvDialog(app, v && ["PlanView", "ElevationView", "SectionView", "View3D"].includes(app.doc.typeOf(v)) ? app.activeView : firstOf("PlanView"), { tab: "pens" }); } },
   projectinfo: { label: "Project Information", icon: "info", run: () => projectInfo() },
+  uxlook: { label: "Interface Look", icon: "menu", key: "UX", hint: "Choose how the app looks and is laid out: Revit, AutoCAD, SketchUp, Onshape, Alias, Rayon or Studio - the same tools in each", run: () => uxDialog() },
+  uxswap: { label: "Swap Interface", icon: "menu", key: "SW", hint: "Go to the next interface look", run: () => setUX(UX_LOOKS[(UX_LOOKS.findIndex(x => x.id === currentUX()) + 1) % UX_LOOKS.length].id) },
   units: { label: "Project Units", icon: "dim", key: "UN", hint: "How lengths are shown: mm, cm, m, feet-inches or inches. Fields take any unit and maths whatever this says.", run: () => unitsDialog() },
   open: { label: "Open…", icon: "open", run: () => openFile() },
   save: { label: "Save", icon: "save", key: "", run: () => saveModel() },
@@ -336,10 +338,10 @@ const RIBBON = [
     { title: "Graphics", items: [big("vv"), big("viewstyles"), small("thin"), small("zoomfit")] },
     { title: "Create", items: [big("planview"), big("default3d"), big("sectionbox"), big("section"), small("elev"), small("schedule"), big("sheet"), small("edittitleblock")] },
     { title: "Windows", items: [big("prompts"), small("graph"), small("tree"), small("closehidden")] },
-    { title: "Interface", items: [big("cadmode")] },
+    { title: "Interface", items: [big("uxlook"), big("cadmode")] },
   ] },
   { tab: "Manage", panels: [
-    { title: "Settings", items: [big("materials"), big("dimstyles"), big("pens"), big("projectinfo"), big("units")] },
+    { title: "Settings", items: [big("uxlook"), big("materials"), big("dimstyles"), big("pens"), big("projectinfo"), big("units")] },
     { title: "Inquiry", items: [big("tests")] },
   ] },
   { tab: "Modify", panels: [
@@ -509,6 +511,7 @@ function renderQAT() {
   const viewName = v ? `${{ PlanView: "Floor Plan", ElevationView: "Elevation", SectionView: "Section", View3D: "3D View", Schedule: "Schedule", Sheet: "Sheet", DraftingView: "Drafting View" }[app.doc.typeOf(v)]}: ${v.get("Name")}` : app.activeView === "__graph" ? "Node Graph" : app.activeView === "__spacegraph" ? "Brief Analysis" : app.activeView === "__tree" ? "Feature Tree" : app.activeView === "__diag" ? "Acceptance Tests" : "";
   q.append(
     h("button", { class: "qbtn mobile-only", "aria-label": "Palettes", onclick: () => document.body.classList.toggle("show-left") }, icon("menu", 16)),
+    h("button", { class: "qbtn burger", title: "Menu: file, settings, swap interface", "aria-label": "Menu", onclick: e => burgerMenu(e.currentTarget) }, icon("menu", 16)),
     h("div", { class: "logo", title: "Web BIM" }, "B"),
     b("open"), b("save"), h("span", { class: "qsep" }), b("undo"), b("redo"), h("span", { class: "qsep" }),
     b("dim"), b("text"), h("span", { class: "qsep" }), b("default3d"), b("elev"), b("thin"), b("closehidden"),
@@ -618,6 +621,50 @@ function fileMenu(anchor) {
     "-", { label: "Export…", icon: "exportI", run: () => exportDialog() }, { label: "Import IFC…", icon: "importI", run: () => importIfcFile() }, { label: "Import DXF Symbol…", icon: "importI", run: () => importDXF() }, { label: "Import Contours (DXF)…", icon: "topo", run: () => importContours() },
     "-", { label: "Project Information…", icon: "info", run: () => projectInfo() }, ...SAMPLES.map(x => ({ label: x.name, icon: "house", run: () => { forget("draft-v6"); forget("tabs"); setDocument(x.build(), { msg: `${x.name}: loaded`, kind: "ok" }); if (x.open) app.openView(x.open); } })),
   ]);
+}
+
+/** The burger menu: the file commands, settings, and every interface look to swap to in one click. */
+function burgerMenu(anchor) {
+  const r = anchor.getBoundingClientRect(), now = currentUX();
+  menuAt(r.left, r.bottom, [
+    { label: "New…", icon: "sheet", run: () => newProjectDialog() }, { label: "Open…", icon: "open", run: () => openFile() }, { label: "Save", icon: "save", run: () => saveModel() }, { label: "Export…", icon: "exportI", run: () => exportDialog() },
+    "-", { label: "Settings: Interface Look…", icon: "menu", key: "UX", run: () => uxDialog() }, { label: "Project Units…", icon: "dim", run: () => unitsDialog() }, { label: "Project Information…", icon: "info", run: () => projectInfo() },
+    "-", { label: "Swap interface to:", disabled: true },
+    ...UX_LOOKS.map(x => ({ label: `${x.id === now ? "● " : "   "}${x.name}`, run: () => setUX(x.id) })),
+  ]);
+}
+
+// ---------------------------------------------------------------- interface looks
+//! One app, many faces. A look is CSS only (html[data-ux]): colours, where the palettes dock, whether the
+//! ribbon is a strip or a floating bar, icons with or without words. Every command, shortcut and panel is
+//! the same in each, so swapping never loses a tool or a selection - it re-renders, nothing more.
+const UX_LOOKS = [
+  { id: "revit", name: "Revit", note: "Ribbon tabs and panels, Properties over the Project Browser on the left. The default.", sw: ["#2B3A4E", "#EEF0F3", "#FFFFFF", "#0F6CBD"] },
+  { id: "autocad", name: "AutoCAD", note: "Dark drafting chrome, a dark model space, monospace command-line status.", sw: ["#1F2530", "#3B4453", "#212830", "#E2A93B"] },
+  { id: "sketchup", name: "SketchUp", note: "Icon toolbar, the Default Tray on the right, a sky-to-ground 3D backdrop.", sw: ["#E8E8E8", "#F4F4F4", "#CFE3F2", "#D9412B"] },
+  { id: "onshape", name: "Onshape", note: "Clean white toolbar of icons, the feature list on the left, blue accents.", sw: ["#FFFFFF", "#F6F8FA", "#FFFFFF", "#2C6ECB"] },
+  { id: "alias", name: "Alias", note: "Charcoal studio shelves, palettes on the right, a graded grey viewport.", sw: ["#2A2A2A", "#3A3A3A", "#5E6266", "#F0B323"] },
+  { id: "rayon", name: "Rayon", note: "Light and airy: a floating tool bar at the bottom, rounded cards, violet accents.", sw: ["#FFFFFF", "#F7F7FB", "#FAFAFC", "#6155F5"] },
+  { id: "studio", name: "Studio (Gen Z)", note: "Designer-first: deep night canvas, glass panels, gradient accents, a floating dock.", sw: ["#0D0D14", "#1A1A26", "#12121C", "#FF4FD8"] },
+];
+const currentUX = () => document.documentElement.dataset.ux || "revit";
+function setUX(id, { quiet = false } = {}) {
+  const look = UX_LOOKS.find(x => x.id === id) || UX_LOOKS[0];
+  if (look.id === "revit") delete document.documentElement.dataset.ux; else document.documentElement.dataset.ux = look.id;
+  store("ux", look.id);
+  app.views.forEach(v => { if (v.render && v.renderer) v.render(); });
+  app.refresh({ keepMain: true });
+  if (!quiet) app.say(`Interface: ${look.name} - the same model and tools (☰ › Swap interface to go back)`, "ok");
+}
+function uxDialog() {
+  const card = x => h("button", { class: "uxcard", "aria-pressed": String(x.id === currentUX()), onclick: () => { setUX(x.id); d.el.querySelectorAll(".uxcard").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.id === x.id))); }, "data-id": x.id },
+    h("div", { class: "uxprev", style: { background: x.sw[2] } },
+      h("div", { style: { background: x.sw[0], height: "14%" } }), h("div", { style: { background: x.sw[1], height: "16%", borderBottom: `2px solid ${x.sw[3]}` } }),
+      h("div", { class: "uxdot", style: { background: x.sw[3] } })),
+    h("b", {}, x.name), h("span", { class: "muted small" }, x.note));
+  const d = dialog("Interface Look", h("div", {},
+    h("p", { class: "muted small", style: { margin: "0 0 10px" } }, "Pick a look - it applies at once and is remembered. Swap back any time from ☰ › Swap interface to, or type SW to step through them."),
+    h("div", { class: "uxgrid" }, UX_LOOKS.map(card))), [{ label: "Done", primary: true, run: () => true }]);
 }
 
 // ---------------------------------------------------------------- palettes: Properties over the Project Browser
@@ -1539,6 +1586,7 @@ window.addEventListener("resize", () => { const v = app.views.get(app.activeView
 
 // ---------------------------------------------------------------- boot
 async function boot() {
+  { const ux = store("ux"); if (ux && ux !== "revit" && UX_LOOKS.some(x => x.id === ux)) document.documentElement.dataset.ux = ux; }   // before the first render
   const snaps = store("snaps"); if (snaps) Object.assign(app.snaps, snaps);
   const split = store("split"); if (split) document.getElementById("left").style.setProperty("--split", (split * 100).toFixed(1) + "%");
   await loadDrawingFont();

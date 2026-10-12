@@ -483,6 +483,129 @@ input.bad { outline: 2px solid var(--error); }
   .navbar { top: 106px; right: 42px; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+/* ---------------------------------------------------------------- interface looks (html[data-ux]) */
+.uxgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; max-width: 760px; }
+.uxcard { display: flex; flex-direction: column; gap: 4px; text-align: left; padding: 8px; border: 1px solid var(--rule); border-radius: 8px; background: var(--panel); }
+.uxcard:hover { border-color: var(--accent); }
+.uxcard[aria-pressed="true"] { border: 2px solid var(--accent); padding: 7px; box-shadow: 0 0 0 3px var(--accent-2); }
+.uxprev { position: relative; height: 72px; border-radius: 5px; overflow: hidden; border: 1px solid var(--rule-2); }
+.uxdot { position: absolute; right: 8px; bottom: 8px; width: 14px; height: 14px; border-radius: 50%; }
+.small { font-size: 11.5px; }
+/* palettes on the right */
+:root[data-ux="sketchup"] .app, :root[data-ux="alias"] .app, :root[data-ux="rayon"] .app, :root[data-ux="studio"] .app {
+  grid-template-columns: 1fr var(--left-w); grid-template-areas: "qat qat" "ribbon ribbon" "options options" "main left" "status status"; }
+:root[data-ux="sketchup"] .left, :root[data-ux="alias"] .left, :root[data-ux="rayon"] .left, :root[data-ux="studio"] .left { border-right: 0; border-left: 1px solid var(--rule); }
+/* icon-only toolbars */
+:root[data-ux="sketchup"] .rbig span, :root[data-ux="onshape"] .rbig span, :root[data-ux="alias"] .rbig span, :root[data-ux="rayon"] .rbig span, :root[data-ux="studio"] .rbig span,
+:root[data-ux="sketchup"] .rptitle, :root[data-ux="onshape"] .rptitle, :root[data-ux="rayon"] .rptitle, :root[data-ux="studio"] .rptitle { display: none; }
+:root[data-ux="sketchup"] .rbig, :root[data-ux="onshape"] .rbig, :root[data-ux="alias"] .rbig, :root[data-ux="rayon"] .rbig, :root[data-ux="studio"] .rbig { min-width: 34px; padding: 4px; justify-content: center; }
+:root[data-ux="sketchup"] .rpanels, :root[data-ux="onshape"] .rpanels { height: auto; padding: 3px; }
+:root[data-ux="alias"] .rpanels { height: auto; }
+:root[data-ux="sketchup"] .rsmall span, :root[data-ux="onshape"] .rsmall span, :root[data-ux="rayon"] .rsmall span, :root[data-ux="studio"] .rsmall span { display: none; }
+:root[data-ux="sketchup"] .rsmallcol, :root[data-ux="onshape"] .rsmallcol, :root[data-ux="rayon"] .rsmallcol, :root[data-ux="studio"] .rsmallcol { flex-direction: row; align-items: center; padding: 0; }
+
+/* dark looks: the Properties group bars follow the palette */
+:root[data-ux="autocad"] .grp > summary, :root[data-ux="alias"] .grp > summary, :root[data-ux="studio"] .grp > summary { background: var(--panel-3); border-bottom-color: var(--rule); color: var(--ink); }
+/* AutoCAD: dark drafting chrome and model space */
+:root[data-ux="autocad"] { color-scheme: dark;
+  --ground: #1A1F27; --panel: #2B313B; --panel-2: #323946; --panel-3: #3A4250; --ink: #E4E8EE; --ink-2: #B5BDC9; --ink-3: #8691A1;
+  --rule: #454E5C; --rule-2: #39414D; --accent: #E2A93B; --accent-2: #3E3727; --accent-ink: #1A1F27;
+  --chrome: #3B4453; --chrome-2: #323A47; --title: #1F2530; --title-ink: #DDE3EA; --file: #C0392B; --context: #6FCF9C; --context-bg: #213128;
+  --canvas: #212830; --canvas-3d: linear-gradient(#2E3540, #212830 70%); --view3d-bg: #2A313B; --error-bg: #3A1D1B; --note-bg: #33290F; --ok-bg: #16301F; }
+:root[data-ux="autocad"] .rbig[aria-pressed="true"], :root[data-ux="autocad"] .rsmall[aria-pressed="true"] { background: #4A4230; border-color: var(--accent); }
+:root[data-ux="autocad"] .rbig:hover, :root[data-ux="autocad"] .rsmall:hover { border-color: var(--accent); }
+:root[data-ux="autocad"] .status { font-family: var(--mono); font-size: 11.5px; background: #1F2530; }
+:root[data-ux="autocad"] .status .msg::before { content: "Command: "; color: var(--accent); }
+
+/* SketchUp: light grey toolbars, red accent, a sky to ground 3D backdrop */
+:root[data-ux="sketchup"] {
+  --ground: #DADADA; --panel: #FFFFFF; --panel-2: #F1F1F1; --panel-3: #E6E6E6; --ink: #222; --ink-2: #444; --ink-3: #777;
+  --rule: #C4C4C4; --rule-2: #E0E0E0; --accent: #D9412B; --accent-2: #FBE4E0; --chrome: #ECECEC; --chrome-2: #E2E2E2;
+  --title: #E8E8E8; --title-ink: #222; --file: #D9412B; --canvas-3d: linear-gradient(#A9CBE4, #E4EEF5 55%, #C9C6B8 55%, #B7B4A6); --view3d-bg: #CFE3F2; }
+:root[data-ux="sketchup"] .qbtn:hover, :root[data-ux="sketchup"] .qswitch:hover { background: rgba(0,0,0,.08); }
+:root[data-ux="sketchup"] .qswitch { border-color: #BBB; background: #fff; }
+:root[data-ux="sketchup"] .rbig[aria-pressed="true"], :root[data-ux="sketchup"] .rsmall[aria-pressed="true"] { background: #F6CFC8; border-color: var(--accent); }
+:root[data-ux="sketchup"] .rbig:hover, :root[data-ux="sketchup"] .rsmall:hover { border-color: #E89A8E; }
+:root[data-ux="sketchup"] .rpanel { border-right: 1px solid #CFCFCF; }
+
+/* Onshape: white, flat, blue */
+:root[data-ux="onshape"] {
+  --ground: #F2F4F7; --panel: #FFFFFF; --panel-2: #F6F8FA; --panel-3: #EEF1F5; --ink: #1F2933; --ink-2: #4A5562; --ink-3: #8A94A1;
+  --rule: #D7DDE4; --rule-2: #E8ECF1; --accent: #2C6ECB; --accent-2: #E3EEFB; --chrome: #FFFFFF; --chrome-2: #F6F8FA;
+  --title: #FFFFFF; --title-ink: #1F2933; --file: #2C6ECB; --view3d-bg: #FFFFFF; --canvas-3d: #FFFFFF; --sans: "Inter", "Segoe UI", system-ui, sans-serif; }
+:root[data-ux="onshape"] .qat { border-bottom: 1px solid var(--rule); }
+:root[data-ux="onshape"] .qbtn:hover, :root[data-ux="onshape"] .qswitch:hover { background: var(--accent-2); }
+:root[data-ux="onshape"] .qswitch { border-color: var(--rule); background: #fff; }
+:root[data-ux="onshape"] .qsep { background: var(--rule); }
+:root[data-ux="onshape"] .rtab[aria-selected="true"] { border-color: transparent; border-bottom: 2px solid var(--accent); border-radius: 0; color: var(--accent); background: none; }
+:root[data-ux="onshape"] .rpanel { border-right: 0; }
+:root[data-ux="onshape"] .rbig[aria-pressed="true"], :root[data-ux="onshape"] .rsmall[aria-pressed="true"] { background: var(--accent-2); border-color: var(--accent); }
+:root[data-ux="onshape"] .palette { border-radius: 4px; }
+
+/* Alias: charcoal shelves, amber highlight, graded grey viewport */
+:root[data-ux="alias"] { color-scheme: dark;
+  --ground: #232323; --panel: #333333; --panel-2: #2C2C2C; --panel-3: #3D3D3D; --ink: #E2E2E2; --ink-2: #B9B9B9; --ink-3: #8B8B8B;
+  --rule: #4A4A4A; --rule-2: #3C3C3C; --accent: #F0B323; --accent-2: #463A1C; --accent-ink: #1E1E1E;
+  --chrome: #3A3A3A; --chrome-2: #2A2A2A; --title: #1E1E1E; --title-ink: #DADADA; --file: #5A5A5A; --context: #F0B323; --context-bg: #3A3220;
+  --canvas: #4E5256; --canvas-3d: linear-gradient(#7A7F84, #3E4245); --view3d-bg: #5E6266; --error-bg: #3A1D1B; --note-bg: #33290F; --ok-bg: #16301F; }
+:root[data-ux="alias"] .rbig[aria-pressed="true"], :root[data-ux="alias"] .rsmall[aria-pressed="true"] { background: #5A4A22; border-color: var(--accent); }
+:root[data-ux="alias"] .rbig:hover, :root[data-ux="alias"] .rsmall:hover { background: #4A4A4A; border-color: #666; }
+:root[data-ux="alias"] .rtab[aria-selected="true"] { color: var(--accent); }
+:root[data-ux="alias"] .rptitle { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
+
+/* Rayon and Studio: the ribbon is a floating dock at the foot of the view */
+:root[data-ux="rayon"] .ribbon, :root[data-ux="studio"] .ribbon { position: fixed; z-index: 40; left: calc((100vw - var(--left-w)) / 2); transform: translateX(-50%);
+  bottom: calc(var(--status-h) + 40px); max-width: calc(100vw - var(--left-w) - 32px); border: 1px solid var(--rule); border-radius: 16px; box-shadow: var(--shadow); overflow: hidden; }
+:root[data-ux="rayon"] .rpanels, :root[data-ux="studio"] .rpanels { height: 46px; padding: 4px 6px; }
+:root[data-ux="rayon"] .rtabs, :root[data-ux="studio"] .rtabs { height: 28px; align-items: center; padding: 0 8px; }
+:root[data-ux="rayon"] .rtab, :root[data-ux="studio"] .rtab { height: 22px; border-radius: 999px; border: 0; }
+:root[data-ux="rayon"] .rtab[aria-selected="true"], :root[data-ux="studio"] .rtab[aria-selected="true"] { height: 22px; margin: 0; }
+:root[data-ux="rayon"] .rtab.file, :root[data-ux="studio"] .rtab.file { border-radius: 999px; }
+:root[data-ux="rayon"] .rpanel, :root[data-ux="studio"] .rpanel { border-right: 1px solid var(--rule-2); }
+:root[data-ux="rayon"] .rbig, :root[data-ux="studio"] .rbig, :root[data-ux="rayon"] .rsmall, :root[data-ux="studio"] .rsmall { border-radius: 10px; }
+:root[data-ux="rayon"] .vcb, :root[data-ux="studio"] .vcb { padding-right: 8px; }
+:root[data-ux="rayon"] .palette, :root[data-ux="studio"] .palette { border-radius: 12px; margin: 6px 6px 0; overflow: hidden; }
+:root[data-ux="rayon"] .palette.browser, :root[data-ux="studio"] .palette.browser { margin-bottom: 6px; }
+@media (max-width: 800px) { :root[data-ux="rayon"] .ribbon, :root[data-ux="studio"] .ribbon { left: 50%; max-width: calc(100vw - 32px); } }
+
+/* Rayon: light, airy, violet */
+:root[data-ux="rayon"] {
+  --ground: #F3F3F7; --panel: #FFFFFF; --panel-2: #FAFAFC; --panel-3: #F1F1F6; --ink: #17171C; --ink-2: #50505C; --ink-3: #9393A0;
+  --rule: #E3E3EA; --rule-2: #EEEEF3; --accent: #6155F5; --accent-2: #EEECFF; --chrome: #FFFFFF; --chrome-2: #FAFAFC;
+  --title: #FFFFFF; --title-ink: #17171C; --file: #17171C; --context: #6155F5; --context-bg: #EEECFF; --view3d-bg: #FAFAFC; --canvas-3d: #FAFAFC;
+  --shadow: 0 2px 6px rgba(20,20,40,.06), 0 12px 32px rgba(20,20,40,.12); --sans: "Inter", "Segoe UI", system-ui, sans-serif; }
+:root[data-ux="rayon"] .qat { border-bottom: 1px solid var(--rule); }
+:root[data-ux="rayon"] .qbtn:hover, :root[data-ux="rayon"] .qswitch:hover { background: var(--accent-2); }
+:root[data-ux="rayon"] .qswitch { border-color: var(--rule); background: #fff; }
+:root[data-ux="rayon"] .qsep { background: var(--rule); }
+:root[data-ux="rayon"] .qat .logo { background: var(--accent); border-radius: 7px; }
+:root[data-ux="rayon"] .rbig[aria-pressed="true"], :root[data-ux="rayon"] .rsmall[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); }
+:root[data-ux="rayon"] .rbig[aria-pressed="true"] svg, :root[data-ux="rayon"] .rsmall[aria-pressed="true"] svg { color: #fff; }
+:root[data-ux="rayon"] .rbig:hover, :root[data-ux="rayon"] .rsmall:hover { border-color: transparent; }
+:root[data-ux="rayon"] .rbig svg, :root[data-ux="rayon"] .rsmall svg { color: var(--ink); }
+
+/* Studio (Gen Z): night canvas, glass, gradient accents */
+:root[data-ux="studio"] { color-scheme: dark;
+  --ground: #0B0B12; --panel: rgba(26,26,38,.82); --panel-2: #161622; --panel-3: #20202E; --ink: #F4F2FF; --ink-2: #C0BCD9; --ink-3: #8781A8;
+  --rule: rgba(255,255,255,.10); --rule-2: rgba(255,255,255,.06); --accent: #FF4FD8; --accent-2: rgba(255,79,216,.16); --accent-ink: #0B0B12;
+  --chrome: rgba(20,20,32,.78); --chrome-2: rgba(16,16,26,.9); --title: #0B0B12; --title-ink: #F4F2FF; --file: #7C5CFF; --context: #3DF2C1; --context-bg: rgba(61,242,193,.12);
+  --canvas: #12121C; --canvas-3d: radial-gradient(120% 90% at 30% 0%, #2B1F4A, #12121C 60%); --view3d-bg: #17142A;
+  --error: #FF6B8B; --error-bg: rgba(255,107,139,.14); --note: #FFD166; --note-bg: rgba(255,209,102,.12); --ok: #3DF2C1; --ok-bg: rgba(61,242,193,.12);
+  --shadow: 0 10px 40px rgba(124,92,255,.25), 0 2px 8px rgba(0,0,0,.5); --sans: "Space Grotesk", "Inter", "Segoe UI", system-ui, sans-serif; }
+:root[data-ux="studio"] .qat { background: linear-gradient(90deg, #120E22, #0B0B12 40%, #0E1420); border-bottom: 1px solid var(--rule); }
+:root[data-ux="studio"] .qat .logo { background: linear-gradient(135deg, #FF4FD8, #7C5CFF 55%, #3DF2C1); border-radius: 8px; }
+:root[data-ux="studio"] .qswitch { border: 0; background: linear-gradient(135deg, rgba(255,79,216,.35), rgba(124,92,255,.35)); }
+:root[data-ux="studio"] .ribbon, :root[data-ux="studio"] .palette, :root[data-ux="studio"] .cmenu, :root[data-ux="studio"] .dialog { backdrop-filter: blur(18px) saturate(1.4); -webkit-backdrop-filter: blur(18px) saturate(1.4); }
+:root[data-ux="studio"] .ribbon { border-radius: 22px; border-color: rgba(255,255,255,.14); }
+:root[data-ux="studio"] .rbig svg, :root[data-ux="studio"] .rsmall svg { color: #E9E4FF; }
+:root[data-ux="studio"] .rbig[aria-pressed="true"], :root[data-ux="studio"] .rsmall[aria-pressed="true"] { background: linear-gradient(135deg, #FF4FD8, #7C5CFF); border-color: transparent; box-shadow: 0 4px 18px rgba(255,79,216,.45); }
+:root[data-ux="studio"] .rbig[aria-pressed="true"] svg, :root[data-ux="studio"] .rsmall[aria-pressed="true"] svg { color: #fff; }
+:root[data-ux="studio"] .rbig:hover, :root[data-ux="studio"] .rsmall:hover { background: rgba(255,255,255,.08); border-color: transparent; }
+:root[data-ux="studio"] .rtab.file { background: linear-gradient(135deg, #FF4FD8, #7C5CFF); }
+:root[data-ux="studio"] .rtab[aria-selected="true"] { background: rgba(255,255,255,.12); color: #fff; }
+:root[data-ux="studio"] .palette > header { text-transform: lowercase; letter-spacing: .02em; }
+:root[data-ux="studio"] .uxcard, :root[data-ux="studio"] .btn.primary { border-radius: 12px; }
+:root[data-ux="studio"] .status { background: #0B0B12; }
 </style>
 <div class="app" id="app">
   <header class="qat" id="qat"></header>
@@ -29670,7 +29793,9 @@ class View3D {
   render() {
     if (!this.renderer || !this.W) return;
     const T = this.T, B = this.basis();
-    this.scene.background = new T.Color(this.style === "Hidden Line" || this.style === "Wireframe" ? 0xffffff : 0xf3f5f8);
+    // the interface look may give shaded 3D its own backdrop (--view3d-bg); line styles stay on white paper
+    const look = typeof document !== "undefined" ? getComputedStyle(document.documentElement).getPropertyValue("--view3d-bg").trim() : "";
+    this.scene.background = new T.Color(this.style === "Hidden Line" || this.style === "Wireframe" ? 0xffffff : look || 0xf3f5f8);
     const t = new T.Vector3(...this.cam.target), D = new T.Vector3(...B.D);
     this.camera.position.copy(t.clone().add(D.multiplyScalar(60000)));
     this.camera.up.set(...B.up); this.camera.lookAt(t);
@@ -30574,6 +30699,8 @@ const COMMANDS = {
   viewstyles: { label: "View Styles", icon: "vv", key: "VT", run: () => { const v = app.doc.element(app.activeView); const isV = v && ["PlanView", "ElevationView", "SectionView", "View3D"].includes(app.doc.typeOf(v)); viewStyleEditor(app, isV ? F.refId(v, "style") : null, isV ? app.activeView : null); } },
   pens: { label: "Object Styles & Pens", icon: "pens", run: () => { const v = app.activeView && app.doc.element(app.activeView); vvDialog(app, v && ["PlanView", "ElevationView", "SectionView", "View3D"].includes(app.doc.typeOf(v)) ? app.activeView : firstOf("PlanView"), { tab: "pens" }); } },
   projectinfo: { label: "Project Information", icon: "info", run: () => projectInfo() },
+  uxlook: { label: "Interface Look", icon: "menu", key: "UX", hint: "Choose how the app looks and is laid out: Revit, AutoCAD, SketchUp, Onshape, Alias, Rayon or Studio - the same tools in each", run: () => uxDialog() },
+  uxswap: { label: "Swap Interface", icon: "menu", key: "SW", hint: "Go to the next interface look", run: () => setUX(UX_LOOKS[(UX_LOOKS.findIndex(x => x.id === currentUX()) + 1) % UX_LOOKS.length].id) },
   units: { label: "Project Units", icon: "dim", key: "UN", hint: "How lengths are shown: mm, cm, m, feet-inches or inches. Fields take any unit and maths whatever this says.", run: () => unitsDialog() },
   open: { label: "Open…", icon: "open", run: () => openFile() },
   save: { label: "Save", icon: "save", key: "", run: () => saveModel() },
@@ -30631,10 +30758,10 @@ const RIBBON = [
     { title: "Graphics", items: [big("vv"), big("viewstyles"), small("thin"), small("zoomfit")] },
     { title: "Create", items: [big("planview"), big("default3d"), big("sectionbox"), big("section"), small("elev"), small("schedule"), big("sheet"), small("edittitleblock")] },
     { title: "Windows", items: [big("prompts"), small("graph"), small("tree"), small("closehidden")] },
-    { title: "Interface", items: [big("cadmode")] },
+    { title: "Interface", items: [big("uxlook"), big("cadmode")] },
   ] },
   { tab: "Manage", panels: [
-    { title: "Settings", items: [big("materials"), big("dimstyles"), big("pens"), big("projectinfo"), big("units")] },
+    { title: "Settings", items: [big("uxlook"), big("materials"), big("dimstyles"), big("pens"), big("projectinfo"), big("units")] },
     { title: "Inquiry", items: [big("tests")] },
   ] },
   { tab: "Modify", panels: [
@@ -30804,6 +30931,7 @@ function renderQAT() {
   const viewName = v ? `${{ PlanView: "Floor Plan", ElevationView: "Elevation", SectionView: "Section", View3D: "3D View", Schedule: "Schedule", Sheet: "Sheet", DraftingView: "Drafting View" }[app.doc.typeOf(v)]}: ${v.get("Name")}` : app.activeView === "__graph" ? "Node Graph" : app.activeView === "__spacegraph" ? "Brief Analysis" : app.activeView === "__tree" ? "Feature Tree" : app.activeView === "__diag" ? "Acceptance Tests" : "";
   q.append(
     h("button", { class: "qbtn mobile-only", "aria-label": "Palettes", onclick: () => document.body.classList.toggle("show-left") }, icon("menu", 16)),
+    h("button", { class: "qbtn burger", title: "Menu: file, settings, swap interface", "aria-label": "Menu", onclick: e => burgerMenu(e.currentTarget) }, icon("menu", 16)),
     h("div", { class: "logo", title: "Web BIM" }, "B"),
     b("open"), b("save"), h("span", { class: "qsep" }), b("undo"), b("redo"), h("span", { class: "qsep" }),
     b("dim"), b("text"), h("span", { class: "qsep" }), b("default3d"), b("elev"), b("thin"), b("closehidden"),
@@ -30913,6 +31041,50 @@ function fileMenu(anchor) {
     "-", { label: "Export…", icon: "exportI", run: () => exportDialog() }, { label: "Import IFC…", icon: "importI", run: () => importIfcFile() }, { label: "Import DXF Symbol…", icon: "importI", run: () => importDXF() }, { label: "Import Contours (DXF)…", icon: "topo", run: () => importContours() },
     "-", { label: "Project Information…", icon: "info", run: () => projectInfo() }, ...SAMPLES.map(x => ({ label: x.name, icon: "house", run: () => { forget("draft-v6"); forget("tabs"); setDocument(x.build(), { msg: `${x.name}: loaded`, kind: "ok" }); if (x.open) app.openView(x.open); } })),
   ]);
+}
+
+/** The burger menu: the file commands, settings, and every interface look to swap to in one click. */
+function burgerMenu(anchor) {
+  const r = anchor.getBoundingClientRect(), now = currentUX();
+  menuAt(r.left, r.bottom, [
+    { label: "New…", icon: "sheet", run: () => newProjectDialog() }, { label: "Open…", icon: "open", run: () => openFile() }, { label: "Save", icon: "save", run: () => saveModel() }, { label: "Export…", icon: "exportI", run: () => exportDialog() },
+    "-", { label: "Settings: Interface Look…", icon: "menu", key: "UX", run: () => uxDialog() }, { label: "Project Units…", icon: "dim", run: () => unitsDialog() }, { label: "Project Information…", icon: "info", run: () => projectInfo() },
+    "-", { label: "Swap interface to:", disabled: true },
+    ...UX_LOOKS.map(x => ({ label: `${x.id === now ? "● " : "   "}${x.name}`, run: () => setUX(x.id) })),
+  ]);
+}
+
+// ---------------------------------------------------------------- interface looks
+//! One app, many faces. A look is CSS only (html[data-ux]): colours, where the palettes dock, whether the
+//! ribbon is a strip or a floating bar, icons with or without words. Every command, shortcut and panel is
+//! the same in each, so swapping never loses a tool or a selection - it re-renders, nothing more.
+const UX_LOOKS = [
+  { id: "revit", name: "Revit", note: "Ribbon tabs and panels, Properties over the Project Browser on the left. The default.", sw: ["#2B3A4E", "#EEF0F3", "#FFFFFF", "#0F6CBD"] },
+  { id: "autocad", name: "AutoCAD", note: "Dark drafting chrome, a dark model space, monospace command-line status.", sw: ["#1F2530", "#3B4453", "#212830", "#E2A93B"] },
+  { id: "sketchup", name: "SketchUp", note: "Icon toolbar, the Default Tray on the right, a sky-to-ground 3D backdrop.", sw: ["#E8E8E8", "#F4F4F4", "#CFE3F2", "#D9412B"] },
+  { id: "onshape", name: "Onshape", note: "Clean white toolbar of icons, the feature list on the left, blue accents.", sw: ["#FFFFFF", "#F6F8FA", "#FFFFFF", "#2C6ECB"] },
+  { id: "alias", name: "Alias", note: "Charcoal studio shelves, palettes on the right, a graded grey viewport.", sw: ["#2A2A2A", "#3A3A3A", "#5E6266", "#F0B323"] },
+  { id: "rayon", name: "Rayon", note: "Light and airy: a floating tool bar at the bottom, rounded cards, violet accents.", sw: ["#FFFFFF", "#F7F7FB", "#FAFAFC", "#6155F5"] },
+  { id: "studio", name: "Studio (Gen Z)", note: "Designer-first: deep night canvas, glass panels, gradient accents, a floating dock.", sw: ["#0D0D14", "#1A1A26", "#12121C", "#FF4FD8"] },
+];
+const currentUX = () => document.documentElement.dataset.ux || "revit";
+function setUX(id, { quiet = false } = {}) {
+  const look = UX_LOOKS.find(x => x.id === id) || UX_LOOKS[0];
+  if (look.id === "revit") delete document.documentElement.dataset.ux; else document.documentElement.dataset.ux = look.id;
+  store("ux", look.id);
+  app.views.forEach(v => { if (v.render && v.renderer) v.render(); });
+  app.refresh({ keepMain: true });
+  if (!quiet) app.say(`Interface: ${look.name} - the same model and tools (☰ › Swap interface to go back)`, "ok");
+}
+function uxDialog() {
+  const card = x => h("button", { class: "uxcard", "aria-pressed": String(x.id === currentUX()), onclick: () => { setUX(x.id); d.el.querySelectorAll(".uxcard").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.id === x.id))); }, "data-id": x.id },
+    h("div", { class: "uxprev", style: { background: x.sw[2] } },
+      h("div", { style: { background: x.sw[0], height: "14%" } }), h("div", { style: { background: x.sw[1], height: "16%", borderBottom: `2px solid ${x.sw[3]}` } }),
+      h("div", { class: "uxdot", style: { background: x.sw[3] } })),
+    h("b", {}, x.name), h("span", { class: "muted small" }, x.note));
+  const d = dialog("Interface Look", h("div", {},
+    h("p", { class: "muted small", style: { margin: "0 0 10px" } }, "Pick a look - it applies at once and is remembered. Swap back any time from ☰ › Swap interface to, or type SW to step through them."),
+    h("div", { class: "uxgrid" }, UX_LOOKS.map(card))), [{ label: "Done", primary: true, run: () => true }]);
 }
 
 // ---------------------------------------------------------------- palettes: Properties over the Project Browser
@@ -31834,6 +32006,7 @@ window.addEventListener("resize", () => { const v = app.views.get(app.activeView
 
 // ---------------------------------------------------------------- boot
 async function boot() {
+  { const ux = store("ux"); if (ux && ux !== "revit" && UX_LOOKS.some(x => x.id === ux)) document.documentElement.dataset.ux = ux; }   // before the first render
   const snaps = store("snaps"); if (snaps) Object.assign(app.snaps, snaps);
   const split = store("split"); if (split) document.getElementById("left").style.setProperty("--split", (split * 100).toFixed(1) + "%");
   await loadDrawingFont();

@@ -208,7 +208,9 @@ export class View3D {
   render() {
     if (!this.renderer || !this.W) return;
     const T = this.T, B = this.basis();
-    this.scene.background = new T.Color(this.style === "Hidden Line" || this.style === "Wireframe" ? 0xffffff : 0xf3f5f8);
+    // the interface look may give shaded 3D its own backdrop (--view3d-bg); line styles stay on white paper
+    const look = typeof document !== "undefined" ? getComputedStyle(document.documentElement).getPropertyValue("--view3d-bg").trim() : "";
+    this.scene.background = new T.Color(this.style === "Hidden Line" || this.style === "Wireframe" ? 0xffffff : look || 0xf3f5f8);
     const t = new T.Vector3(...this.cam.target), D = new T.Vector3(...B.D);
     this.camera.position.copy(t.clone().add(D.multiplyScalar(60000)));
     this.camera.up.set(...B.up); this.camera.lookAt(t);
