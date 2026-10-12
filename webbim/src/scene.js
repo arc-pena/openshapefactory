@@ -2222,6 +2222,9 @@ function elevWall(doc, f, w, V, sOf, depthOf, ctx) {
   const cuts = [...new Set([s0, s1, ...holes.flatMap(h => [h.s0 ?? h[0], h[1]]), ...(profileLine ? profileLine.map(q => q[0]) : [])])].filter(x => x >= s0 && x <= s1).sort((a, b) => a - b);
   const topLine = s => {
     if (!profileLine) return t0 + (t1 - t0) * ((s - s0) / ((s1 - s0) || 1));
+    // past the near face's ends (the far face of a wall seen end-on reaches further) the top holds its end height:
+    // carrying the end segment's slope on would send a raked end through the ground
+    s = Math.max(profileLine[0][0], Math.min(profileLine[profileLine.length - 1][0], s));
     for (let k = 1; k < profileLine.length; k++) { const a = profileLine[k - 1], b = profileLine[k]; if (s <= b[0] + 1e-9) return b[0] - a[0] < 1e-9 ? Math.min(a[1], b[1]) : a[1] + (b[1] - a[1]) * (s - a[0]) / (b[0] - a[0]); }
     return profileLine[profileLine.length - 1][1];
   };
