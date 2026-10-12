@@ -38,6 +38,7 @@ import { buildRmuhSample, RMUH_BRIEF } from "./sample_rmuh.js";
 import { buildPavilionSample } from "./sample_pavilion.js";
 import { buildHotelsSample } from "./sample_hotels.js";
 import { buildOrbitSample } from "./sample_orbit.js";
+import { buildFireStationSample } from "./sample_firestation.js";
 import { buildMazatlanSample } from "./sample_mazatlan.js";
 import { buildSchaefferSample } from "./sample_schaeffer.js";
 import { buildWalnutSample } from "./sample_walnut.js";
@@ -2474,6 +2475,17 @@ testCase("M88", "Orbit, from the scheme drawing: three hotels and the office bui
   const guest = spaces.filter(f => doc.getParam(f, "Department") === "Guest room").length, baths = spaces.filter(f => doc.getParam(f, "Department") === "Bath").length;
   const ok = errs.length === 0 && open.length === 0 && off.length === 0 && keys === "12,18,19" && guest === 49 && baths === 49 && office.meetingRooms >= 10 && office.desks >= 200 && stairs.length === 8 && stairs.every(a => a > 9.5 && a < 20);
   return R(ok, "no errors, all rooms enclosed, no stray openings, keys 12/18/19, a bath per key, 10+ meeting rooms and 200+ desks in the office, 8 stairs of 9.5-20 m²", `errors ${errs.length}; open rooms ${open.length}; stray openings ${off.length}; keys ${keys}; guest rooms ${guest}, baths ${baths}; meeting rooms ${office.meetingRooms}; desks ${office.desks}; stairs ${stairs.map(a => a.toFixed(1)).join("/")}`);
+});
+
+testCase("M89", "Fire station study: builds without an error; every room encloses even where partitions meet the 70 m wall that leans out 8°; no opening falls off its wall; the rooms add up to the published 852 m² less walls (700-850 m² net); five sheets", () => {
+  const doc = buildFireStationSample(), errs = doc.elements().filter(f => doc.error(f));
+  const sp = doc.elements().filter(f => doc.typeOf(f) === "Space"), open = sp.filter(f => { const p = doc.plan(f); return !p || p.status !== "ok"; });
+  const off = doc.elements().filter(f => doc.typeOf(f) === "Opening").filter(f => { const d = doc.data(f); return d && d.frame && d.frame.flagged; });
+  const area = q => Math.abs(q.reduce((a, p, i) => { const r = q[(i + 1) % q.length]; return a + p[0] * r[1] - r[0] * p[1]; }, 0)) / 2e6;
+  const net = sp.reduce((s, f) => s + (doc.plan(f) && doc.plan(f).loop ? area(doc.plan(f).loop.pts) : 0), 0);
+  const sheets = doc.elements().filter(f => doc.typeOf(f) === "Sheet").length;
+  const ok = errs.length === 0 && open.length === 0 && off.length === 0 && net > 700 && net < 850 && sheets === 5;
+  return R(ok, "no errors, all 9 rooms enclosed, no stray openings, 700-850 m² net, 5 sheets", `errors ${errs.length}; open rooms ${open.length}; stray openings ${off.length}; net ${net.toFixed(0)} m²; sheets ${sheets}`);
 });
 
 testCase("M87", "Room text per view: Room text None in a plan's control bar leaves every room in that view without text, while another plan of the same level keeps its names", () => {

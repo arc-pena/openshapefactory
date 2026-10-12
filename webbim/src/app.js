@@ -18,6 +18,7 @@ import { buildFpcSample } from "./sample_fpc.js";
 import { buildAiaSample } from "./sample_aia.js";
 import { buildHotelsSample } from "./sample_hotels.js";
 import { buildOrbitSample } from "./sample_orbit.js";
+import { buildFireStationSample } from "./sample_firestation.js";
 import { cadLibraryIndex, cadLibraryCategories, cadLibrarySymbol, cadLibraryPreview } from "./cadlib.js";
 import { contoursFromDXF } from "./archelements.js";
 import { inflateBase64 } from "./inflate.js";
@@ -1090,6 +1091,7 @@ async function saveModel() { const r = await saveFile(`${app.doc.meta.name || "m
 const SAMPLES = [
   { id: "hotels", name: "Hotels and Office Test Fit (work in progress)", build: () => buildHotelsSample(), open: "V-SITE" },
   { id: "orbit", name: "Orbit — Hotels and Office Test Fit (work in progress)", build: () => buildOrbitSample(), open: "V-SITE" },
+  { id: "firestation", name: "Fire Station Study (after the Vitra Fire Station, Zaha Hadid, 1993)", build: () => buildFireStationSample(), open: "SH-A000" },
   { id: "mazatlan", name: "Casa Mazatlan (INAH drawing set)", build: () => buildMazatlanSample(), open: "SH-A101" },
   { id: "schaeffer", name: "Schaeffer Residence (Frank Harmon Architect)", build: () => buildSchaefferSample(), open: "SH-A202" },
   { id: "walnut", name: "Walnut Creek Environmental Education Center (Frank Harmon Architect)", build: () => buildWalnutSample(), open: "SH-A201" },
@@ -1319,6 +1321,14 @@ async function exportPDF(sheets, issuedBy) {
   const r = await saveFile(`${doc.meta.name || "set"}.pdf`, out.bytes, "application/pdf");
   app.say(r.ok ? `PDF: ${pages.length} page(s), ${(out.bytes.length / 1024).toFixed(0)} KB, ${out.layers.length} layers, ${out.patterns} tiling patterns${out.report.length ? " — " + out.report.join("; ") : ""}` : r.error, r.ok ? "ok" : "error");
 }
+/** The PDF set as bytes for a script (a browser test, a headless export): the same pages the Export dialog writes. */
+app.pdfBytes = async (sheetIds, issuedBy = "") => {
+  const doc = app.doc, sheets = sheetIds.map(id => doc.element(id)).filter(Boolean);
+  await ensureHiddenLine(staleHiddenLine(sheets));
+  const pages = [];
+  for (const sh of sheets) { const sc = sheetScene(doc, sh); pages.push({ size: sc.size, prims: await rastersToJpeg(sc.prims), links: sc.links, title: `${doc.argValue(sh, "number")} ${doc.argValue(sh, "sheetName")}`, sheet: doc.idOf(sh) }); }
+  return writePDF(pages, { title: doc.meta.name + " drawing set", project: doc.meta.name, revision: sheets.map(s => doc.argValue(s, "revision")).join(","), issuedBy, issueDate: new Date().toISOString().slice(0, 10) }).bytes;
+};
 async function rastersToJpeg(prims) {
   const out = [];
   for (const p of prims) {
