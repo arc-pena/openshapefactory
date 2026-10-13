@@ -30939,6 +30939,7 @@ function renderQAT() {
     h("button", { class: "qswitch", title: "Prompts to Claude: feedback with images, kept in the project file", onclick: () => app.promptPanel && app.promptPanel.toggle(true) }, icon("text", 15), h("span", {}, "Prompts"),
       (() => { const n = ((app.doc.meta.prompts || {}).entries || []).filter(e => e.status === "open").length; return n ? h("span", { style: { marginLeft: "4px", background: "var(--note-bg)", color: "var(--note)", borderRadius: "8px", padding: "0 6px" } }, String(n)) : null; })()),
     h("button", { class: "qbtn", title: "Export (PDF set, DXF)", "aria-label": "Export", onclick: () => exportDialog() }, icon("exportI", 16)),
+    h("button", { class: "qswitch", title: "Settings: choose the interface look (Revit, AutoCAD, SketchUp, Onshape, Alias, Rayon, Studio)", onclick: () => uxDialog() }, icon("menu", 15), h("span", {}, "Settings")),
     h("button", { class: "qswitch", title: "Switch to the parametric CAD interface (PC) - the same model", onclick: () => switchToCad() }, icon("view3d", 15), h("span", {}, "Parametric CAD")));
 }
 /** Sun & shadows for a view: altitude and azimuth (drag them and watch the shadows move), colour and strength;
@@ -31039,6 +31040,7 @@ function fileMenu(anchor) {
   menuAt(r.left, r.bottom, [
     { label: "New…", icon: "sheet", run: () => newProjectDialog() }, { label: "Open…", icon: "open", run: () => openFile() }, { label: "Save", icon: "save", run: () => saveModel() },
     "-", { label: "Export…", icon: "exportI", run: () => exportDialog() }, { label: "Import IFC…", icon: "importI", run: () => importIfcFile() }, { label: "Import DXF Symbol…", icon: "importI", run: () => importDXF() }, { label: "Import Contours (DXF)…", icon: "topo", run: () => importContours() },
+    "-", { label: "Settings: Interface Look…", icon: "menu", key: "UX", run: () => uxDialog() }, { label: "Swap Interface (next look)", icon: "menu", key: "SW", run: () => app.run("uxswap") }, { label: "Project Units…", icon: "dim", run: () => unitsDialog() },
     "-", { label: "Project Information…", icon: "info", run: () => projectInfo() }, ...SAMPLES.map(x => ({ label: x.name, icon: "house", run: () => { forget("draft-v6"); forget("tabs"); setDocument(x.build(), { msg: `${x.name}: loaded`, kind: "ok" }); if (x.open) app.openView(x.open); } })),
   ]);
 }
