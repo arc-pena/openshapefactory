@@ -16,13 +16,17 @@
 import { newDocument } from "./bim.js";
 import { VS_PRESENTATION } from "./library.js";
 import { Editor } from "./ops.js";
+import { fitOut, checkFitout, fitNotes, fitDetailSheet } from "./fitout.js";
 
 export const HOTEL_DXF = {"origin":[300000,500000],"boundary":[{"k":"A","c":[733837,217745],"r":1006197,"a0":-2.3942458,"a1":-3.2673205},{"k":"L","a":[-264417,343919],"b":[135242,324796]},{"k":"L","a":[135242,324796],"b":[117451,265081]},{"k":"L","a":[117451,265081],"b":[124863,212321]},{"k":"L","a":[124863,212321],"b":[114143,133296]},{"k":"L","a":[114143,133296],"b":[148629,48512]},{"k":"L","a":[148629,48512],"b":[191185,16106]},{"k":"L","a":[191185,16106],"b":[238227,-60339]},{"k":"L","a":[238227,-60339],"b":[247117,-141369]},{"k":"L","a":[247117,-141369],"b":[284965,-179554]},{"k":"L","a":[284965,-179554],"b":[-4203,-466162]}],"terraces":[{"k":"A","c":[732213,217680],"r":635807,"a0":3.0763357,"a1":3.1023297,"layer":"gh"},{"k":"A","c":[731544,217414],"r":640128,"a0":3.1022766,"a1":3.0761602,"layer":"gh"},{"k":"A","c":[789790,214371],"r":699947,"a0":3.1058086,"a1":3.0731644,"layer":"gh"},{"k":"A","c":[789323,214690],"r":691489,"a0":3.0728349,"a1":3.1053383,"layer":"gh"},{"k":"A","c":[731425,217420],"r":651008,"a0":3.1215401,"a1":3.0608156,"layer":"gh"},{"k":"L","a":[82539,269950],"b":[82647,271282],"layer":"gh"},{"k":"L","a":[82647,271282],"b":[109788,272207],"layer":"gh"},{"k":"L","a":[109788,272207],"b":[109645,270523],"layer":"gh"},{"k":"A","c":[732119,217685],"r":624712,"a0":3.0569109,"a1":3.1177446,"layer":"gh"},{"k":"L","a":[107584,232582],"b":[107552,231244],"layer":"gh"},{"k":"L","a":[107552,231244],"b":[80514,228799],"layer":"gh"},{"k":"L","a":[80514,228799],"b":[80548,230474],"layer":"gh"},{"k":"A","c":[731804,216981],"r":716680,"a0":-2.5775574,"a1":-2.5169418,"layer":"gh"},{"k":"A","c":[731363,216817],"r":730239,"a0":-2.5157413,"a1":-2.5763107,"layer":"gh"},{"k":"A","c":[731889,217039],"r":718783,"a0":-2.5634612,"a1":-2.5307349,"layer":"gh"},{"k":"A","c":[731457,216881],"r":728354,"a0":-2.5296439,"a1":-2.5627148,"layer":"gh"},{"k":"A","c":[733903,217776],"r":634270,"a0":-2.715053,"a1":-2.6854826,"layer":"gh"},{"k":"A","c":[733189,217508],"r":642547,"a0":-2.6841774,"a1":-2.7140371,"layer":"gh"},{"k":"A","c":[733203,217514],"r":640562,"a0":-2.6875715,"a1":-2.7111127,"layer":"gh"},{"k":"A","c":[733912,217780],"r":636280,"a0":-2.7116937,"a1":-2.6883716,"layer":"gh"},{"k":"L","a":[64067,-255750],"b":[65273,-257449],"layer":"Office_ground_lvl"},{"k":"L","a":[65273,-257449],"b":[22042,-291443],"layer":"Office_ground_lvl"},{"k":"A","c":[731037,216656],"r":872261,"a0":-2.5197813,"a1":-2.5616601,"layer":"Office_ground_lvl"},{"k":"L","a":[62276,-181582],"b":[76658,-171847],"layer":"Blue"},{"k":"A","c":[731107,219368],"r":762465,"a0":-2.6028085,"a1":-2.5261916,"layer":"Blue"},{"k":"L","a":[108522,-220793],"b":[22042,-288796],"layer":"Blue"},{"k":"L","a":[22042,-288796],"b":[17283,-282088],"layer":"Blue"},{"k":"L","a":[35263,-190709],"b":[58580,-175309],"layer":"Blue"},{"k":"A","c":[730990,216675],"r":778323,"a0":-2.6138004,"a1":-2.5371506,"layer":"Blue"},{"k":"L","a":[90571,-225648],"b":[68424,-242663],"layer":"Blue"},{"k":"A","c":[730576,216428],"r":805829,"a0":-2.5655088,"a1":-2.5353501,"layer":"Blue"},{"k":"L","a":[68350,-242720],"b":[16017,-282929],"layer":"Blue"},{"k":"A","c":[730825,216513],"r":872005,"a0":-2.5317342,"a1":-2.5617338,"layer":"Blue"},{"k":"L","a":[109694,-223238],"b":[108488,-224188],"layer":"Blue"},{"k":"A","c":[731103,216719],"r":762921,"a0":-2.5254154,"a1":-2.6020213,"layer":"Blue"},{"k":"L","a":[76571,-175245],"b":[122156,-144345],"layer":"Blue"},{"k":"L","a":[122156,-144345],"b":[123253,-146190],"layer":"Blue"},{"k":"A","c":[733745,217743],"r":626104,"a0":-3.1411783,"a1":-3.1098041,"layer":"Blue"},{"k":"L","a":[107957,197843],"b":[57312,190633],"layer":"Blue"},{"k":"A","c":[732474,217225],"r":675685,"a0":-3.1022261,"a1":-3.2081889,"layer":"Blue"},{"k":"L","a":[58287,262190],"b":[75123,262921],"layer":"Blue"},{"k":"L","a":[107818,232668],"b":[107696,226114],"layer":"Blue"},{"k":"A","c":[733559,217594],"r":625880,"a0":-2.6531286,"a1":-2.634276,"layer":"Blue"},{"k":"L","a":[186507,-86480],"b":[157121,-105663],"layer":"Blue"},{"k":"A","c":[732865,217380],"r":660180,"a0":-2.6302763,"a1":-2.6947626,"layer":"Blue"},{"k":"L","a":[137501,-67890],"b":[144869,-63682],"layer":"Blue"},{"k":"A","c":[733764,220392],"r":626124,"a0":3.1220051,"a1":3.1463269,"layer":"Red"},{"k":"L","a":[107647,217428],"b":[73783,213465],"layer":"Red"},{"k":"A","c":[732884,220029],"r":659134,"a0":-3.1316342,"a1":-3.2208212,"layer":"Red"},{"k":"L","a":[75818,272196],"b":[109884,273357],"layer":"Red"},{"k":"L","a":[109884,273357],"b":[109688,270987],"layer":"Red"},{"k":"L","a":[129518,-210652],"b":[111154,-225281],"layer":"Blue"},{"k":"A","c":[731104,219367],"r":762922,"a0":-2.5193946,"a1":-2.5959333,"layer":"Blue"},{"k":"L","a":[78970,-176575],"b":[124376,-145419],"layer":"Blue"},{"k":"A","c":[731815,219636],"r":708694,"a0":-2.6004577,"a1":-2.5235891,"layer":"Blue"},{"k":"L","a":[154204,-190988],"b":[153085,-191879],"layer":"Blue"},{"k":"L","a":[136187,-44935],"b":[160663,-31786],"layer":"Blue"},{"k":"A","c":[733837,220392],"r":626197,"a0":-2.7271134,"a1":-2.6495421,"layer":"Blue"},{"k":"L","a":[181929,-75445],"b":[158468,-90294],"layer":"Blue"},{"k":"A","c":[733062,220102],"r":653073,"a0":-2.6463039,"a1":-2.7237049,"layer":"Blue"}],"quads":{"OFFICE_IN":{"inner":{"c":[731018,216713],"r":818355,"a0":-2.62677159,"a1":-2.57945186},"outer":{"c":[731328,216839],"r":860604,"a0":-2.62485066,"a1":-2.57635904},"W":41977,"L":40228},"H1":{"inner":{"c":[732118,217685],"r":626211,"a0":3.0569108,"a1":3.11774465},"outer":{"c":[731426,217420],"r":649509,"a0":3.0608157,"a1":3.12154002},"W":24132,"L":38768},"H2":{"inner":{"c":[733847,217750],"r":626208,"a0":-2.72711292,"a1":-2.67534847},"outer":{"c":[733120,217475],"r":650470,"a0":-2.7240209,"a1":-2.67235739},"W":25107,"L":33010},"H3":{"inner":{"c":[731808,216984],"r":708685,"a0":-2.57821236,"a1":-2.51754803},"outer":{"c":[731359,216815],"r":738235,"a0":-2.5756955,"a1":-2.51517242},"W":30062,"L":43836},"OFFICE":{"inner":{"c":[730885,216634],"r":806200,"a0":-2.64228073,"a1":-2.5655032},"outer":{"c":[731156,216736],"r":872404,"a0":-2.63809527,"a1":-2.56172832},"W":66006,"L":64260}}};
 // read off the hotel layouts drawn in the file, in each plate's (u, v) frame, mm
 const HOTEL_SCHEMES = {
   H1: { name: "Hotel 1", D: 8050, vb: 9800, nb: 4, vE: 12800, ends: [-7800, -2500, 2500, 7800], atrium: { u: 2500, v0: -7800, v1: 7800 }, lifts: [{ u: 2500, v0: 7800, v1: 9800, face: 1 }, { u: 2500, v0: -9800, v1: -7800, face: -1 }] },
   H2: { name: "Hotel 2", D: 8020, vb: 7420, nb: 3, vE: 9500, ends: [-7830, -2530, 2530, 7830], atrium: { u: 2530, v0: -5500, v1: 7500 }, lifts: [{ u: 2530, v0: -7500, v1: -5500, face: -1 }] },
-  H3: { name: "Hotel 3", D: 8010, vb: 9220, nb: 4, vE: 13900, ends: [-8310, -3010, 3010, 8310], atrium: { u: 5020, v0: -9900, v1: 9900 }, lifts: [{ u: 3010, v0: 9900, v1: 11900, face: 1 }, { u: 3010, v0: -11900, v1: -9900, face: -1 }] },
+  // H3 as drawn had a 4.7 m strip key between the last bay and the end band, which left each corner suite with no wall on
+  // the corridor at all (the fit-out check: "no door"); six bays to vb 11,500 keep the 20 keys and give the suites the
+  // 2.4 m strip as their way in, as in H1 and H2
+  H3: { name: "Hotel 3", D: 8010, vb: 11500, nb: 6, vE: 13900, ends: [-8310, -3010, 3010, 8310], atrium: { u: 5020, v0: -9900, v1: 9900 }, lifts: [{ u: 3010, v0: 9900, v1: 11900, face: 1 }, { u: 3010, v0: -11900, v1: -9900, face: -1 }] },
 };
 const HOTEL_BATH_D = 2400, HOTEL_BATH_W = 1900, HOTEL_CLEAR = 3200;
 // a compact dog-leg stair enclosure: two 1,200 flights and a 100 well inside 215 block (IBC 1011.2: 44 in / 1,118 min
@@ -64,6 +68,8 @@ export function addTestFitStyles(doc) {
     { id: "FL-HOTEL-MEET", when: { param: "Department", is: "Meeting" }, then: { fill: "#C2C0A9" } },
     { id: "FL-HOTEL-CIRC", when: { param: "Department", is: "Circulation" }, then: { fill: "#F4F3E8" } },
     { id: "FL-HOTEL-CORE", when: { param: "Department", is: "Core" }, then: { fill: "#A9A794" } },
+    // the core's WCs and showers in the bathrooms' pale tone, so their fittings read at 1:50 as the keys' do
+    { id: "FL-HOTEL-WC", when: { all: [{ param: "Department", is: "Core" }, { any: [{ param: "Name", contains: "WC" }, { param: "Name", contains: "shower" }] }] }, then: { fill: "#DEDCCD" } },
     { id: "FL-HOTEL-BATH", when: { param: "Department", is: "Bath" }, then: { fill: "#DEDCCD" } },
     { id: "FL-HOTEL-VOID", when: { param: "Department", is: "Atrium" }, then: { fill: "#FFFFFF" } },
   ];
@@ -78,7 +84,8 @@ export function addTestFitStyles(doc) {
 export function buildHotelsSample() {
   const doc = newDocument("Hotels and Office Test Fit");
   const ed = new Editor(doc);
-  const add = (element) => { const r = ed.apply({ op: "add", element }, { regenerate: false }); if (!r.ok) throw new Error(`${element.id || element.type}: ${r.error}`); return r.id; };
+  // no undo steps while the builder writes 3,000 elements: a snapshot per add copied the document each time (19 s → 1 s)
+  const add = (element) => { const r = ed.apply({ op: "add", element }, { regenerate: false, undoable: false }); if (!r.ok) throw new Error(`${element.id || element.type}: ${r.error}`); return r.id; };
   const line = (a, b) => ({ type: "line", start: rnd(a), end: rnd(b) });
   const rnd = p => [Math.round(p[0]), Math.round(p[1])];
   const arcCurve = s => { const a0 = hotelDeg(Math.min(s.a0, s.a1)), sweep = Math.abs(s.a1 - s.a0) * 180 / Math.PI; return { type: "arc", centre: rnd(s.c), radius: Math.round(s.r), start: +a0.toFixed(5), end: +((a0 + sweep) % 360).toFixed(5), ccw: true }; };
@@ -111,7 +118,7 @@ export function buildHotelsSample() {
     const view = `V-${key}`;
     add({ id: view, type: "PlanView", name: viewName, args: { level: { ref: level }, scale, viewRange: vr(2300, 1200, -500, -500), detailLevel: "Medium", style: { ref: "VS-HOTEL" }, clip: { rect: [Math.min(...xs) - 9000, Math.min(...ys) - 9000, Math.max(...xs) + 9000, Math.max(...ys) + 9000].map(Math.round), visible: false, active: true } } });
     context(view, false);
-    let n = 0, op = 0, sp = 0, fu = 0;
+    let n = 0, op = 0, sp = 0;
     // walls are collected first and built at finish(): a wall along v (constant u) follows the plate's curve, so it
     // is cut into straight pieces at every point another wall meets it - the pieces are chords of the curve and
     // every junction lands exactly on one (a 5 m piece on a 640 m radius is off the arc by 5 mm)
@@ -149,7 +156,6 @@ export function buildHotelsSample() {
     const hole = (spec, uv, w) => pending.push(() => { const hst = hostAt(spec, uv), at = Math.max(w / 2 + 50, Math.min(hst.L - w / 2 - 50, hst.at));
       add({ id: `${key}-OP${++op}`, type: "Opening", args: { host: { ref: hst.id }, profile: { kind: "rect", at: Math.round(at), sill: 0, w, h: 2200 }, farProfile: null, depth: "through" } }); });
     const space = (name, uv, dept, number, quiet) => add({ id: `${key}-SP${++sp}`, type: "Space", name, args: { level: { ref: level }, upperLimit: { mode: "offset", offset: HOTEL_CLEAR }, anchor: rnd(P(...uv)), boundaryAt: "finishFace" }, params: Object.assign({ Number: number || "", Department: dept, Occupancy: dept === "Guest room" ? 2 : 0 }, quiet ? { LabelFormat: " " } : {}) });
-    const furn = (shape, uv, size, alongV) => add({ id: `${key}-FU${++fu}`, type: "Furniture", args: { position: rnd(P(...uv)), shape, size, rotation: Math.round(((F.angAt(uv[0], uv[1], alongV) % 360) + 360) % 360), level: { ref: level } } });
     const rect = (name, u0, u1, v0, v1, type, extra) => [wall(name, [u0, v0], [u1, v0], type, extra), wall(name, [u1, v0], [u1, v1], type, extra), wall(name, [u1, v1], [u0, v1], type, extra), wall(name, [u0, v1], [u0, v0], type, extra)];
     const stair = (u0, u1, v0, v1, alongV) => {
       const ln = (a, b) => add({ id: `${key}-DLS${++n}`, type: "DetailLine", args: { curve: line(P(...a), P(...b)), pen: "thin", lineStyle: "Solid", view: { ref: view }, layer: "Stair", colour: "#000000" } });
@@ -158,12 +164,12 @@ export function buildHotelsSample() {
       else { const lo = Math.min(u0, u1) + land, hi = Math.max(u0, u1) - land, m = (v0 + v1) / 2; ln([lo, m], [hi, m]); for (let x = lo; x <= hi + 1; x += 280) ln([x, v0 + 150], [x, v1 - 150]); }
     };
     const slab = () => add({ id: `${key}-FL`, type: "Floor", name: `${label} slab`, args: { boundary: corners.map(rnd), floorType: { ref: "T-FLOOR250" }, level: { ref: level }, heightOffset: 0 } });
-    return { q, F, P, view, wall, rect, door, hole, space, furn, stair, slab, finish, corners, xs, ys, level };
+    return { q, F, P, view, wall, rect, door, hole, space, stair, slab, finish, corners, xs, ys, level };
   }
 
   // ---------------------------------------------------------------- hotels
   for (const key of ["H1", "H2", "H3"]) {
-    const H = HOTEL_SCHEMES[key], T = plate(key, H.name, 250), { q, wall, rect, door, hole, space, furn, stair } = T;
+    const H = HOTEL_SCHEMES[key], T = plate(key, H.name, 250), { q, wall, rect, door, hole, space, stair } = T;
     const W = q.W, L = q.L, Wc = W - 2 * H.D, uc = Wc / 2, A = H.atrium;
     rect("Facade", -W / 2, W / 2, -L / 2, L / 2, "T-EXTCAV300");
     const ring = rect("Corridor wall", -uc, uc, -H.vE, H.vE, "T-BLOCK215");
@@ -171,15 +177,15 @@ export function buildHotelsSample() {
     const ringSide = s => s > 0 ? ring[1] : ring[3], ringEnd = t => t > 0 ? ring[2] : ring[0];
     let keys = 0;
     const keyNo = () => `${key}-${String(++keys).padStart(2, "0")}`;
-    // a key: corridor face at depth 0, facade at depth D; across it from a to b; uvOf(depth, across)
-    const keyRoom = (uvOf, a, b, D, bathAtA, host, alongV) => {
+    // a key: corridor face at depth 0, facade at depth D; across it from a to b; uvOf(depth, across). The bath (2.4 × 1.9)
+    // takes the corridor corner on one side; the entry passage beside it holds the door, kept within `reach` of the plate
+    // axis where only that part of the key's front is corridor. The furniture and the bath's door are the fit-out's.
+    const keyRoom = (uvOf, a, b, D, bathAtA, host, reach = Infinity) => {
       const sg = b > a ? 1 : -1, wB = bathAtA ? a : b, other = bathAtA ? b : a, dir = bathAtA ? sg : -sg, bx = wB + dir * HOTEL_BATH_W;
       wall("Bath", uvOf(HOTEL_BATH_D, wB), uvOf(HOTEL_BATH_D, bx), "T-PART100");
       wall("Bath side", uvOf(0, bx), uvOf(HOTEL_BATH_D, bx), "T-PART100");
-      door(host, uvOf(0, (bx + other) / 2), !bathAtA);
+      door(host, uvOf(0, Math.max(-reach, Math.min(reach, (bx + other) / 2))), !bathAtA);
       space("", uvOf(HOTEL_BATH_D / 2, (wB + bx) / 2), "Bath", "", true);
-      furn("Desk", uvOf(HOTEL_BATH_D + (D - HOTEL_BATH_D) / 2, wB + dir * 1050), [1800, 2000], !alongV);
-      furn("Desk", uvOf(D - 1300, other - dir * 330), [500, 1400], alongV);
       space("King room", uvOf(D * 0.62, (a + b) / 2), "Guest room", keyNo());
     };
     // long sides: bays between ±vb; the strip vb..vE becomes a key if it is wide enough, else part of the corner suite
@@ -188,7 +194,7 @@ export function buildHotelsSample() {
       const edges = []; for (let i = 0; i <= H.nb; i++) edges.push(-H.vb + i * 2 * H.vb / H.nb);
       if (extraKey) edges.unshift(-H.vE), edges.push(H.vE);
       for (const v of edges) wall("Demising", [s * uc, v], [s * W / 2, v], "T-PART100");
-      for (let i = 0; i + 1 < edges.length; i++) keyRoom((d, x) => [s * (uc + d), x], edges[i], edges[i + 1], H.D, i % 2 === 0, ringSide(s), true);
+      for (let i = 0; i + 1 < edges.length; i++) keyRoom((d, x) => [s * (uc + d), x], edges[i], edges[i + 1], H.D, i % 2 === 0, ringSide(s));
     }
     // the end bands: corner suites, a stair, keys between
     for (const t of [-1, 1]) {
@@ -204,12 +210,14 @@ export function buildHotelsSample() {
       for (const u of H.ends) wall("Demising", [u, t * H.vE], [u, u === uJoin ? sDepth : t * L / 2], u === uJoin ? "T-BLOCK215" : "T-PART100");
       for (const s of [-1, 1]) {
         // the corner suite: entered off the corridor's side (an L-shaped suite) or its end
-        const anchorU = s * (endOuter + (W / 2 - endOuter) / 2), anchorV = t * (H.vE + Dend * 0.55);
+        const anchorU = s * (endOuter + (W / 2 - endOuter) / 2);
         if (!extraKey) door(ringSide(s), [s * uc, t * (H.vb + H.vE) / 2], s * t > 0);
         else { const du = s * (Math.min(uc, endOuter) + Math.max(uc, endOuter)) / 2; door(endHost([du, 0]), [du, t * H.vE], s > 0); }
-        furn("Desk", [s * (W / 2 - 2600), t * (H.vE + Dend / 2)], [1800, 2000], false);
-        furn("Sofa", [anchorU - s * 600, t * (L / 2 - 1300)], [2400, 850], true);
-        space("Corner suite", [anchorU, anchorV], "Guest room", keyNo());
+        // its bathroom, 2.4 × 2.6 (a bath and a shower), in the inner corner back to back with the end key's
+        const bu = s * (endOuter + 2400), bv = t * (H.vE + 2600);
+        wall("Bath", [s * endOuter, t * H.vE], [bu, t * H.vE], "T-PART100"); wall("Bath", [bu, t * H.vE], [bu, bv], "T-PART100"); wall("Bath", [bu, bv], [s * endOuter, bv], "T-PART100");
+        space("", [s * (endOuter + 1200), t * (H.vE + 1300)], "Bath", "", true);
+        space("Corner suite", [anchorU, t * (H.vE + Dend * 0.7)], "Guest room", keyNo());
       }
       // between the end partitions: a stair at the first, keys in the rest
       for (let i = 0; i + 1 < H.ends.length; i++) {
@@ -222,7 +230,9 @@ export function buildHotelsSample() {
           stair(Math.min(uJoin, far), Math.max(uJoin, far), t * H.vE, sDepth, false); space("Stair", [(uJoin + far) / 2, (t * H.vE + sDepth) / 2], "Core");
           door(ringEnd(t), [far - dir * 700, t * H.vE], dir * t > 0, 1015);           // a side approach, at the landing
           if (Math.abs(other - far) >= 900) { space("Closet", [(far + other) / 2, (t * H.vE + sDepth) / 2], "Core"); door(ringEnd(t), [(far + other) / 2, t * H.vE], false, Math.min(800, Math.abs(other - far) - 200)); }
-        } else keyRoom((d, x) => [x, t * (H.vE + d)], a, b, Dend, a > 0, endHost, false);
+        // an end key: bath on the suite's side (back to back with the suite's), door where its front is still corridor -
+        // the passage centre is beyond the corridor's end in H1 and H2, and a door there opened into the corner suite
+        } else keyRoom((d, x) => [x, t * (H.vE + d)], a, b, Dend, a < 0, endHost, uc - 650);
       }
     }
     // the middle: the atrium behind a glass rail, its lifts at the ends opening on to the corridor
@@ -254,9 +264,9 @@ export function buildHotelsSample() {
   add({ id: "L2", type: "Level", name: "Office Level 2 (multi-tenant)", args: { name: "Office Level 2 (multi-tenant)", elevation: 4500 } });
   add({ id: "L3", type: "Level", name: "Office Level 3 (coworking)", args: { name: "Office Level 3 (coworking)", elevation: 9000 } });
   const officeFloor = (key, mode, level, title) => {
-    const T = plate(key, "Office", 400, { quad: "OFFICE", level, viewName: title }), { q, wall, rect, door, hole, space, furn, stair, P, F } = T;
+    const T = plate(key, "Office", 400, { quad: "OFFICE", level, viewName: title }), { q, wall, rect, door, hole, space, stair, P, F } = T;
     const W = q.W, L = q.L, ui = 21000, vi = 20200, OK = key;
-    let desks = 0, offices = 0;
+    let offices = 0;
     rect("Facade", -W / 2, W / 2, -L / 2, L / 2, "T-EXTCAV300");
     // the two atria, as drawn: full-height glass where a tenancy looks on to them, a rail where the common zone does
     const atria = [{ u0: -ui, u1: 7000, v0: 6600, v1: vi, full: ["N", "W"] }, { u0: 0, u1: ui, v0: -vi, v1: 0, full: ["S", "E"] }];
@@ -274,7 +284,7 @@ export function buildHotelsSample() {
     wall("Inner zone", [-21000, -20200], [-2400, -20200], "T-BLOCK215"); wall("Inner zone", [-21000, -20200], [-21000, 4200], "T-BLOCK215");
     wall("Inner zone", [9400, 20200], [21000, 20200], "T-BLOCK215"); wall("Inner zone", [21000, 2400], [21000, 20200], "T-BLOCK215");
     const cw = mode === "cowork";
-    const meet = (name, uv, size, dept = "Meeting") => { space(name, uv, dept); if (size) furn("Table", uv, size, true); };
+    const meet = (name, uv) => space(name, uv, "Meeting");
     // a core, drawn in the frame of the one in the south-west block (lifts on to the west arm, stair side-on along the
     // south arm); R turns it half round about the lobby's centre for the north-east block. 11.6 × 8.4 m: three lifts,
     // a riser, two WCs off their own lobby, and a code-width stair with a side approach at its landing
@@ -305,14 +315,13 @@ export function buildHotelsSample() {
     wall("Room", [-8200, -11600], [-8200, -4200], "T-PART100"); wall("Room", [-8200, -20200], [-8200, -13400], "T-PART100");
     const nm = cw ? ["Phone booths", "Meeting room 8p", "Meeting room 8p", "Lockers", "Mail and print", "Event space", "Meeting room 10p", "Store and cleaner"]
       : ["Tenant lounge", "Conference room", "Meeting room 10p", "Showers and lockers", "Parcel room and store", "Training and events", "Meeting suite", "Cleaner and refuse"];
-    door(corr.C1, [-17500, 4200], false); meet(nm[0], [-17500, 0], null);
-    if (cw) for (const v of [-2400, 0, 2400]) furn("Desk", [-19800, v], [900, 700], false); else { furn("Sofa", [-17500, -2600], [2400, 850], true); furn("Table", [-17500, 1200], [2000, 900], true); }
-    for (const [i, u] of [[1, -11100], [2, -5300]]) { door(spurN, [u, -11600], false); meet(nm[i], [u, -7900], [3600, 1200]); }
+    door(corr.C1, [-17500, 4200], false); meet(nm[0], [-17500, 0]);
+    for (const [i, u] of [[1, -11100], [2, -5300]]) { door(spurN, [u, -11600], false); meet(nm[i], [u, -7900]); }
     for (const [i, u] of [[3, -11100], [4, -5300]]) { door(spurS, [u, -13400], true); space(nm[i], [u, -16800], "Core"); }
-    door(endW, [-14000, -12500], false, 1015); meet(nm[5], [-17500, -12200], cw ? [2000, 6000] : [1600, 9000]);
+    door(endW, [-14000, -12500], false, 1015); meet(nm[5], [-17500, -12200]);
     // north-east block, the rest: two rooms off the north arm
     wall("Room", [9400, 15500], [21000, 15500], "T-PART100");
-    door(corr.C3, [9400, 13150], false); meet(nm[6], [15200, 13150], [4400, 1200]);
+    door(corr.C3, [9400, 13150], false); meet(nm[6], [15200, 13150]);
     door(corr.C3, [9400, 17850], true); space(nm[7], [15200, 17850], "Core");
     space(cw ? "Reception and community" : "Common lift lobby", [3500, 3300], "Circulation");
     // the four bands of the ring, each in its own frame: x along it, d in from the facade (0) to the inner line (Db)
@@ -325,23 +334,22 @@ export function buildHotelsSample() {
     const colsX = [-1, -0.5, 0, 0.5, 1];
     for (const B of bands) {
       const M = B.map, w = (name, a, b, type, extra) => wall(name, M(...a), M(...b), type, extra), Db = B.Db, hx = B.half;
-      const sp = (name, x, d, dept) => space(name, M(x, d), dept), fu = (shape, x, d, size, alongX) => furn(shape, M(x, d), size, (B.k === "E" || B.k === "W") ? alongX : !alongX);
-      const xe = (B.gap[0] + B.gap[1]) / 2;
+      const sp = (name, x, d, dept) => space(name, M(x, d), dept);
+      const xe = (B.gap[0] + B.gap[1]) / 2, dO = 4800, dC = 6600;
       // the line to the common zone, with the way in
       const gate = w(mode === "cowork" ? "Lobby screen" : "Tenancy entrance", [B.gap[0], Db], [B.gap[1], Db], mode === "cowork" ? "T-GLASS30" : "T-BLOCK215");
       if (mode === "cowork") hole(gate, M(xe, Db), Math.min(3000, B.gap[1] - B.gap[0] - 600)); else door(gate, M(xe, Db), false, Math.min(1015, B.gap[1] - B.gap[0] - 600));
-      // the corner rooms: from the facade to the inner corner on each side
-      for (const s of [-1, 1]) { const cw = w("Corner room", [s * hx, 0], [s * hx, Db], "T-GLASS30"); door(cw, M(s * hx, 2600), s > 0); }
+      // the corner rooms: from the facade to the inner corner on each side, entered from the open floor - on the coworking
+      // floor from the corridor behind the private offices (a door 2.6 m in opened into the end office)
+      for (const s of [-1, 1]) { const cw = w("Corner room", [s * hx, 0], [s * hx, Db], "T-GLASS30"); door(cw, M(s * hx, mode === "cowork" ? (dO + dC) / 2 : 2600), s > 0); }
       if (mode === "cowork") {
         // private offices along the facade, 3.6 m bays × 4.8 m, a corridor behind them, and the shared spaces against the core
-        const dO = 4800, dC = 6600;
         const n = Math.floor(2 * hx / 3600), bay = 2 * hx / n;
         for (let i = 0; i <= n; i++) { const x = -hx + i * bay; if (i > 0 && i < n) w("Office", [x, 0], [x, dO], "T-PART100"); }
         for (let i = 0; i < n; i++) {
           const x0 = -hx + i * bay, x1 = x0 + bay, f = w("Office front", [x0, dO], [x1, dO], "T-GLASS30");
           door(f, M((x0 + x1) / 2 + (i % 2 ? 700 : -700), dO), i % 2 === 1);
-          for (const o of [-1, 1]) { fu("Desk", (x0 + x1) / 2 + o * 800, 2100, [1600, 1400], false); fu("Chair", (x0 + x1) / 2 + o * 800, 3200, [550, 550], false); }
-          desks += 2; offices++; sp("Private office", (x0 + x1) / 2, 1200, "Workspace");
+          offices++; sp("Private office", (x0 + x1) / 2, 1200, "Workspace");
         }
         // against the core: meeting rooms, phone booths, kitchen; the lounge in between stays open to the corridor
         const mods = [["Meeting room", 4800, "Meeting"], ["Phone booths", 2400, "Meeting"], ["Lounge", 8400, null], ["Meeting room", 3600, "Meeting"], ["Kitchen", 6000, null], ["Phone booths", 2400, "Meeting"], ["Meeting room", 4800, "Meeting"], ["Lounge", 8400, null]];
@@ -350,10 +358,13 @@ export function buildHotelsSample() {
           const [name, len, dept] = mods[i++ % mods.length], x1 = Math.min(hx, x + len), last = hx - x1 < 2400 ? hx : x1;
           if (Math.abs(xe - (x + last) / 2) < 3000 && dept) { /* keep the way in open */ }
           if (last < hx) w("Core-side room", [last, dC], [last, Db], "T-PART100");
-          if (dept) { const f = w(name, [x, dC], [last, dC], "T-GLASS30"); door(f, M((x + last) / 2, dC), false); sp(name, (x + last) / 2, (dC + Db) / 2, dept);
-            if (name === "Meeting room") fu("Table", (x + last) / 2, (dC + Db) / 2, [Math.min(3000, last - x - 1400), 1100], true); }
-          else if (name === "Lounge") { fu("Sofa", (x + last) / 2 - 1500, Db - 1200, [2200, 850], true); fu("Table", (x + last) / 2 + 1600, (dC + Db) / 2, [2400, 1000], true); }
-          else { fu("Desk", (x + last) / 2, Db - 700, [Math.max(1800, last - x - 1200), 650], true); fu("Table", (x + last) / 2, dC + 1600, [2400, 1000], true); }
+          if (dept) { const f = w(name, [x, dC], [last, dC], "T-GLASS30"); door(f, M((x + last) / 2, dC), false); sp(name, (x + last) / 2, (dC + Db) / 2, dept); }
+          else {
+            // the lounge and kitchen stay open to the corridor: a room separator gives them their own room to fit out
+            const a = rnd(P(...M(x, dC))), b = rnd(P(...M(last, dC)));
+            add({ id: `${OK}-RS${B.k}${i}`, type: "RoomSeparator", args: { line: { type: "line", start: a, end: b }, level: { ref: level } } });
+            sp(name, (x + last) / 2, (dC + Db) / 2, "Workspace");
+          }
           x = last;
         }
         sp("Flexible workspace floor", -hx + 2000, (dO + dC) / 2, "Circulation");
@@ -364,7 +375,6 @@ export function buildHotelsSample() {
         const after = [["Meeting 6p", 4200, "Meeting"], ["Quiet room", 2400, "Meeting"], ["Comms", 1800, "Core"], ["Meeting 4p", 3600, "Meeting"], ["Phone booths", 2400, "Meeting"]];
         const r0 = Math.max(-hx, xe - 3600), r1 = Math.min(hx, xe + 3600);             // the reception, open to the floor, at the way in
         w("Reception", [r0, dS], [r0, Db], "T-PART100"); w("Reception", [r1, dS], [r1, Db], "T-PART100");
-        fu("Desk", (r0 + r1) / 2, dS + 1500, [2400, 800], true); fu("Sofa", r0 + 1500, Db - 900, [1800, 800], true);
         const run = (list, from, to, dir) => {
           let x = from, i = 0;
           while (dir * (to - x) > 1500) {
@@ -373,18 +383,11 @@ export function buildHotelsSample() {
             const f = w(name, [x, dS], [x1, dS], name === "Pantry" || name.startsWith("Print") || name === "Comms" ? "T-PART100" : "T-GLASS30");
             door(f, M((x + x1) / 2, dS), dir < 0);
             sp(name, (x + x1) / 2, (dS + Db) / 2, dept);
-            if (name.startsWith("Meeting")) fu("Table", (x + x1) / 2, (dS + Db) / 2, [Math.max(1200, Math.abs(x1 - x) - 1600), 1100], true);
             x = x1;
           }
         };
         run(before, r0, -hx, -1); run(after, r1, hx, 1);
-        // benching: pairs of desks running in from the facade, 3.2 m apart, clear of the columns
-        const cols = colsX.map(f => f * hx);
-        for (let x = -hx + 2400; x <= hx - 2400; x += 3200) {
-          if (cols.some(c => Math.abs(c - x) < 1500)) continue;
-          for (let d = 1300; d + 800 <= dS - aisle; d += 1600) { fu("Desk", x, d + 800, [1600, 1600], false); for (const o of [-1, 1]) fu("Chair", x + o * 1150, d + 800, [550, 550], false); desks += 2; }
-        }
-        sp("Open-plan office", -hx + 1500, dS - aisle / 2, "Workspace");
+        sp("Open-plan office", -hx + 1500, dS - aisle / 2, "Workspace");     // benched by the fit-out, square to the glass
       }
       // columns at 6 m in, on the band's grid
       for (const f of colsX) add({ id: `${OK}-C${B.k}${Math.round((f + 1) * 2)}`, type: "Column", args: { position: rnd(P(...M(f * hx, (B.k === "S" || B.k === "N") ? L / 2 - vi - 6000 : W / 2 - ui - 6000))), columnType: { ref: "T-COL400" }, baseLevel: { ref: level }, height: HOTEL_CLEAR, rotation: Math.round(F.angAt(...M(f * hx, 6000), true)) } });
@@ -397,33 +400,46 @@ export function buildHotelsSample() {
       if (mode !== "cowork") {
         wall("Demising", inner, outer, "T-BLOCK215");
         space("Corner office", [su * (ui + 7500), sv * (vi + 3000)], "Workspace"); space("Boardroom", [su * (ui + 3000), sv * (vi + 7500)], "Meeting");
-        furn("Desk", [su * (ui + 8200), sv * (vi + 2200)], [1800, 800], true); furn("Sofa", [su * (ui + 9800), sv * (vi + 5600)], [1800, 800], false);
-        furn("Table", [su * (ui + 2600), sv * (vi + 7600)], [1200, 3600], true);
-      } else {
-        space("Team suite", [su * (ui + 6000), sv * (vi + 6000)], "Workspace");
-        for (const [du, dv] of [[3500, 3500], [3500, 7300], [7300, 3500], [7300, 7300]]) { furn("Desk", [su * (ui + du), sv * (vi + dv)], [1600, 1600], true); for (const o of [-1, 1]) furn("Chair", [su * (ui + du + o * 1150), sv * (vi + dv)], [550, 550], true); }
-      }
+      } else space("Team suite", [su * (ui + 6000), sv * (vi + 6000)], "Workspace");
     });
     T.slab(); T.finish();
     const atriumA = atria.reduce((s2, a) => s2 + (a.u1 - a.u0) * (a.v1 - a.v0), 0) / 1e6, gia = W * L / 1e6 - atriumA;
-    return { T, desks, offices, gia: Math.round(gia), W, L };
+    return { T, offices, gia: Math.round(gia), W, L };
   };
-  {
-    const mt = officeFloor("OFFICE", "tenants", "L2", "Office Level 2 — four tenancies (test fit)");
-    const cw = officeFloor("OFFICE-CW", "cowork", "L3", "Office Level 3 — flexible workspace (test fit)");
-    summary.push({ name: "Office", desks: mt.desks, coworkDesks: cw.desks, privateOffices: cw.offices, gia: mt.gia });
-    text("TX-OF", `OFFICE L2 — ${(mt.W / 1000).toFixed(1)} × ${(mt.L / 1000).toFixed(1)} m — four tenancies — ${mt.desks} desks — ${mt.gia} m² GIA per floor`, [Math.min(...mt.T.xs) - 3000, Math.max(...mt.T.ys) + 7000], mt.T.view, "TT-25", 80);
-    text("TX-OFC", `OFFICE L3 — flexible workspace — ${cw.offices} private offices, ${cw.desks} desks in them, plus team suites and lounge`, [Math.min(...cw.T.xs) - 3000, Math.max(...cw.T.ys) + 7000], cw.T.view, "TT-25", 80);
-    text("TX-SOF", `Office: four tenancies or flexible workspace`, [Math.min(...mt.T.xs) - 60000, (Math.min(...mt.T.ys) + Math.max(...mt.T.ys)) / 2], "V-SITE", "TT-25", 40);
-  }
+  const mt = officeFloor("OFFICE", "tenants", "L2", "Office Level 2 — four tenancies (test fit)");
+  const cw = officeFloor("OFFICE-CW", "cowork", "L3", "Office Level 3 — flexible workspace (test fit)");
+  text("TX-SOF", `Office: four tenancies or flexible workspace`, [Math.min(...mt.T.xs) - 60000, (Math.min(...mt.T.ys) + Math.max(...mt.T.ys)) / 2], "V-SITE", "TT-25", 40);
   add({ id: "V-3D", type: "View3D", name: "Test fit — 3D", args: { camera: { azimuth: 210, elevation: 40, target: [100000, 0, 0] }, scale: 1000, style: { ref: "VS-PRESENTATION" }, visualStyle: "Shaded" } });
   add({ id: "SC-ROOMS", type: "Schedule", name: "Room Schedule", args: { of: "IfcSpace", fields: ["Number", "Name", "Department", "Area"] } });
   add({ id: "SH-T100", type: "Sheet", name: "T-100 Test Fit", args: { number: "T-100", sheetName: "Hotels and Office Test Fit — Typical Floor (WIP)", size: "A1", orientation: "landscape", titleBlock: { ref: "SY-TB-A1" },
     viewports: [{ id: "VP1", view: { ref: "V-SITE" }, at: [110, 320], clipVisible: false }, { id: "VP2", view: { ref: "V-OFFICE" }, at: [340, 330], clipVisible: false },
-      { id: "VP3", view: { ref: "V-H1" }, at: [530, 420], clipVisible: false }, { id: "VP4", view: { ref: "V-H2" }, at: [530, 190], clipVisible: false }, { id: "VP5", view: { ref: "V-H3" }, at: [710, 320], clipVisible: false }], revision: "P02" } });
+      { id: "VP3", view: { ref: "V-H1" }, at: [530, 428], clipVisible: false }, { id: "VP4", view: { ref: "V-H2" }, at: [530, 180], clipVisible: false }, { id: "VP5", view: { ref: "V-H3" }, at: [710, 320], clipVisible: false }], revision: "P03" } });
   doc.meta.hotelSummary = summary;
   doc.graph.layout = {};
   doc.browser = { organisation: "by-discipline", expanded: ["Views", "Sheets"] };
   doc.regenerate();
+  // the fit-out: every room furnished from the block library and each bathroom given its door, then the whole floor
+  // checked - access, clearances, a way to everything - and whatever still fails noted on the plans that show it
+  const levels = ["L1", "L2", "L3"];
+  for (const lv of levels) fitOut(doc, lv);
+  doc.regenerate();
+  doc.meta.fitout = {};
+  for (const lv of levels) { const res = checkFitout(doc, lv); doc.meta.fitout[lv] = res.summary; fitNotes(doc, lv, res); }
+  const desksOn = lv => doc.elements().filter(f => doc.typeOf(f) === "Fixture" && doc.argValue(f, "level").ref === lv && (doc.lib.types[doc.argValue(f, "fixtureType").ref].fit || {}).kind === "workstation").length;
+  summary.push({ name: "Office", desks: desksOn("L2"), coworkDesks: desksOn("L3"), privateOffices: cw.offices, gia: mt.gia });
+  text("TX-OF", `OFFICE L2 — ${(mt.W / 1000).toFixed(1)} × ${(mt.L / 1000).toFixed(1)} m — four tenancies — ${desksOn("L2")} desks — ${mt.gia} m² GIA per floor`, [Math.min(...mt.T.xs) - 3000, Math.max(...mt.T.ys) + 7000], mt.T.view, "TT-25", 80);
+  text("TX-OFC", `OFFICE L3 — flexible workspace — ${cw.offices} private offices and team suites, ${desksOn("L3")} desks`, [Math.min(...cw.T.xs) - 3000, Math.max(...cw.T.ys) + 7000], cw.T.view, "TT-25", 80);
+  fitDetailSheet(doc, { id: "SH-T101", number: "T-101", name: "Typical rooms — enlarged plans", views: HOTEL_DETAILS });
+  doc.regenerate();
   return doc;
 }
+// the rooms the enlarged plans frame (ids as the builder numbers them): a typical key, a corner suite, an office core and
+// a tenancy's support strip, private offices and a team suite on the coworking floor
+const HOTEL_DETAILS = [
+  { id: "V-D-KEY", name: "Typical king room", rooms: ["H1-SP2", "H1-SP1"] },
+  { id: "V-D-SUITE", name: "Corner suite", rooms: ["H1-SP18", "H1-SP17"] },
+  { id: "V-D-CORE", name: "Office core — lifts, stair and WCs", rooms: ["OFFICE-SP6", "OFFICE-SP8", "OFFICE-SP9", "OFFICE-SP10"], margin: 500 },
+  { id: "V-D-SUPPORT", name: "Tenancy support strip — meeting rooms, phone booths, pantry", rooms: ["OFFICE-SP28", "OFFICE-SP29", "OFFICE-SP30", "OFFICE-SP31"], scale: 100 },
+  { id: "V-D-COWORK", name: "Private offices and meeting room", rooms: ["OFFICE-CW-SP28", "OFFICE-CW-SP29", "OFFICE-CW-SP39"], scale: 100 },
+  { id: "V-D-TEAM", name: "Team suite — benched desks", rooms: ["OFFICE-CW-SP108"], scale: 100, margin: 300 },
+];
