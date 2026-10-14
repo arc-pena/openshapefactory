@@ -30,7 +30,9 @@ import { propertyModel, pickCandidates, graphModel, listeningDimensions, dimensi
 import { buildSample } from "./sample.js";
 import { scheduleTable, scheduleCSV, availableFields, findInSchedule, failText } from "./schedules.js";
 import { parseLength, setLengthUnit } from "./units.js";
-import { bimToCad, cadEditsToOps } from "./cadbridge.js";
+import { bimToCad, cadEditsToOps, cadDiff } from "./cadbridge.js";
+import { towerGeometry, towerParams, towerMesh, towerScript, towerSpecs } from "./towers.js";
+import { buildDiagridTowerSample, buildTwistTowerSample } from "./sample_towers.js";
 import { fromPolygon, addElements, fillet, toggleLock, measureDim, dragHandle, regionsOf, shapeFromClicks, filletCorners, toCentreline, elementSegs, splitElement, bsplineAt, bsplineDomain } from "./bimsketch.js";
 import { cadSketchOutline } from "./cadsketch.js";
 import { programFromBrief, planSpaceGraph, relaxBubbles, gfaOf, activeLegend, legendColour, groupKey } from "./spacegraph.js";
@@ -2607,4 +2609,73 @@ testCase("M94", "Doors the fit-out adds, and the enlarged plans: a door into eac
     got.push(`${name}: doors ${doors.length}, bathroom doors ${bathDoors.length} (${between} between bath and key), ${sheet} ${doc.argValue(sh, "size")} ${vps.length} plans at 1:${[...new Set(boxes.map(x => x.sc))].join("/1:")}, on the sheet ${onSheet}, apart ${apart}, words ${words.length}`);
   }
   return R(ok.every(Boolean), "Hotels 267 doors, 50 bathroom doors all between bath and key; Orbit 166 and 49; A1 sheets of 5+ plans at 1:50/1:100, clear of each other and the title block; no software named", got.join("; "));
+});
+
+// ---------------------------------------------------------------- towers: one massing, its CAD solid, its building, its set
+let TWR = null;
+const accTowers = () => TWR || (TWR = { diagrid: buildDiagridTowerSample(), twist: buildTwistTowerSample() });
+/** Every edge of a face list used once each way: a closed, consistently turned skin. */
+const closedFaces = faces => { const e = new Map(); for (const f of faces) for (let i = 0; i < f.length; i++) { const k = f[i] + "_" + f[(i + 1) % f.length]; e.set(k, (e.get(k) || 0) + 1); }
+  let bad = 0; for (const [k, n] of e) { const [a, b] = k.split("_"); if (n !== 1 || e.get(b + "_" + a) !== 1) bad++; } return bad; };
+testCase("M95", "A tower massing is one closed solid made from numbers: for the diagrid tower (one diamond a face, and four with the bird's mouth alternating), the diagrid without a chamfer, and the twisting tower, the faces close with every edge used once each way, the body Web BIM cuts is closed with a positive volume, and the CAD script built from the same function compiles and declares the tower's parameters (no more than 40)", () => {
+  const got = [], ok = [];
+  for (const [kind, over] of [["diagrid", {}], ["diagrid", { diagridBays: 4, diagridStoreys: 4, birdMouthMode: 1 }], ["diagrid", { cornerChamfer: 0, podiumHeight: 0 }], ["twist", {}]]) {
+    const p = towerParams({ kind, params: over }), G = towerGeometry(kind, p), M = towerMesh(G);
+    const tri = []; for (let i = 0; i < M.index.length; i += 3) tri.push([M.index[i], M.index[i + 1], M.index[i + 2]]);
+    let V = 0; const P = M.positions; for (const [a, b, c] of tri) V += (P[a * 3] * (P[b * 3 + 1] * P[c * 3 + 2] - P[b * 3 + 2] * P[c * 3 + 1]) - P[a * 3 + 1] * (P[b * 3] * P[c * 3 + 2] - P[b * 3 + 2] * P[c * 3]) + P[a * 3 + 2] * (P[b * 3] * P[c * 3 + 1] - P[b * 3 + 1] * P[c * 3])) / 6;
+    const mod = new Function('"use strict"; return (' + towerScript(kind) + ");")();
+    const good = closedFaces(G.tower.faces) === 0 && closedFaces(G.stub.faces) === 0 && closedFaces(tri) === 0 && V > 1e14 && typeof mod.build === "function" && mod.params.length === towerSpecs(kind).length && mod.params.length <= 40;
+    ok.push(good); got.push(`${kind} ${JSON.stringify(over)}: ${G.tower.faces.length} faces, ${tri.length} triangles, ${(V / 1e9).toFixed(0)} m³, ${mod.params.length} parameters${good ? "" : " FAIL"}`);
+  }
+  return R(ok.every(Boolean), "four towers, each closed three ways, positive volume, script with its parameters", got.join("; "));
+});
+testCase("M96", "The building follows the massing: a level, a slab and its stairs per storey, the core from the ground to the roof, the skin, the diagrid and the columns; each slab is the massing cut at its level (its area within 6% of the envelope's plate there, less the core's shafts); and lowering the tower from 265 m to 200 m and the floor-to-floor from 4.2 m to 4.0 m takes it to the new storey count with no element in error and the typical plans re-pointed", () => {
+  const doc = buildDiagridTowerSample(), ed = new Editor(doc);
+  const count = t => doc.elements().filter(f => doc.typeOf(f) === t).length;
+  const before = { levels: count("Level"), floors: count("Floor"), walls: count("Wall"), stairs: count("Stair") };
+  const ms = doc.plan(doc.element("MS")), f20 = doc.element("MS-F20"), z20 = doc.data(doc.element("MS-L20")).value;
+  const plate = ms.levels[20].area, slab = doc.data(f20).value, shafts = ms.tower.core.shafts.reduce((a, sh) => a + Math.abs(polyArea(sh.ring)), 0);
+  const near = Math.abs(slab - (plate - shafts)) / plate < 0.06;
+  const tw = JSON.parse(JSON.stringify(doc.argValue(doc.element("MS"), "tower"))); tw.params.towerHeight = 200000; tw.params.floorToFloor = 4000;
+  const r = ed.apply([{ op: "set", id: "MS", key: "tower", value: tw }, { op: "towersync", id: "MS" }]);
+  const G = towerGeometry("diagrid", towerParams(tw)), after = { levels: count("Level"), floors: count("Floor"), errors: doc.elements().filter(f => doc.error(f)).length };
+  const low = doc.element("V-LOW"), lowLevel = doc.argValue(low, "level").ref;
+  const pass = before.levels === 60 && before.floors === 60 && before.walls === 20 && before.stairs > 100 && near && z20 > 0 && r.ok && after.levels === G.levels.length && after.floors === G.levels.length && after.errors === 0 && !!doc.element(lowLevel) && /LEVEL \d+/.test(low.get("Name"));
+  return R(pass, "60 levels, 60 slabs, 20 core walls, stairs; slab = plate less shafts within 6%; after the change the new count, no errors, views re-pointed",
+    `before ${JSON.stringify(before)}; level 20 plate ${(plate / 1e6).toFixed(0)} m², slab ${(slab / 1e6).toFixed(0)} m², shafts ${(shafts / 1e6).toFixed(0)} m²; after ${JSON.stringify(after)} (${G.levels.length} expected); low-rise plan on ${lowLevel} "${low.get("Name")}"`);
+});
+testCase("M97", "The parametric CAD holds the tower as a geometrical set called Tower massing with one Script whose parameters are the tower's; a slider moved there comes back as the tower's new numbers and a towersync; the modeller's copy is brought up to date by setting the changed parameters, not by writing the tower afresh", () => {
+  const doc = accTowers().diagrid, { model, params } = bimToCad(doc);
+  const set = model.features.find(f => f.type === "GeometricalSet" && f.name === "Tower massing"), sc = set && model.features.find(f => f.parent === set.id && f.type === "Script");
+  const moved = JSON.parse(JSON.stringify(model)); const msc = moved.features.find(f => f.id === sc.id); msc.args.params.towerHeight = 210000;
+  const ops = cadEditsToOps(doc, moved, params), cmds = cadDiff(model, moved);
+  const pass = !!sc && Object.keys(sc.args.params).length === towerSpecs("diagrid").length && /k\.polyhedron/.test(sc.args.code) && ops.length === 2 && ops[0].op === "set" && ops[0].key === "tower" && ops[0].value.params.towerHeight === 210000 && ops[1].op === "towersync"
+    && Array.isArray(cmds) && cmds.length === 1 && cmds[0].op === "set" && cmds[0].key === "towerHeight";
+  return R(pass, "a set Tower massing with the script; the slider gives set tower + towersync; the copy updated by one set", `set ${set && set.id}, script ${sc && sc.id} with ${sc && Object.keys(sc.args.params).length} parameters; ops ${JSON.stringify(ops.map(o => o.op + ":" + (o.key || "")))}; cmds ${JSON.stringify(cmds)}`);
+});
+testCase("M98", "The tower is drawn from the massing: a typical plan cuts the glass line, the perimeter columns and the diagrid; the south elevation draws the facade facing it (mullions, floor lines, the diagrid) and nothing of the far side; a section draws the cut through the envelope and the far side's inner face; the hidden-line model hides behind the skin, facet by facet", () => {
+  const doc = accTowers().diagrid;
+  const pl = planScene(doc, doc.element("V-MID")), cats = {}; for (const p of pl.prims) cats[p.layer] = (cats[p.layer] || 0) + 1;
+  const el = elevationScene(doc, doc.element("V-E-S")), ec = {}; for (const p of el.prims) ec[p.layer] = (ec[p.layer] || 0) + 1;
+  const G = viewLineGeometry(doc, doc.element("V-E-S")), skin = doc.plan(doc.element("MS-SKIN"));
+  const far = skin.lines.filter(l => l.kind === "mullion" && (l.n[0] * -G.look[0] + l.n[1] * -G.look[1]) < -0.5).length;
+  const hlr = buildHLRModel(doc), faces = hlr.solids.reduce((a, s) => a + s.faces.length, 0);
+  const pass = (cats.IfcCurtainWall || 0) > 10 && (cats.IfcColumn || 0) >= 16 && (cats.IfcMember || 0) >= 1 && (ec.IfcCurtainWall || 0) > 500 && (ec.IfcMember || 0) > 10 && far > 100 && faces >= skin.facets.length;
+  return R(pass, "plan: glass, columns, diagrid; elevation: facade and diagrid drawn, the far side's mullions left out; HLR occluders include every facet",
+    `plan ${JSON.stringify(cats)}; elevation ${JSON.stringify(ec)}; far-side mullions ${far}; HLR faces ${faces} (skin facets ${skin.facets.length})`);
+});
+testCase("M99", "Both tower sets are AIA-style A1 sheets: G series first, then A100 site, A101–A106 plans, A201–A202 elevations, A301 sections, A401 enlarged core, A501 details, A601 areas, A901 3D; every sheet in the AIA strip; nothing in error; the core's rooms on every drawn level pass the fit-out check (access from the lobby, WC clearances, 1500 lift landings); and no text speaks of software", () => {
+  const got = [], ok = [];
+  for (const [name, doc] of Object.entries(accTowers())) {
+    const sheets = doc.elements().filter(f => doc.typeOf(f) === "Sheet"), nums = sheets.map(f => doc.argValue(f, "number")).sort();
+    const want = ["A100", "A101", "A102", "A103", "A104", "A105", "A106", "A201", "A202", "A301", "A401", "A501", "A601", "A901", "G001", "G002", "G003"];
+    const strip = sheets.every(f => (doc.argValue(f, "titleBlock") || {}).ref === "SY-TB-AIA-A1" && doc.argValue(f, "size") === "A1");
+    const errors = doc.elements().filter(f => doc.error(f)).length;
+    const lvls = [...new Set(doc.elements().filter(f => doc.typeOf(f) === "Space").map(f => doc.argValue(f, "level").ref))];
+    const bad = lvls.flatMap(l => checkFitout(doc, l).rooms.filter(r => !r.ok).map(r => `${l}/${r.name}`));
+    const words = doc.elements().filter(f => doc.typeOf(f) === "Text").map(f => String(doc.argValue(f, "content") || "")).filter(t => /\b(AI|Claude|software|algorithm|generated|automatic|parametric)\b/i.test(t));
+    const pass = want.every(n => nums.includes(n)) && strip && errors === 0 && lvls.length >= 6 && !bad.length && !words.length;
+    ok.push(pass); got.push(`${name}: ${sheets.length} sheets (${nums.join(" ")}), strip ${strip}, errors ${errors}, fitted levels ${lvls.length}, failing rooms ${bad.length}${bad.length ? " " + bad.slice(0, 3) : ""}, words ${words.length}`);
+  }
+  return R(ok.every(Boolean), "both sets complete, in the strip, no errors, core rooms pass, no software words", got.join("; "));
 });

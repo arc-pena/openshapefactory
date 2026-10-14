@@ -1158,6 +1158,23 @@ export async function createWasmKernel({ initModule, wasmBinary, instantiateWasm
 
       fillet(shape, radius) { return SF.fillet(shape, radius); },
 
+      //! A closed solid from its faces: points [x, y, z], and each face a ring
+      //! of indices into them, counter-clockwise seen from outside. A flat face
+      //! stays one face (a facet with a point along an edge is still flat); one
+      //! that is not is fanned. Refused unless every edge has a face each side:
+      //! a solid with a hole in its skin is not a solid.
+      polyhedron(points, faces, opts = {}) {
+        if (!Array.isArray(points) || !Array.isArray(faces) || !faces.length)
+          throw new Error("a polyhedron needs points and faces");
+        for (const ring of faces)
+          if (!Array.isArray(ring) || ring.length < 3 || ring.some(i => !points[i]))
+            throw new Error("every face must be three or more indices into the points");
+        const sewn = sewMesh({ points, faces }, opts.tolerance || 0.01, true);
+        if (!sewn.closed)
+          throw new Error("the faces do not close: " + sewn.rim.length + " open edges");
+        return sewn.shape;
+      },
+
       compound(shapes) {
         const list = [].concat(shapes).filter(Boolean);
         if (!list.length) throw new Error("nothing to assemble");

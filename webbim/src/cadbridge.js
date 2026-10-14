@@ -14,6 +14,7 @@
 import { F, CATALOGUE } from "./ocaf.js";
 import { elementParts } from "./solids.js";
 import { forCad } from "./bimsketch.js";
+import { towerParams, towerScript } from "./towers.js";
 
 const PREFIX = "B_";
 const sid = id => String(id).replace(/[^A-Za-z0-9]/g, "_");
@@ -47,7 +48,20 @@ export function bimToCad(doc) {
     return levelSets.get(key);
   };
   for (const f of doc.elements()) {
-    const t = doc.typeOf(f); if (!CAD_TYPES.includes(t) || f.get("Integer") === 0 || doc.error(f)) continue;
+    const t = doc.typeOf(f);
+    // a tower massing: a geometrical set called Tower massing, holding the tower as one parametric script - its
+    // sliders are the tower's parameters, its body the closed solid Web BIM cuts for the slab edges
+    const tw = t === "Massing" ? F.json(f, "tower") : null;
+    if (tw && tw.kind && f.get("Integer") !== 0) {
+      const id = doc.idOf(f), s = sid(id), values = towerParams(tw);
+      const set = put(PREFIX + s, "GeometricalSet", "Tower massing", { inputs: "", shell: "Open" }, root);
+      const place = { x: F.real(f, "offsetX"), y: F.real(f, "offsetY"), z: F.real(f, "offsetZ"), rotation: F.real(f, "rotation") };
+      const nid = put(`${PREFIX}${s}_tower`, "Script", `${f.get("Name") || id} (${tw.kind === "diagrid" ? "diagrid" : "twisting"} tower)`, { code: towerScript(tw.kind, place), params: values }, set,
+        { appearance: { finish: "glass", color: [0.62, 0.78, 0.90] } });
+      params.set(nid, { el: id, key: "tower", kind: "towerScript", value: values, tower: tw });
+      continue;
+    }
+    if (!CAD_TYPES.includes(t) || f.get("Integer") === 0 || doc.error(f)) continue;
     const id = doc.idOf(f), s = sid(id);
     const typeName = (() => { const k = ["wallType", "columnType", "doorType", "windowType", "floorType", "beamType"].find(k => F.refId(f, k)); const ty = k && doc.lib.types[F.refId(f, k)]; return ty ? ty.name : t; })();
     const set = put(PREFIX + s, "GeometricalSet", `${id} · ${typeName}`, { inputs: "", shell: "Open" }, levelSet(f));
@@ -117,6 +131,14 @@ export function cadEditsToOps(doc, cadModel, params) {
       ops.push({ op: "set", id: p.el, key: "sketch", value: Object.assign({}, dr, { dims: (was.dims || []).filter(x => (x.of || []).every(id => dr.elements.some(e => e.id === id))) }) });
       continue;
     }
+    if (p.kind === "towerScript") {
+      // the tower's sliders moved: the tower takes the new numbers, and its building follows (levels, slabs, core, skin)
+      const got = Object.assign({}, p.value, (f.args && f.args.params) || {});
+      const moved = Object.keys(p.value).some(k => Number.isFinite(got[k]) && Math.abs(got[k] - p.value[k]) > 1e-6 * Math.max(1, Math.abs(p.value[k])));
+      if (!moved) continue;
+      ops.push({ op: "set", id: p.el, key: "tower", value: Object.assign({}, p.tower, { params: got }) }, { op: "towersync", id: p.el });
+      continue;
+    }
     if (p.kind === "number") {
       const v = numB(f.args.value); if (!Number.isFinite(v) || Math.abs(v - p.value) < 1e-6) continue;
       ops.push({ op: "set", id: p.el, key: p.key, value: v });
@@ -145,6 +167,9 @@ export function cadDiff(cur, next) {
     for (const [k, v] of Object.entries(f.args)) {
       const was = g.args ? g.args[k] : undefined;
       if (k === "drawing") { if (!sameDrawing(was, v)) cmds.push({ op: "sketch", id: f.id, drawing: v }); continue; }
+      // a script: new code is a new feature (written afresh); new parameter values are slider moves
+      if (k === "code") { if (was !== v) return null; continue; }
+      if (k === "params" && v && typeof v === "object") { for (const [pk, pv] of Object.entries(v)) if (!(Math.abs(numB((was || {})[pk]) - pv) < 1e-6)) cmds.push({ op: "set", id: f.id, key: pk, value: pv }); continue; }
       if (v && typeof v === "object" && v.ref !== undefined) { if (!was || was.ref !== v.ref) return null; continue; }
       if (Array.isArray(v)) { if (JSON.stringify(was) !== JSON.stringify(v)) return null; continue; }
       if (typeof v === "number") { if (!(Math.abs(numB(was) - v) < 1e-6)) cmds.push({ op: "set", id: f.id, key: k, value: v }); continue; }

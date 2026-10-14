@@ -16,7 +16,8 @@ import { wallRecord, wallReferences, pointAt, uOf, sideOf, boundary, wallPieces,
 import { resolveJoins, wallRegions, solidSpans, solidPieces, coarseMaterial, JOIN_TOL } from "./joins.js";
 import { findLoops, claimLoops, filterWallFaces, interiorPoint } from "./spaces.js";
 import { regionsOf, regionPaths, FINE, elementSegs, bridgeHoles } from "./bimsketch.js";
-import { placeMesh, meshBox, meshMeasure, levelsIn, weldTriangles } from "./massing.js";
+import { placeMesh, meshBox, meshMeasure, levelsIn, weldTriangles, plateAt, offsetLoop } from "./massing.js";
+import { towerSpecs, towerParams, towerGeometry, towerMesh, towerCore } from "./towers.js";
 import { DIM_TYPES } from "./dimstyles.js";
 import { footprintRoofBody, attachedProfile } from "./archelements.js";
 import { curtainOf, curtainPieces } from "./curtain.js";
@@ -32,7 +33,7 @@ const levelElev = (doc, f, key = "baseLevel") => { const lv = F.reference(f, key
 // ---------------------------------------------------------------- datum elements
 declare({ type: "Level", guid: "wb-0001", category: "IfcBuildingStorey", kind: "level", idPrefix: "L",
   summary: "A plane z = elevation, and nothing more. Its elevation rep is a line with a level head.",
-  args: [ text("name", "Name", "Level", { group: "Identity Data" }), real("elevation", "Elevation", 0, -100000, 100000, 1) ] });
+  args: [ text("name", "Name", "Level", { group: "Identity Data" }), real("elevation", "Elevation", 0, -1e6, 1e6, 1) ] });
 BUILDERS.Level = { build: (f) => {
   const e = F.real(f, "elevation");
   return { data: { value: e, kind: "Length", props: { Elevation: L(e), Name: T(F.text(f, "name")) } } };
@@ -527,9 +528,24 @@ declare({ type: "Floor", guid: "wb-0401", category: "IfcSlab", kind: "floor", id
   summary: "A boundary on a level, and the type's layers stacked down from its top surface.",
   args: [ json("boundary", "Boundary", [[0, 0], [6000, 0], [6000, 4000], [0, 4000]]), ref("floorType", "Type", ["floorType"]), ref("level", "Level", ["level"]),
           real("heightOffset", "Height offset from level", 0, -10000, 10000, 1, "mm", { group: "Constraints" }),
-          json("sketch", "Boundary sketch", null, { group: "Constraints" }) ],
+          json("sketch", "Boundary sketch", null, { group: "Constraints" }),
+          // a slab whose edge is the massing's: the envelope cut at the floor's level, in by the tower's slab-edge
+          // inset, the core's shafts left open - it follows every change to the massing
+          ref("massing", "Slab edge from massing", ["massing"], { group: "Constraints" }), bool("shafts", "Core shafts left open", true, { group: "Constraints" }) ],
   // no grips: a floor's boundary is edited only in its sketch (Edit Boundary), where its loops stay closed
   handles: () => [] });
+/** A floor's areas from its massing: the envelope cut just under the floor's top (just over it at the ground). */
+function massingRegions(doc, f, ms, top) {
+  const mp = doc.plan(ms); if (!mp || !mp.mesh) throw new Error("the massing has not built");
+  const tw = mp.tower, b = mp.box;
+  const z = Math.max(b[2] + 1, Math.min(b[5] - 1, top - 1 < b[2] + 1 ? top + 1 : top - 1));
+  const cut = plateAt(mp.mesh, z); if (!cut.plates.length) throw new Error(`the massing does not reach this floor's level (${Math.round(top)})`);
+  const inset = tw ? tw.p.slabEdgeInset : 0;
+  const lowest = tw ? Math.abs(top - (tw.G.levels[0].z + (tw.place.z || 0))) < 1 : false;
+  const shafts = tw && !lowest && F.bool(f, "shafts") !== false ? tw.core.shafts.map(sh => sh.ring.map(q => placePlan(tw.place, q))) : [];
+  return cut.plates.map(pl => ({ outer: inset ? offsetLoop(pl.outer, inset) : pl.outer, holes: pl.holes.concat(shafts.filter(h => pointInPoly(h[0], pl.outer))) }));
+}
+const placePlan = (pl, q) => { const a = (pl.rotation || 0) * Math.PI / 180, c = Math.cos(a), s = Math.sin(a); return [q[0] * c - q[1] * s + (pl.x || 0), q[0] * s + q[1] * c + (pl.y || 0)]; };
 const hasSketch = s => !!(s && Array.isArray(s.elements) && s.elements.length);
 /** A floor's areas: the sketch's closed loops with their holes, or the plain boundary. */
 export function floorRegions(f) {
@@ -545,12 +561,14 @@ export function sketchPath(f) {
 BUILDERS.Floor = {
   precondition: (f) => {
     const sk = F.json(f, "sketch");
-    if (hasSketch(sk)) { const r = regionsOf(sk); if (r.error) return r.error; if (!r.regions.length) return "the sketch has no closed loop"; }
+    if (F.refId(f, "massing")) { /* its edge is the massing's */ }
+    else if (hasSketch(sk)) { const r = regionsOf(sk); if (r.error) return r.error; if (!r.regions.length) return "the sketch has no closed loop"; }
     else { const b = F.json(f, "boundary"); if (!Array.isArray(b) || b.length < 3) return "a floor needs a boundary of three points or more"; }
     return F.type(f, "floorType") ? null : "pick a floor type";
   },
   build: (f, doc) => {
-    const t = F.type(f, "floorType"), regions = floorRegions(f), top = levelElev(doc, f, "level") + F.real(f, "heightOffset");
+    const t = F.type(f, "floorType"), top = levelElev(doc, f, "level") + F.real(f, "heightOffset"), ms = F.reference(f, "massing");
+    const regions = ms ? massingRegions(doc, f, ms, top) : floorRegions(f);
     const layers = t.layers || [{ function: "Structure", thickness: 200, material: "M-CONC" }];
     const parts = []; let z = top;
     for (const L of layers) { for (const rg of regions) parts.push({ foot: rg.outer.map(p => p.slice()), holes: rg.holes.map(h => h.map(p => p.slice())), z0: z - L.thickness, z1: z, sub: L.function, material: L.material }); z -= L.thickness; }
@@ -560,7 +578,7 @@ BUILDERS.Floor = {
     const per = regions.reduce((a, rg) => a + ringLen(rg.outer) + rg.holes.reduce((s, h) => s + ringLen(h), 0), 0);
     const main = regions.reduce((b, rg) => (ringArea(rg.outer) > ringArea(b.outer) ? rg : b), regions[0]), b = main.outer;
     // drawn from the sketch's own curves - arcs as arcs, splines as Béziers - never from the sampled rings
-    const path = sketchPath(f) || regions.flatMap(rg => [...polyPath(rg.outer), ...rg.holes.flatMap(h => polyPath(h))]);
+    const path = (!ms && sketchPath(f)) || regions.flatMap(rg => [...polyPath(rg.outer), ...rg.holes.flatMap(h => polyPath(h))]);
     return { plan: { path, foot: b, regions, z0: z, z1: top, material: layers[layers.length > 1 ? 1 : 0].material, parts },
       data: { value: area, kind: "Area", parts, props: { Area: { kind: "Area", v: area }, Thickness: L(T_), Perimeter: L(per), Volume: { kind: "Volume", v: area * T_ }, "Top elevation": L(top), "Bottom elevation": L(z), Holes: { kind: "Number", v: regions.reduce((s, rg) => s + rg.holes.length, 0) }, TypeMark: T(t.mark || t.id) } } };
   },
@@ -972,18 +990,20 @@ BUILDERS.DraftingView = { build: () => ({ data: {} }) };
 declare({ type: "ElevationView", guid: "wb-0502", category: "View", kind: "view", idPrefix: "V-E",
   summary: "A line in plan: the view plane is the line extruded in z, looking along its right-hand normal.",
   args: [ curve2d("line", "View line", ["line"], { type: "line", start: [0, -3000], end: [12000, -3000] }), real("depth", "Depth", 15000, 1, 1e6, 1),
-          integer("scale", "Scale 1:", 100, 1, 5000, { group: "Graphics" }), ref("baseLevel", "Base level", ["level"]), real("top", "Top", 6000, 1, 1e5, 1),
+          integer("scale", "Scale 1:", 100, 1, 5000, { group: "Graphics" }), ref("baseLevel", "Base level", ["level"]), real("top", "Top", 6000, 1, 1e6, 1),
           ref("style", "View style", ["viewStyle"], { group: "Graphics" }), choice("detailLevel", "Detail level", ["Coarse", "Medium", "Fine"], 0, { group: "Graphics" }),
           json("clip", "Crop region", { rect: null, visible: false, active: false }, { group: "Extents" }),
           json("vg", "Visibility/Graphics", {}, { group: "Graphics" }) ,
           json("levelExtent", "Level lines (from, to along the view)", null, { group: "Graphics" }), bool("groundLine", "Ground line", true, { group: "Graphics" }),
-          json("overrides", "Element overrides", {}, { group: "Graphics" })],
+          json("overrides", "Element overrides", {}, { group: "Graphics" }),
+          // Revit's "Hide at scales coarser than": its marker leaves views drawn at a smaller scale than this
+          integer("hideCoarserThan", "Hide marker at scales coarser than 1:", 0, 0, 100000, { group: "Graphics" })],
   handles: viewLineHandles });
 BUILDERS.ElevationView = { build: () => ({ data: {} }) };
 declare({ type: "SectionView", guid: "wb-0505", category: "View", kind: "view", idPrefix: "V-S",
   summary: "A line in plan cutting the building: what it crosses is drawn cut, layer by layer, and what lies beyond it as in an elevation.",
   args: [ curve2d("line", "Section line", ["line"], { type: "line", start: [0, 4000], end: [12000, 4000] }), real("depth", "Far clip", 15000, 1, 1e6, 1),
-          integer("scale", "Scale 1:", 50, 1, 5000, { group: "Graphics" }), ref("baseLevel", "Base level", ["level"]), real("top", "Top", 6000, 1, 1e5, 1),
+          integer("scale", "Scale 1:", 50, 1, 5000, { group: "Graphics" }), ref("baseLevel", "Base level", ["level"]), real("top", "Top", 6000, 1, 1e6, 1),
           ref("style", "View style", ["viewStyle"], { group: "Graphics" }), choice("detailLevel", "Detail level", ["Coarse", "Medium", "Fine"], 2, { group: "Graphics" }),
           json("clip", "Crop region", { rect: null, visible: false, active: false }, { group: "Extents" }),
           json("vg", "Visibility/Graphics", {}, { group: "Graphics" }),
@@ -991,7 +1011,9 @@ declare({ type: "SectionView", guid: "wb-0505", category: "View", kind: "view", 
           // Revit's callout: a detail of another section, on its cut, its crop drawn there as a boundary with a bubble
           json("callout", "Callout of", null, { group: "Graphics" }),
           json("levelExtent", "Level lines (from, to along the view)", null, { group: "Graphics" }), bool("groundLine", "Ground line", true, { group: "Graphics" }),
-          json("overrides", "Element overrides", {}, { group: "Graphics" })],
+          json("overrides", "Element overrides", {}, { group: "Graphics" }),
+          // Revit's "Hide at scales coarser than": its marker leaves views drawn at a smaller scale than this
+          integer("hideCoarserThan", "Hide marker at scales coarser than 1:", 0, 0, 100000, { group: "Graphics" })],
   handles: viewLineHandles });
 BUILDERS.SectionView = { build: () => ({ data: {} }) };
 
@@ -1190,11 +1212,20 @@ declare({ type: "Massing", guid: "wb-0902", category: "Mass", kind: "massing", i
           real("offsetX", "X offset", 0, -1e9, 1e9, 1, "mm", { group: "Position" }), real("offsetY", "Y offset", 0, -1e9, 1e9, 1, "mm", { group: "Position" }),
           real("offsetZ", "Z offset", 0, -1e9, 1e9, 1, "mm", { group: "Position" }), real("rotation", "Rotation", 0, -360, 360, 1, "°", { group: "Position" }),
           real("floorToFloor", "Ideal floor-to-floor", 3500, 1000, 20000, 1, "mm", { group: "Levels" }),
-          real("minPlate", "Smallest plate that makes a storey", 20, 0, 1e6, 1, "", { group: "Levels" }) ] });
+          real("minPlate", "Smallest plate that makes a storey", 20, 0, 1e6, 1, "", { group: "Levels" }),
+          // a tower written as numbers (towers.js): { kind: "diagrid" | "twist", params }. Its faces are the body; the
+          // parametric CAD shows the same faces as a B-Rep in a geometrical set called Tower massing
+          json("tower", "Tower (parametric)", null, { group: "Parametric" }) ] });
 BUILDERS.Massing = {
-  precondition: (f) => { const m = F.json(f, "mesh"); return m && m.index && m.index.length >= 3 ? null : "the massing has no triangles: import an OBJ, STL or STEP"; },
+  precondition: (f) => {
+    const tw = F.json(f, "tower"); if (tw && tw.kind) { try { towerSpecs(tw.kind); return null; } catch (e) { return e.message; } }
+    const m = F.json(f, "mesh"); return m && m.index && m.index.length >= 3 ? null : "the massing has no triangles: import an OBJ, STL or STEP";
+  },
   build: (f) => {
-    const m = placeMesh(F.json(f, "mesh"), { x: F.real(f, "offsetX"), y: F.real(f, "offsetY"), z: F.real(f, "offsetZ"), rotation: F.real(f, "rotation") });
+    const place = { x: F.real(f, "offsetX"), y: F.real(f, "offsetY"), z: F.real(f, "offsetZ"), rotation: F.real(f, "rotation") };
+    const tw = F.json(f, "tower");
+    if (tw && tw.kind) return buildTowerMassing(f, tw, place);
+    const m = placeMesh(F.json(f, "mesh"), place);
     const box = meshBox(m), me = meshMeasure(m), h = F.real(f, "floorToFloor");
     const lv = levelsIn(m, h, { minPlate: (F.real(f, "minPlate") || 0) * 1e6 }), gfa = lv.reduce((a, l) => a + l.area, 0);
     return { plan: { mesh: m, box, z0: box[2], z1: box[5], levels: lv },
@@ -1202,6 +1233,21 @@ BUILDERS.Massing = {
         Storeys: { kind: "Number", v: lv.length }, "Gross floor area": { kind: "Area", v: gfa }, Triangles: { kind: "Number", v: m.index.length / 3 } } } };
   },
 };
+
+/** A tower massing: its faces as the body, its storeys as the levels (each with the plate the envelope makes there),
+ *  and what the elements made from it read - the tower's rows and faces, its placement and its core. */
+function buildTowerMassing(f, tw, place) {
+  const p = towerParams(tw), G = towerGeometry(tw.kind, p), m = placeMesh(towerMesh(G), place);
+  const box = meshBox(m), me = meshMeasure(m);
+  const lv = G.levels.map(l => { const z = l.z + place.z, pl = plateAt(m, Math.min(box[5] - 1, z + (l.index === 0 ? 1 : -1))); return { index: l.index, z, area: pl.area, plates: pl.plates }; });
+  const gfa = lv.slice(0, -1).reduce((a, l) => a + l.area, 0);
+  const { tower: _t, stub: _s, ...lite } = G;
+  const tower = { kind: tw.kind, p, G: lite, faces: G.tower.faces, place, core: towerCore(p) };
+  return { plan: { mesh: m, box, z0: box[2], z1: box[5], levels: lv, tower },
+    data: { value: Math.abs(me.volume), kind: "Volume", props: { Volume: { kind: "Volume", v: Math.abs(me.volume) }, "Envelope area": { kind: "Area", v: me.area }, Height: L(box[5] - box[2]),
+      Storeys: { kind: "Number", v: G.roof }, "Roof level": L(G.levels[G.roof].z), "Podium storeys": { kind: "Number", v: G.podiumLevel }, "Gross floor area": { kind: "Area", v: gfa },
+      Kind: T(tw.kind === "diagrid" ? "Diagrid tower" : "Twisting tower"), Faces: { kind: "Number", v: G.tower.faces.length } } } };
+}
 
 /** A space graph: the program as nodes and adjacencies, the site and its setbacks, the entry and the
  *  packing options - and the saved slot order that is each room's identity. Its model is built by
@@ -1342,6 +1388,10 @@ function elementRefs2d(doc, f) {
   }
   if ((t === "Floor" || t === "Generic" || t === "SiteBoundary") && p) {
     const R = p.foot && p.foot.length >= 3 ? p.foot : p.pts; ring(R);
+    // its extents, as lines through its outermost points: what a slab cut from a massing is dimensioned by (its
+    // vertex count changes with the massing; its west, east, south and north extremes are always there)
+    if (R && R.length >= 3) { const xs = R.map(q => q[0]), ys = R.map(q => q[1]), x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+      line("extent.west", [x0, y0], [x0, y1]); line("extent.east", [x1, y0], [x1, y1]); line("extent.south", [x0, y0], [x1, y0]); line("extent.north", [x0, y1], [x1, y1]); }
     // a generic body (an imported column, a pier) is dimensioned by its centre axis, as a column is
     if (t === "Generic" && R && R.length >= 3) { const xs = R.map(q => q[0]), ys = R.map(q => q[1]); point("centre", [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2]); }
     return out;

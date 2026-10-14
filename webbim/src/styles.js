@@ -39,6 +39,8 @@ export function categoryOf(doc, f) {
     const own = decl.args.some(a => a.key === "category") ? F.text(f, "category") : ""; if (own && doc.lib.categories[own]) return own;
     const c = genericCategory(F.text(f, "ifcClass")); if (c && doc.lib.categories[c]) return c;
   }
+  // a tower's frame files its perimeter columns with the columns
+  if (doc.typeOf(f) === "TowerFrame" && F.choice(f, "role") !== "Diagrid") return "IfcColumn";
   return decl ? decl.category : "Unknown";
 }
 const GENERIC_CATEGORY = [

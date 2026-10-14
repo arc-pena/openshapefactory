@@ -14,6 +14,11 @@ import { outline } from "./bimsketch.js";
 import { lockedKey, pushStyleSettings } from "./styles.js";
 import { planSpaceGraph, buildOpsFor, swapInOrder, movedBlocks } from "./spacegraph.js";
 import { storeysFor, placeMesh } from "./massing.js";
+import { towerOf, towerLevels, placeTower } from "./towerbim.js";
+import { towerRingAt } from "./towers.js";
+
+/** What a tower's sync calls when it is loaded: `fit(doc, levelId)` furnishes the core's rooms (fitout.js sets it). */
+export const TOWER_HOOKS = { fit: null };
 
 export class Editor {
   constructor(doc) {
@@ -462,6 +467,206 @@ const HANDLERS = {
       ids.push(id); made++;
     }
     return { said: `${o.id}: ${p.levels.length} storeys of ${F.real(f, "floorToFloor")} mm fit; ${made} level${made === 1 ? "" : "s"} made, ${p.levels.length - made} already there`, levels: ids };
+  },
+  /** A tower massing's building brought up to date with its numbers: a level per storey, a slab per level cut from the
+   *  massing, the core's walls from the ground to the roof, the skin, the diagrid and the perimeter columns, and the
+   *  core's doors on the levels the drawings show. Plan views tagged "Tower level" (ground, podium, roof, or a share of
+   *  the tower's height) are pointed at the level that tag now means, and elevations and sections tagged "Tower view"
+   *  are made tall enough. Everything it makes has an id starting with the massing's; a second run changes what
+   *  changed, adds what is new and removes what the tower no longer has. */
+  towersync(doc, o, ed) {
+    const M = o.id, f = doc.element(M); if (!f || doc.typeOf(f) !== "Massing") throw new Error(`${M} is not a massing`);
+    doc.regenerate();
+    const tw = towerOf(doc, f); if (!tw) throw new Error(doc.error(f) || `${M} has no tower`);
+    const G = tw.G, p = tw.p, sync = (doc.argValue(f, "tower") || {}).sync || {};
+    const pad = i => String(i).padStart(2, "0"), has = id => !!doc.element(id);
+    const put = (id, type, name, args, params) => {
+      if (has(id)) { const g = doc.element(id); for (const [k, v] of Object.entries(args)) if (JSON.stringify(doc.argValue(g, k)) !== JSON.stringify(v)) doc.setArg(g, k, v); if (name && g.get("Name") !== name) { g.set("Name", name); doc.log.touch(g); doc.bumpView(); } return id; }
+      HANDLERS.add(doc, { element: Object.assign({ id, type, name, args }, params ? { params } : {}) }); return id;
+    };
+    const mine = re => doc.elements().map(g => doc.idOf(g)).filter(id => re.test(id));
+    const levels = towerLevels(tw), roof = G.roof, podium = G.podiumLevel;
+    const levelName = i => (sync.levelNames && sync.levelNames[i]) || (i === 0 ? "Ground" : i === roof ? "Roof" : i === podium ? `Level ${pad(i)} (podium roof)` : `Level ${pad(i)}`);
+    // ---- levels
+    const LID = i => `${M}-L${pad(i)}`;
+    for (const l of levels) put(LID(l.index), "Level", levelName(l.index), { name: levelName(l.index), elevation: Math.round(l.z) }, { Comments: `${M}: storey ${l.index}` });
+    // ---- the plan views that follow the tower: each points at the level its tag means
+    const tagLevel = tag => {
+      const t = String(tag).trim().toLowerCase();
+      if (t === "ground") return 0; if (t === "podium") return podium; if (t === "roof") return roof; if (t === "top") return roof - 1;
+      if (t === "first") return Math.min(roof - 1, podium + 1);
+      // "row:k": the storey of the tower's k-th row (a diagrid's node row), the next storey up if the row is the crown
+      if (t.startsWith("row:")) { const r = G.rows[Math.min(G.rows.length - 2, Math.max(0, Number(t.slice(4)) || 0))]; return r && r.storey != null ? Math.min(roof - 1, r.storey) : null; }
+      const v = Number(t); if (!Number.isFinite(v)) return null;
+      if (v >= 1) return Math.min(roof, Math.round(v));
+      const lo = podium + 1, hi = roof - 1; return Math.max(lo, Math.min(hi, Math.round(lo + v * (hi - lo))));
+    };
+    const shown = new Set([0]);
+    for (const g of doc.elements()) {
+      const t = doc.typeOf(g), pr = doc.params(g);
+      if (t === "PlanView" && pr["Tower level"] != null && String(pr["Tower massing"] || M) === M) {
+        const i = tagLevel(pr["Tower level"]); if (i == null) continue;
+        shown.add(i); if (F.refId(g, "level") !== LID(i)) doc.setArg(g, "level", { ref: LID(i) });
+        const title = pr["Tower view title"]; if (title) { const nm = String(title).replace("{level}", levelName(i)).replace("{n}", pad(i)); if (g.get("Name") !== nm) { g.set("Name", nm); doc.bumpView(); } }
+      }
+      if ((t === "ElevationView" || t === "SectionView") && pr["Tower view"] != null && String(pr["Tower massing"] || M) === M) {
+        const top = Math.round(G.top + (tw.place.z || 0) + 8000);
+        if (Math.abs(F.real(g, "top") - top) > 1) doc.setArg(g, "top", top);
+      }
+    }
+    // ---- slabs
+    const floorType = sync.floorType || "T-SLAB300";
+    for (const l of levels) put(`${M}-F${pad(l.index)}`, "Floor", `${levelName(l.index)} slab`, { massing: { ref: M }, level: { ref: LID(l.index) }, floorType: { ref: floorType }, shafts: true, boundary: [[0, 0], [1, 0], [1, 1]] });
+    // ---- the core: walls from the ground to the roof (and through the crown for the lift overruns)
+    // the core's concrete: the project's own wall types, or two plain ones made here once
+    const wallType = (id, name, mark, th) => { if (!doc.lib.types[id]) doc.setDef("types", id, { family: "F-BASICWALL", name, mark, layers: [{ function: "Structure", thickness: th, material: "M-CONC" }], coreStart: 0, coreEnd: 1, params: { Function: "Core" } }); return id; };
+    const coreOuter = sync.coreType || wallType("T-TWR-CORE500", "Core wall, concrete 500", "CW5", 500), coreInner = sync.coreInnerType || wallType("T-TWR-CORE250", "Core wall, concrete 250", "CW2", 250);
+    const overrun = p.crownHeight > 1500 ? Math.min(p.crownHeight - 500, 4500) : 0;
+    tw.core.walls.forEach((w, i) => {
+      const a = placeTower(tw, w.a), b = placeTower(tw, w.b);
+      put(`${M}-CW${pad(i)}`, "Wall", `Core ${w.role} ${i + 1}`, { centreline: { type: "line", start: a.map(Math.round), end: b.map(Math.round) }, wallType: { ref: w.role === "core" ? coreOuter : coreInner },
+        baseLevel: { ref: LID(0) }, baseOffset: 0, topLevel: { ref: LID(roof) }, topOffset: overrun, mounting: "Centreline" });
+    });
+    // ---- skin and frame
+    put(`${M}-SKIN`, "TowerSkin", "Facade", { massing: { ref: M } });
+    put(`${M}-PC`, "TowerFrame", "Perimeter columns", { massing: { ref: M }, role: "Perimeter columns", material: sync.columnMaterial || "M-CONC" });
+    if (tw.kind === "diagrid") put(`${M}-DG`, "TowerFrame", "Diagrid", { massing: { ref: M }, role: "Diagrid", material: "M-STEEL" });
+    if (G.podium) put(`${M}-PDC`, "TowerFrame", "Podium columns", { massing: { ref: M }, role: "Podium columns", material: sync.columnMaterial || "M-CONC" });
+    // ---- what the tower no longer has: surplus slabs and core walls, then the levels nothing points at now
+    const gone = [];
+    for (const id of mine(new RegExp(`^${M}-F(\\d+)$`))) if (+id.slice(M.length + 2) > roof) gone.push(id);
+    for (const id of mine(new RegExp(`^${M}-CW(\\d+)$`))) if (+id.slice(M.length + 3) >= tw.core.walls.length) gone.push(id);
+    if (tw.kind !== "diagrid" && has(`${M}-DG`)) gone.push(`${M}-DG`);
+    if (!G.podium && has(`${M}-PDC`)) gone.push(`${M}-PDC`);
+    // ---- the core's doors, on the levels the drawings show (rebuilt each time: the levels they stand on move)
+    gone.push(...mine(new RegExp(`^${M}-(OP|DR|SP|ST)\\d+(-.*)?$`)));
+    if (gone.length) HANDLERS.delete(doc, { ids: gone });
+    const surplus = mine(new RegExp(`^${M}-L(\\d+)$`)).filter(id => +id.slice(M.length + 2) > roof);
+    if (surplus.length) {
+      for (const g of doc.elements()) for (const k of ["level", "baseLevel", "topLevel"]) { const r = F.refId(g, k); if (r && surplus.includes(r) && !surplus.includes(doc.idOf(g))) doc.setArg(g, k, { ref: LID(roof) }); }
+      HANDLERS.delete(doc, { ids: surplus });
+    }
+    doc.regenerate();
+    let n = 0;
+    const liftType = sync.liftDoorType || "T-DOOR1015", doorType = sync.doorType || "T-DOOR1015";
+    for (const i of [...shown].sort((a, b) => a - b)) {
+      const lvz = levels[i].z - levels[0].z;
+      for (const d of tw.core.doors) {
+        const host = `${M}-CW${pad(d.wall)}`; if (!has(host)) continue;
+        const op = `${M}-OP${pad(n)}`, dr = `${M}-DR${pad(n)}`; n++;
+        HANDLERS.add(doc, { element: { id: op, type: "Opening", args: { host: { ref: host }, profile: { kind: "rect", at: Math.round(d.u), sill: Math.round(lvz), w: d.w, h: d.h }, depth: "through" } } });
+        if (d.kind === "Lobby entrance") continue;
+        const flip = d.into === "S";
+        HANDLERS.add(doc, { element: { id: dr, type: "Door", args: { fills: { ref: op }, doorType: { ref: d.kind === "Lift" ? liftType : doorType }, operation: d.kind === "Lift" ? "Sliding" : "Single", flipFacing: flip, flipHand: false }, params: { Comments: `${d.kind}, ${levelName(i)}` } } });
+      }
+    }
+    // ---- the stairs, storey by storey (a storey much taller than the typical one keeps its stair for the design)
+    let ns = 0;
+    for (let i = 0; i < roof; i++) {
+      const hgt = levels[i + 1].z - levels[i].z; if (hgt > 1.3 * p.floorToFloor) continue;
+      for (const st of tw.core.stairs) {
+        const P = q => placeTower(tw, q).map(Math.round);
+        HANDLERS.add(doc, { element: { id: `${M}-ST${String(ns++).padStart(3, "0")}`, type: "Stair", name: `${st.name}, level ${pad(i)}`, args: { baseLevel: { ref: LID(i) }, topLevel: { ref: LID(i + 1) },
+          flights: [{ from: P(st.up[0]), to: P(st.up[1]) }, { from: P(st.down[0]), to: P(st.down[1]) }], width: Math.round(st.width), maxRiser: 180, railings: "None", numbers: false, material: "M-CONC" } } });
+      }
+    }
+    // ---- the core's rooms named on the levels the drawings show, and fitted out (WCs, lift cars) where the
+    // fit-out is loaded
+    let k = 0;
+    const sorted = [...shown].sort((a, b) => a - b);
+    for (const i of sorted) for (const rm of tw.core.rooms) {
+      if (!rm.kind) continue;
+      HANDLERS.add(doc, { element: { id: `${M}-SP${String(k++).padStart(3, "0")}`, type: "Space", name: rm.name, args: { level: { ref: LID(i) }, upperLimit: { mode: "offset", offset: 3000 }, anchor: placeTower(tw, rm.at).map(Math.round), boundaryAt: "finishFace" },
+        params: { Number: `${pad(i)}.${rm.number}`, Department: "Core" } } });
+    }
+    doc.regenerate();
+    if (TOWER_HOOKS.fit && sync.fitOut !== false) for (const i of sorted) { try { TOWER_HOOKS.fit(doc, LID(i)); } catch (e) { /* a room the fit-out cannot fit stays empty */ } }
+    doc.regenerate();
+    // ---- what the drawings say about the tower: crops round each plate, dimensions to the plate of the view's
+    // level, notes that quote the tower's numbers
+    const ms = doc.plan(f), mdata = doc.data(f) || {};
+    for (const g of doc.elements()) {
+      const t = doc.typeOf(g), pr = doc.params(g);
+      if (t === "PlanView" && pr["Tower crop"] != null) {
+        const lid = F.refId(g, "level"), li = lid && lid.startsWith(`${M}-L`) ? +lid.slice(M.length + 2) : null; if (li == null) continue;
+        const pl = ms.levels[li] && ms.levels[li].plates || [], pts = pl.flatMap(q => q.outer).concat(tw.core.outline.map(q => placeTower(tw, q)));
+        if (!pts.length) continue;
+        const mg = Number(pr["Tower crop"]) || 6000, xs = pts.map(q => q[0]), ys = pts.map(q => q[1]);
+        const rect = [Math.min(...xs) - mg, Math.min(...ys) - mg, Math.max(...xs) + mg, Math.max(...ys) + mg].map(Math.round);
+        const clip = Object.assign({}, doc.argValue(g, "clip") || {}, { rect, active: true });
+        if (JSON.stringify(doc.argValue(g, "clip")) !== JSON.stringify(clip)) doc.setArg(g, "clip", clip);
+      }
+      // a detail's crop, held on the part of the tower it details as the tower moves
+      if (t === "PlanView" && pr["Tower corner crop"] != null) {
+        const lid = F.refId(g, "level"), li = lid && lid.startsWith(`${M}-L`) ? +lid.slice(M.length + 2) : null; if (li == null) continue;
+        const [dir, size] = String(pr["Tower corner crop"]).split(":"), sz = Number(size) || 12000, sx = dir.includes("e") ? 1 : -1, sy = dir.includes("n") ? 1 : -1;
+        const pts = (ms.levels[li] && ms.levels[li].plates || []).flatMap(q => q.outer); if (!pts.length) continue;
+        let c = pts.reduce((b, q) => (sx * q[0] + sy * q[1] > sx * b[0] + sy * b[1] ? q : b), pts[0]);
+        if (dir === "notch" && tw.kind === "twist") {
+          // the twisting plate's notch: the slot's mouth on the plate at this level, wherever the turn has taken it
+          const R = towerRingAt(G, levels[li].z - (tw.place.z || 0)), n = R.length, q = placeTower(tw, R[Math.round(n / 4 + 3) % n]);
+          const ctr = pts.reduce((a, b) => [a[0] + b[0] / pts.length, a[1] + b[1] / pts.length], [0, 0]), out = [q[0] - ctr[0], q[1] - ctr[1]], l = Math.hypot(out[0], out[1]) || 1;
+          c = [q[0] + out[0] / l * sz * 0.12, q[1] + out[1] / l * sz * 0.12];
+        }
+        // centred a little inside the corner's outermost point, so the corner and the facade either side of it show
+        const cc = dir === "notch" ? c : [c[0] - sx * sz * 0.12, c[1] - sy * sz * 0.12], rect = [cc[0] - sz / 2, cc[1] - sz / 2, cc[0] + sz / 2, cc[1] + sz / 2].map(Math.round);
+        const clip = Object.assign({}, doc.argValue(g, "clip") || {}, { rect, active: true });
+        if (JSON.stringify(doc.argValue(g, "clip")) !== JSON.stringify(clip)) doc.setArg(g, "clip", clip);
+      }
+      if ((t === "SectionView" || t === "ElevationView") && (pr["Tower edge crop"] != null || pr["Tower node crop"] != null)) {
+        const c = doc.argValue(g, "line"), dl = Math.hypot(c.end[0] - c.start[0], c.end[1] - c.start[1]) || 1, d = [(c.end[0] - c.start[0]) / dl, (c.end[1] - c.start[1]) / dl];
+        const sOf = q => -((q[0] - c.end[0]) * d[0] + (q[1] - c.end[1]) * d[1]), look = [d[1], -d[0]];
+        const Z0 = levels[0].z;
+        let rect = null;
+        if (pr["Tower edge crop"] != null) {
+          // where the section line meets the slab edge at that level, nearest the line's start: the slab, the glass, the column
+          const i = tagLevel(pr["Tower edge crop"]), pts = (ms.levels[i] && ms.levels[i].plates || []).flatMap(q => q.outer); if (i != null && pts.length) {
+            let best = null;
+            for (let a = 0; a < pts.length; a++) { const A = pts[a], B = pts[(a + 1) % pts.length], e = [B[0] - A[0], B[1] - A[1]], den = d[0] * e[1] - d[1] * e[0]; if (Math.abs(den) < 1e-9) continue;
+              const tt = ((A[0] - c.start[0]) * e[1] - (A[1] - c.start[1]) * e[0]) / den, u = ((A[0] - c.start[0]) * d[1] - (A[1] - c.start[1]) * d[0]) / den;
+              if (u >= 0 && u <= 1 && (best == null || tt < best)) best = tt; }
+            if (best != null) { const q = [c.start[0] + d[0] * best, c.start[1] + d[1] * best], se = sOf(q), z = levels[i].z - Z0; rect = [se - 2700, z - 1700, se + 800, z + 1500].map(Math.round); }
+          }
+        } else {
+          const want = String(pr["Tower node crop"]);
+          let q3 = null;
+          if (tw.kind === "diagrid" && want !== "corner") {
+            // a node in the middle of the face the view looks at, at the node row asked for (or the next with one there)
+            const { J } = (() => { const B = Math.max(1, Math.round(p.diagridBays)); return { J: 2 * B }; })(), m = G.ringFaces[0].to - G.ringFaces[0].from + (p.cornerChamfer >= 50 ? 2 : 0);
+            let best = -Infinity;
+            for (let f2 = 0; f2 < 4; f2++) { const nOut = (() => { const a = G.rows[0].ring[f2 * m], b = G.rows[0].ring[f2 * m + J]; const e = [b[0] - a[0], b[1] - a[1]], l = Math.hypot(e[0], e[1]) || 1; return [e[1] / l, -e[0] / l]; })();
+              const facing = -(nOut[0] * look[0] + nOut[1] * look[1]); if (facing <= best) continue; best = facing;
+              for (let k2 = Math.max(1, Number(want) || 1); k2 < G.rows.length; k2++) { const j = J / 2, startOdd = Math.round(p.diagridStart) === 1 ? 1 : 0; if ((k2 + j + startOdd) % 2 !== 0 && J > 1) continue;
+                const r = G.rows[k2].ring[f2 * m + j]; q3 = [...placeTower(tw, r), G.rows[k2].z + (tw.place.z || 0)]; break; } }
+          } else {
+            // the notched corner a third of the way up
+            const i = tagLevel("0.33"), z = levels[i].z, R = towerRingAt(G, z - (tw.place.z || 0)), n = R.length, cand = [Math.round(n / 4 + 3), Math.round(3 * n / 4 + 3)].map(k2 => placeTower(tw, R[k2 % n]));
+            const pick = cand.reduce((b, q) => (-(q[0] * look[0] + q[1] * look[1]) > -(b[0] * look[0] + b[1] * look[1]) ? q : b), cand[0]);
+            q3 = [...pick, z];
+          }
+          if (q3) { const sq = sOf(q3), z = q3[2] - Z0, w = tw.kind === "diagrid" ? 8000 : 9000; rect = [sq - w, z - w * 1.1, sq + w, z + w * 1.1].map(Math.round); }
+        }
+        if (rect) { const clip = Object.assign({}, doc.argValue(g, "clip") || {}, { rect, active: true }); if (JSON.stringify(doc.argValue(g, "clip")) !== JSON.stringify(clip)) doc.setArg(g, "clip", clip); }
+      }
+      if (t === "Dimension") {
+        const v = doc.element(F.refId(g, "view")), lid = v && doc.typeOf(v) === "PlanView" ? F.refId(v, "level") : null;
+        if (!lid || !lid.startsWith(`${M}-L`)) continue;
+        const fl = `${M}-F${lid.slice(M.length + 2)}`, of = doc.argValue(g, "of") || [];
+        const next = of.map(k2 => (new RegExp(`^${M}-F\\d+:`).test(k2) ? fl + k2.slice(k2.indexOf(":")) : k2));
+        if (JSON.stringify(next) !== JSON.stringify(of)) doc.setArg(g, "of", next);
+      }
+      if (t === "Text" && pr["Tower text"] != null) {
+        const mm = v => Math.round(v).toLocaleString("en-US"), m3 = v => (v / 1000).toFixed(3), m1 = v => (v / 1000).toFixed(1);
+        const vals = { storeys: String(roof), podiumStoreys: String(podium), roofLevel: "+" + m3(levels[roof].z - levels[0].z), height: m1(G.top), f2f: mm(p.floorToFloor), ground: mm(p.groundFloorHeight),
+          gfa: mm((mdata.props && mdata.props["Gross floor area"] ? mdata.props["Gross floor area"].v : 0) / 1e6), plate: `${m1(p.plateWidth)} × ${m1(p.plateDepth)}`, core: `${m1(p.coreWidth)} × ${m1(p.coreDepth)}`,
+          lifts: String(2 * tw.core.lifts), columns: mm(p.columnSize), colSpacing: mm(p.columnSpacing), mullions: mm(p.mullionSpacing), twist: String(p.twist), chamfer: mm(p.cornerChamfer || 0), birdMouth: mm(Math.abs(p.birdMouth || 0)),
+          diagrid: tw.kind === "diagrid" ? `${Math.round(p.diagridBays)} diamond${p.diagridBays > 1 ? "s" : ""} per face, node rows every ${Math.round(p.diagridStoreys)} storeys` : "", member: mm(p.diagridSize || 0) };
+        for (const [k2, v] of Object.entries(p)) if (!(k2 in vals)) vals[k2] = mm(v);
+        const content = String(pr["Tower text"]).replace(/\{(\w+)\}/g, (m0, k2) => (k2 in vals ? vals[k2] : m0));
+        if (F.text(g, "content") !== content) doc.setArg(g, "content", content);
+      }
+    }
+    return { said: `${M}: ${roof} storeys to the roof at ${(levels[roof].z / 1000).toFixed(2)} m, ${levels.length} levels and slabs, ${tw.core.walls.length} core walls, core doors on ${shown.size} levels`, levels: levels.map(l => LID(l.index)) };
   },
   /** Two rooms trade places: each takes the other's slot, the widths follow the areas, the strip shifts. */
   sgswap(doc, o, ed) {

@@ -19,6 +19,7 @@ import { buildAiaSample } from "./sample_aia.js";
 import { buildHotelsSample } from "./sample_hotels.js";
 import { buildOrbitSample } from "./sample_orbit.js";
 import { buildFireStationSample } from "./sample_firestation.js";
+import { buildDiagridTowerSample, buildTwistTowerSample } from "./sample_towers.js";
 import { cadLibraryIndex, cadLibraryCategories, cadLibrarySymbol, cadLibraryPreview } from "./cadlib.js";
 import { contoursFromDXF } from "./archelements.js";
 import { inflateBase64 } from "./inflate.js";
@@ -1091,6 +1092,8 @@ async function saveModel() { const r = await saveFile(`${app.doc.meta.name || "m
 const SAMPLES = [
   { id: "hotels", name: "Hotels and Office Test Fit (work in progress)", build: () => buildHotelsSample(), open: "V-SITE" },
   { id: "orbit", name: "Orbit — Hotels and Office Test Fit (work in progress)", build: () => buildOrbitSample(), open: "V-SITE" },
+  { id: "tower-diagrid", name: "Diagrid Office Tower — design development set (study after Brookfield Place, Dubai)", build: () => buildDiagridTowerSample(), open: "SH-A103" },
+  { id: "tower-twist", name: "Twisting Office Tower — design development set (study after the Generali Tower, Milan)", build: () => buildTwistTowerSample(), open: "SH-A103" },
   { id: "firestation", name: "Fire Station Study (after the Vitra Fire Station, Zaha Hadid, 1993)", build: () => buildFireStationSample(), open: "SH-A000" },
   { id: "mazatlan", name: "Casa Mazatlan (INAH drawing set)", build: () => buildMazatlanSample(), open: "SH-A101" },
   { id: "schaeffer", name: "Schaeffer Residence (Frank Harmon Architect)", build: () => buildSchaefferSample(), open: "SH-A202" },

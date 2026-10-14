@@ -13,6 +13,7 @@ import { wallRegions, wallAt, leanInvolved } from "./joins.js";
 import { pointAt, uOf, sideOf, wallTop, topBreaks } from "./walls.js";
 import { F } from "./ocaf.js";
 import { elementParts } from "./solids.js";
+import { towerHLR } from "./towerbim.js";
 
 const hlrCross = (u, v) => [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
 const hlrDot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
@@ -53,6 +54,8 @@ export function buildHLRModel(doc, opts = {}) {
       for (let i = 0; i < ft.length; i++) { const a = ft[i], b = ft[(i + 1) % ft.length];
         edges.push({ a: [a[0], a[1], p.z0], b: [b[0], b[1], p.z0], kind: "sharp" }, { a: [a[0], a[1], p.z1], b: [b[0], b[1], p.z1], kind: "sharp" }, { a: [a[0], a[1], p.z0], b: [a[0], a[1], p.z1], kind: "sharp" }); }
       continue; }
+    // a tower's skin hides what is inside it, facet by facet; its lines and the diagrid's are drawn
+    if (t === "TowerSkin" || t === "TowerFrame") { const r = towerHLR(doc, f); solids.push(...r.solids); edges.push(...r.edges); continue; }
     if ((t === "Generic" || t === "Duct" || t === "Pipe" || t === "Roof" || t === "Lattice" || t === "Stair" || t === "Toposurface" || t === "Planting" || t === "Railing" || t === "Ramp") && doc.plan(f) && doc.plan(f).mesh) { const m = doc.plan(f).mesh, P = m.positions; for (const [a, b] of featureEdges(m)) edges.push({ a: [P[a * 3], P[a * 3 + 1], P[a * 3 + 2]], b: [P[b * 3], P[b * 3 + 1], P[b * 3 + 2]], kind: "sharp" }); continue; }
     if (t === "Door" || t === "Window" || t === "Floor" || t === "Beam" || t === "Generic") { for (const pt of elementParts(doc, f)) if (pt.foot && pt.foot.length >= 3) {
       prism(pt.foot, pt.z0, pt.z1, solids, edges, "auto", pt.topFoot);
@@ -258,7 +261,10 @@ export function* hlrSteps(model, cam) {
     if (++i % 50 === 0) yield { done: i, total: model.edges.length };
   }
   const xs = all.map(p => p[0]), ys = all.map(p => p[1]);
-  const bbox = xs.length ? [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)] : [0, 0, 1, 1];
+  // a loop, not a spread: a tower's skin gives more edges than a call may take arguments
+  let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
+  for (let k = 0; k < xs.length; k++) { if (xs[k] < bx0) bx0 = xs[k]; if (xs[k] > bx1) bx1 = xs[k]; if (ys[k] < by0) by0 = ys[k]; if (ys[k] > by1) by1 = ys[k]; }
+  const bbox = xs.length ? [bx0, by0, bx1, by1] : [0, 0, 1, 1];
   return { lines, bbox, counts: Object.fromEntries(Object.entries(lines).map(([k, v]) => [k, v.length])), faces: occ.length, edges: model.edges.length };
 }
 export function runHLR(model, cam) { const it = hlrSteps(model, cam); let r; do { r = it.next(); } while (!r.done); return r.value; }

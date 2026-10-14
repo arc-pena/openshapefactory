@@ -110,6 +110,8 @@ export const CATEGORIES = {
   IfcStair:          { name: "Stairs", subcategories: { Common: { cut: "medium", projection: "thin", beyond: "hairline" } } },
   IfcRamp:           { name: "Ramps", subcategories: { Common: { cut: "medium", projection: "thin", beyond: "hairline" } } },
   IfcRailing:        { name: "Railings", subcategories: { Common: { cut: "medium", projection: "thin", beyond: "hairline" } } },
+  IfcCurtainWall:    { name: "Curtain Systems", subcategories: { Common: { cut: "medium", projection: "hairline", beyond: "hairline" } } },
+  IfcMember:         { name: "Diagrid and Bracing", subcategories: { Common: { cut: "heavy", projection: "thin", beyond: "hairline" } } },
   IfcPlate:          { name: "Curtain Panels", subcategories: { Common: { cut: "medium", projection: "thin", beyond: "hairline" } } },
   IfcFlowTerminal:   { name: "Plumbing & Fixtures", subcategories: { Common: { cut: "thin", projection: "thin", beyond: "hairline" } } },
   IfcTransportElement: { name: "Vertical Circulation", subcategories: { Common: { cut: "medium", projection: "thin", beyond: "hairline" } } },

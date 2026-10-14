@@ -17,7 +17,7 @@
 
 import { add, sub, mul, dot, cross, len, dist, normalise, perp, polyArea, pointInPoly } from "./geom2d.js";
 import { pointAt } from "./walls.js";
-import { Editor } from "./ops.js";
+import { Editor, TOWER_HOOKS } from "./ops.js";
 
 // ---------------------------------------------------------------- drawing helpers (mm, in a block's frame)
 const fxPt = (x, y) => [Math.round(x), Math.round(y)];
@@ -236,6 +236,9 @@ const fxIsVoid = r => r.dept === "Atrium" || /atrium|void/i.test(r.name);
 export function fitModel(doc, levelId) {
   const M = { doc, levelId, rooms: [], walls: [], doors: [], holes: [], seps: [], columns: [], fixtures: [], byId: new Map() };
   const onLevel = (f, k) => { const r = doc.argValue(f, k); return r && r.ref === levelId; };
+  // a wall that rises through this level from one below (a tower's core, ground to roof) bounds its rooms here too
+  const lvEl = doc.element(levelId), Lz = lvEl && doc.data(lvEl) ? doc.data(lvEl).value : 0;
+  const spans = f => { const w = doc.plan(f); return !!(w && w.z0 < Lz - 1 && w.z1 > Lz + 2000); };
   for (const f of doc.elements()) {
     const t = doc.typeOf(f), id = doc.idOf(f);
     if (t === "Space" && onLevel(f, "level")) {
@@ -244,7 +247,7 @@ export function fitModel(doc, levelId) {
       const dept = doc.getParam(f, "Department") || "", r = { id, f, name: f.get("Name") || dept || id, dept, poly, holes: (p.loop.holes || []).map(h => h.map(q => [q[0], q[1]])), area: Math.abs(polyArea(poly)) / 1e6 };
       r.bb = fxBB(poly); r.edges = [...[poly, ...r.holes].flatMap(P => P.map((a, i) => { const b = P[(i + 1) % P.length]; return { a, b, bb: fxBB([a, b]) }; }))]; r.obstacles = [];
       M.rooms.push(r); M.byId.set(id, r);
-    } else if (t === "Wall" && onLevel(f, "baseLevel")) {
+    } else if (t === "Wall" && (onLevel(f, "baseLevel") || spans(f))) {
       const w = doc.plan(f); if (!w || !w.curve || w.curve.type !== "line") continue;
       const s = w.stack.s, ty = doc.argValue(f, "wallType"), tid = ty && ty.ref, tt = doc.lib.types[tid] || {};
       M.walls.push({ id, f, w, a: w.curve.start, b: w.curve.end, d: w.d, L: w.L, T: w.stack.T, s0: Math.min(s[0], s[s.length - 1]), s1: Math.max(s[0], s[s.length - 1]), name: f.get("Name") || "", typeId: tid,
@@ -258,6 +261,8 @@ export function fitModel(doc, levelId) {
   for (const f of doc.elements()) {
     const t = doc.typeOf(f); if (t !== "Opening") continue;
     const fr = (doc.data(f) || {}).frame, w = fr && wallOf(fr.host); if (!w || fr.flagged) continue;
+    // on a wall that rises through many levels, only the openings at this one
+    const dz = Lz - (w.w.z0 || 0); if (fr.sill > dz + 300 || fr.sill + fr.h < dz + 300) continue;
     M.holes.push({ id: doc.idOf(f), wall: w, at: fr.at, w: fr.w, C: pointAt(w.w, 0, fr.at) });
   }
   const byOpening = new Map(M.holes.map(h => [h.id, h]));
@@ -1234,3 +1239,6 @@ export function fitDetailSheet(doc, { id, number, name, revision = "P03", scale 
   add_({ id, type: "Sheet", name: `${number} ${name}`, args: { number, sheetName: name, size: "A1", orientation: "landscape", titleBlock: { ref: "SY-TB-A1" }, viewports: vps, revision } });
   return id;
 }
+
+// a tower's sync furnishes the core's WCs and lift cars on the levels its drawings show
+TOWER_HOOKS.fit = (doc, levelId) => fitOut(doc, levelId);

@@ -31,6 +31,7 @@ import { paramText, scheduleTable } from "./schedules.js";
 import { readDXF } from "./dxf.js";
 import { sunOf, planShadows } from "./sun.js";
 import { NORTH_DXF } from "./library.js";
+import { towerElevItems, towerPlanPrims } from "./towerbim.js";
 
 // ---------------------------------------------------------------- text metrics
 /** Text height is cap height in paper mm (the drafting convention); the em
@@ -301,6 +302,16 @@ export function planScene(doc, v, opts = {}) {
       B.hit(id, p.foot);
       continue;
     }
+    if ((t === "TowerSkin" || t === "TowerFrame") && vis(f)) {
+      // a tower's glass line and its members where the plan cuts them, taken from its massing at this height
+      const pr = towerPlanPrims(doc, f, cutZ); if (!pr.fills.length && !pr.strokes.length) continue;
+      const id = doc.idOf(f), cat = categoryOf(doc, f), g = resolveGraphics(doc, ctx, f, "cut");
+      for (const fl of pr.fills) { const path = polyPath(fl.pts); B.fill(path, g.pattern === "solid" && g.fill ? g.fill : fl.colour, cat, id); B.stroke(path, { weight: penWeight(doc, "thin", S), colour: "#000" }, cat, id); }
+      for (const st of pr.strokes) B.stroke(st.pts.slice(1).map((q, i) => lineSeg(st.pts[i], q)), { weight: penWeight(doc, st.pen, S), colour: g.colour && g.colour !== "#000000" ? g.colour : "#000" }, cat, id);
+      const xs = [...pr.fills.flatMap(x => x.pts), ...pr.strokes.flatMap(x => x.pts)];
+      if (t === "TowerSkin" && xs.length) { const bx = [Math.min(...xs.map(q => q[0])), Math.min(...xs.map(q => q[1])), Math.max(...xs.map(q => q[0])), Math.max(...xs.map(q => q[1]))]; B.hit(id, [[bx[0], bx[1]], [bx[2], bx[1]], [bx[2], bx[3]], [bx[0], bx[3]]], "curve"); }
+      continue;
+    }
     if ((t === "Duct" || t === "Pipe") && vis(f)) {
       // MEP runs as MEP drawings show them: each run two lines and a dashed centreline, a riser its section crossed
       // drawn whatever the cut: services above it are what a services plan is for
@@ -454,9 +465,9 @@ export function planScene(doc, v, opts = {}) {
       B.hit(doc.idOf(f), samplePath(p.paths[0]));
     }
     if (t === "Grid" && vis(f)) drawGrid(doc, ctx, B, f);
-    if (t === "ElevationView" && categoryVisible(ctx, "Annotation") && (hov[doc.idOf(f)] || {}).visible !== false) drawElevationMarker(doc, ctx, B, f, place);
+    if (t === "ElevationView" && categoryVisible(ctx, "Annotation") && (hov[doc.idOf(f)] || {}).visible !== false && !markerHidden(f, ctx.scale)) drawElevationMarker(doc, ctx, B, f, place);
     // a callout's detail is marked by its boundary on its parent, not by a cut line
-    if (t === "SectionView" && categoryVisible(ctx, "Annotation") && !doc.argValue(f, "callout")) drawSectionMarker(doc, ctx, B, f, place);
+    if (t === "SectionView" && categoryVisible(ctx, "Annotation") && !doc.argValue(f, "callout") && (hov[doc.idOf(f)] || {}).visible !== false && !markerHidden(f, ctx.scale)) drawSectionMarker(doc, ctx, B, f, place);
     if (t === "RoomSeparator" && F.refId(f, "level") === (lv && doc.idOf(lv))) { const c = F.json(f, "line"); B.stroke([lineSeg(c.start, c.end)], { weight: penWeight(doc, "hairline", S), colour: "#6b7684", dash: LINE_TYPES.dashed2 }, "IfcSpace-Separator", doc.idOf(f)); B.hit(doc.idOf(f), [c.start, c.end], "curve"); }
   }
   // 4. detail and annotation belonging to this view
@@ -823,6 +834,8 @@ export function gridHead(doc, B, f, at, out, g, id) {
   }
   B.text([cp[0], cp[1] - ts / 2], F.text(f, "name"), ts, { align: "centre", layer: "IfcGrid", id, font: annotationStyle(doc).font || undefined });
 }
+/** Is a view's marker left out of a view drawn at 1:S (its "hide at scales coarser than")? */
+function markerHidden(f, S) { const k = F.int(f, "hideCoarserThan") || 0; return k > 0 && S > k; }
 /** A section line in plan: a chain line with a head at each end, the arrows pointing the way it looks. */
 function drawSectionMarker(doc, ctx, B, f, place) {
   const id = doc.idOf(f), S = ctx.scale;
@@ -1621,6 +1634,8 @@ function gatherElevationItems(doc, ctx, G, skip = null) {
     if (!categoryVisible(ctx, categoryOf(doc, f)) || hiddenByRule(doc, ctx, f)) continue;
     const t = doc.typeOf(f);
     if (t === "Wall") { const w = doc.plan(f); if (!w) continue; const it = elevWall(doc, f, w, V, sOf, depthOf, ctx); if (it) items.push(it); }
+    // a tower's skin and diagrid: what faces the eye (in a section, the far side beyond the cut, and the cut itself)
+    if (t === "TowerSkin" || t === "TowerFrame") { for (const it of towerElevItems(doc, f, G, !!skip)) items.push(it); continue; }
     if ((t === "Generic" || t === "Duct" || t === "Pipe" || t === "Roof" || t === "Lattice" || t === "Stair" || t === "Toposurface" || t === "Planting" || t === "Railing" || t === "Ramp") && doc.plan(f) && doc.plan(f).mesh) {
       // a body of its own shape: its feature edges, projected; hidden by what stands in front of it
       const p = doc.plan(f), P = p.mesh.positions, curves = [];
@@ -1785,7 +1800,7 @@ function drawDatums(doc, ctx, B, v, G) {
   }
   // other sections that cross this view: a line where their cut plane passes, with their name - picked and dragged here as in plan
   if (categoryVisible(ctx, "Annotation")) for (const f of doc.elements()) {
-    if (doc.typeOf(f) !== "SectionView" || f === v || doc.argValue(f, "callout")) continue;
+    if (doc.typeOf(f) !== "SectionView" || f === v || doc.argValue(f, "callout") || markerHidden(f, S)) continue;
     const sl = F.json(f, "line"); if (!sl || sl.type !== "line") continue;
     const sd = normalise(sub(sl.end, sl.start)), den = d[0] * sd[1] - d[1] * sd[0]; if (Math.abs(den) < 1e-9) continue;
     const t = ((sl.start[0] - o[0]) * sd[1] - (sl.start[1] - o[1]) * sd[0]) / den;
@@ -2045,6 +2060,13 @@ export function sectionCut(doc, v) {
           for (const [z0, z1] of spans) push(f, "wall", s0, s1, z0, z1, r.material, L ? L.priority : 1);
         }
       }
+    }
+    if (t === "TowerFrame" && p.mesh && p.mesh.index.length) {
+      // a tower's members cut by the section plane: each member's box sliced; the frame beyond is still drawn
+      const P = p.mesh.positions, Q = new Array(P.length); let lo = Infinity, hi = -Infinity;
+      for (let i = 0; i < P.length; i += 3) { const q = [P[i], P[i + 1]], dd = G.depthOf(q); Q[i] = G.sOf(q); Q[i + 1] = P[i + 2] - G.Z0; Q[i + 2] = dd; lo = Math.min(lo, dd); hi = Math.max(hi, dd); }
+      if (lo < 0 && hi > 0) { const loops = sliceMesh({ positions: Q, index: p.mesh.index }, 0).filter(l => l.closed && l.pts.length >= 3).map(l => l.pts); if (loops.length) polys.push({ id: doc.idOf(f), material: F.text(f, "material"), loops, cat: categoryOf(doc, f) }); }
+      continue;
     }
     if ((t === "Generic" || t === "Duct" || t === "Pipe" || t === "Roof" || t === "Lattice" || t === "Stair" || t === "Toposurface" || t === "Planting" || t === "Railing" || t === "Ramp") && p.mesh) {
       // a body of its own shape, cut by the section plane: turned into (along, up, depth) and sliced at depth 0
@@ -2328,17 +2350,17 @@ export function view3dScene(doc, v, opts = {}) {
  *  formatted. Paper millimetres. */
 export function scheduleScene(doc, v) {
   const B = new SceneBuilder(1), T = scheduleTable(doc, v), A = T.settings.appearance, cols = T.visible.map(i => T.columns[i]);
-  const h = 2.5, rowH = 6, pad = 2;
+  const h = A.textHeight || 2.5, rowH = A.rowHeight || Math.max(6, h * 2.4), pad = A.padding || 2, font = A.font || undefined;
   const shown = r => r.kind === "header" || r.kind === "blank" ? [] : T.visible.map(i => r.cells[i].text || "");
-  const colW = cols.map((c, n) => Math.max(textWidth(c.heading, h), ...T.rows.map(r => textWidth(shown(r)[n] || (n === 0 && r.text ? r.text : ""), h)), 6) + 2 * pad);
+  const colW = cols.map((c, n) => Math.max(textWidth(c.heading, h, font), ...T.rows.map(r => textWidth(shown(r)[n] || (n === 0 && r.text ? r.text : ""), h, font)), 6) + 2 * pad);
   const W = colW.reduce((a, b) => a + b, 0), xs = colW.reduce((acc, w) => (acc.push(acc[acc.length - 1] + w), acc), [0]);
   const groups = cols.some(c => c.group);
   const nRows = T.rows.length + (A.headers ? 1 : 0) + (A.headers && groups ? 1 : 0) + (A.blankRow ? 1 : 0);
   const H = nRows * rowH;
   const stroke = (a, b, w = 0.18) => B.prims.push({ t: "stroke", path: [lineSeg(a, b)], weight: w, colour: "#000", layer: "Schedule" });
   const fill = (x0, y0, x1, y1, colour) => B.prims.push({ t: "fill", path: rectPath(x0, y0, x1, y1), colour, layer: "Schedule" });
-  const put = (x0, w, y, s, align, opts = {}) => { const tw = textWidth(s, opts.h || h), x = align === "right" ? x0 + w - pad - tw : align === "center" ? x0 + (w - tw) / 2 : x0 + pad; B.text([x, y + 2], s, opts.h || h, opts); };
-  if (A.title) put(0, W, H + 1, T.title, "center", { h: 3.5 });
+  const put = (x0, w, y, s, align, opts = {}) => { const o = Object.assign(font ? { font } : {}, opts), hh = o.h || h, tw = textWidth(s, hh, o.font), x = align === "right" ? x0 + w - pad - tw : align === "center" ? x0 + (w - tw) / 2 : x0 + pad; B.text([x, y + (rowH - hh) / 2], s, hh, o); };
+  if (A.title) put(0, W, H + 1, T.title, "center", { h: A.titleHeight || 3.5, font: A.titleFont || font });
   let y = H;
   if (A.headers && groups) {
     y -= rowH;
@@ -2378,7 +2400,7 @@ export function sheetScene(doc, sh, opts = {}) {
   const band = isTitleFamily(tb) ? tb.viewTitles === "band" : tb.generated === "titleBand" || tb.generated === "fhaStrip" || tb.generated === "fhaBand";
   if (isTitleFamily(tb)) {
     // a title block family: its lines, text, smart fields and symbols, each shown as the sheet's check boxes say
-    const scales = [...new Set((doc.argValue(sh, "viewports") || []).map(vp => doc.element(vp.view.ref)).filter(v => v && doc.typeOf(v) !== "Schedule" && doc.typeOf(v) !== "View3D").map(v => F.int(v, "scale") || 100))].map(n => ({ n, name: scaleName(doc, n) }));
+    const scales = [...new Set((doc.argValue(sh, "viewports") || []).map(vp => doc.element(vp.view.ref)).filter(v => v && doc.typeOf(v) !== "Schedule" && doc.typeOf(v) !== "View3D" && doc.typeOf(v) !== "DraftingView").map(v => F.int(v, "scale") || 100))].map(n => ({ n, name: scaleName(doc, n) }));
     drawTitleFamily(doc, sh, W, H, tb, { put: (path, w, c) => put(path, w, c), txt, scales, tw: textWidth,
       fill: (path, colour) => prims.push({ t: "fill", path, colour, layer: "TitleBlock" }),
       segs: (pts, closed) => polyPath(pts, closed), circ: (c, r) => circlePath(c, r),

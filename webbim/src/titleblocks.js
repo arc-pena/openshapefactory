@@ -177,7 +177,70 @@ function defaultFamily() {
     { k: "fill", pts: [[xs[0], y1 - 0.9 * k], [W - b, y1 - 0.9 * k], [W - b, y1], [xs[0], y1]], hold: "right" });
   return { family: "titleblock", name: "Title block", space: "paper", design: [W, H], viewTitles: "plain", scaleStyle: "list", fields: [], visibility: [], items };
 }
+/** An AIA-style strip along the right edge of an A1 sheet (metric), as US sets lay it out (US National CAD Standard):
+ *  a 20 mm binding margin on the left, a 100 mm strip on the right reading top to bottom - architect, consultants,
+ *  seal, project, client, key plan, the issue record, the sheet's title, the job's particulars, and the sheet number
+ *  at the foot, large. The view titles are the standard's: the drawing's number in a circle, its title on a rule,
+ *  the scale beneath. Fields the project does not fill stay blank: a title block is never made up. */
+function aiaStripFamily() {
+  const W = 841, H = 594, L0 = 20, B0 = 10, R0 = W - 10, T0 = H - 10, X0 = R0 - 100, pad = 3, grey = "#5f6670", A = "Arial", AB = "ArialBold";
+  const items = [{ k: "rect", a: [L0, B0], b: [R0, T0], w: 0.5, hold: "stretch", holdY: "stretch" }, { k: "line", pts: [[X0, B0], [X0, T0]], w: 0.5, hold: "right", holdY: "stretch" }];
+  const top = y => ({ hold: "right", holdY: y > H / 2 ? "top" : undefined });
+  const rule = (y, w = 0.25) => items.push(Object.assign({ k: "line", pts: [[X0, y], [R0, y]], w }, top(y)));
+  const head = (y, t) => items.push(Object.assign({ k: "text", text: t, at: [X0 + pad, y - 4], h: 1.6, font: AB, colour: grey }, top(y)));
+  const lab = (x, y, field, h, o = {}) => items.push(Object.assign({ k: "label", field, at: [x, y], h, font: A }, top(y), o));
+  const txt = (x, y, text, h, o = {}) => items.push(Object.assign({ k: "text", text, at: [x, y], h, font: A }, top(y), o));
+  // the architect
+  head(T0, "ARCHITECT"); lab(X0 + pad, T0 - 12, "Firm", 4.2, { font: AB, room: 94, upper: true }); lab(X0 + pad, T0 - 18, "Firm Address", 2.0, { lines: 4, step: [0, -3.2], room: 94 });
+  rule(539);
+  // consultants
+  head(539, "CONSULTANTS");
+  [["STRUCTURAL ENGINEER", "Structural Engineer"], ["MEP ENGINEER", "MEP Engineer"], ["FACADE CONSULTANT", "Facade Consultant"], ["VERTICAL TRANSPORTATION", "VT Consultant"], ["LANDSCAPE ARCHITECT", "Landscape Architect"]]
+    .forEach(([t, f], i) => { const y = 529 - i * 12; txt(X0 + pad, y, t, 1.5, { colour: grey }); lab(X0 + pad, y - 4.2, f, 2.2, { room: 94 }); });
+  rule(469);
+  // seal: for a schematic or design-development set, not for construction
+  head(469, "SEAL");
+  items.push(Object.assign({ k: "rect", a: [X0 + 25, 410], b: [X0 + 75, 460], w: 0.18, colour: "#8a9099" }, top(460)));
+  lab(X0 + 50, 436.5, "Seal Note", 2.4, { align: "centre", font: AB, line: 0 }); lab(X0 + 50, 431.5, "Seal Note", 2.4, { align: "centre", font: AB, line: 1 });
+  rule(404);
+  // project and client
+  head(404, "PROJECT"); lab(X0 + pad, 391, "Project Name", 3.8, { font: AB, upper: true, lines: 3, step: [0, -5.4], room: 94 }); lab(X0 + pad, 374, "Address", 2.0, { lines: 2, step: [0, -3.2], room: 94 });
+  rule(354, 0.18);
+  head(354, "CLIENT"); lab(X0 + pad, 342, "Client", 2.6, { room: 94 });
+  rule(336);
+  // key plan: the symbol the project gives it, or the north point
+  head(336, "KEY PLAN"); items.push(Object.assign({ k: "symbol", symbol: "SY-NORTH", at: [R0 - 16, 286], scale: 1.0, vis: "North point" }, top(300)));
+  lab(X0 + pad, 276, "Key Plan Note", 1.8, { lines: 3, step: [0, -2.8], room: 70, colour: grey });
+  rule(266);
+  // the issue record: number, issue, date, a row each
+  head(266, "ISSUE RECORD");
+  txt(X0 + pad, 255, "NO.", 1.6, { font: AB, colour: grey }); txt(X0 + 14, 255, "ISSUE", 1.6, { font: AB, colour: grey }); txt(R0 - pad, 255, "DATE", 1.6, { font: AB, colour: grey, align: "right" });
+  items.push(Object.assign({ k: "line", pts: [[X0 + pad, 252.5], [R0 - pad, 252.5]], w: 0.13, colour: "#9aa1a9" }, top(252)));
+  lab(X0 + pad, 247, "Issue No.", 2.2, { lines: 10, step: [0, -7] }); lab(X0 + 14, 247, "Issue Description", 2.2, { lines: 10, step: [0, -7], room: 60 }); lab(R0 - pad, 247, "Issue Dates", 2.2, { lines: 10, step: [0, -7], align: "right" });
+  rule(176);
+  // the sheet's title
+  head(176, "SHEET TITLE"); lab(X0 + pad, 160, "Sheet Name", 4.4, { font: AB, upper: true, room: 94, line: 0 }); lab(X0 + pad, 152, "Sheet Name", 4.4, { font: AB, upper: true, room: 94, line: 1 });
+  rule(138);
+  // the particulars: two columns of label over value
+  const cell = (x, y, t, field, o = {}) => { txt(x, y, t, 1.5, { colour: grey }); lab(x, y - 5.2, field, 2.6, Object.assign({ room: 46 }, o)); };
+  cell(X0 + pad, 133, "PROJECT NO.", "Project Number"); cell(X0 + 52, 133, "DATE", "Issue Date");
+  cell(X0 + pad, 114, "SCALE", "Scale"); cell(X0 + 52, 114, "SHEET SIZE", "Print Size");
+  cell(X0 + pad, 95, "DRAWN", "Drawn By"); cell(X0 + 52, 95, "CHECKED", "Checked By");
+  cell(X0 + pad, 76, "ISSUE", "Issue", { font: AB, upper: true, room: 94 });
+  for (const y of [119.5, 100.5, 81.5]) items.push({ k: "line", pts: [[X0 + pad, y], [R0 - pad, y]], w: 0.13, colour: "#c4c8ce", hold: "right" });
+  items.push({ k: "line", pts: [[X0 + 50, 82], [X0 + 50, 137]], w: 0.13, colour: "#c4c8ce", hold: "right" });
+  rule(62, 0.5);
+  // the sheet number: read from across the room
+  txt(X0 + pad, 57, "SHEET NUMBER", 1.6, { font: AB, colour: grey });
+  lab(R0 - pad, 20, "Sheet Number", 17, { font: AB, align: "right", room: 92 });
+  return { family: "titleblock", name: "AIA strip, A1 metric (architect, consultants, seal, project, issue record, sheet number)", space: "paper", design: [W, H],
+    viewTitles: "band", scaleStyle: "band", asNoted: "AS NOTED",
+    viewTitle: { R: 5, numH: 3.2, numDy: -1.6, sheet: false, nameDx: 7, nameDy: 1.2, nameH: 3.6, scaleDx: 7, scaleDy: -3.6, scaleH: 2.0, font: "Arial", w: 0.35 },
+    fields: [{ name: "Seal Note", default: "NOT FOR\nCONSTRUCTION" }, { name: "Key Plan Note", default: "" }, { name: "Issue No.", default: "" }, { name: "Issue Description", default: "" }, { name: "Issue Dates", default: "" },
+      { name: "Structural Engineer", default: "" }, { name: "MEP Engineer", default: "" }, { name: "Facade Consultant", default: "" }, { name: "VT Consultant", default: "" }, { name: "Landscape Architect", default: "" }],
+    visibility: [{ name: "North point", default: true }], items };
+}
 /** The families the library starts with (replacing the generated title blocks of earlier files). */
 export function titleBlockFamilies() {
-  return { "SY-TB-A1": defaultFamily(), "SY-TB-BAND": titleBandFamily(), "SY-TB-FHA": fhaStripFamily(), "SY-TB-FHAB": fhaBandFamily() };
+  return { "SY-TB-A1": defaultFamily(), "SY-TB-BAND": titleBandFamily(), "SY-TB-FHA": fhaStripFamily(), "SY-TB-FHAB": fhaBandFamily(), "SY-TB-AIA-A1": aiaStripFamily() };
 }
