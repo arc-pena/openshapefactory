@@ -122,7 +122,17 @@ if (fs.existsSync(CAD)) {
   const page = fs.readFileSync(CAD, "utf8");
   // carried deflated (raw DEFLATE, base64): a third smaller, and base64 needs no escaping; inflated on first use
   const z = zlib.deflateRawSync(Buffer.from(page, "utf8"), { level: 9 }).toString("base64");
-  const studio = single.replace("<!--CAD-->", `<script type="text/x-webbim-cad-deflate" id="cad-page-z">${z}</script>`);
+  // the app rides the same way: deflated in an inert script, inflated by a bootstrap and run as an inline script at
+  // once, where the plain script stood. 4.3 MB of source becomes about 1 MB, which keeps the page under its 16 MB
+  // limit with the CAD page aboard (it had come within 6 KB of it). The bootstrap's inflater is closed in its own
+  // scope so it cannot meet the bundle's copy.
+  const appZ = zlib.deflateRawSync(Buffer.from(bundle, "utf8"), { level: 9 }).toString("base64");
+  const inflater = fs.readFileSync(path.join(SRC, "inflate.js"), "utf8").replace(/^export\s+/gm, "");
+  const boot = `<script type="text/x-webbim-app-deflate" id="app-z">${appZ}</script>\n<script>\n(() => {\n${inflater}\n` +
+    `const b = atob(document.getElementById("app-z").textContent), z = new Uint8Array(b.length);\nfor (let i = 0; i < b.length; i++) z[i] = b.charCodeAt(i);\n` +
+    `const s = document.createElement("script"); s.textContent = new TextDecoder().decode(inflateRaw(z));\ndocument.currentScript.after(s);\n})();\n</script>`;
+  if (boot.includes("</script", boot.indexOf("<script>") + 8) && boot.lastIndexOf("</script") !== boot.length - 9) fail("the bootstrap holds </script");
+  const studio = shell.replace("<!--CAD-->", () => `<script type="text/x-webbim-cad-deflate" id="cad-page-z">${z}</script>`).replace("<!--APP-->", () => boot);
   fs.writeFileSync(path.join(ROOT, "dist", "web-bim-studio.html"), studio);
   const mb = (studio.length / 1048576).toFixed(1);
   if (studio.length > 16 * 1048576) { console.error(`build refused: dist/web-bim-studio.html is ${mb} MB, over the 16 MB page limit`); process.exit(1); }
