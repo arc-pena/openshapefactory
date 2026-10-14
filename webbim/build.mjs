@@ -16,7 +16,7 @@ const SRC = path.join(ROOT, "src");
 // Dependency order is the concatenation order: a module comes after everything it imports.
 const MODULES = [
   "fontdata.js", "geom2d.js", "expr.js", "units.js", "dimstyles.js", "ocaf.js", "entourage.js", "titleblocks.js", "prompts.js", "promptagent.js", "library.js", "sections.js", "sectionlib.js", "walls.js", "curtain.js", "spaces.js", "joins.js", "dxf.js",
-  "cadsketch.js", "bimsketch.js", "massing.js", "archelements.js", "bim.js", "solids.js", "sun.js", "crop.js", "styles.js", "spacegraph.js", "ops.js", "props.js", "schedules.js", "scene.js", "hlr.js", "pdf.js", "render.js", "sample.js", "sample_rmuh.js", "sample_pavilion.js", "inflate.js", "cadlib_data.js", "cadlib.js", "mazatlan_pdf.js", "sample_mazatlan.js", "fha_pdf.js", "sample_fha.js", "sample_schaeffer.js", "sample_walnut.js", "sample_fpc.js", "sample_aia.js", "sample_hotels.js", "sample_orbit.js", "sample_firestation.js", "ifcsections.js", "ifcread.js", "ifcrecover.js", "ifcimport.js", "cadbridge.js", "acceptance.js",
+  "cadsketch.js", "bimsketch.js", "massing.js", "archelements.js", "bim.js", "solids.js", "sun.js", "crop.js", "styles.js", "spacegraph.js", "ops.js", "props.js", "schedules.js", "scene.js", "hlr.js", "pdf.js", "render.js", "sample.js", "sample_rmuh.js", "sample_pavilion.js", "inflate.js", "cadlib_data.js", "cadlib.js", "mazatlan_pdf.js", "sample_mazatlan.js", "fha_pdf.js", "sample_fha.js", "sample_schaeffer.js", "sample_walnut.js", "sample_fpc.js", "sample_aia.js", "fitout.js", "sample_hotels.js", "sample_orbit.js", "sample_firestation.js", "ifcsections.js", "ifcread.js", "ifcrecover.js", "ifcimport.js", "cadbridge.js", "acceptance.js",
   "ui_util.js", "tbeditor.js", "promptpanel.js", "sectionui.js", "scheduleui.js", "dimstyleui.js", "panel.js", "graph.js", "sketchui.js", "sgui.js", "canvas2d.js", "viewcube.js", "view3d.js", "app.js",
 ];
 const fail = msg => { console.error("build refused: " + msg); process.exit(1); };
@@ -107,7 +107,9 @@ for (const f of MODULES) {
 const shell = fs.readFileSync(path.join(ROOT, "shell.html"), "utf8");
 const bundle = `(() => {\n"use strict";\n${bodies.join("\n")}\n})();`;
 if (bundle.includes("</script")) fail("a module contains </script, which would end the inline script early");
-const single = shell.replace("<!--APP-->", `<script>\n${bundle}\n</script>`);
+// a function, not a string: in a replacement string `$` + backtick, $' and $& insert parts of the shell, and a module's
+// `^(${k})$` template did exactly that - the page stopped at "Unexpected end of input"
+const single = shell.replace("<!--APP-->", () => `<script>\n${bundle}\n</script>`);
 fs.mkdirSync(path.join(ROOT, "dist"), { recursive: true });
 fs.writeFileSync(path.join(ROOT, "dist", "web-bim.html"), single);
 const served = shell.replace("<!--APP-->", `<script type="module" src="src/app.js"></script>`);

@@ -38,6 +38,7 @@ import { buildRmuhSample, RMUH_BRIEF } from "./sample_rmuh.js";
 import { buildPavilionSample } from "./sample_pavilion.js";
 import { buildHotelsSample } from "./sample_hotels.js";
 import { buildOrbitSample } from "./sample_orbit.js";
+import { checkFitout } from "./fitout.js";
 import { buildFireStationSample } from "./sample_firestation.js";
 import { buildMazatlanSample } from "./sample_mazatlan.js";
 import { buildSchaefferSample } from "./sample_schaeffer.js";
@@ -2449,8 +2450,13 @@ testCase("M85", "The project's conversation lives in its file: the architect's p
   return { pass: shape && answered && image && briefOk && standard && refused && gone, detail: { ids, answered, image, briefOk, standard, refused, gone } };
 });
 
-testCase("M86", "Hotels and office test fit on the site drawing: four plates build without an error, every room encloses, no opening falls off its wall, and the counts come out as worked by hand - H1 4+4 bays + 4 suites + 2 + 2 end keys either side of the stair under the lifts = 16, H2 3+3 + 4 + 4 = 14, H3 (4+2)+(4+2) + 4 suites + 4 = 20; office 228 benched desks on the tenancy floor, 44 private offices on the coworking floor; the office middle is corridor, two compact cores and rooms, with no more than 260 m² of common circulation; doors carry no ADA clearance unless asked", () => {
-  const doc = buildHotelsSample(), errs = doc.elements().filter(f => doc.error(f)).map(f => doc.idOf(f));
+// the two test-fit samples take 10-15 s each to build and fit out; the tests that only read them share one build
+let ACC_HOTELS = null, ACC_ORBIT = null;
+const accHotels = () => ACC_HOTELS || (ACC_HOTELS = buildHotelsSample());
+const accOrbit = () => ACC_ORBIT || (ACC_ORBIT = buildOrbitSample());
+
+testCase("M86", "Hotels and office test fit on the site drawing: four plates build without an error, every room encloses, no opening falls off its wall, and the counts come out as worked by hand - H1 4+4 bays + 4 suites + 2 + 2 end keys either side of the stair under the lifts = 16, H2 3+3 + 4 + 4 = 14, H3 (4+2)+(4+2) + 4 suites + 4 = 20; office 224 benched desks on the tenancy floor, 44 private offices on the coworking floor; the office middle is corridor, two compact cores and rooms, with no more than 260 m² of common circulation; doors carry no ADA clearance unless asked", () => {
+  const doc = accHotels(), errs = doc.elements().filter(f => doc.error(f)).map(f => doc.idOf(f));
   const spaces = doc.elements().filter(f => doc.typeOf(f) === "Space"), open = spaces.filter(f => { const p = doc.plan(f); return !p || p.status !== "ok"; });
   const off = doc.elements().filter(f => doc.typeOf(f) === "Opening").filter(f => { const d = doc.data(f); return d && d.frame && d.frame.flagged; });
   const s = doc.meta.hotelSummary, doors = doc.elements().filter(f => doc.typeOf(f) === "Door");
@@ -2461,20 +2467,24 @@ testCase("M86", "Hotels and office test fit on the site drawing: four plates bui
   const stairs = spaces.filter(f => f.get("Name") === "Stair").map(f => area(doc.plan(f).loop.pts));
   const stairsOk = stairs.length === 10 && stairs.every(a => a > 9.5 && a < 15.5);
   const circ = spaces.filter(f => doc.idOf(f).startsWith("OFFICE-SP") && doc.getParam(f, "Department") === "Circulation").reduce((a, f) => a + area(doc.plan(f).loop.pts), 0);
-  const ok = errs.length === 0 && open.length === 0 && off.length === 0 && keys === "16,14,20" && desks === 228 && circ > 150 && circ < 260 && (s.find(x => x.name === "Office") || {}).privateOffices === 44 && withClearance === 0 && stairsOk;
-  return R(ok, "no errors, all rooms enclosed, no stray openings, keys 16/14/20, 228 desks, 44 private offices, office common circulation 150-260 m², no clearance zones, 10 stairs of 9.5-15.5 m²", `errors ${errs.length}; open rooms ${open.length}; stray openings ${off.length}; keys ${keys}; desks ${desks}; office circulation ${circ.toFixed(0)} m²; doors with clearance ${withClearance} of ${doors.length}; stairs ${stairs.map(a => a.toFixed(1)).join("/")}`);
+  // desks as the fit-out benches them, pods square to the glass at 4.0 m centres along each tenancy's 42 m of facade, two
+  // pairs or more deep: 56 + 52 + 56 + 60 = 224 (the 228 laid before as boxes kept no 900 behind the chairs)
+  const ok = errs.length === 0 && open.length === 0 && off.length === 0 && keys === "16,14,20" && desks === 224 && circ > 150 && circ < 260 && (s.find(x => x.name === "Office") || {}).privateOffices === 44 && withClearance === 0 && stairsOk;
+  return R(ok, "no errors, all rooms enclosed, no stray openings, keys 16/14/20, 224 desks, 44 private offices, office common circulation 150-260 m², no clearance zones, 10 stairs of 9.5-15.5 m²", `errors ${errs.length}; open rooms ${open.length}; stray openings ${off.length}; keys ${keys}; desks ${desks}; office circulation ${circ.toFixed(0)} m²; doors with clearance ${withClearance} of ${doors.length}; stairs ${stairs.map(a => a.toFixed(1)).join("/")}`);
 });
 
-testCase("M88", "Orbit, from the scheme drawing: three hotels and the office build without an error, every room encloses, no opening falls off its wall; the keys are the drawing's - Upper-scale 8 rooms + 4 suites = 12, ULO 6 suites + 12 rooms = 18 - and the midscale's 19 in its outline; every key has a bath and a door; eight stairs of code width (two per hotel core pair, one per office core)", () => {
-  const doc = buildOrbitSample(), errs = doc.elements().filter(f => doc.error(f));
+testCase("M88", "Orbit, from the scheme drawing: three hotels and the office build without an error, every room encloses, no opening falls off its wall; the keys are the drawing's - Upper-scale 8 rooms + 4 suites = 12, ULO 6 suites + 12 rooms = 18 - and the midscale's 19 in its outline; every key has a bath and a door; eight stairs of code width (two per hotel core pair, one per office core); the office benches 198 desks", () => {
+  const doc = accOrbit(), errs = doc.elements().filter(f => doc.error(f));
   const spaces = doc.elements().filter(f => doc.typeOf(f) === "Space"), open = spaces.filter(f => { const p = doc.plan(f); return !p || p.status !== "ok"; });
   const off = doc.elements().filter(f => doc.typeOf(f) === "Opening").filter(f => { const d = doc.data(f); return d && d.frame && d.frame.flagged; });
   const s = doc.meta.hotelSummary, keys = s.filter(x => x.keys !== undefined).map(x => x.keys).join(), office = s.find(x => x.name === "Office") || {};
   const area = q => Math.abs(q.reduce((a, p, i) => { const r = q[(i + 1) % q.length]; return a + p[0] * r[1] - r[0] * p[1]; }, 0)) / 2e6;
   const stairs = spaces.filter(f => f.get("Name") === "Stair").map(f => area(doc.plan(f).loop.pts));
   const guest = spaces.filter(f => doc.getParam(f, "Department") === "Guest room").length, baths = spaces.filter(f => doc.getParam(f, "Department") === "Bath").length;
-  const ok = errs.length === 0 && open.length === 0 && off.length === 0 && keys === "12,18,19" && guest === 49 && baths === 49 && office.meetingRooms >= 10 && office.desks >= 200 && stairs.length === 8 && stairs.every(a => a > 9.5 && a < 20);
-  return R(ok, "no errors, all rooms enclosed, no stray openings, keys 12/18/19, a bath per key, 10+ meeting rooms and 200+ desks in the office, 8 stairs of 9.5-20 m²", `errors ${errs.length}; open rooms ${open.length}; stray openings ${off.length}; keys ${keys}; guest rooms ${guest}, baths ${baths}; meeting rooms ${office.meetingRooms}; desks ${office.desks}; stairs ${stairs.map(a => a.toFixed(1)).join("/")}`);
+  // desks as the fit-out benches them to the same clearances as the hotels' office: 76 + 68 + 54 in tenancies B, A and C
+  // (the 200+ estimated from boxes counted desks with no 900 behind the chairs and none of the wing cores' lobbies)
+  const ok = errs.length === 0 && open.length === 0 && off.length === 0 && keys === "12,18,19" && guest === 49 && baths === 49 && office.meetingRooms >= 10 && office.desks === 198 && stairs.length === 8 && stairs.every(a => a > 9.5 && a < 20);
+  return R(ok, "no errors, all rooms enclosed, no stray openings, keys 12/18/19, a bath per key, 10+ meeting rooms and 198 desks in the office, 8 stairs of 9.5-20 m²", `errors ${errs.length}; open rooms ${open.length}; stray openings ${off.length}; keys ${keys}; guest rooms ${guest}, baths ${baths}; meeting rooms ${office.meetingRooms}; desks ${office.desks}; stairs ${stairs.map(a => a.toFixed(1)).join("/")}`);
 });
 
 testCase("M89", "Fire station study: builds without an error; every room encloses; no opening falls off its wall; the rooms come to 700-850 m² net; the canopy's tip is the building's highest point; seven sheets", () => {
@@ -2496,4 +2506,105 @@ testCase("M87", "Room text per view: Room text None in a plan's control bar leav
   ed.apply({ op: "set", id: "V-PLAN", key: "overrides", value: Object.assign({}, doc.argValue(doc.element("V-PLAN"), "overrides") || {}, { __roomText: "None" }) });
   const after = texts("V-PLAN"), otherAfter = texts("V-PRES");
   return R(before > 0 && after === 0 && otherAfter === other && other > 0, "room text in V-PLAN > 0 → 0; V-PRES unchanged", `V-PLAN ${before} → ${after}; V-PRES ${other} → ${otherAfter}`);
+});
+
+// ---------------------------------------------------------------- the test fits' fit-out (fitout.js)
+/** Each Fixture's footprint centre in the plan and the Space it stands in (same level, inside the outline, out of its holes). */
+function accFixturesByRoom(doc) {
+  const spaces = doc.elements().filter(f => doc.typeOf(f) === "Space").map(f => ({ f, id: doc.idOf(f), lv: doc.argValue(f, "level").ref, dept: doc.getParam(f, "Department"), loop: (doc.plan(f) || {}).loop }));
+  const out = new Map(spaces.map(s => [s.id, []]));
+  for (const f of doc.elements().filter(f => doc.typeOf(f) === "Fixture")) {
+    const t = doc.lib.types[doc.argValue(f, "fixtureType").ref], [x0, y0, x1, y1] = t.fit.foot, pos = doc.argValue(f, "position"), a = (doc.argValue(f, "rotation") || 0) * Math.PI / 180;
+    const m = doc.argValue(f, "mirror") ? -1 : 1, cx = m * (x0 + x1) / 2, cy = (y0 + y1) / 2, p = [pos[0] + cx * Math.cos(a) - cy * Math.sin(a), pos[1] + cx * Math.sin(a) + cy * Math.cos(a)];
+    const s = spaces.find(s => s.loop && s.lv === doc.argValue(f, "level").ref && pointInPoly(p, s.loop.pts) && !(s.loop.holes || []).some(h => pointInPoly(p, h)));
+    if (s) out.get(s.id).push(t.fit.kind);
+  }
+  return { spaces, kinds: out };
+}
+const accLevels = doc => doc.elements().filter(f => doc.typeOf(f) === "Level").map(f => doc.idOf(f));
+
+testCase("M90", "Test-fit furniture is a block library: both test-fit samples build with no element in error and no furniture box left (the hotels had 753, Orbit 289); every fixture is a type from the library - sanitary ware, furniture or casework - drawn in lines, with a footprint and clearance zones; a typical king room carries the reference plan's pieces: bed between two nightstands, desk and chair, armchair, wardrobe, TV, and its bathroom a WC, basin and shower", () => {
+  const got = [], ok = [];
+  for (const [name, doc] of [["Hotels", accHotels()], ["Orbit", accOrbit()]]) {
+    const els = doc.elements(), errs = els.filter(f => doc.error(f)).length, boxes = els.filter(f => doc.typeOf(f) === "Furniture").length;
+    const fx = els.filter(f => doc.typeOf(f) === "Fixture"), bad = fx.filter(f => { const t = doc.lib.types[(doc.argValue(f, "fixtureType") || {}).ref];
+      return !t || !["F-SANITARY", "F-FIXTURE", "F-CASEWORK"].includes(t.family) || !(t.lines || []).length || !t.fit || t.fit.foot.length !== 4; }).length;
+    ok.push(errs === 0 && boxes === 0 && fx.length > 0 && bad === 0);
+    got.push(`${name}: errors ${errs}, furniture boxes ${boxes}, fixtures ${fx.length}, not from the library ${bad}`);
+  }
+  const { kinds } = accFixturesByRoom(accHotels()), key = kinds.get("H1-SP2"), bath = kinds.get("H1-SP1"), n = (list, k) => list.filter(x => x === k).length;
+  const keyOk = n(key, "bed") === 1 && n(key, "nightstand") === 2 && n(key, "desk") === 1 && n(key, "chair") === 1 && n(key, "armchair") === 1 && n(key, "wardrobe") === 1 && n(key, "tv") === 1;
+  const bathOk = n(bath, "wc") === 1 && n(bath, "basin") === 1 && n(bath, "shower") === 1;
+  return R(ok.every(Boolean) && keyOk && bathOk, "both: 0 errors, 0 furniture boxes, every fixture a library block; H1-SP2 bed, 2 nightstands, desk, chair, armchair, wardrobe, TV; H1-SP1 WC, basin, shower",
+    `${got.join("; ")}; H1-SP2 ${key.slice().sort().join(",")}; H1-SP1 ${bath.slice().sort().join(",")}`);
+});
+
+testCase("M91", "Every room can be reached from the main circulation without passing through another room (a bathroom through its own key, a riser through its store): no room fails on any floor of either test fit; and the check sees a key's corridor door taken out - that key and its bathroom then have no way in, and nothing else changes", () => {
+  const access = [];
+  for (const doc of [accHotels(), accOrbit()]) for (const lv of accLevels(doc)) for (const r of checkFitout(doc, lv).rooms) if (r.problems.some(p => /^no way in/.test(p))) access.push(r.id);
+  // H1-SP2's only doors are H1-D1 from the corridor and its bathroom's: with H1-D1 and its opening walled up the key is
+  // reached from nowhere, and its bathroom (reached only through the key) with it - 2 rooms of the 122 on the floor
+  const c = openDocument(JSON.parse(accHotels().serialise())); c.regenerate();
+  const ed = new Editor(c), hole = c.argValue(c.element("H1-D1"), "fills").ref;
+  for (const id of ["H1-D1", hole]) ed.apply({ op: "delete", id }, { undoable: false });
+  c.regenerate();
+  const res = checkFitout(c, "L1"), failed = res.rooms.filter(r => !r.ok);
+  const planted = failed.map(r => r.id).sort().join() === "H1-SP1,H1-SP2" && failed.every(r => r.problems.some(p => /^no way in from circulation/.test(p)));
+  return R(access.length === 0 && planted, "no room without a way in; H1-D1 out: H1-SP1 and H1-SP2 fail with no way in, 120 of 122 pass",
+    `rooms without a way in ${access.length}${access.length ? " (" + access.slice(0, 5).join(", ") + ")" : ""}; H1-D1 out: ${res.summary.passed} of ${res.summary.rooms} pass, ${failed.map(r => r.id + ": " + r.problems.join(" / ")).join("; ")}`);
+});
+
+testCase("M92", "People fit: on every floor of both test fits no fixture overlaps another, runs into a wall or a door's swing, or stands in a clearance (bed 600 at the sides and 700 at the foot, desk chair 750, 900 behind a seated chair on a route, wardrobe 600, WC 400 either side of its centreline and 600 × 800 in front, basin 700, shower entry 700, bath 700, armchair 450, chairs' 750 pull-out, counter 1200, lifts' 1500 landing), and an 800 walker (1200 on open-plan floors) reaches every one of those zones from the door; the check sees a nightstand pushed into the bed and a basin set in front of the WC", () => {
+  const got = [];
+  let failed = 0;
+  for (const [name, doc] of [["Hotels", accHotels()], ["Orbit", accOrbit()]]) for (const lv of accLevels(doc)) { const s = checkFitout(doc, lv).summary; failed += s.failed; got.push(`${name} ${lv} ${s.passed}/${s.rooms}`); }
+  // in a copy: H1-SP2's first nightstand moved onto its bed's insertion point (the bed is 1880 wide about it, the stand 500)
+  // overlaps it; H1-SP1's basin set square in front of the WC, its back 800 out from the WC's back, falls inside the WC's
+  // 600 × 800 front zone (690-1290 out): those two rooms fail, the other 120 still pass
+  const c = openDocument(JSON.parse(accHotels().serialise())); c.regenerate();
+  const ed = new Editor(c), at = (id, k) => c.argValue(c.element(id), k);
+  ed.apply({ op: "set", id: "H1-SP2-FX2", key: "position", value: at("H1-SP2-FX1", "position") }, { undoable: false });
+  const wc = at("H1-SP1-FX2", "position"), a = at("H1-SP1-FX2", "rotation") * Math.PI / 180;
+  ed.apply({ op: "set", id: "H1-SP1-FX3", key: "position", value: [wc[0] - 800 * Math.sin(a), wc[1] + 800 * Math.cos(a)] }, { undoable: false });
+  ed.apply({ op: "set", id: "H1-SP1-FX3", key: "rotation", value: at("H1-SP1-FX2", "rotation") }, { undoable: false });
+  c.regenerate();
+  const res = checkFitout(c, "L1"), bad = new Map(res.rooms.filter(r => !r.ok).map(r => [r.id, r.problems.join(" / ")]));
+  const planted = bad.size === 2 && /Nightstand .* overlaps King bed|King bed .* overlaps Nightstand/.test(bad.get("H1-SP2") || "") && /WC front clearance/.test(bad.get("H1-SP1") || "");
+  return R(failed === 0 && planted, "every room on every floor passes (0 failed); planted: H1-SP2 overlap, H1-SP1 basin in the WC front clearance, nothing else",
+    `${got.join(", ")}; planted: ${[...bad.entries()].map(([k, v]) => k + ": " + v).join("; ")}`);
+});
+
+testCase("M93", "Every key is furnished to the brief, counted room by room from where each fixture stands: a bed, two nightstands, a desk and its chair and a wardrobe in each of the hotels' 16 + 14 + 20 = 50 keys and Orbit's 12 + 18 + 19 = 49, and in each key's bathroom a WC, a basin and a shower or a bath", () => {
+  const got = [], ok = [];
+  for (const [name, doc, nk] of [["Hotels", accHotels(), 50], ["Orbit", accOrbit(), 49]]) {
+    const { spaces, kinds } = accFixturesByRoom(doc), n = (id, k) => kinds.get(id).filter(x => k.test(x)).length;
+    const keys = spaces.filter(s => s.dept === "Guest room"), baths = spaces.filter(s => s.dept === "Bath");
+    const shortKeys = keys.filter(s => !(n(s.id, /^bed$/) >= 1 && n(s.id, /^nightstand$/) === 2 && n(s.id, /^desk$/) >= 1 && n(s.id, /^chair$/) >= 1 && n(s.id, /^wardrobe$/) >= 1)).map(s => s.id);
+    const shortBaths = baths.filter(s => !(n(s.id, /^wc$/) >= 1 && n(s.id, /^basin$/) >= 1 && n(s.id, /^(shower|bath)$/) >= 1)).map(s => s.id);
+    ok.push(keys.length === nk && baths.length === nk && !shortKeys.length && !shortBaths.length);
+    got.push(`${name}: keys ${keys.length}, baths ${baths.length}, keys short ${shortKeys.length}${shortKeys.length ? " (" + shortKeys.slice(0, 4) + ")" : ""}, baths short ${shortBaths.length}${shortBaths.length ? " (" + shortBaths.slice(0, 4) + ")" : ""}`);
+  }
+  return R(ok.every(Boolean), "Hotels 50 keys and 50 baths, Orbit 49 and 49, none short", got.join("; "));
+});
+
+testCase("M94", "Doors the fit-out adds, and the enlarged plans: a door into each bathroom from its own key (the hotels 217 drawn + 50 = 267 doors; Orbit 114 drawn, less 5 the take-off listed twice, + 2 into the office wings' new lift lobbies + 49 bathroom doors + 6 into rooms drawn without one = 166), each in a wall between the bathroom and its key; each sample has an A1 sheet of enlarged plans at 1:50 and 1:100 whose plans sit on the sheet clear of each other and of the title block, and no sheet speaks of software", () => {
+  const got = [], ok = [];
+  const textOf = doc => doc.elements().filter(f => doc.typeOf(f) === "Text").map(f => String(doc.argValue(f, "content") || ""));
+  for (const [name, doc, total, nb, sheet] of [["Hotels", accHotels(), 267, 50, "SH-T101"], ["Orbit", accOrbit(), 166, 49, "SH-O101"]]) {
+    const els = doc.elements(), doors = els.filter(f => doc.typeOf(f) === "Door"), bathDoors = doors.filter(f => f.get("Name") === "Bathroom door");
+    // each bathroom door's opening: the spaces either side of it, a little off its wall's faces, are a Bath and a Guest room
+    const spaces = els.filter(f => doc.typeOf(f) === "Space" && doc.plan(f) && doc.plan(f).loop);
+    const deptAt = p => { const s = spaces.find(s => pointInPoly(p, doc.plan(s).loop.pts)); return s ? doc.getParam(s, "Department") : null; };
+    const between = bathDoors.filter(d => { const o = doc.element(doc.argValue(d, "fills").ref), fr = doc.data(o).frame, w = doc.plan(doc.element(fr.host)), n = [-w.d[1], w.d[0]], C = pointAt(w, 0, fr.at), off = Math.max(...w.stack.s.map(Math.abs)) + 150;
+      return [deptAt(add(C, mul(n, off))), deptAt(add(C, mul(n, -off)))].sort().join() === "Bath,Guest room"; }).length;
+    const sh = doc.element(sheet), vps = doc.argValue(sh, "viewports") || [];
+    const boxes = vps.map(vp => { const v = doc.element(vp.view.ref), r = doc.argValue(v, "clip").rect, sc = doc.argValue(v, "scale"), w = (r[2] - r[0]) / sc, h = (r[3] - r[1]) / sc; return { sc, b: [vp.at[0] - w / 2, vp.at[1] - h / 2, vp.at[0] + w / 2, vp.at[1] + h / 2] }; });
+    // A1 landscape is 841 × 594; the title block's band and each plan's title under it need the bottom 45 mm
+    const onSheet = boxes.every(x => x.b[0] >= 20 && x.b[2] <= 821 && x.b[1] >= 45 && x.b[3] <= 584 && [50, 100].includes(x.sc));
+    const apart = boxes.every((x, i) => boxes.every((y, j) => j <= i || x.b[2] <= y.b[0] || y.b[2] <= x.b[0] || x.b[3] <= y.b[1] || y.b[3] <= x.b[1]));
+    const words = textOf(doc).concat(els.filter(f => doc.typeOf(f) === "Sheet").map(f => String(doc.argValue(f, "sheetName") || ""))).filter(t => /\b(AI|Claude|software|algorithm|generated|automatic)\b/i.test(t));
+    ok.push(doors.length === total && bathDoors.length === nb && between === nb && doc.argValue(sh, "size") === "A1" && vps.length >= 5 && onSheet && apart && !words.length);
+    got.push(`${name}: doors ${doors.length}, bathroom doors ${bathDoors.length} (${between} between bath and key), ${sheet} ${doc.argValue(sh, "size")} ${vps.length} plans at 1:${[...new Set(boxes.map(x => x.sc))].join("/1:")}, on the sheet ${onSheet}, apart ${apart}, words ${words.length}`);
+  }
+  return R(ok.every(Boolean), "Hotels 267 doors, 50 bathroom doors all between bath and key; Orbit 166 and 49; A1 sheets of 5+ plans at 1:50/1:100, clear of each other and the title block; no software named", got.join("; "));
 });
