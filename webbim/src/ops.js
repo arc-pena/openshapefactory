@@ -16,6 +16,7 @@ import { planSpaceGraph, buildOpsFor, swapInOrder, movedBlocks } from "./spacegr
 import { storeysFor, placeMesh } from "./massing.js";
 import { towerOf, towerLevels, placeTower } from "./towerbim.js";
 import { towerRingAt } from "./towers.js";
+import { applyMeshSync } from "./meshgrid.js";
 
 /** What a tower's sync calls when it is loaded: `fit(doc, levelId)` furnishes the core's rooms (fitout.js sets it). */
 export const TOWER_HOOKS = { fit: null };
@@ -24,6 +25,8 @@ export class Editor {
   constructor(doc) {
     this.doc = doc; this.undoStack = []; this.redoStack = []; this.lastKey = null; this.listeners = [];
     this.lastResult = null;
+    // a mesh's slabs and walls follow its edits, and a core's: set false while a builder writes a whole project
+    this.autoMeshSync = true;
   }
   on(fn) { this.listeners.push(fn); }
   emit(r) { for (const fn of this.listeners) fn(r); }
@@ -36,14 +39,17 @@ export class Editor {
     // copy the document each time. What fails then is not rolled back - the builder stops on it
     if (!undoable) {
       let result = { ok: true };
+      const mk0 = this.autoMeshSync ? meshInputs(this.doc) : null;
       try { for (const o of ops) { const h = HANDLERS[o.op]; if (!h) throw new Error(`"${o.op}" is not an edit this document understands`);
-        const r = h(this.doc, o, this); if (r && r.conflicts) return this.finish({ ok: false, conflicts: r.conflicts, error: r.error }); result = Object.assign(result, r || {}); } }
+        const r = h(this.doc, o, this); if (r && r.conflicts) return this.finish({ ok: false, conflicts: r.conflicts, error: r.error }); result = Object.assign(result, r || {}); }
+        if (this.autoMeshSync) followMeshes(this.doc, ops, mk0, result); }
       catch (err) { return this.finish({ ok: false, error: err.message, at: err.at }); }
       if (regenerate) this.doc.regenerate();
       return this.finish(result);
     }
     const snap = snapshot(this.doc);
     let result = { ok: true };
+    const mk0 = this.autoMeshSync ? meshInputs(this.doc) : null;
     try {
       for (const o of ops) {
         const h = HANDLERS[o.op];
@@ -52,6 +58,7 @@ export class Editor {
         if (r && r.conflicts) { restore(this.doc, snap); this.doc.regenerate(); return this.finish({ ok: false, conflicts: r.conflicts, error: r.error }); }
         result = Object.assign(result, r || {});
       }
+      if (this.autoMeshSync) followMeshes(this.doc, ops, mk0, result);
     } catch (err) {
       restore(this.doc, snap);
       if (regenerate) this.doc.regenerate();
@@ -68,6 +75,34 @@ export class Editor {
   undo() { if (!this.undoStack.length) return this.finish({ ok: false, error: "nothing to undo" }); const cur = snapshot(this.doc); restore(this.doc, this.undoStack.pop()); this.redoStack.push(cur); this.lastKey = null; this.doc.regenerate(); return this.finish({ ok: true, undo: true }); }
   redo() { if (!this.redoStack.length) return this.finish({ ok: false, error: "nothing to redo" }); const cur = snapshot(this.doc); restore(this.doc, this.redoStack.pop()); this.undoStack.push(cur); this.lastKey = null; this.doc.regenerate(); return this.finish({ ok: true, redo: true }); }
   finish(r) { this.lastResult = r; this.emit(r); return r; }
+}
+
+// ---------------------------------------------------------------- meshes follow their edits
+/** What the meshes' slabs and walls are made from: the meshes, the cores and the levels (null: no mesh). */
+function meshInputs(doc) {
+  let s = "", any = false;
+  for (const g of doc.elements()) {
+    const t = doc.typeOf(g); if (t !== "MeshGrid" && t !== "Core" && t !== "Level") continue;
+    if (t === "MeshGrid") any = true;
+    const d = doc.declOf(g); s += doc.idOf(g) + JSON.stringify(d ? d.args.filter(a => a.group !== "Graphics").map(a => doc.argValue(g, a.key)) : null);
+  }
+  return any ? s : null;
+}
+/** After an edit that changed a mesh, a core or a level, the meshes make their slabs and walls again (unless the
+ *  edit was a mesh sync itself). */
+function followMeshes(doc, ops, before, result) {
+  if (ops.some(o => o.op === "meshsync" || o.op === "meshedit")) return;
+  const after = meshInputs(doc); if (after === null || after === before) return;
+  const r = HANDLERS.meshsync(doc, {});
+  if (r && r.said && !result.said) result.said = r.said;
+}
+/** Elements gone at once - a mesh's slabs and walls - with what their walls host. */
+function removeQuick(doc, ids) {
+  const set = new Set(ids.filter(id => doc.element(id)));
+  for (const g of doc.elements()) if (doc.typeOf(g) === "Opening" && set.has(F.refId(g, "host"))) set.add(doc.idOf(g));
+  for (const g of doc.elements()) { const t = doc.typeOf(g); if ((t === "Door" || t === "Window") && set.has(F.refId(g, "fills"))) set.add(doc.idOf(g)); }
+  for (const id of set) if (doc.element(id)) doc.removeElement(id);
+  return [...set];
 }
 
 // ---------------------------------------------------------------- snapshots
@@ -467,6 +502,42 @@ const HANDLERS = {
       ids.push(id); made++;
     }
     return { said: `${o.id}: ${p.levels.length} storeys of ${F.real(f, "floorToFloor")} mm fit; ${made} level${made === 1 ? "" : "s"} made, ${p.levels.length - made} already there`, levels: ids };
+  },
+  /** A mesh's slabs and walls made again from its cells (every mesh, without an id): the cells each level uses become
+   *  that level's slabs - touching cells one slab, a cell left out inside them a hole, a core through the level a
+   *  hole too - and walls run round them, from the level to the next. What is new is added, what changed is changed,
+   *  what the mesh no longer makes goes. */
+  meshsync(doc, o) {
+    const ids = o.id ? [o.id] : doc.elements().filter(g => doc.typeOf(g) === "MeshGrid").map(g => doc.idOf(g));
+    doc.regenerate();
+    const said = [], out = { slabs: 0, walls: 0, notCut: [] };
+    for (const M of ids) {
+      const f = doc.element(M); if (!f || doc.typeOf(f) !== "MeshGrid") throw new Error(`${M} is not a mesh`);
+      if (doc.error(f)) throw new Error(`${M}: ${doc.error(f)}`);
+      const plan = applyMeshSync(doc, M, rec => HANDLERS.add(doc, { element: rec }), list => removeQuick(doc, list));
+      out.slabs += plan.floors.length; out.walls += plan.walls.length; out.notCut.push(...plan.notCut);
+      const lv = new Set(plan.floors.map(x => x.level)).size;
+      said.push(`${M}: ${plan.floors.length} slabs, ${plan.walls.length} walls, ${lv} level${lv === 1 ? "" : "s"}` + (plan.notCut.length ? ` · ${plan.notCut.length} core crossing${plan.notCut.length === 1 ? "" : "s"} uncut (on a slab edge)` : "") + (plan.missing.length ? ` · no level ${plan.missing.join(", ")}` : ""));
+    }
+    return Object.assign(out, { said: said.join(" · ") });
+  },
+  /** A mesh edited: nodes, cells and the cells each level uses, patched ({ N7: [x, y], N9: null }) or replaced whole
+   *  (replace: true); then its slabs and walls are made again, all as one step. */
+  meshedit(doc, o) {
+    const f = doc.element(o.id); if (!f || doc.typeOf(f) !== "MeshGrid") throw new Error(`${o.id} is not a mesh`);
+    for (const k of ["nodes", "cells", "use"]) {
+      if (o[k] === undefined) continue;
+      if (o.replace) { doc.setArg(f, k, clone(o[k])); continue; }
+      const cur = clone(doc.argValue(f, k) || {});
+      for (const [kk, v] of Object.entries(o[k])) {
+        if (v === null) { delete cur[kk]; continue; }
+        if (k === "use" && typeof v === "object" && !Array.isArray(v)) { cur[kk] = cur[kk] || {}; for (const [c, u] of Object.entries(v)) { if (u === null) delete cur[kk][c]; else cur[kk][c] = clone(u); } }
+        else cur[kk] = clone(v);
+      }
+      doc.setArg(f, k, cur);
+    }
+    if (o.sync === false) return {};
+    return HANDLERS.meshsync(doc, { id: o.id });
   },
   /** A tower massing's building brought up to date with its numbers: a level per storey, a slab per level cut from the
    *  massing, the core's walls from the ground to the roof, the skin, the diagrid and the perimeter columns, and the
@@ -1012,7 +1083,7 @@ export function geomKeyOf(t) {
   return t === "Wall" ? "centreline" : t === "Grid" || t === "RoomSeparator" || t === "ElevationView" || t === "SectionView" ? "line"
     : t === "Column" || t === "Furniture" || t === "Text" || t === "SymbolInstance" ? "position" : t === "Space" ? "anchor"
     : t === "DetailLine" ? "curve" : t === "FilledRegion" || t === "Generic" ? "boundary" : t === "CADImport" ? "offsetX"
-    : t === "RepeatingDetail" ? "path" : t === "MaterialTag" ? "position" : t === "Beam" ? "axis" : t === "Floor" ? "boundary" : null;
+    : t === "RepeatingDetail" ? "path" : t === "MaterialTag" ? "position" : t === "Beam" ? "axis" : t === "Floor" ? "boundary" : t === "Core" ? "at" : null;
 }
 
 // ---------------------------------------------------------------- transforms

@@ -108,6 +108,8 @@ export const ICONS = {
   tree: P('<path d="M4 3v14M4 6h4M4 11h4M4 16h4"/><rect x="9" y="4" width="8" height="4"/><rect x="9" y="9" width="8" height="4"/><rect x="9" y="14" width="8" height="3"/>'),
   importI: P('<path d="M10 2v10M6 8l4 4 4-4"/><path d="M3 13v4h14v-4"/>'),
   exportI: P('<path d="M10 12V2M6 6l4-4 4 4"/><path d="M3 13v4h14v-4"/>'),
+  mesh: P('<path d="M2 6l6-3 6 2 4 5-3 6-7 1-5-4z"/><path d="M8 3l1 7 6 6M9 10l-7-1M9 10l9 0M9 10l-2 7" stroke-dasharray="2 1.2"/>'),
+  python: P('<path d="M10 2c-4 0-4 2-4 3v2h4v1H4c-2 0-2 3-2 4s0 4 2 4h2v-3c0-1 1-2 2-2h4c1 0 2-1 2-2V5c0-1 0-3-4-3z"/><path d="M10 18c4 0 4-2 4-3v-2h-4v-1h6c2 0 2-3 2-4s0-4-2-4h-2v3c0 1-1 2-2 2"/>'),
   tests: P('<path d="M4 10l4 4 8-8"/><rect x="2" y="2" width="16" height="16" rx="2"/>'),
   pens: P('<path d="M4 16l9-9 3 3-9 9H4z"/><path d="M12 4l4 4" /><path d="M2 5h5M2 8h3" stroke-width="1"/>'),
   info: P('<circle cx="10" cy="10" r="8"/><path d="M10 9v5M10 6v.5"/>'),

@@ -389,7 +389,7 @@ export class Document {
   serialise() { return JSON.stringify(this.toJSON(), null, 2) + "\n"; }
 }
 
-const META_KEYS = ["format", "version", "units", "name", "displayUnits", "project", "annotation", "defaultDimType", "scaleNames", "surveyElevation", "prompts"];
+const META_KEYS = ["format", "version", "units", "name", "displayUnits", "project", "annotation", "defaultDimType", "scaleNames", "surveyElevation", "prompts", "revisions"];
 export function loadDocument(input) {
   const src = typeof input === "string" ? JSON.parse(input) : input;
   const doc = new Document();

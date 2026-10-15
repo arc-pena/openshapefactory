@@ -48,6 +48,9 @@ import { buildWalnutSample } from "./sample_walnut.js";
 import { buildFpcSample } from "./sample_fpc.js";
 import { cadLibraryIndex, cadLibraryCategories, cadLibraryGeometry, cadLibrarySymbol } from "./cadlib.js";
 import { parseOBJ, storeysFor, plateAt, weldTriangles } from "./massing.js";
+import { levelRegions, cellShape, cellPolys, meshMoveNode, meshSplitCell, meshMergeCells, meshAddNodeOnEdge, meshDeleteNode } from "./meshgrid.js";
+import { rhinoPayload, rhinoScriptText, rhBase64 } from "./rhinoexport.js";
+import { buildNexusSample } from "./sample_nexus.js";
 
 export const CASES = [];
 const testCase = (id, name, fn, opts = {}) => CASES.push(Object.assign({ id, name, fn }, opts));
@@ -2678,4 +2681,111 @@ testCase("M99", "Both tower sets are AIA-style A1 sheets: G series first, then A
     ok.push(pass); got.push(`${name}: ${sheets.length} sheets (${nums.join(" ")}), strip ${strip}, errors ${errors}, fitted levels ${lvls.length}, failing rooms ${bad.length}${bad.length ? " " + bad.slice(0, 3) : ""}, words ${words.length}`);
   }
   return R(ok.every(Boolean), "both sets complete, in the strip, no errors, core rooms pass, no software words", got.join("; "));
+});
+
+// ---------------------------------------------------------------- the mesh that drives slabs and walls
+/** A 3 × 3 mesh of 10 m cells (nodes N00…N33 on a 10 m grid, cells C00…C22 by column and row): L0 uses the ring of
+ *  eight round the centre, L1 all nine; a 300 wall type, a 200 slab; a lift core 4 × 4 m in the centre cell, L0 to L1. */
+function meshFixture() {
+  const { doc, ed } = fixture();
+  doc.addElement({ id: "L1", type: "Level", args: { name: "First", elevation: 3000 } });
+  const nodes = {}, cells = {};
+  for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) nodes[`N${i}${j}`] = [i * 10000, j * 10000];
+  for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) cells[`C${i}${j}`] = [`N${i}${j}`, `N${i + 1}${j}`, `N${i + 1}${j + 1}`, `N${i}${j + 1}`];
+  const ring = {}; for (const c of Object.keys(cells)) if (c !== "C11") ring[c] = 1;
+  const all = {}; for (const c of Object.keys(cells)) all[c] = 1;
+  doc.addElement({ id: "MG", type: "MeshGrid", args: { nodes, cells, use: { L0: ring, L1: all }, slabType: { ref: "T-SLAB200" }, wallType: { ref: "T-300" }, walls: "Perimeter", topHeight: 4000 } });
+  doc.addElement({ id: "VC", type: "Core", args: { use: "Lift", at: [15000, 15000], width: 4000, depth: 4000, baseLevel: { ref: "L0" }, topLevel: { ref: "L1" }, cars: 1, cutsSlabs: true } });
+  doc.regenerate();
+  return { doc, ed, nodes, cells };
+}
+const meshArea = (doc, id) => (doc.data(doc.element(id)) || {}).value / 1e6;
+testCase("M100", "A level's slabs from the cells it uses: three 10 m cells in a row are one slab of 300 m²; the two end cells alone are two slabs of 100 m²; two cells touching at one corner stay two slabs; the ring of eight round an unused centre is one 900 m² outline with a 100 m² hole; a cell used in part at 0.5 is a 5 m square, 25 m², on the cell's centre", () => {
+  const { nodes, cells } = meshFixture();
+  const A = rs => rs.map(r => Math.round((Math.abs(polyArea(r.outer)) - r.holes.reduce((s, h) => s + Math.abs(polyArea(h.pts)), 0)) / 1e6));
+  const row = levelRegions(nodes, cells, { C00: 1, C10: 1, C20: 1 }).regions, ends = levelRegions(nodes, cells, { C00: 1, C20: 1 }).regions;
+  const pinch = levelRegions(nodes, cells, { C00: 1, C11: 1 }).regions;
+  const ring = levelRegions(nodes, cells, { C00: 1, C10: 1, C20: 1, C01: 1, C21: 1, C02: 1, C12: 1, C22: 1 }).regions;
+  const half = levelRegions(nodes, cells, { C11: [0.5, 0, 0] }).regions[0], hp = half.outer, hb = [Math.min(...hp.map(p => p[0])), Math.min(...hp.map(p => p[1])), Math.max(...hp.map(p => p[0])), Math.max(...hp.map(p => p[1]))];
+  const pass = row.length === 1 && A(row)[0] === 300 && row[0].outer.length === 8 && ends.length === 2 && A(ends).every(a => a === 100) && pinch.length === 2 && ring.length === 1 && ring[0].holes.length === 1
+    && Math.round(Math.abs(polyArea(ring[0].outer)) / 1e6) === 900 && A(ring)[0] === 800 && half.part && JSON.stringify(hb) === JSON.stringify([12500, 12500, 17500, 17500]);
+  return R(pass, "row 1 × 300 m² (8 corners); ends 2 × 100; pinch 2; ring 900 outline, 1 hole, 800 net; half cell [12500, 12500, 17500, 17500]",
+    `row ${row.length} × ${A(row)} (${row[0].outer.length} corners); ends ${A(ends)}; pinch ${pinch.length}; ring ${ring.length} with ${ring[0].holes.length} hole(s), net ${A(ring)}; half ${JSON.stringify(hb)}`);
+});
+testCase("M101", "meshsync makes the slabs and walls: L0's ring is one slab of 800 m² (the centre left open) with 16 walls (12 round the outside, 4 round the opening) 3000 high to L1; L1 is one slab of 900 m² less the 4 × 4 lift = 884 m², and 12 walls 4000 high (the top level's height); the lift does not cut L0 (its pit) ; each wall is joined to the next; a second sync changes nothing", () => {
+  const { doc, ed } = meshFixture();
+  const r = ed.apply({ op: "meshsync", id: "MG" });
+  const fl = doc.elements().filter(f => doc.typeOf(f) === "Floor"), wl = doc.elements().filter(f => doc.typeOf(f) === "Wall");
+  const onL = l => wl.filter(f => F.refId(f, "baseLevel") === l);
+  const h0 = onL("L0").map(f => W(doc, doc.idOf(f))).map(w => Math.round(w.z1 - w.z0)), h1 = onL("L1").map(f => W(doc, doc.idOf(f))).map(w => Math.round(w.z1 - w.z0));
+  const a0 = meshArea(doc, "MG-L0-S-C00"), a1 = meshArea(doc, "MG-L1-S-C00"), joins = doc.joins.filter(j => j.a.of.startsWith("MG-")).length;
+  const before = JSON.stringify(doc.elements().map(f => doc.elementJSON(f))); ed.apply({ op: "meshsync", id: "MG" }); const after = JSON.stringify(doc.elements().map(f => doc.elementJSON(f)));
+  const pass = r.ok && fl.length === 2 && Math.round(a0) === 800 && Math.round(a1) === 884 && onL("L0").length === 16 && onL("L1").length === 12 && h0.every(h => h === 3000) && h1.every(h => h === 4000) && joins === 28 && before === after && !doc.elements().some(f => doc.error(f));
+  return R(pass, "2 slabs: 800, 884 m²; walls 16 × 3000 on L0, 12 × 4000 on L1; 28 joins; unchanged by a second sync; no errors",
+    `${r.said}; slabs ${fl.length}: ${Math.round(a0)}, ${Math.round(a1)} m²; walls L0 ${onL("L0").length} (${[...new Set(h0)]}), L1 ${onL("L1").length} (${[...new Set(h1)]}); joins ${joins}; second sync ${before === after ? "no change" : "changed"}`);
+});
+testCase("M102", "The mesh edited, and the slabs and walls follow in the same undo step: the corner node N33 moved 5 m east makes cell C22 a trapezoid of 125 m², so L0's slab is 825 m² and L1's 909 m², and the wall from N32 to N33 keeps its id and ends at (35000, 30000); undo puts all of it back; a node added on the edge N10-N11 is in both cells either side and deleting it restores them; N11, where four edges meet, cannot be deleted; C11 split corner to corner and merged back is 100 m² again", () => {
+  const { doc, ed } = meshFixture();
+  ed.apply({ op: "meshsync", id: "MG" });
+  const m0 = { nodes: doc.argValue(doc.element("MG"), "nodes"), cells: doc.argValue(doc.element("MG"), "cells"), use: doc.argValue(doc.element("MG"), "use") };
+  const moved = meshMoveNode(m0, "N33", [35000, 30000]);
+  const r = ed.apply({ op: "meshedit", id: "MG", nodes: moved.nodes, cells: moved.cells, use: moved.use, replace: true });
+  const a0 = Math.round(meshArea(doc, "MG-L0-S-C00")), a1 = Math.round(meshArea(doc, "MG-L1-S-C00")), w = doc.argValue(doc.element("MG-L0-W-N32-N33"), "centreline");
+  ed.undo();
+  const back = Math.round(meshArea(doc, "MG-L0-S-C00")), wb = doc.argValue(doc.element("MG-L0-W-N32-N33"), "centreline");
+  const add = meshAddNodeOnEdge(m0, "N10", "N11", [10000, 4000]), nid = add.id, inBoth = ["C00", "C10"].every(c => add.mesh.cells[c].includes(nid) && add.mesh.cells[c].length === 5);
+  const del = meshDeleteNode(add.mesh, nid), restored = ["C00", "C10"].every(c => del.cells[c].length === 4);
+  let refused = ""; try { meshDeleteNode(m0, "N11"); } catch (e) { refused = e.message; }
+  const sp = meshSplitCell(m0, "C11", "N11", "N22"), mg = meshMergeCells(sp.mesh, "C11", sp.id), P = cellPolys(mg.mesh.nodes, mg.mesh.cells);
+  const pass = r.ok && a0 === 825 && a1 === 909 && w && w.end[0] === 35000 && w.end[1] === 30000 && back === 800 && wb.end[0] === 30000 && inBoth && restored && /4 edges meet/.test(refused)
+    && Object.keys(sp.mesh.cells).length === 10 && Object.keys(mg.mesh.cells).length === 9 && Math.round(Math.abs(polyArea(P.C11)) / 1e6) === 100 && mg.mesh.cells.C11.length === 4;
+  return R(pass, "825 / 909 m², wall end (35000, 30000); undo 800, (30000, 30000); node on edge in C00 and C10; deleted again; N11 refused; split 10 cells, merged 9, C11 100 m², 4 corners",
+    `${a0} / ${a1} m², wall end ${w && JSON.stringify(w.end)}; undo ${back}, ${wb && JSON.stringify(wb.end)}; ${nid} in both ${inBoth}, deleted ${restored}; "${refused}"; split ${Object.keys(sp.mesh.cells).length}, merged ${Object.keys(mg.mesh.cells).length}, C11 ${Math.round(Math.abs(polyArea(P.C11)) / 1e6)} m², ${mg.mesh.cells.C11.length} corners`);
+});
+testCase("M103", "A core follows what drives it: moved 3 m east with the Move op, the lift's hole in L1's slab moves with it (the slab stays 884 m², the hole's west edge from 13000 to 16000); an atrium on cell C11 inset 1000 is an 8 × 8 m void, 64 m², and when node N22 moves 2 m north-east it reshapes with the cell: its corner there is where the two edges into N22, each moved 1 m in, cross - x 20783; the plan of L0 draws the lift, the plan of a level above its top does not", () => {
+  const { doc, ed } = meshFixture();
+  ed.apply({ op: "meshsync", id: "MG" });
+  ed.apply({ op: "transform", ids: ["VC"], move: [3000, 0] });
+  const fl = doc.element("MG-L1-S-C00"), holes = doc.plan(fl).regions[0].holes, hx = holes.length ? Math.min(...holes[0].map(p => p[0])) : null, a1 = Math.round(meshArea(doc, "MG-L1-S-C00"));
+  ed.apply({ op: "add", element: { id: "AT", type: "Core", args: { use: "Atrium", mesh: { ref: "MG" }, cell: "C11", inset: 1000, baseLevel: { ref: "L0" }, topLevel: { ref: "L1" }, cutsSlabs: false } } });
+  const at0 = Math.round(Math.abs(polyArea(doc.plan(doc.element("AT")).foot)) / 1e6);
+  const m = doc.argValue(doc.element("MG"), "nodes");
+  ed.apply({ op: "meshedit", id: "MG", nodes: { N22: [m.N22[0] + 2000, m.N22[1] + 2000] } });
+  const ft = doc.plan(doc.element("AT")).foot, at1 = Math.round(Math.abs(polyArea(ft)) / 1e6), maxX = Math.max(...ft.map(p => p[0]));
+  doc.addElement({ id: "L2", type: "Level", args: { name: "Second", elevation: 9000 } }); doc.addElement({ id: "V2", type: "PlanView", args: { level: { ref: "L2" }, scale: 100, viewRange: { top: 2300, cut: 1200, bottom: 0 }, style: { ref: "VS-CONSTRUCTION" } } }); doc.regenerate();
+  const drawnIn = vid => planScene(doc, doc.element(vid)).prims.some(p => p.id === "VC" && p.t === "stroke");
+  const pass = a1 === 884 && hx === 16000 && at0 === 64 && at1 > 64 && Math.abs(maxX - 20783) <= 1 && drawnIn("V") && !drawnIn("V2");
+  return R(pass, "slab 884 m², hole west edge 16000; atrium 64 m², then larger with its east corner at x 20783; lift drawn on L0, not on L2",
+    `slab ${a1} m², hole west edge ${hx}; atrium ${at0} → ${at1} m², east edge ${Math.round(maxX)}; drawn on L0 ${drawnIn("V")}, on L2 ${drawnIn("V2")}`);
+});
+testCase("M104", "Provide Python: the script's data has a layer per level with Slabs, Walls, Cells and Plane under it, the four disciplines, Mesh, Site and Sheets; a solid for every slab, wall and core; the plan's clipping plane 1200 above L0 (its cut) pointing up; a level plane the size of the site plus 50 m; each object's hash unchanged by a second export and changed only for what moved; and a script with every placeholder filled", () => {
+  const { doc, ed } = meshFixture();
+  ed.apply({ op: "meshsync", id: "MG" });
+  const p1 = rhinoPayload(doc), p2 = rhinoPayload(doc);
+  const keys = new Set(p1.layers.map(l => l.key)), need = ["lv:L0:slabs", "lv:L0:walls", "lv:L0:cells", "lv:L0:plane", "lv:L1:slabs", "disc:Vertical Transport", "disc:Structure", "disc:MEP", "disc:Voids", "mesh", "site", "sheets"];
+  const solids = p1.objects.filter(o => o.kind === "solid").length, n = t => doc.elements().filter(f => doc.typeOf(f) === t).length;
+  const clip = p1.clips.find(c => c.id === "clip:V"), same = p1.objects.every((o, i) => p2.objects[i].h === o.h);
+  ed.apply({ op: "transform", ids: ["VC"], move: [1000, 0] });
+  const p3 = rhinoPayload(doc), changed = p3.objects.filter(o => { const q = p1.objects.find(x => x.id === o.id); return !q || q.h !== o.h; }).map(o => o.id);
+  const plane = p1.objects.find(o => o.id === "plane:L0");
+  const sc = { text: rhinoScriptText(p3, rhBase64(new TextEncoder().encode(JSON.stringify(p3))), false) };
+  const pass = need.every(k => keys.has(k)) && solids === n("Floor") + n("Wall") + n("Core") && clip && clip.origin[2] === 1200 && clip.x[0] === 1 && clip.y[1] === 1 && same
+    && changed.includes("VC") && changed.includes("MG-L1-S-C00") && changed.length === 2 && plane.geom.x0 === -50000 && plane.geom.x1 === 80000 && !/__[A-Z]+__/.test(sc.text) && /PROJECT = "test"/.test(sc.text);
+  return R(pass, "layers present; solids = floors + walls + cores; clip z 1200, normal up; hashes stable; moving the lift changes it and L1's slab only; plane -50000 to 80000; placeholders filled",
+    `missing ${need.filter(k => !keys.has(k))}; solids ${solids} (${n("Floor")}+${n("Wall")}+${n("Core")}); clip ${clip && JSON.stringify([clip.origin, clip.x, clip.y])}; stable ${same}; changed ${JSON.stringify(changed)}; plane ${plane.geom.x0}..${plane.geom.x1}; placeholders ${(sc.text.match(/__[A-Z]+__/g) || []).length}`);
+});
+testCase("M105", "The Nexus: 17 levels, L00 at 0, L01 at +8 m, then 6 m a storey to L16 at +98 m; the mesh of 777 nodes and 319 cells drives a slab on every level; each level's plan cuts 1000 above its floor and sits alone on an A1 sheet; the plans as drawn are kept on 16 levels; nothing is in error; no text speaks of software", () => {
+  const doc = buildNexusSample();
+  const lv = doc.elements().filter(f => doc.typeOf(f) === "Level").map(f => F.real(f, "elevation")).sort((a, b) => a - b);
+  const want = [0, ...Array.from({ length: 16 }, (_, i) => 8000 + 6000 * i)];
+  const mg = doc.element("MG1"), nN = Object.keys(doc.argValue(mg, "nodes")).length, nC = Object.keys(doc.argValue(mg, "cells")).length;
+  const slabLv = new Set(doc.elements().filter(f => doc.typeOf(f) === "Floor").map(f => F.refId(f, "level")));
+  const plans = doc.elements().filter(f => doc.typeOf(f) === "PlanView" && /^V-L\d\d$/.test(doc.idOf(f)));
+  const cuts = plans.every(v => doc.argValue(v, "viewRange").cut === 1000);
+  const sheets = doc.elements().filter(f => doc.typeOf(f) === "Sheet"), onOwn = plans.every(v => sheets.some(sh => { const vps = doc.argValue(sh, "viewports"); return vps.length === 1 && vps[0].view.ref === doc.idOf(v) && doc.argValue(sh, "size") === "A1"; }));
+  const refs = doc.elements().filter(f => doc.typeOf(f) === "PlanReference").length, errors = doc.elements().filter(f => doc.error(f)).length;
+  const words = doc.elements().filter(f => doc.typeOf(f) === "Text").map(f => String(doc.argValue(f, "content") || "")).filter(t => /\b(AI|Claude|software|algorithm|generated|automatic|parametric|Python|Rhino)\b/i.test(t));
+  const pass = JSON.stringify(lv) === JSON.stringify(want) && nN === 777 && nC === 319 && slabLv.size === 17 && plans.length === 17 && cuts && onOwn && refs === 16 && errors === 0 && !words.length;
+  return R(pass, "levels 0, 8000 … 98000; 777 nodes, 319 cells; slabs on 17 levels; 17 plans cut at 1000, each alone on an A1; 16 traced plans; no errors; no software words",
+    `levels ${lv.join(",")}; ${nN} nodes, ${nC} cells; slabs on ${slabLv.size} levels; ${plans.length} plans, cut 1000 ${cuts}, own sheet ${onOwn}; ${refs} traced; ${errors} errors; words ${words.length}`);
 });

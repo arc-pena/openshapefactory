@@ -115,6 +115,9 @@ export const CATEGORIES = {
   IfcPlate:          { name: "Curtain Panels", subcategories: { Common: { cut: "medium", projection: "thin", beyond: "hairline" } } },
   IfcFlowTerminal:   { name: "Plumbing & Fixtures", subcategories: { Common: { cut: "thin", projection: "thin", beyond: "hairline" } } },
   IfcTransportElement: { name: "Vertical Circulation", subcategories: { Common: { cut: "medium", projection: "thin", beyond: "hairline" } } },
+  // the 2D mesh that drives slabs and walls, and the drawings traced to check it against
+  Mesh:              { name: "Mesh", subcategories: { Common: { projection: "thin" } } },
+  Reference:         { name: "Traced plans", subcategories: { Common: { projection: "thin" } } },
   // roofs, building services and the site: what coordination models from other disciplines bring
   IfcRoof:           { name: "Roofs", subcategories: { Common: { cut: "heavy", projection: "thin", beyond: "hairline" } } },
   IfcChimney:        { name: "Chimneys", subcategories: { Common: { cut: "medium", projection: "thin", beyond: "hairline" } } },

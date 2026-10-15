@@ -32,6 +32,7 @@ import { readDXF } from "./dxf.js";
 import { sunOf, planShadows } from "./sun.js";
 import { NORTH_DXF } from "./library.js";
 import { towerElevItems, towerPlanPrims } from "./towerbim.js";
+import { cellShape } from "./meshgrid.js";
 
 // ---------------------------------------------------------------- text metrics
 /** Text height is cap height in paper mm (the drafting convention); the em
@@ -231,6 +232,12 @@ export function planScene(doc, v, opts = {}) {
 
   // 1. spaces first: fills sit under everything
   for (const f of els) if (doc.typeOf(f) === "Space" && vis(f) && F.refId(f, "level") === (lv && doc.idOf(lv))) drawSpace(doc, ctx, B, f);
+  // a floor of this level tinted under everything, when the view style gives floors a projection fill (a study's
+  // plates read at a glance; the walls and edges draw over it)
+  for (const f of els) if (doc.typeOf(f) === "Floor" && vis(f) && lv && F.refId(f, "level") === doc.idOf(lv)) {
+    const p = doc.plan(f); if (!p || band(p.z0, p.z1) !== "projection") continue;
+    const g = resolveGraphics(doc, ctx, f, "projection"); if (g.fill) B.fill(p.path, g.fill, "IfcSlab", doc.idOf(f));
+  }
   // hard shadows go here, over the room fills and under everything drawn from the model (filled in at the end)
   const shadowAt = B.prims.length;
   // 2. walls
@@ -274,6 +281,41 @@ export function planScene(doc, v, opts = {}) {
       const c = p.pts.reduce((a, q) => add(a, q), [0, 0]).map(v => v / p.pts.length), d = doc.data(f);
       if (d && d.props && F.bool(f, "label") !== false) B.text(add(B.P(c), [0, 0]), `SITE ${fmtArea(d.props["Site area"].v)}`, 3.5, { align: "centre", layer: "Site", id, colour: "#1b1f24" });
       B.hit(id, p.pts, "curve");
+    }
+    if (t === "MeshGrid" && vis(f)) {
+      // the mesh: every edge a thin red chain line; the cells this level uses shaded, if asked; ids, if asked
+      const p = doc.plan(f); if (!p) continue; const id = doc.idOf(f), N = p.nodes, lvId = lv && doc.idOf(lv);
+      const use = lvId ? ((F.json(f, "use") || {})[lvId] || {}) : {};
+      if (F.bool(f, "showUse") && lvId) for (const [cid, u] of Object.entries(use)) { const P = p.polys[cid]; if (P) B.fill(polyPath(cellShape(P, u)), Array.isArray(u) ? "#fde3c8" : "#fff2b8", "Mesh", id); }
+      if (F.bool(f, "showMesh") !== false) {
+        const so = (ctx.style && ctx.style.byCategory && ctx.style.byCategory.Mesh) || {};
+        B.stroke(p.edges.map(([a, b]) => lineSeg(N[a], N[b])), { weight: penWeight(doc, so.pen || "thin", S), colour: so.colour || "#e0262b", dash: so.dash || LINE_TYPES.centre }, "Mesh", id);
+      }
+      for (const [a, b] of p.edges) B.hit(id, [N[a], N[b]], "curve");
+      if (F.bool(f, "showIds")) {
+        for (const [cid, c] of Object.entries(p.centroids)) B.text(B.P(c), cid, 2.0, { align: "centre", layer: "Mesh", id, colour: "#b3261e" });
+        for (const [nid, q] of Object.entries(N)) B.text(add(B.P(q), [0.6, 0.6]), nid, 1.2, { layer: "Mesh", id, colour: "#7a1d1d" });
+      }
+    }
+    if (t === "PlanReference" && vis(f) && lv && F.refId(f, "level") === doc.idOf(lv)) {
+      // the drawn plan of this level, traced: its zones in their own colours, its plates green, its labels grey
+      const p = doc.plan(f); if (!p) continue; const id = doc.idOf(f), w = penWeight(doc, "medium", S);
+      for (const z of p.zones) B.stroke(polyPath(z.p), { weight: w, colour: z.c, dash: null }, "Reference", id);
+      for (const o of p.outlines) B.stroke(polyPath(o.p, o.closed), { weight: w, colour: "#2a9d3a", dash: LINE_TYPES.dashed2 }, "Reference", id);
+      for (const l of p.labels) B.text(B.P(l.at), l.t, l.lift ? 1.4 : 2.2, { align: "centre", layer: "Reference", id, colour: l.lift ? "#5b6b7b" : "#3d4651" });
+      if (p.bbox) B.hit(id, [[p.bbox[0], p.bbox[1]], [p.bbox[2], p.bbox[1]], [p.bbox[2], p.bbox[3]], [p.bbox[0], p.bbox[3]], [p.bbox[0], p.bbox[1]]], "curve");
+    }
+    if (t === "Core" && vis(f)) {
+      // a lift, stair, riser, shaft or atrium on every level it passes through: its outline in its discipline's
+      // colour, its symbol, its label
+      const p = doc.plan(f); if (!p || p.z0 > cutZ + TOL || p.z1 < E - TOL) continue; const id = doc.idOf(f);
+      const g = { weight: penWeight(doc, p.use === "Structural core" ? "heavy" : "medium", S), colour: p.colour, dash: p.use === "Atrium" ? LINE_TYPES.dashed1 : null };
+      B.fill(p.path, p.use === "Atrium" ? "#eef8fb" : "#ffffff", "IfcTransportElement", id);
+      B.stroke(p.path, g, "IfcTransportElement", id);
+      if (p.symbol && p.symbol.length) B.stroke(p.symbol.map(([a, b]) => lineSeg(a, b)), { weight: penWeight(doc, "thin", S), colour: p.colour, dash: p.use === "Atrium" ? LINE_TYPES.dashed2 : null }, "IfcTransportElement", id);
+      const c = p.foot.reduce((a, q) => add(a, q), [0, 0]).map(v => v / p.foot.length);
+      B.text(add(B.P(c), [0, -0.8]), p.label + (p.use === "Lift" && p.cars > 1 ? ` ×${p.cars}` : ""), 1.8, { align: "centre", layer: "IfcTransportElement", id, colour: p.colour });
+      B.hit(id, p.foot);
     }
     if (t === "Massing" && vis(f)) {
       // the envelope where the plan cuts it: a pale fill and a chain outline, as Revit draws a mass

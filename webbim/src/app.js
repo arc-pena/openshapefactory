@@ -7,6 +7,7 @@
 
 import { h, clear, icon, dialog, saveFile, store, forget, loadDrawingFont, fmtLen } from "./ui_util.js";
 import { SketchSession } from "./sketchui.js";
+import { MeshSession } from "./meshui.js";
 import { LENGTH_UNITS, setLengthUnit, fmtLength, parseLength, isImperial } from "./units.js";
 import { formatValue } from "./expr.js";
 import { fromPolygon } from "./bimsketch.js";
@@ -20,6 +21,7 @@ import { buildHotelsSample } from "./sample_hotels.js";
 import { buildOrbitSample } from "./sample_orbit.js";
 import { buildFireStationSample } from "./sample_firestation.js";
 import { buildDiagridTowerSample, buildTwistTowerSample } from "./sample_towers.js";
+import { buildNexusSample } from "./sample_nexus.js";
 import { cadLibraryIndex, cadLibraryCategories, cadLibrarySymbol, cadLibraryPreview } from "./cadlib.js";
 import { contoursFromDXF } from "./archelements.js";
 import { inflateBase64 } from "./inflate.js";
@@ -44,6 +46,8 @@ import { View2D, SNAP_KINDS, MODIFY_TOOLS } from "./canvas2d.js";
 import { View3D, VISUAL_STYLES, hiddenLineFor } from "./view3d.js";
 import { categoryOf, lockedKey, SCHEMES, STYLE_SETTINGS, blankStyle } from "./styles.js";
 import { bimToCad, cadEditsToOps, cadDiff, mergeModel } from "./cadbridge.js";
+import { rhinoScript } from "./rhinoexport.js";
+import { atlasLog, atlasEnabled, setAtlasEnabled } from "./atlaslog.js";
 import { importIfc } from "./ifcimport.js";
 
 const VIEW_TYPES = ["PlanView", "ElevationView", "SectionView", "View3D", "Schedule", "Sheet", "DraftingView"];
@@ -213,6 +217,8 @@ const COMMANDS = {
   stair: { label: "Stair", icon: "stair", key: "ST", hint: "Draw each flight as a line, bottom first (first riser to last): landings join them. It rises to the next level; its risers are counted and numbered.", run: () => startKindSketch("stair", "a stair") },
   roof: { label: "Roof", icon: "roof", key: "RO", hint: "Sketch the roof's footprint (with its overhang): every edge slopes; set an edge to null for a gable, or a ridge height. Ridges, hips and valleys are found.", run: () => startKindSketch("roof", "a roof") },
   topo: { label: "Toposurface", icon: "topo", key: "TS", hint: "Sketch the ground's boundary, then give it contours (Properties) - or File › Import Contours (DXF) for a survey's contour lines at their heights", run: () => startKindSketch("topo", "a toposurface") },
+  editmesh: { label: "Edit Mesh", icon: "mesh", key: "EM", hint: "The mesh that drives the slabs and walls: move, add and delete nodes, split and merge cells, pick the cells each level uses, place lifts, stairs, risers and atria. Every edit is one undo step.", run: () => app.editMesh(), active: () => !!(app.sketch && app.sketch.target && app.sketch.target.kind === "mesh") },
+  providepython: { label: "Provide Python", icon: "python", key: "PY", hint: "A Python script for Rhino that builds this project there - layers per level, level planes, slabs, walls, cores, clipping planes, layouts - and, run again, keeps it in step (adds, changes, moves, renames, deletes)", run: () => providePython() },
   editboundary: { label: "Edit Boundary", icon: "skline", hint: "Back into the floor's sketch", run: () => { const id = [...app.selection].find(i => app.doc.element(i) && app.doc.typeOf(app.doc.element(i)) === "Floor"); if (id) app.editBoundary(id); else app.say("select a floor", "note"); } },
   beam: tool("beam", "Beam", "beam", "BM", "Two clicks: the beam's axis. Its top sits at the level plus the top offset."),
   grid: tool("grid", "Grid", "grid", "GR", "Two clicks."),
@@ -321,6 +327,7 @@ const RIBBON = [
     { title: "Room & Area", items: [big("space"), small("sep"), small("schedule")] },
     { title: "Program", items: [big("spacegraph"), small("sgimport"), small("sgbrief")] },
     { title: "Site", items: [big("siteboundary")] },
+    { title: "Mesh", items: [big("editmesh"), big("providepython")] },
     { title: "Datum", items: [big("level"), big("grid"), big("planview")] },
   ] },
   { tab: "Structure", panels: [
@@ -329,6 +336,7 @@ const RIBBON = [
   ] },
   { tab: "Insert", panels: [
     { title: "Import", items: [big("importcad"), big("importifc"), big("importdxf"), big("open")] },
+    { title: "Rhino", items: [big("providepython")] },
     { title: "Load from Library", items: [big("placesymbol")] },
   ] },
   { tab: "Annotate", panels: [
@@ -440,6 +448,18 @@ app.startSketch = (view, target, drawing) => {
   app.refresh({ keepMain: true });
   app.say(`${app.sketch.title}: ${target.kind === "repeat" ? "lines, arcs and splines, open or closed: the component repeats along them" : target.kind === "crop" ? "the crop's boundary" : "closed loops make the floor; a loop inside another is a hole"}. Draw, then Finish ✓ on the ribbon (or Cancel ✕).`, "note");
 };
+/** Into Edit Mesh, in a plan: the mesh selected (or the project's first), on the plan's level. */
+app.editMesh = (id, view) => {
+  const doc = app.doc, mid = id || [...app.selection].find(i => doc.element(i) && doc.typeOf(doc.element(i)) === "MeshGrid") || (doc.elements().find(g => doc.typeOf(g) === "MeshGrid") ? doc.idOf(doc.elements().find(g => doc.typeOf(g) === "MeshGrid")) : null);
+  if (!mid) return app.say("this project has no mesh", "error");
+  let v = view || app.views.get(app.activeView);
+  if (!v || v.kind !== "PlanView") { const pv = doc.elements().find(g => doc.typeOf(g) === "PlanView"); if (!pv) return app.say("open a plan to edit the mesh in", "error"); app.openView(doc.idOf(pv)); v = app.views.get(doc.idOf(pv)); }
+  if (app.sketch) app.sketch.cancel();
+  app.sketch = new MeshSession(app, v, mid);
+  app.tool = "sketch"; app.selection.clear();
+  app.refresh({ keepMain: true });
+  app.say(`Edit Mesh ${mid} on ${app.sketch.level || "this plan"}: Cells Used - click a cell to use it on this level or not. Move Node, Add Node, Split, Merge and the cores are on the ribbon; every edit is one undo step.`, "note");
+};
 app.endSketch = () => { app.sketch = null; app.tool = "select"; const v = app.views.get(app.activeView); if (v && v.hideHud) { v.hideHud(); v.showSnap && v.showSnap(null); } app.refresh({ keepMain: true }); };
 function planViewForSketch(levelId) {
   const cur = app.views.get(app.activeView);
@@ -475,6 +495,7 @@ app.stepInto = (id, view) => {
   const t = doc.typeOf(f);
   if (["ElevationView", "SectionView", "PlanView", "View3D", "Schedule", "Sheet", "DraftingView"].includes(t)) return app.openView(id);
   if (t === "Floor") return app.editBoundary(id);
+  if (t === "MeshGrid") return app.editMesh(id, view && view.kind === "PlanView" ? view : null);
   if (t === "SiteBoundary") {
     const vv = view && view.kind === "PlanView" ? view : app.views.get(app.activeView); if (!vv || vv.kind !== "PlanView") return;
     return app.startSketch(vv, { kind: "site", id }, doc.argValue(f, "sketch"));
@@ -623,7 +644,7 @@ function fileMenu(anchor) {
   const r = anchor.getBoundingClientRect();
   menuAt(r.left, r.bottom, [
     { label: "New…", icon: "sheet", run: () => newProjectDialog() }, { label: "Open…", icon: "open", run: () => openFile() }, { label: "Save", icon: "save", run: () => saveModel() },
-    "-", { label: "Export…", icon: "exportI", run: () => exportDialog() }, { label: "Import IFC…", icon: "importI", run: () => importIfcFile() }, { label: "Import DXF Symbol…", icon: "importI", run: () => importDXF() }, { label: "Import Contours (DXF)…", icon: "topo", run: () => importContours() },
+    "-", { label: "Export…", icon: "exportI", run: () => exportDialog() }, { label: "Provide Python (Rhino)…", icon: "python", run: () => providePython() }, { label: `Studio Atlas logging: ${atlasEnabled() ? "on" : "off"}`, icon: "info", run: () => { setAtlasEnabled(!atlasEnabled()); app.say(`Studio Atlas logging ${atlasEnabled() ? "on: Provide Python, Save and Open are recorded in the library" : "off"}`, "note"); } }, { label: "Import IFC…", icon: "importI", run: () => importIfcFile() }, { label: "Import DXF Symbol…", icon: "importI", run: () => importDXF() }, { label: "Import Contours (DXF)…", icon: "topo", run: () => importContours() },
     "-", { label: "Settings: Interface Look…", icon: "menu", key: "UX", run: () => uxDialog() }, { label: "Swap Interface (next look)", icon: "menu", key: "SW", run: () => app.run("uxswap") }, { label: "Project Units…", icon: "dim", run: () => unitsDialog() },
     "-", { label: "Project Information…", icon: "info", run: () => projectInfo() }, ...SAMPLES.map(x => ({ label: x.name, icon: "house", run: () => { forget("draft-v6"); forget("tabs"); setDocument(x.build(), { msg: `${x.name}: loaded`, kind: "ok" }); if (x.open) app.openView(x.open); } })),
   ]);
@@ -1131,16 +1152,62 @@ function projectInfo() {
 function openFile() {
   const inp = h("input", { type: "file", accept: ".json,application/json", hidden: true }); document.body.append(inp);
   inp.addEventListener("change", async () => { const file = inp.files[0]; inp.remove(); if (!file) return;
-    try { const doc = openDocument(await file.text()); doc.regenerate(); setDocument(doc, { msg: `Opened ${file.name}${doc.loadReport.length ? " — " + doc.loadReport.join("; ") : ""}`, kind: doc.loadReport.length ? "note" : "ok" }); }
+    try { const text = await file.text(), doc = openDocument(text); doc.regenerate(); setDocument(doc, { msg: `Opened ${file.name}${doc.loadReport.length ? " — " + doc.loadReport.join("; ") : ""}`, kind: doc.loadReport.length ? "note" : "ok" });
+      logToAtlas({ prompt: `Opened ${file.name}`, vars: projectCounts(), inputs: [{ label: file.name }], outputs: [{ name: file.name, mime: "application/json", data: text, role: "input" }] }); }
     catch (err) { app.say(`Could not open ${file.name}: ${err.message}`, "error"); } });
   inp.click();
 }
-async function saveModel() { const r = await saveFile(`${app.doc.meta.name || "model"}.json`, app.doc.serialise(), "application/json"); app.say(r.ok ? "Model saved" : r.error, r.ok ? "ok" : "error"); }
+/** The next revision of an output of this project (R01, R02 …), kept in the file: "save", "rhino". */
+function nextRevision(kind) {
+  const m = app.doc.meta, r = m.revisions = Object.assign({}, m.revisions || {}); r[kind] = (r[kind] || 0) + 1;
+  return "R" + String(r[kind]).padStart(2, "0");
+}
+const fileStem = s => String(s || "model").replace(/\s+[—–-]\s+.*$/, "").replace(/[^A-Za-z0-9]+/g, "_").replace(/^_|_$/g, "") || "model";
+async function saveModel() {
+  const rev = nextRevision("save"), name = `${fileStem(app.doc.meta.name)}_${rev}.json`, text = app.doc.serialise();
+  const r = await saveFile(name, text, "application/json"); app.say(r.ok ? "Model saved" : r.error, r.ok ? "ok" : "error");
+  if (r.ok) logToAtlas({ prompt: `Saved the working file ${name}`, vars: projectCounts(), outputs: [{ name, mime: "application/json", data: text, role: "data" }] });
+}
+/** What the project holds, for a Studio Atlas step's variables. */
+function projectCounts() {
+  const c = {}; for (const f of app.doc.elements()) { const t = app.doc.typeOf(f); c[t] = (c[t] || 0) + 1; }
+  return { revision: app.doc.modelRevision, levels: c.Level || 0, slabs: c.Floor || 0, walls: c.Wall || 0, cores: c.Core || 0, sheets: c.Sheet || 0, meshes: c.MeshGrid || 0 };
+}
+/** The project's sources as the levels name them ("Traced from A2_2000_L6.pdf"). */
+function projectSources() {
+  const out = [];
+  for (const f of app.doc.elements()) { const m = /Traced from (.+)$/.exec(String(app.doc.params(f).Comments || "")); if (m && !out.includes(m[1])) out.push(m[1]); }
+  return out.map(label => ({ label }));
+}
+/** A step in Studio Atlas (Google Drive + Sheets), when the viewer's connectors allow it; said when it lands. */
+function logToAtlas(step) {
+  if (!atlasEnabled()) return;
+  atlasLog(Object.assign({ stream: `${app.doc.meta.name || "Untitled"} (Web BIM)`, category: "testfit", inputs: projectSources() }, step)).then(r => {
+    if (r.ok) app.say(`Studio Atlas: ${r.stream} ${r.label} recorded${r.uploaded ? `, ${r.uploaded} file${r.uploaded > 1 ? "s" : ""} backed up to Drive` : ""}`, "ok");
+    else if (!/not available|logging is off/.test(r.error)) app.say(`Studio Atlas: not recorded (${r.error})`, "note");
+  });
+}
+/** Provide Python: the project as a script for Rhino, saved; and the step recorded in Studio Atlas. */
+async function providePython() {
+  app.say("Writing the Rhino script…", "note");
+  let out;
+  try { out = await rhinoScript(app.doc); } catch (err) { return app.say(`Provide Python: ${err.message}`, "error"); }
+  out.filename = `${fileStem(app.doc.meta.name).toUpperCase()}_Rhino_${nextRevision("rhino")}.py`;
+  const r = await saveFile(out.filename, out.text, "text/x-python");
+  const s = out.stats;
+  app.say(r.ok ? `${out.filename}: ${s.levels} levels, ${s.slabs} slabs, ${s.walls} walls, ${s.cores} cores, ${s.sheets} layouts with ${s.details} details, ${s.clips} clipping planes (${(out.text.length / 1024).toFixed(0)} KB). Run it in Rhino; run a newer one to bring the model in step.` : r.error, r.ok ? "ok" : "error");
+  if (r.ok) logToAtlas({ prompt: `Provide Python: ${app.doc.meta.name || "the project"} to Rhino (${out.filename})`, vars: Object.assign(projectCounts(), { objects: s.objects, clips: s.clips, layouts: s.sheets, details: s.details, script_kb: Math.round(out.text.length / 1024) }),
+    outputs: [{ name: out.filename, mime: "text/x-python", data: out.text, role: "main" }] });
+  return out;
+}
+app.providePython = providePython;
+app.rhinoScript = () => rhinoScript(app.doc);
 // ---------------------------------------------------------------- samples, and new projects from them
 /** The drawing sets the tool carries. Each is also a template: a new project can take its standards. */
 const SAMPLES = [
   { id: "hotels", name: "Hotels and Office Test Fit (work in progress)", build: () => buildHotelsSample(), open: "V-SITE" },
   { id: "orbit", name: "Orbit — Hotels and Office Test Fit (work in progress)", build: () => buildOrbitSample(), open: "V-SITE" },
+  { id: "nexus", name: "Nexus — layout reality check from the level plans (mesh-driven slabs and walls)", build: () => buildNexusSample(), open: "V-L01" },
   { id: "tower-diagrid", name: "Diagrid Office Tower — design development set (study after Brookfield Place, Dubai)", build: () => buildDiagridTowerSample(), open: "SH-A103" },
   { id: "tower-twist", name: "Twisting Office Tower — design development set (study after the Generali Tower, Milan)", build: () => buildTwistTowerSample(), open: "SH-A103" },
   { id: "firestation", name: "Fire Station Study (after the Vitra Fire Station, Zaha Hadid, 1993)", build: () => buildFireStationSample(), open: "SH-A000" },
@@ -1348,10 +1415,13 @@ function exportDialog() {
     h("table", {}, h("tbody", {}, checks.map(c => h("tr", {}, h("td", {}, c.cb), h("td", { class: "mono" }, doc.argValue(c.sh, "number")), h("td", {}, doc.argValue(c.sh, "sheetName")), h("td", { class: "muted" }, `${doc.argValue(c.sh, "size")} ${c.size.map(fmtLen).join("×")} mm`))))),
     h("div", {}, issuedBy),
     h("div", { class: "muted" }, "Page size per sheet; line weights are physical mm; hatches as tiling patterns; the font embedded; bookmarks, category layers and marker links included. Sheets are re-derived for export, and 3D viewports get their hidden-line drawing computed automatically."),
+    h("h3", {}, "Project → Rhino (Python)"),
+    h("div", { class: "muted" }, "A script for Rhino 7 or 8 that builds this project there: a layer per level (slabs, walls, the cells used, a plane the size of the site), datums, clipping planes cut 1 m above each floor and along each section, the cores by discipline, and a layout per sheet with its details at scale. Run it again with a newer export and it brings the model in step."),
     h("h3", {}, "Current view → DXF (zipped)"),
     h("div", { class: "muted" }, "Plans and elevations export to model space at full size ($INSUNITS 4, mm); sheets export paper space 1:1. Lineweights go in group 370, snapped to the DXF ladder with every substitution reported."));
   dialog("Export", body, [
     { label: "DXF of current view", run: () => { exportDXF(); return false; } },
+    { label: "Provide Python", run: () => { providePython(); return false; } },
     { label: "Export PDF set", primary: true, run: () => { exportPDF(checks.filter(c => c.cb.checked).map(c => c.sh), issuedBy.value); return false; } },
   ]);
 }

@@ -192,13 +192,25 @@ The Artifact publishes `dist/web-bim-studio.html`. The CAD page rides in it as i
     - **Pack** tick (programme and parking tabs): untick an element to leave it out of the packing; it stays in the brief and its totals, and the report lists what sat out.
     - Drag an edge grip: that side moves and the other follows, so the area holds.
   - **Diagrams → A1 sheet:** lays out the site analysis, bubbles, matrix, pies, massing and summary on sheet A-001 (the sample ships with it). The diagrams redraw from the graph whenever it changes and print to PDF.
+- **Nexus sample (File › Nexus — layout reality check):** seventeen level plans (A2_2000_L0 … L16, 1:2000) rebuilt from their 2D mesh. Ground floor L00 at ±0, L01 at +8 m, then 6 m a storey.
+  - **The mesh drives the building.** A MeshGrid holds nodes and cells, and for each level the cells it uses: a cell whole, or a part of it (scaled about its centroid and moved, so the part follows the cell). The meshsync op makes each level's slabs from its cells (touching cells are one slab; a cell left out inside them is a hole) and walls round them, from the level to the next. Ids hold while the mesh changes: MG1-L06-S-C012 is the L06 slab whose lowest cell is C012; MG1-L06-W-N101-N102 the wall on the edge N101→N102.
+  - **Edit Mesh (EM, or double-click the mesh):** Cells Used (click a cell: on this level or not, whole or in part), Copy Below/Above, Clear Level; Move Node (drag), Add Node (on an edge), Delete Node; Split Cell, Merge Cells, Draw Cell, Delete Cell; Lift, Stair, Escalator, Riser, Shaft, Structural core, Atrium (a cell, inset). Each edit is one undo step, and the slabs and walls follow it. Moving or editing a core re-cuts the slabs too.
+  - **Cores (Core):** lift, stair, escalator, riser, shaft, structural core or atrium, from a base level to a top level, as a rectangle, an outline, or a mesh cell inset. A core cuts the slabs above its base. One that straddles a slab edge is left uncut, and the sync says so.
+  - **The drawings, traced:** each level's zones, plates and labels as drawn (PlanReference), in plan over the mesh's slabs. Turn them off with the Traced plans category.
+  - **Provide Python (PY; Architecture › Mesh, Insert › Rhino, File, Export):** a script for Rhino 7 or 8 that builds the project there and, run again, keeps it in step (rhinoexport.js).
+    - Layers: one per level, holding Slabs, Walls, Cells and Plane. Under Levels: Datums and Clipping planes. Then the disciplines (Vertical Transport, Structure, MEP, Voids), Mesh, Site and Sheets.
+    - Objects carry their id (user text wb_id) and a hash of what made them. Changed objects are replaced in place, missing ones deleted. Layers are found by key, so a renamed level renames its layers.
+    - Each sheet becomes a layout with its title block and a detail per view, at scale. Each plan gets a clipping plane at its cut (1 m above the floor), clipping only that plan's details; each section gets one along its line and one at its depth. Inside each detail, the other clipping planes, the level planes and the other levels' cells are hidden.
+    - test/rhino runs the script in a stand-in for RhinoCommon: first run, unchanged run, run after edits.
+  - **Studio Atlas:** Provide Python, Save and Open each record a step in the team's library (Google Sheets + Drive, via the viewer's connectors): the file backed up, the sources as inputs. Turn it off from the File menu. File names carry revisions: NEXUS_Rhino_R03.py, Nexus_R02.json.
+  - **The tools that read the PDFs:** tools/nexus (README there).
 - **Datums in elevations and sections:** grids, and sections whose line reaches into the view, are drawn where they cross it, and are edited right there.
   - Drag a grid or section sideways and it moves along the view, in plan.
   - Drag a level up or down.
   - Drag a dimension between levels sideways. It snaps into line with the view's other level dimensions and grids; Shift drags freely. Locked dimensions move too, because the lock holds their value, not their position.
   - Move (MV) and Copy (CO) work in these views too: grids and sections slide along the view, levels change height.
   - None of this switches to a plan.
-- **Two-letter shortcuts:** WA DR WN OP CL GR RM RS DI TX EL MV CO RO MM DE LL VV TL ZF 3D SA PP MD. Ctrl+Z / Ctrl+Y undo and redo; Esc cancels, then clears the selection.
+- **Two-letter shortcuts:** WA DR WN OP CL GR RM RS DI TX EL MV CO RO MM DE LL VV TL ZF 3D SA PP MD EM PY. Ctrl+Z / Ctrl+Y undo and redo; Esc cancels, then clears the selection.
 
 ## Known gaps (said, not hidden)
 

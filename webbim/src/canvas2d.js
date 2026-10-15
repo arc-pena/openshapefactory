@@ -613,7 +613,7 @@ export class View2D {
       let hit = false, score = 0;
       if (ht.kind === "curve") { for (let i = 0; i < ht.pts.length - 1; i++) { const a = ht.pts[i], b = ht.pts[i + 1], d = distSeg(p, a, b); if (d < tol) { hit = true; score = d; } } score = score * 0.001;
         // a datum line running through a wall must not steal the click from the wall
-        const f = this.doc.element(ht.id); if (f && ["Grid", "RoomSeparator", "ElevationView", "SectionView", "Level"].includes(this.doc.typeOf(f))) score += 1e12; }
+        const f = this.doc.element(ht.id); if (f && ["Grid", "RoomSeparator", "ElevationView", "SectionView", "Level", "MeshGrid", "PlanReference"].includes(this.doc.typeOf(f))) score += 1e12; }
       else if (ht.pts.length > 2 && pointInPoly(p, ht.pts)) { hit = true; score = Math.abs(polyArea(ht.pts)); }
       // in an elevation or section what is nearer the viewer comes first, whatever its size
       const depth = ht.depth || 0, datum = score >= 1e12 ? 1 : 0;
