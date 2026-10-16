@@ -1195,7 +1195,8 @@ async function providePython() {
   out.filename = `${fileStem(app.doc.meta.name).toUpperCase()}_Rhino_${nextRevision("rhino")}.py`;
   const r = await saveFile(out.filename, out.text, "text/x-python");
   const s = out.stats;
-  app.say(r.ok ? `${out.filename}: ${s.levels} levels, ${s.slabs} slabs, ${s.walls} walls, ${s.cores} cores, ${s.sheets} layouts with ${s.details} details, ${s.clips} clipping planes (${(out.text.length / 1024).toFixed(0)} KB). Run it in Rhino; run a newer one to bring the model in step.` : r.error, r.ok ? "ok" : "error");
+  const how = r.renamed ? ` Saved as ${r.savedAs}: delete ".txt" from the name to get the .py, then run it in Rhino.` : r.zipped ? ` Saved inside ${r.savedAs}: open it to get the .py, then run it in Rhino.` : " Run it in Rhino;";
+  app.say(r.ok ? `${out.filename}: ${s.levels} levels, ${s.slabs} slabs, ${s.walls} walls, ${s.cores} cores, ${s.sheets} layouts with ${s.details} details, ${s.clips} clipping planes (${(out.text.length / 1024).toFixed(0)} KB).${how} Run a newer one to bring the model in step.` : r.error, r.ok ? "ok" : "error");
   if (r.ok) logToAtlas({ prompt: `Provide Python: ${app.doc.meta.name || "the project"} to Rhino (${out.filename})`, vars: Object.assign(projectCounts(), { objects: s.objects, clips: s.clips, layouts: s.sheets, details: s.details, script_kb: Math.round(out.text.length / 1024) }),
     outputs: [{ name: out.filename, mime: "text/x-python", data: out.text, role: "main" }] });
   return out;

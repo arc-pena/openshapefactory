@@ -3,6 +3,7 @@
 
 import { fmtLength } from "./units.js";
 import { FONT_TTF_B64 } from "./fontdata.js";
+import { makeZip } from "./dxf.js";
 
 export function h(tag, attrs = {}, ...kids) {
   const el = document.createElement(tag);
@@ -134,11 +135,29 @@ export async function downloadsCapability() {
   try { DL = window.claude && window.claude.use ? await window.claude.use("downloads") : false; } catch (e) { DL = false; }
   return DL || false;
 }
+/** The file types the viewer's save prompt takes. Anything else (a Rhino .py, an .ifc) is refused with
+ *  `rejected_extension` - the first Provide Python from inside Claude failed exactly that way. Text then goes
+ *  out with .txt added (NAME.py.txt: delete ".txt" to get the .py back - the user's choice over a zip), and
+ *  bytes go out inside a .zip of the same name. The caller is told (`savedAs`, `renamed`, `zipped`) so it can
+ *  say what landed. */
+export const SAVE_EXTENSIONS = new Set("gif png jpg jpeg webp mp4 webm mov txt json md docx pptx epub csv ttf html svg pdf xlsx zip".split(" "));
+const saveErr = e => e && e.code === "declined" ? "the save was declined" : `the viewer could not save it (${e && e.code || e})`;
 export async function saveFile(filename, data, mime = "application/octet-stream") {
   const cap = await downloadsCapability();
   if (cap) {
-    try { await cap.save({ filename, data: data instanceof Uint8Array ? data.slice(0) : data }); return { ok: true, via: "viewer" }; }
-    catch (e) { return { ok: false, error: e && e.code === "declined" ? "the save was declined" : `the viewer could not save it (${e && e.code || e})` }; }
+    const dot = filename.lastIndexOf("."), ext = dot > 0 ? filename.slice(dot + 1).toLowerCase() : "";
+    const bytes = () => data instanceof Uint8Array ? data.slice(0) : data;
+    if (SAVE_EXTENSIONS.has(ext)) {
+      try { await cap.save({ filename, data: bytes() }); return { ok: true, via: "viewer", savedAs: filename }; }
+      catch (e) { if (!e || e.code !== "rejected_extension") return { ok: false, error: saveErr(e) }; }
+    }
+    if (typeof data === "string") {
+      try { await cap.save({ filename: filename + ".txt", data }); return { ok: true, via: "viewer", savedAs: filename + ".txt", renamed: true }; }
+      catch (e) { if (!e || e.code !== "rejected_extension") return { ok: false, error: saveErr(e) }; }
+    }
+    const zipName = (dot > 0 ? filename.slice(0, dot) : filename) + ".zip";
+    try { await cap.save({ filename: zipName, data: makeZip([{ name: filename, data: bytes() }]) }); return { ok: true, via: "viewer", savedAs: zipName, zipped: true }; }
+    catch (e) { return { ok: false, error: saveErr(e) }; }
   }
   if (window.claude) return { ok: false, error: "saving files is not available in this view" };
   const blob = new Blob([data], { type: mime });
