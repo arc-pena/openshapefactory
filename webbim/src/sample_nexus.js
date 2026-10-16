@@ -65,22 +65,22 @@ export function buildNexusSample() {
   apply({ op: "meshsync", id: "MG1" });
 
   // ---------------------------------------------------------------- views
-  // each level's plan cropped round what it has, at the largest scale that fits an A1 sheet's drawing area
-  const plan = meshSyncPlan(doc, "MG1"), byLevel = new Map();
-  for (const s of plan.floors) { if (!byLevel.has(s.level)) byLevel.set(s.level, []); byLevel.get(s.level).push(...s.outer); }
+  // Every plan - the site plan and the 17 levels - has the same crop: the whole site boundary with 30 m round it,
+  // at the largest scale that fits an A1 sheet's drawing area (1:1500). With the same crop, scale and viewport
+  // point, the plans land on the same spot on every sheet: leaf through the set and only the floor changes.
+  const plan = meshSyncPlan(doc, "MG1");
   const bbox = pts => [Math.min(...pts.map(p => p[0])), Math.min(...pts.map(p => p[1])), Math.max(...pts.map(p => p[0])), Math.max(...pts.map(p => p[1]))];
   const all = plan.floors.flatMap(s => s.outer), B0 = bbox(all), towers = plan.floors.filter(s => +s.level.slice(1) >= 4).flatMap(s => s.outer), BT = towers.length ? bbox(towers) : B0;
   const fit = (bb, W = 760, H = 470) => NX_SCALES.find(k => (bb[2] - bb[0]) / k <= W && (bb[3] - bb[1]) / k <= H) || 2500;
-  const crops = {};
+  const SB = bbox(D.site), sm = 30000;
+  const planRect = [Math.floor((SB[0] - sm) / 1000) * 1000, Math.floor((SB[1] - sm) / 1000) * 1000, Math.ceil((SB[2] + sm) / 1000) * 1000, Math.ceil((SB[3] + sm) / 1000) * 1000];
+  const planScale = fit(planRect);
   for (const lv of D.levels) {
-    const pts = byLevel.get(lv.id) || all, bb = bbox(pts), m = 20000, rect = [bb[0] - m, bb[1] - m, bb[2] + m, bb[3] + m].map(v => Math.round(v / 1000) * 1000);
-    crops[lv.id] = { rect, scale: fit(rect) };
     const podium = +lv.id.slice(1) <= 3;
-    add({ id: `V-${lv.id}`, type: "PlanView", name: `${lv.id} FLOOR PLAN`, args: { level: { ref: lv.id }, scale: crops[lv.id].scale,
-      viewRange: { top: 2300, cut: 1000, bottom: 0, depth: podium ? 0 : -lv.elevation }, detailLevel: "Coarse", style: { ref: "VS-NX" }, clip: { rect, visible: false, active: true } } });
+    add({ id: `V-${lv.id}`, type: "PlanView", name: `${lv.id} FLOOR PLAN`, args: { level: { ref: lv.id }, scale: planScale,
+      viewRange: { top: 2300, cut: 1000, bottom: 0, depth: podium ? 0 : -lv.elevation }, detailLevel: "Coarse", style: { ref: "VS-NX" }, clip: { rect: planRect.slice(), visible: false, active: true } } });
   }
-  const sm = 30000, siteRect = [-sm, -sm, 853191 + sm, 604203 + sm];
-  add({ id: "V-SITE", type: "PlanView", name: "SITE PLAN", args: { level: { ref: "L16" }, scale: 2000, viewRange: { top: 30000, cut: 20000, bottom: -110000, depth: -110000 }, detailLevel: "Coarse", style: { ref: "VS-NX" }, clip: { rect: siteRect, visible: false, active: true } } });
+  add({ id: "V-SITE", type: "PlanView", name: "SITE PLAN", args: { level: { ref: "L16" }, scale: planScale, viewRange: { top: 30000, cut: 20000, bottom: -110000, depth: -110000 }, detailLevel: "Coarse", style: { ref: "VS-NX" }, clip: { rect: planRect.slice(), visible: false, active: true } } });
   // sections through the towers (a section looks to the right of the way its line is drawn): A-A drawn east to west,
   // looking north; B-B drawn north to south, looking west
   const top = D.levels[D.levels.length - 1].elevation + 14000, cx = Math.round((BT[0] + BT[2]) / 2), cy = Math.round((BT[1] + BT[3]) / 2);
@@ -111,8 +111,9 @@ export function buildNexusSample() {
   const sheet = (id, number, name, vps) => add({ id, type: "Sheet", name: `${number} ${name}`, args: { number, sheetName: name, size: "A1", orientation: "landscape", titleBlock: { ref: "SY-TB-A1" }, revision: "P01",
     viewports: vps.map(([view, at, extra], i) => Object.assign({ id: `VP${i + 1}`, view: { ref: view }, at, clipVisible: false, number: i + 1 }, extra || {})) } });
   sheet("SH-G001", "G001", "Study notes", [["V-NOTES", [420, 330], { noTitle: true }]]);
-  sheet("SH-A100", "A100", "Site plan", [["V-SITE", [420, 320]]]);
-  D.levels.forEach((lv, i) => sheet(`SH-A${101 + i}`, `A${101 + i}`, `${lv.id} floor plan, FFL ${lv.elevation ? "+" : "±"}${(lv.elevation / 1000).toFixed(3)}`, [[`V-${lv.id}`, [420, 320]]]));
+  const PLAN_AT = [420, 320];   // every plan's crop centred here, so the set registers sheet to sheet
+  sheet("SH-A100", "A100", "Site plan", [["V-SITE", PLAN_AT.slice()]]);
+  D.levels.forEach((lv, i) => sheet(`SH-A${101 + i}`, `A${101 + i}`, `${lv.id} floor plan, FFL ${lv.elevation ? "+" : "±"}${(lv.elevation / 1000).toFixed(3)}`, [[`V-${lv.id}`, PLAN_AT.slice()]]));
   sheet("SH-A301", "A301", "Sections A-A and B-B", [["V-S-A", [420, 430]], ["V-S-B", [420, 190]]]);
   sheet("SH-A601", "A601", "Slab areas by level", [["SC-AREAS", [250, 330]]]);
   sheet("SH-A901", "A901", "Axonometric", [["V-AXO", [420, 320]]]);

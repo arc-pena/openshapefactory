@@ -22935,22 +22935,22 @@ function buildNexusSample() {
   apply({ op: "meshsync", id: "MG1" });
 
   // ---------------------------------------------------------------- views
-  // each level's plan cropped round what it has, at the largest scale that fits an A1 sheet's drawing area
-  const plan = meshSyncPlan(doc, "MG1"), byLevel = new Map();
-  for (const s of plan.floors) { if (!byLevel.has(s.level)) byLevel.set(s.level, []); byLevel.get(s.level).push(...s.outer); }
+  // Every plan - the site plan and the 17 levels - has the same crop: the whole site boundary with 30 m round it,
+  // at the largest scale that fits an A1 sheet's drawing area (1:1500). With the same crop, scale and viewport
+  // point, the plans land on the same spot on every sheet: leaf through the set and only the floor changes.
+  const plan = meshSyncPlan(doc, "MG1");
   const bbox = pts => [Math.min(...pts.map(p => p[0])), Math.min(...pts.map(p => p[1])), Math.max(...pts.map(p => p[0])), Math.max(...pts.map(p => p[1]))];
   const all = plan.floors.flatMap(s => s.outer), B0 = bbox(all), towers = plan.floors.filter(s => +s.level.slice(1) >= 4).flatMap(s => s.outer), BT = towers.length ? bbox(towers) : B0;
   const fit = (bb, W = 760, H = 470) => NX_SCALES.find(k => (bb[2] - bb[0]) / k <= W && (bb[3] - bb[1]) / k <= H) || 2500;
-  const crops = {};
+  const SB = bbox(D.site), sm = 30000;
+  const planRect = [Math.floor((SB[0] - sm) / 1000) * 1000, Math.floor((SB[1] - sm) / 1000) * 1000, Math.ceil((SB[2] + sm) / 1000) * 1000, Math.ceil((SB[3] + sm) / 1000) * 1000];
+  const planScale = fit(planRect);
   for (const lv of D.levels) {
-    const pts = byLevel.get(lv.id) || all, bb = bbox(pts), m = 20000, rect = [bb[0] - m, bb[1] - m, bb[2] + m, bb[3] + m].map(v => Math.round(v / 1000) * 1000);
-    crops[lv.id] = { rect, scale: fit(rect) };
     const podium = +lv.id.slice(1) <= 3;
-    add({ id: `V-${lv.id}`, type: "PlanView", name: `${lv.id} FLOOR PLAN`, args: { level: { ref: lv.id }, scale: crops[lv.id].scale,
-      viewRange: { top: 2300, cut: 1000, bottom: 0, depth: podium ? 0 : -lv.elevation }, detailLevel: "Coarse", style: { ref: "VS-NX" }, clip: { rect, visible: false, active: true } } });
+    add({ id: `V-${lv.id}`, type: "PlanView", name: `${lv.id} FLOOR PLAN`, args: { level: { ref: lv.id }, scale: planScale,
+      viewRange: { top: 2300, cut: 1000, bottom: 0, depth: podium ? 0 : -lv.elevation }, detailLevel: "Coarse", style: { ref: "VS-NX" }, clip: { rect: planRect.slice(), visible: false, active: true } } });
   }
-  const sm = 30000, siteRect = [-sm, -sm, 853191 + sm, 604203 + sm];
-  add({ id: "V-SITE", type: "PlanView", name: "SITE PLAN", args: { level: { ref: "L16" }, scale: 2000, viewRange: { top: 30000, cut: 20000, bottom: -110000, depth: -110000 }, detailLevel: "Coarse", style: { ref: "VS-NX" }, clip: { rect: siteRect, visible: false, active: true } } });
+  add({ id: "V-SITE", type: "PlanView", name: "SITE PLAN", args: { level: { ref: "L16" }, scale: planScale, viewRange: { top: 30000, cut: 20000, bottom: -110000, depth: -110000 }, detailLevel: "Coarse", style: { ref: "VS-NX" }, clip: { rect: planRect.slice(), visible: false, active: true } } });
   // sections through the towers (a section looks to the right of the way its line is drawn): A-A drawn east to west,
   // looking north; B-B drawn north to south, looking west
   const top = D.levels[D.levels.length - 1].elevation + 14000, cx = Math.round((BT[0] + BT[2]) / 2), cy = Math.round((BT[1] + BT[3]) / 2);
@@ -22981,8 +22981,9 @@ function buildNexusSample() {
   const sheet = (id, number, name, vps) => add({ id, type: "Sheet", name: `${number} ${name}`, args: { number, sheetName: name, size: "A1", orientation: "landscape", titleBlock: { ref: "SY-TB-A1" }, revision: "P01",
     viewports: vps.map(([view, at, extra], i) => Object.assign({ id: `VP${i + 1}`, view: { ref: view }, at, clipVisible: false, number: i + 1 }, extra || {})) } });
   sheet("SH-G001", "G001", "Study notes", [["V-NOTES", [420, 330], { noTitle: true }]]);
-  sheet("SH-A100", "A100", "Site plan", [["V-SITE", [420, 320]]]);
-  D.levels.forEach((lv, i) => sheet(`SH-A${101 + i}`, `A${101 + i}`, `${lv.id} floor plan, FFL ${lv.elevation ? "+" : "±"}${(lv.elevation / 1000).toFixed(3)}`, [[`V-${lv.id}`, [420, 320]]]));
+  const PLAN_AT = [420, 320];   // every plan's crop centred here, so the set registers sheet to sheet
+  sheet("SH-A100", "A100", "Site plan", [["V-SITE", PLAN_AT.slice()]]);
+  D.levels.forEach((lv, i) => sheet(`SH-A${101 + i}`, `A${101 + i}`, `${lv.id} floor plan, FFL ${lv.elevation ? "+" : "±"}${(lv.elevation / 1000).toFixed(3)}`, [[`V-${lv.id}`, PLAN_AT.slice()]]));
   sheet("SH-A301", "A301", "Sections A-A and B-B", [["V-S-A", [420, 430]], ["V-S-B", [420, 190]]]);
   sheet("SH-A601", "A601", "Slab areas by level", [["SC-AREAS", [250, 330]]]);
   sheet("SH-A901", "A901", "Axonometric", [["V-AXO", [420, 320]]]);
@@ -29978,6 +29979,29 @@ testCase("M105", "The Nexus: 17 levels, L00 at 0, L01 at +8 m, then 6 m a storey
   const pass = JSON.stringify(lv) === JSON.stringify(want) && nN === 777 && nC === 319 && slabLv.size === 17 && plans.length === 17 && cuts && onOwn && refs === 16 && errors === 0 && !words.length;
   return R(pass, "levels 0, 8000 … 98000; 777 nodes, 319 cells; slabs on 17 levels; 17 plans cut at 1000, each alone on an A1; 16 traced plans; no errors; no software words",
     `levels ${lv.join(",")}; ${nN} nodes, ${nC} cells; slabs on ${slabLv.size} levels; ${plans.length} plans, cut 1000 ${cuts}, own sheet ${onOwn}; ${refs} traced; ${errors} errors; words ${words.length}`);
+});
+
+testCase("M106", "The Nexus plan set registers: the site plan and the 17 level plans share one crop (the site boundary 0,24 → 853191,604203 with 30 m round it, rounded out to the metre: -30000,-30000 → 884000,635000), one scale (1:1250 is 532 mm tall, over the 470 mm the sheet allows, so 1:1500) and one viewport point (420,320); on every A1 sheet the crop lands at 115.333,98.333 → 724.667,541.667 and the whole site boundary at 135.333,118.349 → 704.127,521.135, inside it", () => {
+  const doc = buildNexusSample();
+  const ids = ["SH-A100", ...Array.from({ length: 17 }, (_, i) => `SH-A${101 + i}`)];
+  const wantClip = [115.333, 98.333, 724.667, 541.667], wantSite = [135.333, 118.349, 704.127, 521.135];
+  const near = (a, b) => a && a.length === b.length && a.every((v, i) => Math.abs(v - b[i]) < 0.01);
+  const walk = (ps, f) => { for (const p of ps) p.t === "group" ? walk(p.prims, f) : f(p); };
+  const bad = [];
+  let scales = new Set(), n = 0;
+  for (const id of ids) {
+    const sh = doc.element(id); if (!sh) { bad.push(`${id} missing`); continue; }
+    const vp = doc.argValue(sh, "viewports")[0], view = doc.element(vp.view.ref);
+    scales.add(doc.argValue(view, "scale"));
+    const g = sheetScene(doc, sh).prims.find(p => p.t === "group" && p.vp);
+    const model = g.clip ? g : g.prims.find(p => p.t === "group" && p.clip);
+    const s = [1e9, 1e9, -1e9, -1e9];
+    walk(g.prims, p => { if (p.layer === "Site" && p.path) for (const seg of p.path) for (const q of [seg.a, seg.b]) if (q) { s[0] = Math.min(s[0], q[0]); s[1] = Math.min(s[1], q[1]); s[2] = Math.max(s[2], q[0]); s[3] = Math.max(s[3], q[1]); } });
+    const c = model && model.clip, inside = c && s[0] >= c[0] && s[1] >= c[1] && s[2] <= c[2] && s[3] <= c[3];
+    if (!near(c, wantClip) || !near(s, wantSite) || !inside) bad.push(`${id} crop ${c && c.map(v => v.toFixed(3))} site ${s.map(v => v.toFixed(3))}`); else n++;
+  }
+  return R(n === 18 && !bad.length && scales.size === 1 && scales.has(1500), "18 plan sheets at 1:1500, crop 115.333,98.333 → 724.667,541.667 and site 135.333,118.349 → 704.127,521.135 on each",
+    `${n} of 18 sheets match; scales ${[...scales].join(",")}${bad.length ? "; " + bad.slice(0, 3).join("; ") : ""}`);
 });
 
 // ===== ui_util.js =====

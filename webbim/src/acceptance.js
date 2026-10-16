@@ -2789,3 +2789,26 @@ testCase("M105", "The Nexus: 17 levels, L00 at 0, L01 at +8 m, then 6 m a storey
   return R(pass, "levels 0, 8000 … 98000; 777 nodes, 319 cells; slabs on 17 levels; 17 plans cut at 1000, each alone on an A1; 16 traced plans; no errors; no software words",
     `levels ${lv.join(",")}; ${nN} nodes, ${nC} cells; slabs on ${slabLv.size} levels; ${plans.length} plans, cut 1000 ${cuts}, own sheet ${onOwn}; ${refs} traced; ${errors} errors; words ${words.length}`);
 });
+
+testCase("M106", "The Nexus plan set registers: the site plan and the 17 level plans share one crop (the site boundary 0,24 → 853191,604203 with 30 m round it, rounded out to the metre: -30000,-30000 → 884000,635000), one scale (1:1250 is 532 mm tall, over the 470 mm the sheet allows, so 1:1500) and one viewport point (420,320); on every A1 sheet the crop lands at 115.333,98.333 → 724.667,541.667 and the whole site boundary at 135.333,118.349 → 704.127,521.135, inside it", () => {
+  const doc = buildNexusSample();
+  const ids = ["SH-A100", ...Array.from({ length: 17 }, (_, i) => `SH-A${101 + i}`)];
+  const wantClip = [115.333, 98.333, 724.667, 541.667], wantSite = [135.333, 118.349, 704.127, 521.135];
+  const near = (a, b) => a && a.length === b.length && a.every((v, i) => Math.abs(v - b[i]) < 0.01);
+  const walk = (ps, f) => { for (const p of ps) p.t === "group" ? walk(p.prims, f) : f(p); };
+  const bad = [];
+  let scales = new Set(), n = 0;
+  for (const id of ids) {
+    const sh = doc.element(id); if (!sh) { bad.push(`${id} missing`); continue; }
+    const vp = doc.argValue(sh, "viewports")[0], view = doc.element(vp.view.ref);
+    scales.add(doc.argValue(view, "scale"));
+    const g = sheetScene(doc, sh).prims.find(p => p.t === "group" && p.vp);
+    const model = g.clip ? g : g.prims.find(p => p.t === "group" && p.clip);
+    const s = [1e9, 1e9, -1e9, -1e9];
+    walk(g.prims, p => { if (p.layer === "Site" && p.path) for (const seg of p.path) for (const q of [seg.a, seg.b]) if (q) { s[0] = Math.min(s[0], q[0]); s[1] = Math.min(s[1], q[1]); s[2] = Math.max(s[2], q[0]); s[3] = Math.max(s[3], q[1]); } });
+    const c = model && model.clip, inside = c && s[0] >= c[0] && s[1] >= c[1] && s[2] <= c[2] && s[3] <= c[3];
+    if (!near(c, wantClip) || !near(s, wantSite) || !inside) bad.push(`${id} crop ${c && c.map(v => v.toFixed(3))} site ${s.map(v => v.toFixed(3))}`); else n++;
+  }
+  return R(n === 18 && !bad.length && scales.size === 1 && scales.has(1500), "18 plan sheets at 1:1500, crop 115.333,98.333 → 724.667,541.667 and site 135.333,118.349 → 704.127,521.135 on each",
+    `${n} of 18 sheets match; scales ${[...scales].join(",")}${bad.length ? "; " + bad.slice(0, 3).join("; ") : ""}`);
+});
