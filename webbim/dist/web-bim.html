@@ -29987,6 +29987,7 @@ testCase("M105", "The Nexus: 17 levels, L00 at 0, L01 at +8 m, then 6 m a storey
 
 
 
+
 function h(tag, attrs = {}, ...kids) {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs || {})) {
@@ -30117,11 +30118,29 @@ async function downloadsCapability() {
   try { DL = window.claude && window.claude.use ? await window.claude.use("downloads") : false; } catch (e) { DL = false; }
   return DL || false;
 }
+/** The file types the viewer's save prompt takes. Anything else (a Rhino .py, an .ifc) is refused with
+ *  `rejected_extension` - the first Provide Python from inside Claude failed exactly that way. Text then goes
+ *  out with .txt added (NAME.py.txt: delete ".txt" to get the .py back - the user's choice over a zip), and
+ *  bytes go out inside a .zip of the same name. The caller is told (`savedAs`, `renamed`, `zipped`) so it can
+ *  say what landed. */
+const SAVE_EXTENSIONS = new Set("gif png jpg jpeg webp mp4 webm mov txt json md docx pptx epub csv ttf html svg pdf xlsx zip".split(" "));
+const saveErr = e => e && e.code === "declined" ? "the save was declined" : `the viewer could not save it (${e && e.code || e})`;
 async function saveFile(filename, data, mime = "application/octet-stream") {
   const cap = await downloadsCapability();
   if (cap) {
-    try { await cap.save({ filename, data: data instanceof Uint8Array ? data.slice(0) : data }); return { ok: true, via: "viewer" }; }
-    catch (e) { return { ok: false, error: e && e.code === "declined" ? "the save was declined" : `the viewer could not save it (${e && e.code || e})` }; }
+    const dot = filename.lastIndexOf("."), ext = dot > 0 ? filename.slice(dot + 1).toLowerCase() : "";
+    const bytes = () => data instanceof Uint8Array ? data.slice(0) : data;
+    if (SAVE_EXTENSIONS.has(ext)) {
+      try { await cap.save({ filename, data: bytes() }); return { ok: true, via: "viewer", savedAs: filename }; }
+      catch (e) { if (!e || e.code !== "rejected_extension") return { ok: false, error: saveErr(e) }; }
+    }
+    if (typeof data === "string") {
+      try { await cap.save({ filename: filename + ".txt", data }); return { ok: true, via: "viewer", savedAs: filename + ".txt", renamed: true }; }
+      catch (e) { if (!e || e.code !== "rejected_extension") return { ok: false, error: saveErr(e) }; }
+    }
+    const zipName = (dot > 0 ? filename.slice(0, dot) : filename) + ".zip";
+    try { await cap.save({ filename: zipName, data: makeZip([{ name: filename, data: bytes() }]) }); return { ok: true, via: "viewer", savedAs: zipName, zipped: true }; }
+    catch (e) { return { ok: false, error: saveErr(e) }; }
   }
   if (window.claude) return { ok: false, error: "saving files is not available in this view" };
   const blob = new Blob([data], { type: mime });
@@ -37418,7 +37437,8 @@ async function providePython() {
   out.filename = `${fileStem(app.doc.meta.name).toUpperCase()}_Rhino_${nextRevision("rhino")}.py`;
   const r = await saveFile(out.filename, out.text, "text/x-python");
   const s = out.stats;
-  app.say(r.ok ? `${out.filename}: ${s.levels} levels, ${s.slabs} slabs, ${s.walls} walls, ${s.cores} cores, ${s.sheets} layouts with ${s.details} details, ${s.clips} clipping planes (${(out.text.length / 1024).toFixed(0)} KB). Run it in Rhino; run a newer one to bring the model in step.` : r.error, r.ok ? "ok" : "error");
+  const how = r.renamed ? ` Saved as ${r.savedAs}: delete ".txt" from the name to get the .py, then run it in Rhino.` : r.zipped ? ` Saved inside ${r.savedAs}: open it to get the .py, then run it in Rhino.` : " Run it in Rhino;";
+  app.say(r.ok ? `${out.filename}: ${s.levels} levels, ${s.slabs} slabs, ${s.walls} walls, ${s.cores} cores, ${s.sheets} layouts with ${s.details} details, ${s.clips} clipping planes (${(out.text.length / 1024).toFixed(0)} KB).${how} Run a newer one to bring the model in step.` : r.error, r.ok ? "ok" : "error");
   if (r.ok) logToAtlas({ prompt: `Provide Python: ${app.doc.meta.name || "the project"} to Rhino (${out.filename})`, vars: Object.assign(projectCounts(), { objects: s.objects, clips: s.clips, layouts: s.sheets, details: s.details, script_kb: Math.round(out.text.length / 1024) }),
     outputs: [{ name: out.filename, mime: "text/x-python", data: out.text, role: "main" }] });
   return out;
